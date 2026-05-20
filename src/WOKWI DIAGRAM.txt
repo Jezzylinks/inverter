@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "author": "JOHNSON OGBU",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": 0,
+      "left": -4.76,
+      "attrs": { "builder": "esp-idf" }
+    },
+    {
+      "type": "wokwi-lcd1602",
+      "id": "lcd1",
+      "top": -204.8,
+      "left": -109.6,
+      "attrs": { "pins": "i2c" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 100.25,
+      "left": -87.8,
+      "rotate": 180,
+      "attrs": { "value": "1000" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": 43.2,
+      "left": -115.75,
+      "rotate": 90,
+      "attrs": { "value": "10000" }
+    },
+    {
+      "type": "wokwi-pushbutton-6mm",
+      "id": "btn1",
+      "top": 221.8,
+      "left": -178.4,
+      "rotate": 90,
+      "attrs": { "color": "yellow", "xray": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton-6mm",
+      "id": "btn2",
+      "top": 231.4,
+      "left": -130.4,
+      "rotate": 90,
+      "attrs": { "color": "grey", "xray": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton-6mm",
+      "id": "btn3",
+      "top": 221.8,
+      "left": -82.4,
+      "rotate": 90,
+      "attrs": { "color": "red", "xray": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton-6mm",
+      "id": "btn4",
+      "top": 289,
+      "left": -130.4,
+      "rotate": 90,
+      "attrs": { "color": "black", "xray": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton-6mm",
+      "id": "btn5",
+      "top": 183.4,
+      "left": -130.4,
+      "rotate": 90,
+      "attrs": { "color": "blue", "xray": "1" }
+    },
+    {
+      "type": "wokwi-buzzer",
+      "id": "bz1",
+      "top": -64.8,
+      "left": -171,
+      "attrs": { "volume": "0.1" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led1",
+      "top": 121.2,
+      "left": 138.2,
+      "attrs": { "color": "red" }
+    }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "lcd1:GND", "esp:GND.2", "black", [ "h0" ] ],
+    [ "lcd1:VCC", "esp:3V3", "red", [ "h0" ] ],
+    [ "lcd1:SDA", "esp:21", "green", [ "h0" ] ],
+    [ "lcd1:SCL", "esp:22", "green", [ "h230.4", "v134.7" ] ],
+    [ "r1:2", "r2:2", "green", [ "v0" ] ],
+    [ "r1:1", "esp:GND.1", "green", [ "v76.8", "h86.25" ] ],
+    [ "r2:1", "esp:3V3", "green", [ "v-57.6", "h86.4" ] ],
+    [ "esp:33", "r2:2", "green", [ "h0" ] ],
+    [ "bz1:2", "esp:23", "green", [ "v0" ] ],
+    [ "bz1:1", "esp:GND.1", "green", [ "v0" ] ],
+    [ "btn3:2.l", "esp:16", "green", [ "v0" ] ],
+    [ "esp:5", "btn4:2.l", "green", [ "h0" ] ],
+    [ "esp:19", "btn2:2.l", "green", [ "h0" ] ],
+    [ "esp:17", "btn5:2.l", "green", [ "h0" ] ],
+    [ "esp:18", "btn1:2.l", "green", [ "h0" ] ],
+    [ "esp:GND.1", "btn3:1.r", "black", [ "h0" ] ],
+    [ "esp:GND.1", "btn5:1.r", "black", [ "h0" ] ],
+    [ "esp:GND.1", "btn2:1.r", "black", [ "h0" ] ],
+    [ "esp:GND.1", "btn4:1.r", "black", [ "h0" ] ],
+    [ "esp:GND.1", "btn1:1.r", "black", [ "h0" ] ],
+    [ "esp:13", "led1:A", "green", [ "h-19.05", "v57.6", "h192" ] ],
+    [ "led1:C", "esp:GND.2", "green", [ "v0", "h-38", "v-134.4" ] ]
+  ],
+  "dependencies": {}
+}
