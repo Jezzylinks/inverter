@@ -42,6 +42,8 @@
 
 // WIFI Credentials
 #include "esp_wifi.h"
+#include "lcd_watchdog.h"
+#include "lcd_flash_queue.h"
 
 /* ── All original #defines─────────────────────────────── */
 #define WIFI_SSID "johnson"
@@ -4123,7 +4125,8 @@ void erase_all_logs(void)
     error_log_clear();
 
     nvs_handle_t h;
-    if (nvs_open("log_storage", NVS_READWRITE, &h) == ESP_OK)
+    esp_err_t err = nvs_open("log_storage", NVS_READWRITE, &h);
+    if (err == ESP_OK)
     {
         nvs_erase_all(h);
         nvs_commit(h);
@@ -5638,7 +5641,26 @@ void lcd_draw_diagnostics_screen(uint8_t index)
     switch (index)
     {
     case 0: // System Status
-        snprintf(row1, 17, "Sys:%-12s", diag_data.system_ok ? "OK" : "Fault");
+        /*
+         * Row 1 layout (16 chars):
+         *   "OK  HB:12345    "   ← system ok,  heartbeat count
+         *   "FLT HB:12345    "   ← fault,      heartbeat count
+         *
+         * Heartbeat counter gives operators a live "pulse" to confirm
+         * lcd_task is running: it increments ~10 times per second.
+         */
+        uint32_t hb = lcd_watchdog_get_heartbeat();
+        uint32_t last_ms = lcd_watchdog_last_feed_ms();
+        uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        uint32_t age_ms = (last_ms > 0) ? (now_ms - last_ms) : 0;
+
+        /* Flag lcd_task as stale if feed is overdue */
+        bool lcd_alive = (age_ms < LCD_HEARTBEAT_TIMEOUT_MS);
+
+        snprintf(row1, 17, "%s HB:%-6lu%s",
+                 (diag_data.system_ok && lcd_alive) ? "OK " : "FLT",
+                 (unsigned long)(hb % 999999),
+                 lcd_alive ? " " : "!");
         break;
     case 1: // Latest Error
     {
@@ -7801,7 +7823,7 @@ cleanup:
 static void cleanup_button_system(void)
 {
     ESP_LOGI(APP_TAG, "🧹 Cleaning up button system...");
-
+    lcd_watchdog_deinit();
     g_app_state.system_ready = false;
 
     // Stop and destroy all button controllers
@@ -8585,6 +8607,7 @@ _Noreturn void system_restart(void)
 /* ── perform_system_restart() ───────────────────────────────────────────── */
 void perform_system_restart(bool factory_reset)
 {
+    lcd_watchdog_deinit();
     lcd_flash_message("System Restart  ", "Please wait...  ", 500);
     update_buzzer(2000, 30);
     if (!factory_reset)
@@ -9042,7 +9065,7 @@ void app_main(void)
     //   xTaskCreate(fan_monitor_task, "fan_monitor_task", 4096, NULL, 5, NULL);
     //   xTaskCreate(diagnostic_update_task, "diagnostic_update_task", 2048, NULL, 5, NULL);
     //     === Main Loop (Watchdog + Error Handling) ===
-
+    lcd_watchdog_init(lcd_task_handle);
     while (sys_state.system_ready)
         vTaskDelay(pdMS_TO_TICKS(1000));
 
