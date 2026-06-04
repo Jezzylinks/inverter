@@ -21,21 +21,21 @@
 /* ── Priority levels ─────────────────────────────────────────────────── */
 typedef enum
 {
-    FLASH_PRI_INFO = 0,     /* general notices: "Value Saved", "Cancelled" */
-    FLASH_PRI_WARNING = 1,  /* non-critical alerts: low battery warning    */
-    FLASH_PRI_FAULT = 2,    /* faults: over-temp, overload, fan fail       */
-    FLASH_PRI_CRITICAL = 3, /* emergency: relay fault, emergency shutdown  */
+  FLASH_PRI_INFO = 0,     /* general notices: "Value Saved", "Cancelled" */
+  FLASH_PRI_WARNING = 1,  /* non-critical alerts: low battery warning    */
+  FLASH_PRI_FAULT = 2,    /* faults: over-temp, overload, fan fail       */
+  FLASH_PRI_CRITICAL = 3, /* emergency: relay fault, emergency shutdown  */
 } flash_priority_t;
 
 /* ── Single queue entry ──────────────────────────────────────────────── */
 typedef struct
 {
-    char line0[17];
-    char line1[17];
-    uint32_t duration_ms;
-    flash_priority_t priority;
-    lcd_screen_id_t return_to; /* screen to restore when timer expires   */
-    bool valid;
+  char line0[17];
+  char line1[17];
+  uint32_t duration_ms;
+  flash_priority_t priority;
+  lcd_screen_id_t return_to; /* screen to restore when timer expires   */
+  bool valid;
 } flash_entry_t;
 
 #define LCD_FLASH_QUEUE_DEPTH 4
@@ -81,4 +81,3 @@ uint8_t lcd_flash_queue_count(void);
 
 /* Discard all queued messages below the given priority. */
 void lcd_flash_queue_purge_below(flash_priority_t min_priority);
-cm\

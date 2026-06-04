@@ -121,19 +121,19 @@ static void draw_main(lcd_main_data_t *m)
     {
     case MAIN_SUB_OUTPUT:
         snprintf(r0, 17, "OUT:%3.0fV %2.0fHz   ", m->output_voltage, m->output_frequency);
-        snprintf(r1, 17, "CUR:%4.1fA %4.0fW  ", m->output_current,
+        snprintf(r1, 17, "CUR:%4.1fA %4.0fW ", m->output_current,
                  m->output_voltage * m->output_current);
         break;
     case MAIN_SUB_BATTERY:
-        snprintf(r0, 17, "BAT:%4.1fV %3d%%   ", m->battery_voltage, m->battery_pct);
-        snprintf(r1, 17, "TMP:%2.0fC CHG:%s  ",
+        snprintf(r0, 17, "BAT:%4.1fV %3d%%  ", m->battery_voltage, m->battery_pct);
+        snprintf(r1, 17, "TMP:%2.0fC CHG:%s ",
                  m->battery_temperature, m->battery_charging ? "YES" : "NO ");
         break;
     case MAIN_SUB_SYSTEM:
-        snprintf(r0, 17, "INV:%s AC:%s   ",
+        snprintf(r0, 17, "INV:%s AC:%s  ",
                  m->inverter_active ? "ON " : "OFF",
                  m->ac_connected ? "YES" : "NO ");
-        snprintf(r1, 17, "LOAD: %3d%%       ", m->load_pct);
+        snprintf(r1, 17, "LOAD: %3d%%      ", m->load_pct);
         break;
     default:
         snprintf(r0, 17, "%-16s", "Vonix Inverter  ");
@@ -172,7 +172,7 @@ static void draw_shutdown(const lcd_shutdown_data_t *d)
     if (d->load_warning)
     {
         char r1[17];
-        snprintf(r1, 17, "Load:%-6.1fA     ", d->load_current);
+        snprintf(r1, 17, "Load:%-6.1fA    ", d->load_current);
         draw_commit("** WARNING! **  ", r1);
     }
     else
@@ -273,7 +273,7 @@ static void draw_standby(const lcd_standby_data_t *d)
     if (d->battery_voltage < 10.5f)
         snprintf(r1, 17, "LOW BAT:%4.1fV   ", d->battery_voltage);
     else
-        snprintf(r1, 17, "STD_BY BAT:%3d%%  ", d->battery_pct);
+        snprintf(r1, 17, "STD_BY BAT:%3d%% ", d->battery_pct);
     draw_commit("Vonix Inverter  ", r1);
 }
 

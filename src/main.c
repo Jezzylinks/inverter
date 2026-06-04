@@ -1234,17 +1234,6 @@ typedef struct
     uint32_t boot_screen_timestamp_ms; // Time to display each boot screen
 } boot_screen_config_t;
 
-typedef enum
-{
-    LCD_SCREEN_NONE = 0,
-    LCD_SCREEN_MAIN,        // Main status screen
-    LCD_SCREEN_BATTERY,     // Battery details
-    LCD_SCREEN_POWER,       // Power consumption
-    LCD_SCREEN_DIAGNOSTICS, // System diagnostics
-    LCD_SCREEN_ERRORS,      // Error details
-    LCD_SCREEN_COUNT        // Total number of screens
-} lcd_screen_t;
-
 typedef struct
 {
     // Battery
@@ -1254,8 +1243,6 @@ typedef struct
     float max_power_w; // Maximum power rating (e.g., 1000W)
     inverter_state_t inverter_state;
     bool blink_state;
-    lcd_screen_t current_screen;
-    lcd_screen_t previous_screen;
     // Fault info
     uint16_t fault_code;
     uint32_t last_update_time;
@@ -1361,6 +1348,9 @@ typedef struct
     uint32_t time_since_last_shutdown;
     bool emergency_stop_active;
     float last_power_off_time;
+
+    // LCD status
+    lcd_render_state_t lcd_render;
 
 } system_state_t;
 
@@ -1568,8 +1558,6 @@ void init_hardware();
 void nvs_init(bool erase_on_fail);
 bool save_settings();
 bool load_settings();
-static inline void lcd_lock(void);
-static inline void lcd_unlock(void);
 void lcd_show_bt_edit_screen(const char *label, const char *value);
 void lcd_show_value_edit_screen(void);
 void lcd_show_bt_connecting_screen(const char *device_name);
@@ -1579,7 +1567,6 @@ void update_led(led_channel_t led, uint8_t brightness /*uint8_t led*/);
 void adc_task(void *arg);
 static bool adc_calibration_init(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle);
 static void adc_calibration_deinit(adc_cali_handle_t handle);
-void display_task(void *arg);
 uint8_t calculate_battery_percentage(float voltage);
 void power_task(void *arg);
 void error_handler();
@@ -1593,6 +1580,7 @@ void exit_diagnostic_mode(void);
 void lcd_draw_diagnostics_screen(uint8_t index);
 void perform_factory_reset(void);
 static void build_menu_rows(menu_state_t menu_st, int selection, char *out_row0, char *out_row1);
+static void show_menu_screen(menu_state_t menu_st, int selection);
 void menu_navigate_up(void);
 void menu_navigate_down(void);
 void menu_enter_selection(void);
@@ -1609,7 +1597,6 @@ static void push_menu_history(menu_state_t state, uint8_t selection);
 // LCD display functions
 void lcd_update_display(void);
 void lcd_display_startup_screen(void);
-static void sync_lcd_state(void);
 void lcd_draw_main_screen(lcd_display_state_t *state);
 void lcd_draw_progress_bar(uint8_t, uint8_t percent);
 void lcd_update_menu_screen(void);
@@ -1654,7 +1641,9 @@ static void wifi_init_sta(void);
 void start_wifi_scan(void);
 void lcd_show_wifi_scan_screen(void);
 void start_wifi_connection(void);
-
+void stop_wifi_connection(void);
+void clear_all_settings(void);
+void reload_default_settings(void);
 // Function to save the frequency setting to NVS
 void save_frequency_to_nvs(int frequency);
 void clamp_values();
@@ -3559,22 +3548,8 @@ void update_led_status()
     }
 }
 
-// Function prototype for battery percentage calculation (assumed to be defined elsewhere)
-extern uint8_t calculate_battery_percentage(float voltage);
-
 // Function prototype for getting the mode string
 const char *get_mode_string(uint8_t mode);
-
-// Example implementation of the battery percentage function (you should have your own)
-uint8_t calculate_battery_percentage(float voltage)
-{
-    // Example linear mapping - adjust based on your battery characteristics
-    if (voltage <= 10.5f)
-        return 0;
-    if (voltage >= 12.6f)
-        return 100;
-    return (uint8_t)(((voltage - 10.5f) / (12.6f - 10.5f)) * 100);
-}
 
 /**
  * @brief Initialize click detection system
@@ -3602,6 +3577,48 @@ void click_detection_init()
 void lcd_update_menu_screen(void)
 {
     show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
+}
+
+/**
+ * @brief Display value editing screen
+ */
+void lcd_update_value_edit_screen(void)
+{
+    lcd_clear();
+    char line1[32], line2[32];
+
+    snprintf(line1, sizeof(line1), "%s", value_edit.label);
+    snprintf(line2, sizeof(line2), "%.2f %s", value_edit.temp_value,
+             value_edit.unit);
+
+    // flash message if in edit mode
+    lcd_flash_message(line1, line2, sys_state.value_edit_mode ? 500 : 0);
+
+    /* Blink cursor if in edit mode */
+    static bool blink_state = false;
+    static int64_t last_blink = 0;
+    int64_t current_time = esp_timer_get_time() / 1000;
+
+    if (current_time - last_blink > LCD_BLINK_INTERVAL_MS)
+    {
+        blink_state = !blink_state;
+        last_blink = current_time;
+    }
+
+    if (sys_state.value_edit_mode && value_edit.unit && value_edit.label)
+    {
+        char value_str[17];
+        int value_len = snprintf(value_str, sizeof(value_str),
+                                 "%.2f %s",
+                                 value_edit.temp_value,
+                                 value_edit.unit);
+        if (blink_state && value_len < 16)
+        {
+            /* Position cursor immediately after the value string on row 1 */
+            lcd_set_cursor(value_len, 1);
+            lcd_flash_message("_", NULL, 0); // Flash the cursor character
+        }
+    }
 }
 
 // Special characters for 16x2 LCD
@@ -3650,7 +3667,7 @@ void lcd_show_monitoring_detail(const char *label, float value,
 {
     char l[17], v[17];
     snprintf(l, 17, "%-16.16s", label);
-    snprintf(v, 17, "%.2f %-13.13s", value, unit ? unit : "");
+    snprintf(v, 17, "%.2f %-6.6s", value, unit ? unit : "");
     lcd_show_monitor_detail(l, v);
 }
 
@@ -3850,23 +3867,6 @@ void start_wifi_scan(void)
 #define WIFI_SCAN_TIMEOUT_MS 30000 // 30s inactivity timeout
 
 /**
- * @brief Convert RSSI value to a simple signal strength bar string
- */
-static const char *wifi_rssi_to_bars(int rssi)
-{
-    if (rssi >= -50)
-        return "||||"; // Excellent
-    else if (rssi >= -65)
-        return "|||"; // Good
-    else if (rssi >= -75)
-        return "||"; // Fair
-    else if (rssi >= -85)
-        return "|"; // Weak
-    else
-        return " "; // Very poor
-}
-
-/**
  * @brief Display WiFi scan results on 16x2 LCD with scrolling and signal bars
  */
 /* ── lcd_show_wifi_scan_screen() ─────────────────────────────────────────── */
@@ -3949,47 +3949,8 @@ void lcd_show_wifi_scan_screen(void)
 #define WIFI_FAIL_BIT BIT1
 
 static EventGroupHandle_t s_wifi_event_group;
-static int s_retry_num = 0;
 
 #define MAX_RETRY 5
-
-// --- Wi-Fi event handler ---
-static void wifi_event_handler(void *arg, esp_event_base_t event_base,
-                               int32_t event_id, void *event_data)
-{
-    if (event_base == WIFI_EVENT)
-    {
-        switch (event_id)
-        {
-        case WIFI_EVENT_STA_START:
-            esp_wifi_connect();
-            break;
-
-        case WIFI_EVENT_STA_DISCONNECTED:
-            if (s_retry_num < MAX_RETRY)
-            {
-                esp_wifi_connect();
-                s_retry_num++;
-                ESP_LOGI(WIFI_TAG, "Retrying WiFi connection (%d/%d)...", s_retry_num, MAX_RETRY);
-            }
-            else
-            {
-                xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-            }
-            break;
-
-        default:
-            break;
-        }
-    }
-    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
-    {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        ESP_LOGI(WIFI_TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
-        s_retry_num = 0;
-        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
-    }
-}
 
 /* ── start_wifi_connection() ─────────────────────────────────────────────── */
 void start_wifi_connection(void)
@@ -4948,7 +4909,7 @@ void handle_enter_menu_button_event(const button_event_info_t *event_info,
                 /* After scan, show results via lcd_show_wifi_scan() */
                 if (ap_count > 0)
                 {
-                    const char (*ssids)[9] = NULL; /* build from ap_records */
+                    // const char (*ssids)[9] = NULL; /* build from ap_records */
                     /* simplified: caller handles wifi scan screen via lcd_show_wifi_scan */
                 }
                 lcd_show_wifi_scan_screen();
@@ -6137,27 +6098,6 @@ void lcd_draw_brand_screen(void)
   HELPER FUNCTIONS
 ------------------------------------------------------------------------------*/
 
-static const char *get_battery_icon(float voltage)
-{
-    if (voltage >= 12.6f)
-        return "\xDB"; // Full
-    else if (voltage >= 12.0f)
-        return "\xB2"; // 75%
-    else if (voltage >= 11.5f)
-        return "\xB1"; // 50%
-    else if (voltage >= 11.0f)
-        return "\xB0"; // 25%
-    else
-        return " "; // Empty
-}
-
-/**
- * @brief Display main operating screen
- */
-/*------------------------------------------------------------------------------
-  MAIN SCREEN - 16x2 Optimized
-------------------------------------------------------------------------------*/
-
 static inline float clamp_float(float value, float min, float max)
 {
     if (value < min)
@@ -6166,11 +6106,6 @@ static inline float clamp_float(float value, float min, float max)
         return max;
     return value;
 }
-
-static float display_voltage = 0.0f;
-
-/* ── Forward declarations ─────────────────────────────────────── */
-static const char *inverter_mode_string(inverter_state_t state);
 
 /*------------------------------------------------------------------------------
   16x2 LCD DISPLAY SYSTEM FOR INVERTER
@@ -6195,36 +6130,6 @@ static lcd_animation_state_t lcd_anim = {
     .first_update = true};
 
 /*------------------------------------------------------------------------------
-  SMOOTH VALUE INTERPOLATION WITH STARTUP ANIMATION
-------------------------------------------------------------------------------*/
-static float smooth_value_update(float current, float target, float smoothing,
-                                 bool is_startup, float startup_progress)
-{
-    if (is_startup)
-    {
-        // Ease-out quadratic for natural startup feel
-        float eased = 1.0f - (1.0f - startup_progress) * (1.0f - startup_progress);
-        return target * eased;
-    }
-    else
-    {
-        // Normal smooth tracking
-        return current + (target - current) * smoothing;
-    }
-}
-
-static void sync_lcd_state(void)
-{
-    sys_state.lcd_state.battery_voltage = sys_state.inverter.battery.voltage;
-    sys_state.lcd_state.load_percentage = sys_state.inverter.load_percentage;
-    sys_state.lcd_state.inverter_state = sys_state.inverter.inverter_state;
-    sys_state.lcd_state.fault_code = (uint16_t)sys_state.error.error_flags;
-    sys_state.lcd_state.max_power_w = 1000.0f; // your rated wattage
-    sys_state.lcd_state.blink_state =
-        ((xTaskGetTickCount() / pdMS_TO_TICKS(500)) % 2 == 0);
-}
-
-/*------------------------------------------------------------------------------
   RESET ANIMATION (Call when system restarts)
 ------------------------------------------------------------------------------*/
 void lcd_animation_reset(void)
@@ -6236,226 +6141,10 @@ void lcd_animation_reset(void)
     lcd_anim.first_update = true;
 }
 
-/**
- * @brief  Short 3-4 char mode abbreviation that fits the 16-char line.
- */
-static const char *inverter_mode_string(inverter_state_t state)
-{
-    switch (state)
-    {
-    case INVERTER_OFF:
-        return "OFF ";
-    case INVERTER_STANDBY:
-        return "STBY";
-    case INVERTER_ON:
-        return "ON ";
-    case INVERTER_FAULT:
-        return "ERR ";
-    case INVERTER_STARTING:
-        return "STRT";
-    default:
-        return "??? ";
-    }
-}
-
 /* ── lcd_display_confirmation_screen() ──────────────────────────────────── */
 void lcd_display_confirmation_screen(void)
 {
     lcd_show_confirm("Save Changes?   ", "Enter=Yes Back=N");
-}
-
-/**
- * @brief Main screen update dispatcher
- */
-/*------------------------------------------------------------------------------
-  MAIN UPDATE FUNCTION
-------------------------------------------------------------------------------*/
-void lcd_update_display(void)
-{
-    static const char *TAG = "LCD_UPDATE";
-    static TickType_t last_screen_change = 0;
-    const TickType_t SCREEN_ROTATE_INTERVAL = pdMS_TO_TICKS(5000); // Rotate every 5 seconds
-
-    uint32_t now = xTaskGetTickCount();
-
-    // Auto-rotate screens if no user interaction
-    if ((now - last_screen_change) >= SCREEN_ROTATE_INTERVAL)
-    {
-        // Cycle through screens (exclude LCD_SCREEN_COUNT)
-        sys_state.lcd_state.current_screen =
-            (sys_state.lcd_state.current_screen + 1) % LCD_SCREEN_COUNT;
-
-        last_screen_change = now;
-        ESP_LOGD(TAG, "Screen rotated to: %d", sys_state.lcd_state.current_screen);
-    }
-
-    // Update blink state for error screen
-    sys_state.lcd_state.blink_state = ((now / pdMS_TO_TICKS(500)) % 2 == 0);
-
-    ESP_LOGD(TAG, "Current screen: %d", sys_state.lcd_state.current_screen);
-
-    // Draw screen
-    switch (sys_state.lcd_state.current_screen)
-    {
-    case LCD_SCREEN_MAIN:
-        sync_lcd_state();
-        lcd_draw_main_screen(&sys_state.lcd_state);
-        break;
-    case LCD_SCREEN_BATTERY:
-        lcd_draw_battery_screen();
-        break;
-    case LCD_SCREEN_POWER:
-        lcd_draw_power_screen();
-        break;
-    case LCD_SCREEN_DIAGNOSTICS:
-        lcd_draw_diagnostics_screen(sys_state.menu_selection);
-        break;
-    case LCD_SCREEN_ERRORS:
-        lcd_draw_error_screen();
-        break;
-    case LCD_SCREEN_NONE:
-        break;
-    default:
-        ESP_LOGW(TAG, "Invalid screen %d, resetting to MAIN", sys_state.lcd_state.current_screen);
-        sys_state.lcd_state.current_screen = LCD_SCREEN_NONE;
-        last_screen_change = now;
-        break;
-    }
-}
-
-/**
- * @brief Handle boot sequence screens
- * @return true when boot sequence is complete
- */
-bool lcd_handle_boot_sequence(void)
-{
-    static const char *TAG = "BOOT_SEQ";
-    static TickType_t screen_start_time = 0;
-    static boot_screen_t current_screen = BOOT_SCREEN_BRAND;
-    static bool screen_initialized = false;
-
-    const TickType_t now = xTaskGetTickCount();
-    const TickType_t BRAND_SCREEN_DURATION = pdMS_TO_TICKS(1500);
-
-    // Initialize screen on first entry or screen change
-    if (!screen_initialized)
-    {
-        screen_start_time = now;
-        screen_initialized = true;
-        lcd_clear();
-    }
-
-    switch (current_screen) // ← Use local static variable
-    {
-
-    case BOOT_SCREEN_BRAND:
-        lcd_draw_brand_screen();
-
-        if ((now - screen_start_time) >= BRAND_SCREEN_DURATION)
-        {
-            ESP_LOGI(TAG, "Brand screen done → Init screen");
-            current_screen = BOOT_SCREEN_INIT;
-            screen_initialized = false;
-        }
-        break;
-
-    case BOOT_SCREEN_INIT:
-        ESP_LOGI(TAG, "ADC ready → Main screen");
-        current_screen = BOOT_SCREEN_MAIN;
-        screen_initialized = false;
-        break;
-
-    case BOOT_SCREEN_MAIN:
-        ESP_LOGI(TAG, "Boot sequence complete!");
-
-        // Update sys_state WITH mutex protection
-        if (xSemaphoreTake(sys_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
-        {
-            sys_state.lcd_state.current_screen = LCD_SCREEN_MAIN;
-            sys_state.lcd_state.last_update_time = now;
-            sys_state.lcd_state.last_screen_change = now;
-            xSemaphoreGive(sys_state_mutex);
-        }
-
-        screen_initialized = false;
-        return true; // Boot complete
-
-    default:
-        ESP_LOGW(TAG, "Invalid boot state %d, resetting", current_screen);
-        current_screen = BOOT_SCREEN_BRAND;
-        screen_initialized = false;
-        break;
-    }
-
-    return false; // Boot still in progress
-}
-
-/*------------------------------------------------------------------------------
-  LCD TASK - CONTINUOUS UPDATE
-------------------------------------------------------------------------------*/
-
-void lcd_task(void *arg)
-{
-    const char *TAG = "LCD_TASK";
-    ESP_LOGI(TAG, "LCD task started");
-
-    if (sys_state_mutex == NULL)
-    {
-        ESP_LOGE(TAG, "MUTEX IS NULL!");
-        vTaskDelete(NULL);
-        return;
-    }
-
-    if (xSemaphoreTake(sys_state_mutex, portMAX_DELAY) == pdTRUE)
-    {
-        sys_state.lcd_boot_state.current_screen = BOOT_SCREEN_BRAND;
-        sys_state.lcd_boot_state.boot_screen_timestamp_ms = xTaskGetTickCount();
-        sys_state.inverter.boot_complete = false;
-        xSemaphoreGive(sys_state_mutex);
-    }
-
-    bool boot_complete = false;
-
-    while (1)
-    {
-        if (xSemaphoreTake(sys_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
-        {
-            boot_complete = sys_state.inverter.boot_complete;
-            xSemaphoreGive(sys_state_mutex);
-        }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
-        }
-
-        if (!boot_complete)
-        {
-            bool boot_finished = lcd_handle_boot_sequence();
-
-            if (boot_finished)
-            {
-                if (xSemaphoreTake(sys_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
-                {
-                    sys_state.inverter.boot_complete = true;
-                    sys_state.lcd_state.current_screen = LCD_SCREEN_MAIN;
-                    xSemaphoreGive(sys_state_mutex);
-                }
-            }
-        }
-        else
-        {
-            // Only update display at defined interval to prevent flicker
-            if (sys_state.menu_state == MENU_NONE &&
-                !sys_state.in_detail_view &&
-                !sys_state.value_edit_mode)
-            {
-                lcd_update_display();
-            }
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
 }
 
 // System initialization
@@ -6867,7 +6556,7 @@ void handle_value_confirmation(void)
         exit_value_edit_mode(true);
 
         printf("AUDIT: Parameter changed - %s\n", config->label);
-        lcd_flash_message("Value Saved!    ", config->label, 1000)
+        lcd_flash_message("Value Saved!    ", config->label, 1000);
     }
     else
     {
@@ -8139,7 +7828,6 @@ void init_menu_system()
     sys_state.menu_selection = 0;
 
     // lcd_display_state
-    sys_state.lcd_state.current_screen = LCD_SCREEN_MAIN;
     sys_state.lcd_state.blink_state = false;
     sys_state.lcd_boot_state.boot_screen_timestamp_ms = 0;
     sys_state.inverter.battery.battery_last_update_tick = 0;
@@ -8275,7 +7963,7 @@ void handle_wakeup(void)
     {
         uint32_t dur =
             (xTaskGetTickCount() - rtc_mem.last_sleep_time) / 1000;
-        snprintf(r1, 17, "Slept %lds       ", (long)dur);
+        snprintf(r1, 17, "Slept %lds", (long)dur);
     }
     if (rtc_mem.last_error)
     {
@@ -8545,7 +8233,7 @@ void handle_critical_error(void)
         snprintf(l1, 17, "%.1fA Max:%.1fA  ",
                  sys_state.inverter.output_current, MAX_CURRENT);
     }
-    else if
+    else if (sys_state.error.error_flags & ERR_UNDER_VOLTAGE)
     {
         snprintf(l0, 17, "%-16s", "Critical Error  ");
         snprintf(l1, 17, "Code: 0x%02X      ",
@@ -8636,7 +8324,7 @@ void show_system_info(void)
     char l[17], v[17];
     snprintf(l, 17, "Firmware:%-7s", FIRMWARE_VERSION);
     battery_profile_t profile = battery_profiles[sys_state.battery_profile.chemistry];
-    snprintf(v, 17, "%s %dV          ",
+    snprintf(v, 17, "%s %dV  ",
              profile.name_prefix,
              (int)sys_state.battery_profile.nominal_voltage);
     lcd_show_monitor_detail(l, v);

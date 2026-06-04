@@ -70,6 +70,7 @@ void lcd_integrity_init(void)
 
 void lcd_integrity_snapshot(const char *row0, const char *row1)
 {
+    // Restructure the corruption condition
     /* Store exactly 16 chars per row — space-pad if source is shorter */
     for (int i = 0; i < 16; i++)
     {
@@ -160,6 +161,27 @@ bool lcd_integrity_check(void)
     s_consecutive_mismatches = 0;
     return true;
 
+corruption_detected:
+    s_consecutive_mismatches++;
+    ESP_LOGW(TAG, "Corruption detected (%d/%d)",
+             s_consecutive_mismatches, LCD_INTEGRITY_MISMATCH_THRESHOLD);
+
+    if (s_consecutive_mismatches >= LCD_INTEGRITY_MISMATCH_THRESHOLD)
+    {
+        s_corruption_count++;
+        s_last_corruption_ms = ms;
+        s_consecutive_mismatches = 0;
+
+        ESP_LOGE(TAG,
+                 "LCD CORRUPTION CONFIRMED — reinit triggered "
+                 "(total events: %lu)",
+                 (unsigned long)s_corruption_count);
+
+        return false; /* caller must reinit + redraw */
+    }
+
+    return true; /* mismatch count below threshold — wait and see */
+
 #else /* LCD_INTEGRITY_READ_SUPPORTED == 0 */
     /*--------------------------------------------------------------------------
       WRITE-ONLY MODE (most common PCF8574 adapters)
@@ -183,27 +205,6 @@ bool lcd_integrity_check(void)
     /* Return false to trigger redraw — lcd_task will reinit + redraw */
     return false;
 #endif
-
-corruption_detected:
-    s_consecutive_mismatches++;
-    ESP_LOGW(TAG, "Corruption detected (%d/%d)",
-             s_consecutive_mismatches, LCD_INTEGRITY_MISMATCH_THRESHOLD);
-
-    if (s_consecutive_mismatches >= LCD_INTEGRITY_MISMATCH_THRESHOLD)
-    {
-        s_corruption_count++;
-        s_last_corruption_ms = ms;
-        s_consecutive_mismatches = 0;
-
-        ESP_LOGE(TAG,
-                 "LCD CORRUPTION CONFIRMED — reinit triggered "
-                 "(total events: %lu)",
-                 (unsigned long)s_corruption_count);
-
-        return false; /* caller must reinit + redraw */
-    }
-
-    return true; /* mismatch count below threshold — wait and see */
 }
 
 uint32_t lcd_integrity_corruption_count(void)
