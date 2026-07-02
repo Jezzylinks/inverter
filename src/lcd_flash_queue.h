@@ -27,6 +27,19 @@ typedef enum
   FLASH_PRI_CRITICAL = 3, /* emergency: relay fault, emergency shutdown  */
 } flash_priority_t;
 
+/*==============================================================================
+  Active flash state
+==============================================================================*/
+typedef struct
+{
+  bool active;
+  char line0[17];
+  char line1[17];
+  uint32_t expire_ms;
+  flash_priority_t priority;
+  lcd_screen_id_t return_to;
+} active_flash_t;
+
 /* ── Single queue entry ──────────────────────────────────────────────── */
 typedef struct
 {
@@ -43,16 +56,7 @@ typedef struct
 /* ── Public API ──────────────────────────────────────────────────────── */
 
 /* Call once before any task starts. */
-void lcd_flash_queue_init(void);
-
-/*
- * Enqueue a flash message.
- * - If queue has space: inserts in priority order (highest first).
- * - If queue is full and this priority > lowest waiting: drops lowest,
- *   inserts this one in priority order.
- * - If queue is full and this priority <= lowest waiting: drops silently.
- * Never blocks. Safe to call from any task or ISR context.
- */
+void lcd_flash_init(TaskHandle_t lcd_task_handle);
 void lcd_flash_enqueue(const char *line0,
                        const char *line1,
                        uint32_t duration_ms,
@@ -66,6 +70,10 @@ void lcd_flash_info(const char *line0, const char *line1, uint32_t ms);
 void lcd_flash_warning(const char *line0, const char *line1, uint32_t ms);
 void lcd_flash_fault(const char *line0, const char *line1, uint32_t ms);
 void lcd_flash_critical(const char *line0, const char *line1, uint32_t ms);
+bool lcd_flash_is_active(void);
+bool lcd_flash_get(active_flash_t *flash);
+bool lcd_flash_is_expired(void);
+void lcd_flash_clear(void);
 
 /*
  * Called exclusively by lcd_task to dequeue the next message.

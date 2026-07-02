@@ -122,7 +122,7 @@ void lcd_home(void)
     vTaskDelay(pdMS_TO_TICKS(2));
 }
 
-void lcd_set_cursor(uint8_t row, uint8_t col)
+void lcd_set_cursor(uint8_t col, uint8_t row)
 {
     static const uint8_t row_offsets[] = {0x00, 0x40};
     if (row >= LCD_ROWS)

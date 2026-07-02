@@ -280,7 +280,7 @@ void lcd_flash_saved(const char *label, const char *value_str)
 
 void lcd_flash_cancelled(void)
 {
-    lcd_flash_message("Edit Cancelled  ", "                ", 800);
+    lcd_flash_message("Edit Cancelled  ", "                ", 1000);
 }
 
 /* ── Standby ─────────────────────────────────────────────────────────────── */

@@ -186,7 +186,7 @@
 #define RTC_MAGIC_FLAG 0xA5A5A5A5
 #define BUTTON_MAX 5
 #define DEBOUNCE_THRESHOLD_MS 50
-#define LONG_PRESS_MS 3000
+#define LONG_PRESS_MS 1500
 #define HOLD_PRESS_MS 500
 #define VERY_LONG_PRESS_MS 3000
 #define DOUBLE_CLICK_MS 400
@@ -203,8 +203,6 @@
 #define FAST_INCREMENT_THRESHOLD_MS 500
 #define REPEAT_ACCELERATION_MS 100
 #define VALUE_CONFIRM_TIMEOUT_MS 5000
-#define LCD_SCROLL_DELAY_MS 300
-#define LCD_BLINK_INTERVAL_MS 500
 #define MAX_REPEAT_MULTIPLIER 10
 #define PRECISION_MODE_DIVISOR 10
 #define CLICK_TIMEOUT_MS 400
@@ -250,6 +248,8 @@
 #define ERROR_DISPLAY_INTERVAL_MS 1000
 #define STARTUP_DELAY_MS 2000
 #define NUM_DISPLAY_SCREENS 3
+#define LCD_SCROLL_DELAY_MS 300
+#define LCD_BLINK_INTERVAL_MS 500
 #define LCD_REFRESH_RATE_MS 500
 #define LCD_ROTATION_INTERVAL_MS 5000
 #define VOLTAGE_DELTA_THRESH 0.09f
@@ -340,7 +340,6 @@ typedef enum
     ERR_UNDER_VOLTAGE = 0x05,
     ERR_OVER_VOLTAGE = 0x06,
     ERR_INVERTER_VOLTAGE = 0x07,
-    // Additional error codes
     ERR_AC_FAULT = 0x08,
     ERR_FAN_FAIL = 0x10,
     ERR_EEPROM = 0x20,
@@ -348,19 +347,17 @@ typedef enum
     ERR_SHORT_CIRCUIT = 0x80,
     ERR_SYSTEM_FAILURE = 0x90,
     ERR_OVER_UNDER_VOLTAGE = 0x50,
+    ERR_COUNT
 } system_errors_t;
 // static bool editing_battery_menu = false;
 //  end
 /* ── Global handles (unchanged) ───────────────────────────────────────── */
+
+lcd_render_state_t sys_lcd;
 SemaphoreHandle_t sys_state_mutex;
 TaskHandle_t lcd_task_handle = NULL;
-
-/*
- * The single lcd_render_state instance.
- * lcd_writer.c externs this; lcd_task.c externs this.
- * Protected by sys_state_mutex for writers; lcd_task snapshots under mutex.
- */
-lcd_render_state_t sys_lcd;
+active_flash_t s_active_flash = {0};
+bool g_system_initialized = false;
 
 const uint64_t wakeup_pin_mask =
     (1ULL << WAKEUP_BUTTON_1) | (1ULL << WAKEUP_BUTTON_2);
@@ -983,11 +980,11 @@ void select_battery_type(button_id_t btn)
         {
             snprintf(display_char, sizeof(display_char),
                      "Saved: %s", battery_type_names[selected]);
-            lcd_flash_message("Battery Type    ", display_char, 1500);
+            lcd_flash_info("Battery Type    ", display_char, 1500);
         }
         else
         {
-            lcd_flash_message("Save Failed!    ", "                ", 1500);
+            lcd_flash_info("Save Failed!    ", "                ", 1500);
         }
         updated = true;
         break;
@@ -1068,7 +1065,6 @@ typedef enum
     MENU_SETTINGS,
     MENU_MONITORING,
     MENU_DIAGNOSTIC,
-    MENU_FACTORY_RESET_CONFIRM,
     MENU_WIFI_CONFIG,
     MENU_OUTPUT_VOLTAGE_SETTING,
     MENU_FREQUENCY_SETTING,
@@ -1126,75 +1122,29 @@ typedef struct
 
 typedef enum
 {
-    VALUE_EDIT_NUMERIC,
+    VALUE_EDIT_NUMERIC = 0,
     VALUE_EDIT_BOOL,
     VALUE_EDIT_SELECT,
     VALUE_EDIT_LIST,
     VALUE_TYPE_NONE
 } value_edit_type_t;
 
+typedef enum
+{
+    VALUE_TYPE_VOLTAGE = 0,
+    VALUE_TYPE_FREQUENCY,
+    VALUE_TYPE_CURRENT,
+    VALUE_TYPE_TEMPERATURE,
+    VALUE_TYPE_BATTERY_VOLTAGE,
+    VALUE_TYPE_MENU_SELECTION,
+    VALUE_TYPE_TIMEOUT,
+    VALUE_TYPE_BLUETOOTH,
+    VALUE_TYPE_WIFI,
+    VALUE_TYPE_COUNT
+} value_edit_param_t;
+
+typedef void (*param_apply_fn)(float value);
 // Value configuration structure
-typedef struct
-{
-    value_edit_type_t edit_type;
-    float temp_value;
-    float min_value;
-    float max_value;
-    float step_size;
-    bool bool_value;
-    int selection_index;
-    int max_selection;
-    const char *label;
-    const char *unit;
-    uint8_t decimal_places;
-    float increment_precision;
-    float increment_small; // Normal increment
-    float increment_large; // Fast increment (long press/repeat)
-    bool is_critical;      // Requires confirmation for changes
-    bool live_update;      // Update system in real-time
-    uint16_t current_value;
-    uint8_t options[10]; // For select/list types
-} value_config_t;
-
-// // Value configuration table
-// static value_config_t g_value_configs[] = {
-//     [VALUE_TYPE_VOLTAGE] = {
-//         .edit_type = VALUE_EDIT_NUMERIC,
-//         .min_value = 100.0f,
-//         .max_value = 240.000f,
-//         .temp_value = 220.0f,
-//         .increment_small = 1.0f,
-//         .increment_large = 5.0f,
-//         .increment_precision = 0.1f,
-//         .decimal_places = 1,
-//         .unit = "V",
-//         .label = "Voltage Thresh",
-//         .is_critical = true,
-//         .live_update = false},
-//     [VALUE_TYPE_FREQUENCY] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 45.0f, .max_value = 65.0f, .increment_small = 0.1f, .increment_large = 1.0f, .increment_precision = 0.01f, .decimal_places = 2, .unit = "Hz", .label = "Frequency", .is_critical = true, .live_update = false},
-//     [VALUE_TYPE_CURRENT] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 1.0f, .max_value = 50.0f, .increment_small = 0.5f, .increment_large = 2.0f, .increment_precision = 0.1f, .decimal_places = 1, .unit = "A", .label = "Current Limit", .is_critical = false, .live_update = true},
-//     [VALUE_TYPE_TEMPERATURE] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 40.0f, .max_value = 85.0f, .increment_small = 1.0f, .increment_large = 5.0f, .increment_precision = 0.5f, .decimal_places = 1, .unit = "°C", .label = "Temperature Limit", .is_critical = false, .live_update = true},
-//     [VALUE_TYPE_BATTERY_VOLTAGE] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 10.0f, .max_value = 15.0f, .increment_small = 0.1f, .increment_large = 0.5f, .increment_precision = 0.01f, .decimal_places = 2, .unit = "V", .label = "Battery Cutoff", .is_critical = true, .live_update = false},
-//     [VALUE_TYPE_MENU_SELECTION] = {.edit_type = VALUE_EDIT_SELECT, .min_value = 0, .max_value = 0, .temp_value = 0, .unit = "", .label = "Menu Select", .is_critical = false, .live_update = false},
-//     [VALUE_TYPE_BLUETOOTH] = {.edit_type = VALUE_EDIT_BOOL, .bool_value = false, .unit = "", .label = "Bluetooth", .is_critical = false, .live_update = true},
-//     [VALUE_TYPE_WIFI] = {.edit_type = VALUE_EDIT_BOOL, .selection_index = 0, .bool_value = false, .unit = "", .label = "WiFi", .is_critical = false, .live_update = true}};
-
-typedef struct
-{
-    bool enabled;
-    char ssid[32];
-    char password[64];
-} wifi_state_t;
-
-typedef struct
-{
-    float voltage_threshold; // V
-    float current_limit;     // A
-    float frequency_range;   // Hz
-    float temperature_alarm; // °C
-    int system_timeout;      // Seconds
-} settings_t;
-
 typedef struct
 {
     value_edit_type_t edit_type;
@@ -1219,7 +1169,31 @@ typedef struct
     const char *options[10]; // For select/list types
     bool is_critical;
     bool live_update;
+    param_apply_fn apply; // NULL => no live hardware effect
 } value_edit_context_t;
+
+typedef struct
+{
+    bool enabled;
+    char ssid[32];
+    char password[64];
+} wifi_state_t;
+
+typedef struct
+{
+    bool enabled;
+    char device_name[32];
+    char pairing_code[16];
+} bluetooth_state_t;
+
+typedef struct
+{
+    float voltage_threshold; // V
+    float current_limit;     // A
+    float frequency_range;   // Hz
+    float temperature_alarm; // °C
+    int system_timeout;      // Seconds
+} settings_t;
 
 typedef enum
 {
@@ -1249,8 +1223,6 @@ typedef struct
     uint32_t last_screen_change;
 } lcd_display_state_t;
 
-static value_edit_context_t value_edit;
-
 // Final grouped system_state_t
 typedef struct
 {
@@ -1270,7 +1242,7 @@ typedef struct
     inverter_state_t pre_detail_inverter_state;
 
     // Value adjustment context
-    value_edit_context_t current_value_type;
+    value_edit_context_t *current_value_type;
     bool value_edit_mode;
     settings_t settings;
     bool value_changed;
@@ -1308,6 +1280,7 @@ typedef struct
     uint64_t memory_usage;
     uint64_t uptime_hours;
     wifi_state_t wifi;
+    bluetooth_state_t bluetooth;
     uint64_t system_timeout;
     bool calibration_valid;
     bool load_connected;
@@ -1351,6 +1324,7 @@ typedef struct
 
     // LCD status
     lcd_render_state_t lcd_render;
+    uint32_t hold_start_time;
 
 } system_state_t;
 
@@ -1462,7 +1436,7 @@ static const menu_item_t main_menu_items[] = {
     {"Monitoring", MENU_MONITORING},
     {"Diagnostic", MENU_DIAGNOSTIC},
     {"WiFi Config", MENU_WIFI_CONFIG},
-    {"Factory Reset", MENU_FACTORY_RESET_CONFIRM}};
+    {"Factory Reset", MENU_FACTORY_RESET}};
 
 // SETTINGS MENU (5 items)
 static const menu_item_t settings_items[] = {
@@ -1500,11 +1474,10 @@ static const menu_item_t wifi_items[] = {
     {"Scan Networks", MENU_WIFI_CONFIG},
     {"Connect", MENU_WIFI_CONFIG}};
 
-// FACTORY RESET MENU (3 items)
 static const menu_item_t factory_reset_items[] = {
-    {"Reset All Data", MENU_FACTORY_RESET_CONFIRM},
-    {"Clear Settings", MENU_FACTORY_RESET_CONFIRM},
-    {"Erase Logs", MENU_FACTORY_RESET_CONFIRM}};
+    {"Reset All Data", MENU_FACTORY_RESET},
+    {"Clear Settings", MENU_FACTORY_RESET},
+    {"Erase Logs", MENU_FACTORY_RESET}};
 
 // LED channel definitions for easy reference
 typedef enum
@@ -1521,7 +1494,7 @@ typedef struct
     TickType_t last_sleep_time; // Time of last sleep entry
     bool was_inverter_active;
     bool ac_was_connected;
-    uint32_t last_error;
+    uint16_t last_error;
     uint32_t wake_count;
 } rtc_mem_t;
 
@@ -1548,7 +1521,6 @@ int64_t lcd_get_current_time_ms(void)
 }
 
 void lcd_create_custom_char(uint8_t location, uint8_t charmap[]);
-void lcd_write_float(float value, uint8_t decimalPlaces);
 
 adc_cali_handle_t handle = NULL;
 
@@ -1570,6 +1542,7 @@ static void adc_calibration_deinit(adc_cali_handle_t handle);
 uint8_t calculate_battery_percentage(float voltage);
 void power_task(void *arg);
 void error_handler();
+void log_all_error_flags(uint32_t flags);
 void toggle_display();
 
 // Function prototypes
@@ -1583,7 +1556,6 @@ static void build_menu_rows(menu_state_t menu_st, int selection, char *out_row0,
 static void show_menu_screen(menu_state_t menu_st, int selection);
 void menu_navigate_up(void);
 void menu_navigate_down(void);
-void menu_enter_selection(void);
 void menu_go_back(void);
 bool check_safety_conditions(void);
 void handle_menu_timeout(void);
@@ -1595,13 +1567,8 @@ void exit_detail_view(void);
 static void push_menu_history(menu_state_t state, uint8_t selection);
 
 // LCD display functions
-void lcd_update_display(void);
-void lcd_display_startup_screen(void);
-void lcd_draw_main_screen(lcd_display_state_t *state);
-void lcd_draw_progress_bar(uint8_t, uint8_t percent);
-void lcd_update_menu_screen(void);
 void lcd_update_value_edit_screen(void);
-void lcd_draw_error_screen(void);
+void update_lcd_activity_state(void);
 
 void process_battery_voltage(void);
 
@@ -1612,10 +1579,18 @@ bool thermal_protection_set_limit(float temperature_limit_celsius);
 bool battery_monitor_set_cutoff(float cutoff_voltage);
 void set_system_timeout(uint32_t timeout_ms);
 void inverter_emergency_shutdown(void);
+static void apply_voltage_threshold(float v);
+static void apply_frequency(float v);
+static void apply_current_limit(float v);
+static void apply_temperature_limit(float v);
+static void apply_battery_cutoff(float v);
+static void apply_wifi(float v);
+static void apply_bluetooth(float v);
 
 // Value adjustment functions
 void increase_value(bool fast_mode, bool precision_mode);
 void decrease_value(bool fast_mode, bool precision_mode);
+static void get_accel_step(int64_t hold_duration_ms, bool *fast, bool *big);
 void enter_value_edit_mode(value_edit_context_t *value_type);
 void exit_value_edit_mode(bool save_changes);
 void apply_value_change(void);
@@ -1625,7 +1600,7 @@ value_edit_context_t *get_current_value_config(void);
 float calculate_increment(bool fast_mode, bool precision_mode);
 bool validate_value_range(float new_value);
 void handle_value_confirmation(void);
-void update_system_parameter(value_edit_context_t *context_type, float value);
+void update_system_parameter(value_edit_context_t *config, float new_value);
 static const menu_item_t *get_menu_items(menu_state_t state, int *item_count);
 void edit_voltage_threshold(void);
 void edit_current_limit(void);
@@ -1651,14 +1626,13 @@ int get_setting_value(int index);
 void set_setting_value(int index, int value);
 void menu_exit();
 menu_state_t display_menu_state();
-void adjust_factory_reset(button_event_info_t btn);
+void adjust_factory_reset(button_event_info_t *btn);
 void init_menu_system();
 void restore_from_deep_sleep();
 void enter_deep_sleep(uint32_t sleep_seconds);
 void init_deep_sleep(uint64_t wakeup_pin_mask, int wakeup_time_sec);
 void save_calibration();
 void load_calibration();
-float read_adc_calibrated(adc_channel_t channel, adc_oneshot_unit_handle_t adc_handle);
 void check_protections();
 void update_led_status();
 void perform_factory_reset();
@@ -1666,7 +1640,6 @@ void show_system_info();
 bool system_is_inactive();
 void update_activity();
 void display_timeout_task(void *arg);
-void lcd_write_float(float value, uint8_t decimalPlaces);
 void lcd_power_init();
 void LCD_power(bool enable);
 void lcd_set_brightness(uint8_t brightness);
@@ -1675,10 +1648,7 @@ void handle_critical_error(); // centralized error handling
 bool battery_save_configuration(battery_type_t type, voltage_system_t voltage_sys, uint16_t capacity_ah);
 void battery_print_profile(const battery_profile_t *profile);
 bool battery_load_profile(battery_profile_t *profile);
-void monitor_battery_task(void *arg);
-void battery_menu_task(void *arg);
 void log_error_to_nvs(uint8_t error_code);
-void shutdown();
 void perform_system_restart(bool factory_reset);
 // deep sleep function
 void enable_brownout();
@@ -1696,15 +1666,44 @@ void filter_init(MovingAverageFilter *f);
 // Calibration menu
 void adjust_calibration_setting(button_event_info_t btn);
 void log_error_state();
+static void cleanup_button_system(void);
 
 RTC_DATA_ATTR rtc_mem_t rtc_mem; // Must be placed in RTC fast memory
-
-// ================== BUTTON SYSTEM DEFINITIONS ==================
-
 static const char *APP_TAG = "BUTTON_APP";
-
-// ================== BUTTON ISR HANDLER WITH DEBOUNCE ==================
 extern void update_activity(); // Activity timestamp updater
+
+static value_edit_context_t value_edit[] = {
+    [VALUE_TYPE_VOLTAGE] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 100.0f,
+        .max_value = 240.000f,
+        .temp_value = 220.0f,
+        .increment_small = 1.0f,
+        .increment_large = 5.0f,
+        .increment_precision = 0.1f,
+        .decimal_places = 1,
+        .unit = "V",
+        .label = "Voltage Threshold",
+        .is_critical = true,
+        .live_update = false,
+        .apply = apply_voltage_threshold,
+        .step_size = 1.0f,
+    },
+
+    [VALUE_TYPE_FREQUENCY] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 45.0f, .max_value = 65.0f, .increment_small = 0.1f, .increment_large = 1.0f, .increment_precision = 0.01f, .decimal_places = 2, .unit = "Hz", .label = "Frequency", .is_critical = true, .live_update = true, .step_size = 0.1f, .apply = apply_frequency},
+
+    [VALUE_TYPE_CURRENT] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 1.0f, .max_value = 50.0f, .increment_small = 0.5f, .increment_large = 2.0f, .increment_precision = 0.1f, .decimal_places = 1, .unit = "A", .label = "Current Limit", .is_critical = false, .live_update = true, .step_size = 0.1f, .apply = apply_current_limit},
+
+    [VALUE_TYPE_TEMPERATURE] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 40.0f, .max_value = 85.0f, .increment_small = 1.0f, .increment_large = 5.0f, .increment_precision = 0.5f, .decimal_places = 1, .unit = "°C", .label = "Temperature Limit", .is_critical = false, .live_update = true, .step_size = 0.5f, .apply = apply_temperature_limit},
+
+    [VALUE_TYPE_BATTERY_VOLTAGE] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 10.0f, .max_value = 15.0f, .increment_small = 0.1f, .increment_large = 0.5f, .increment_precision = 0.01f, .decimal_places = 2, .unit = "V", .label = "Battery Cutoff", .is_critical = true, .live_update = true, .step_size = 0.5f, .apply = apply_battery_cutoff},
+
+    [VALUE_TYPE_MENU_SELECTION] = {.edit_type = VALUE_EDIT_SELECT, .min_value = 0, .max_value = 0, .temp_value = 0, .unit = "", .label = "Menu Select", .is_critical = false, .live_update = false, .apply = NULL},
+
+    [VALUE_TYPE_BLUETOOTH] = {.edit_type = VALUE_EDIT_BOOL, .bool_value = false, .unit = "", .label = "Bluetooth", .is_critical = false, .live_update = true, .apply = apply_bluetooth},
+
+    [VALUE_TYPE_WIFI] = {.edit_type = VALUE_EDIT_BOOL, .selection_index = 0, .bool_value = false, .unit = "", .label = "WiFi", .is_critical = false, .live_update = true, .apply = apply_wifi},
+};
 
 // =============== HARDWARE INITIALIZATION ===============
 void init_hardware()
@@ -2404,39 +2403,39 @@ bool save_settings()
     return true;
 }
 
-// Error code to string mapping
-
-typedef struct
+const char *get_error_string(uint32_t flags)
 {
-    uint32_t code;
-    const char *message;
-} ErrorInfo;
+    // Check critical errors FIRST (highest priority)
+    if (flags & ERR_SHORT_CIRCUIT)
+        return "Short Circuit   ";
+    if (flags & ERR_SYSTEM_FAILURE)
+        return "System Failure  ";
+    if (flags & ERR_OVER_TEMP)
+        return "Overtemperature ";
+    if (flags & ERR_UNDER_VOLTAGE)
+        return "Under Voltage   ";
+    if (flags & ERR_OVER_VOLTAGE)
+        return "Over Voltage    ";
+    if (flags & ERR_OVERLOAD)
+        return "Overload        ";
+    if (flags & ERR_LOW_BAT)
+        return "Low Battery     ";
+    if (flags & ERR_HIGH_BAT)
+        return "High Battery    ";
+    if (flags & ERR_FAN_FAIL)
+        return "Fan Failure     ";
+    if (flags & ERR_AC_FAULT)
+        return "AC Fault        ";
+    if (flags & ERR_INVERTER_VOLTAGE)
+        return "Inverter Fault  ";
+    if (flags & ERR_BATTERY_VOLTAGE)
+        return "Battery Fault   ";
+    if (flags & ERR_OVER_UNDER_VOLTAGE)
+        return "Voltage Fault   ";
+    if (flags & ERR_EEPROM)
+        return "EEPROM Error    ";
 
-static const ErrorInfo error_table[] = {
-    {ERR_OVER_TEMP, "Overtemperature"},
-    {ERR_OVERLOAD, "Overload"},
-    {ERR_BATTERY_VOLTAGE, "Battery Voltage Fault"},
-    {ERR_LOW_BAT, "Low Battery"},
-    {ERR_UNDER_VOLTAGE, "Under Voltage"},
-    {ERR_OVER_VOLTAGE, "Over Voltage"},
-    {ERR_INVERTER_VOLTAGE, "Inverter Voltage Fault"},
-    {ERR_AC_FAULT, "AC Fault"},
-    {ERR_FAN_FAIL, "Fan Failure"},
-    {ERR_EEPROM, "EEPROM Error"},
-    {ERR_HIGH_BAT, "High Battery"},
-    {ERR_SHORT_CIRCUIT, "Short Circuit"},
-    {ERR_SYSTEM_FAILURE, "System Failure"},
-    {ERR_OVER_UNDER_VOLTAGE, "Over/Under Voltage"},
-};
-
-const char *get_error_string(uint32_t code)
-{
-    for (int i = 0; i < sizeof(error_table) / sizeof(error_table[0]); ++i)
-    {
-        if (error_table[i].code == code)
-            return error_table[i].message;
-    }
-    return "Unknown Error";
+    return "Unknown Error   ";
 }
 
 bool detect_critical_error()
@@ -2760,9 +2759,10 @@ void adc_task(void *arg)
 #endif
 
     bool first_sample = true;
+    uint8_t sample_count = 0;
+    const uint8_t SAMPLES_BEFORE_ERROR_CHECK = 10; // ← ADD THIS
 
     ESP_LOGI(TAG_ADC, "Starting ADC sampling and LCD updates");
-    // Main task loop
 
     while (1)
     {
@@ -2774,6 +2774,12 @@ void adc_task(void *arg)
         }
         // Process battery voltage monitoring
         process_battery_voltage();
+        if (sample_count < SAMPLES_BEFORE_ERROR_CHECK)
+        {
+            sys_state.error.error_flags = 0; // Clear errors during warmup
+            sample_count++;
+            ESP_LOGI(TAG_ADC, "ADC warmup: %d/%d", sample_count, SAMPLES_BEFORE_ERROR_CHECK);
+        }
         xEventGroupSetBits(sys_event_group, EVT_ADC_READY | EVT_ADC_VALID);
 
         /* Update main screen data for lcd_task */
@@ -2790,7 +2796,9 @@ void adc_task(void *arg)
             sys_state.battery_charging);
 
         /* Show fault screen immediately if error flags are set */
-        if (sys_state.error.error_flags)
+        // Temporary set error flags to 0
+        sys_state.error.error_flags = 0;
+        if (sys_state.error.error_flags && sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
         {
             const char *err = get_error_string(sys_state.error.error_flags);
             char l0[17], l1[17];
@@ -2804,12 +2812,12 @@ void adc_task(void *arg)
             lcd_clear_fault();
         }
 
-        if (first_sample)
+        if (first_sample && sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
         {
             first_sample = false;
-            ESP_LOGI(TAG_ADC, "First sample: Battery=%.2fV",
+            ESP_LOGI(TAG_ADC, "First valid sample: Battery=%.2fV",
                      sys_state.inverter.battery.voltage);
-            lcd_boot_complete(); /* switches lcd_task to LCD_SCREEN_MAIN */
+            lcd_boot_complete();
             if (lcd_task_handle != NULL)
                 xTaskNotifyGive(lcd_task_handle);
         }
@@ -3274,9 +3282,6 @@ static void cleanup_adc_resources(adc_oneshot_unit_handle_t handle,
     }
 }
 
-// Power management task
-// This task handles power management, including sleep mode, error handling, and system status updates.
-/* ── power_task() ───────────────────────────────────────────────────────── */
 void power_task(void *arg)
 {
     static bool last_relay_state = false;
@@ -3285,39 +3290,53 @@ void power_task(void *arg)
 
     while (1)
     {
+        // Update activity tracking
         if (sys_state.inverter.inverter_active || sys_state.inverter.connected)
             sys_state.flags.last_power_event = xTaskGetTickCount();
 
+        // Check for inactivity timeout
         if ((xTaskGetTickCount() - sys_state.flags.last_power_event) >
             pdMS_TO_TICKS(30 * 60 * 1000))
         {
             ESP_LOGI("POWER_TASK", "Entering deep sleep");
             enter_deep_sleep(3600);
+            // Never returns from here
         }
 
-        if (sys_state.inverter.temperature > 90.0f)
-        {
-            /* Show fault and restart */
-            lcd_show_fault("Critical Temp!  ", "Shutting Down...");
-            vTaskDelay(pdMS_TO_TICKS(3000));
-            perform_system_restart(false);
-        }
+        // ✅ CRITICAL TEMP CHECK - Separate from relay logic
+        // Note: This is for later version of the code
+        // Reason: No temperature sensor currently, but when implemented, we want to ensure that the relay control logic is not nested inside the temperature check. This allows the system to still switch to battery mode if AC fails, even if the temperature is high (but not critical). The critical temp check will only trigger a shutdown if it exceeds the threshold, but won't prevent relay switching in non-critical conditions.
+        // if (sys_state.inverter.temperature > 90.0f)
+        // {
+        //     ESP_LOGE("POWER_TASK", "CRITICAL TEMP: %.1f°C - SHUTTING DOWN!",
+        //              sys_state.inverter.temperature);
+        //     lcd_show_fault("Critical Temp!  ", "Shutting Down...");
+        //     vTaskDelay(pdMS_TO_TICKS(3000));
+        //     perform_system_restart(false);
+        //     // Execution never reaches here
+        // }
 
+        // ✅ RELAY CONTROL - Now at correct level (NOT nested in temp check)
         bool new_relay_state;
         if (sys_state.inverter.connected &&
             !(sys_state.error.error_flags & ERR_AC_FAULT))
         {
-            new_relay_state = true;
+            new_relay_state = true; // AC source available
         }
         else
         {
             if (!(sys_state.error.error_flags &
                   (ERR_OVER_TEMP | ERR_OVERLOAD | ERR_LOW_BAT | ERR_HIGH_BAT)))
-                new_relay_state = false;
+            {
+                new_relay_state = false; // Use inverter (no errors)
+            }
             else
-                new_relay_state = last_relay_state;
+            {
+                new_relay_state = last_relay_state; // Keep current state
+            }
         }
 
+        // Toggle relay if state changed
         if (new_relay_state != last_relay_state)
         {
             TickType_t now = xTaskGetTickCount();
@@ -3327,10 +3346,13 @@ void power_task(void *arg)
                 sys_state.inverter.inverter_active = !new_relay_state;
                 last_relay_state = new_relay_state;
                 last_state_change = now;
-                ESP_LOGI("POWER_TASK", "Relay: %s",
-                         new_relay_state ? "AC" : "INVERTER");
+
+                ESP_LOGI("POWER_TASK", "Relay: %s (%s)",
+                         new_relay_state ? "AC" : "INVERTER",
+                         new_relay_state ? "Grid connected" : "Battery mode");
             }
         }
+
         vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
@@ -3444,16 +3466,16 @@ void check_protections()
     // Clear non-critical flags at start (keep persistent ones)
     sys_state.error.error_flags &= (ERR_EEPROM | ERR_FAN_FAIL);
 
-    // Temperature check
-    if (sys_state.inverter.temperature > MAX_TEMPERATURE)
-    {
-        sys_state.error.error_flags |= ERR_OVER_TEMP;
-        ESP_LOGE("PROTECTION", "Over temp: %.1fC", sys_state.inverter.temperature);
-    }
-    else
-    {
-        sys_state.error.error_flags &= ~ERR_OVER_TEMP;
-    }
+    // Temperature check Not present here. Maybe, in later version
+    // if (sys_state.inverter.temperature > MAX_TEMPERATURE)
+    // {
+    //     sys_state.error.error_flags |= ERR_OVER_TEMP;
+    //     ESP_LOGE("PROTECTION", "Over temp: %.1fC", sys_state.inverter.temperature);
+    // }
+    // else
+    // {
+    //     sys_state.error.error_flags &= ~ERR_OVER_TEMP;
+    // }
 
     // Current check
     if (sys_state.inverter.actual_current > MAX_CURRENT)
@@ -3584,41 +3606,119 @@ void lcd_update_menu_screen(void)
  */
 void lcd_update_value_edit_screen(void)
 {
-    lcd_clear();
+    /* =========================================================================
+     * STEP 1: DIRTY CHECKING - Compare with previous frame
+     * ========================================================================= */
+
+    /* ✅ Store previous frame's display text (static, persists across calls) */
+    static char prev_line1[32] = {0};
+    static char prev_line2[32] = {0};
+
+    /* Generate current frame's display text */
     char line1[32], line2[32];
+    snprintf(line1, sizeof(line1), "%s", sys_state.current_value_type->label);
+    snprintf(line2, sizeof(line2), "%.2f %s", sys_state.current_value_type->temp_value,
+             sys_state.current_value_type->unit);
 
-    snprintf(line1, sizeof(line1), "%s", value_edit.label);
-    snprintf(line2, sizeof(line2), "%.2f %s", value_edit.temp_value,
-             value_edit.unit);
+    /* ✅ Check if text content changed */
+    bool line1_changed = (strcmp(prev_line1, line1) != 0);
+    bool line2_changed = (strcmp(prev_line2, line2) != 0);
+    bool text_changed = line1_changed || line2_changed;
 
-    // flash message if in edit mode
-    lcd_flash_message(line1, line2, sys_state.value_edit_mode ? 500 : 0);
+    /* =========================================================================
+     * STEP 2: LCD CLEAR - Only if text changed
+     * ========================================================================= */
 
-    /* Blink cursor if in edit mode */
-    static bool blink_state = false;
-    static int64_t last_blink = 0;
-    int64_t current_time = esp_timer_get_time() / 1000;
-
-    if (current_time - last_blink > LCD_BLINK_INTERVAL_MS)
+    if (text_changed)
     {
-        blink_state = !blink_state;
-        last_blink = current_time;
+        /* ✅ Only clear when content actually differs */
+        lcd_clear();
+
+        /* Save current state for next frame */
+        strncpy(prev_line1, line1, sizeof(prev_line1) - 1);
+        prev_line1[sizeof(prev_line1) - 1] = '\0';
+
+        strncpy(prev_line2, line2, sizeof(prev_line2) - 1);
+        prev_line2[sizeof(prev_line2) - 1] = '\0';
+        ESP_LOGI("TEXT_CHANGED", "Text for display changed");
     }
 
-    if (sys_state.value_edit_mode && value_edit.unit && value_edit.label)
+    /* =========================================================================
+     * STEP 3: FLASH MESSAGE - Display current values
+     * ========================================================================= */
+
+    /* ✅ Flash the value while in edit mode (5s timeout), or no flash (0ms) */
+    uint32_t flash_duration_ms = sys_state.value_edit_mode ? 5000 : 0;
+    lcd_flash_info(line1, line2, flash_duration_ms);
+
+    /* =========================================================================
+     * STEP 4: BLINKING CURSOR - Visual feedback for edit mode
+     * ========================================================================= */
+
+    /* ✅ Cursor blink state (toggles every LCD_BLINK_INTERVAL_MS) */
+    static bool blink_state = false;
+    static int64_t last_blink_time_ms = 0;
+
+    int64_t current_time_ms = esp_timer_get_time() / 1000; // Convert to ms
+    int64_t time_since_blink = current_time_ms - last_blink_time_ms;
+
+    /* ✅ Toggle blink every interval */
+    if (time_since_blink > LCD_BLINK_INTERVAL_MS)
     {
+        blink_state = !blink_state;
+        last_blink_time_ms = current_time_ms;
+    }
+
+    /* ✅ Draw blinking cursor if in edit mode */
+    if (sys_state.value_edit_mode && sys_state.current_value_type->unit && sys_state.current_value_type->label)
+    {
+        /* Generate the value string (what we're displaying) */
         char value_str[17];
         int value_len = snprintf(value_str, sizeof(value_str),
                                  "%.2f %s",
-                                 value_edit.temp_value,
-                                 value_edit.unit);
+                                 sys_state.current_value_type->temp_value,
+                                 sys_state.current_value_type->unit);
+
+        /* ✅ Display blinking cursor at end of value */
         if (blink_state && value_len < 16)
         {
             /* Position cursor immediately after the value string on row 1 */
             lcd_set_cursor(value_len, 1);
-            lcd_flash_message("_", NULL, 0); // Flash the cursor character
+
+            /* Write cursor character (underscore) */
+            lcd_print_string("_");
+        }
+        else if (!blink_state)
+        {
+            /* ✅ Erase cursor during off phase */
+            lcd_set_cursor(value_len, 1);
+            lcd_print_string(" ");
         }
     }
+}
+
+void update_lcd_activity_state(void)
+{
+    xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+
+    /* Copy activity state to LCD render state */
+    sys_lcd.last_user_activity = sys_state.flags.last_user_activity;
+    sys_lcd.inverter_active = sys_state.inverter.inverter_active;
+    sys_lcd.inverter_connected = sys_state.inverter.connected;
+
+    /* Determine if we should cycle sub-pages */
+    bool on_main_screen = (sys_lcd.screen == LCD_SCREEN_MAIN);
+    bool inverter_idle = !sys_state.inverter.inverter_active &&
+                         !sys_state.inverter.connected;
+
+    TickType_t now_ticks = xTaskGetTickCount();
+    uint32_t idle_time_ms = (now_ticks - sys_state.flags.last_user_activity) *
+                            portTICK_PERIOD_MS;
+    bool user_idle = (idle_time_ms > 5000);
+
+    sys_lcd.should_cycle_subpages = on_main_screen && inverter_idle && user_idle;
+
+    xSemaphoreGive(sys_state_mutex);
 }
 
 // Special characters for 16x2 LCD
@@ -3651,7 +3751,7 @@ static const menu_item_t *get_menu_items(menu_state_t state, int *item_count)
         *item_count = sizeof(wifi_items) / sizeof(wifi_items[0]);
         return wifi_items;
 
-    case MENU_FACTORY_RESET_CONFIRM:
+    case MENU_FACTORY_RESET:
         *item_count = sizeof(factory_reset_items) / sizeof(factory_reset_items[0]);
         return factory_reset_items;
 
@@ -3874,7 +3974,7 @@ void lcd_show_wifi_scan_screen(void)
 {
     if (ap_count == 0)
     {
-        lcd_flash_message("No Networks     ", "Found           ", 2000);
+        lcd_flash_info("No Networks     ", "Found           ", 2000);
         return;
     }
 
@@ -3897,7 +3997,7 @@ void lcd_show_wifi_scan_screen(void)
     {
         if ((esp_timer_get_time() / 1000) - last_activity > WIFI_SCAN_TIMEOUT_MS)
         {
-            lcd_flash_message("Scan Timeout    ", "                ", 1200);
+            lcd_flash_info("Scan Timeout    ", "                ", 1200);
             break;
         }
 
@@ -3936,7 +4036,7 @@ void lcd_show_wifi_scan_screen(void)
                 vTaskDelay(pdMS_TO_TICKS(2000));
                 return;
             case BTN_BACK:
-                lcd_flash_message("Exiting Scan    ", "                ", 1000);
+                lcd_flash_info("Exiting Scan    ", "                ", 1000);
                 return;
             default:
                 break;
@@ -3992,12 +4092,16 @@ void stop_wifi_connection(void)
 /* ── clear_all_settings() ───────────────────────────────────────────────── */
 void clear_all_settings(void)
 {
-    lcd_flash_message("Clearing        ", "Settings...     ", 500);
+    lcd_flash_info("Clearing        ", "Settings...     ", 500);
+    xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+    sys_lcd.screen = LCD_SCREEN_FLASH_MSG;
+    s_active_flash.active = true;
+    xSemaphoreGive(sys_state_mutex);
     esp_err_t err = nvs_flash_erase();
     if (err == ESP_OK)
         nvs_flash_init();
     reload_default_settings();
-    lcd_flash_message("Done            ", "All cleared!    ", 1000);
+    lcd_flash_info("Done            ", "All cleared!    ", 1000);
 }
 
 void reload_default_settings(void)
@@ -4109,7 +4213,7 @@ void erase_all_logs(void)
 
     // === 4. Notify user via LCD and buzzer ===
     update_buzzer(1000, 50);
-    lcd_flash_message("Logs Cleared    ", "System Clean    ", 1500);
+    lcd_flash_info("Logs Cleared    ", "System Clean    ", 1500);
 }
 
 typedef struct
@@ -4211,7 +4315,7 @@ void lcd_show_factory_reset_screen(void)
                     waiting = false;
                     break;
                 case BTN_BACK:
-                    lcd_flash_message("Cancelled       ", "                ", 800);
+                    lcd_flash_info("Cancelled       ", "                ", 800);
                     sys_state.menu_state = MAIN_MENU;
                     show_menu_screen(MAIN_MENU, 0);
                     waiting = false;
@@ -4223,7 +4327,7 @@ void lcd_show_factory_reset_screen(void)
         }
         if ((esp_timer_get_time() / 1000 - entry) > 15000)
         {
-            lcd_flash_message("Timeout         ", "                ", 800);
+            lcd_flash_info("Timeout         ", "                ", 800);
             sys_state.menu_state = MAIN_MENU;
             show_menu_screen(MAIN_MENU, 0);
             waiting = false;
@@ -4309,7 +4413,7 @@ void enter_submenu(menu_state_t new_state)
 }
 
 /* ── handle_power_button_event() ─────────────────────────────────────────── */
-void handle_power_button_event(const button_event_info_t *event_info,
+void handle_power_button_event(button_event_info_t *event_info,
                                void *user_data)
 {
     if (!sys_state.system_ready)
@@ -4333,7 +4437,7 @@ void handle_power_button_event(const button_event_info_t *event_info,
             sys_state.value_edit_mode = false;
             sys_state.value_changed = false;
             sys_state.pending_confirmation = false;
-            lcd_flash_message("Edit Cancelled  ", "                ", 600);
+            lcd_flash_info("Edit Cancelled  ", "                ", 600);
             /* flash auto-returns — nothing else needed */
             break;
         }
@@ -4428,12 +4532,13 @@ void handle_power_button_event(const button_event_info_t *event_info,
 
     case BUTTON_EVENT_DOUBLE_CLICK:
     {
+        ESP_LOGI("POWER BUTTON", "Button button clicked twice");
         if (sys_state.value_edit_mode)
             break;
         if (sys_state.inverter.inverter_state == INVERTER_ON ||
             sys_state.inverter.inverter_state == INVERTER_STARTING)
         {
-            lcd_flash_message("Stop inverter   ", "before diag!    ", 1500);
+            lcd_flash_info("Stop inverter   ", "before diag!    ", 10000);
             break;
         }
         if (sys_state.inverter.inverter_state != INVERTER_DIAGNOSTIC)
@@ -4456,10 +4561,11 @@ void handle_power_button_event(const button_event_info_t *event_info,
 
     case BUTTON_EVENT_TRIPLE_CLICK:
     {
+        ESP_LOGI("POWER BUTTON", "cLICKED THREE TIMES");
         if (sys_state.inverter.inverter_state == INVERTER_ON ||
             sys_state.inverter.inverter_state == INVERTER_STARTING)
         {
-            lcd_flash_message("Stop inverter   ", "before reset!   ", 1500);
+            lcd_flash_info("Stop inverter   ", "before reset!   ", 1500);
             break;
         }
         if (sys_state.inverter.inverter_state == INVERTER_DIAGNOSTIC)
@@ -4473,7 +4579,7 @@ void handle_power_button_event(const button_event_info_t *event_info,
         sys_state.in_detail_view = false;
         sys_state.in_confirmation_screen = false;
         push_menu_history(sys_state.menu_state, sys_state.menu_selection);
-        sys_state.menu_state = MENU_FACTORY_RESET_CONFIRM;
+        sys_state.menu_state = MENU_FACTORY_RESET;
         sys_state.menu_selection = 0;
         sys_state.power_button_sequence_count = 1;
         sys_state.power_sequence_start_time = current_time;
@@ -4489,7 +4595,7 @@ void handle_power_button_event(const button_event_info_t *event_info,
             lcd_show_value_edit_screen();
             break;
         }
-        if (sys_state.menu_state == MENU_FACTORY_RESET_CONFIRM &&
+        if (sys_state.menu_state == MENU_FACTORY_RESET &&
             sys_state.power_button_sequence_count > 0)
         {
             sys_state.power_button_sequence_count = 0;
@@ -4631,7 +4737,7 @@ menu_state_t display_menu_state(void)
         r0 = "Diagnostic      ";
         r1 = "Run Tests       ";
         break;
-    case MENU_FACTORY_RESET_CONFIRM:
+    case MENU_FACTORY_RESET:
         r0 = "Factory Reset?  ";
         r1 = "Enter=Yes Back=N";
         break;
@@ -4655,7 +4761,8 @@ menu_state_t display_menu_state(void)
 
 // ENTER/MENU BUTTON - Navigate menus and enter/confirm values
 /* ── handle_enter_menu_button_event() ──────────────────────────────────── */
-void handle_enter_menu_button_event(const button_event_info_t *event_info,
+
+void handle_enter_menu_button_event(button_event_info_t *event_info,
                                     void *user_data)
 {
     if (!sys_state.system_ready)
@@ -4705,7 +4812,7 @@ void handle_enter_menu_button_event(const button_event_info_t *event_info,
                 next = MENU_WIFI_CONFIG;
                 break;
             case 4:
-                next = MENU_FACTORY_RESET_CONFIRM;
+                next = MENU_FACTORY_RESET;
                 break;
             }
             if (next != MENU_NONE)
@@ -4713,7 +4820,7 @@ void handle_enter_menu_button_event(const button_event_info_t *event_info,
                 push_menu_history(sys_state.menu_state, sys_state.menu_selection);
                 sys_state.menu_state = next;
                 sys_state.menu_selection = 0;
-                show_menu_screen(next, 0);
+                show_menu_screen(next, sys_state.menu_selection);
             }
             break;
         }
@@ -4783,10 +4890,9 @@ void handle_enter_menu_button_event(const button_event_info_t *event_info,
             show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
             break;
 
-        case MENU_FACTORY_RESET_CONFIRM:
-            lcd_show_confirm("Hold to confirm ", "factory reset   ");
-            break;
-
+        case MENU_FACTORY_RESET:
+            sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
+            adjust_factory_reset(&event_info);
         default:
             break;
         }
@@ -4814,6 +4920,7 @@ void handle_enter_menu_button_event(const button_event_info_t *event_info,
         case MAIN_MENU:
         {
             menu_state_t next = MENU_NONE;
+            sys_lcd.screen = LCD_SCREEN_MENU;
             switch (sys_state.menu_selection)
             {
             case 0:
@@ -4821,15 +4928,16 @@ void handle_enter_menu_button_event(const button_event_info_t *event_info,
                 break;
             case 1:
                 next = MENU_MONITORING;
+                sys_lcd.screen = LCD_SCREEN_MONITORING_DETAIL;
                 break;
             case 2:
                 next = MENU_DIAGNOSTIC;
+                sys_lcd.screen = LCD_SCREEN_DIAGNOSTIC;
                 break;
             case 3:
-                next = MENU_WIFI_CONFIG;
-                break;
-            case 4:
-                next = MENU_FACTORY_RESET_CONFIRM;
+                next = MENU_FACTORY_RESET;
+                sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
+                sys_lcd.factory_reset.phase = FACTORY_PHASE_DONE;
                 break;
             }
             if (next != MENU_NONE)
@@ -4903,7 +5011,7 @@ void handle_enter_menu_button_event(const button_event_info_t *event_info,
         case MENU_WIFI_CONFIG:
             switch (sys_state.menu_selection)
             {
-            case 5:
+            case 1:
                 lcd_show_wifi_connecting("Scanning...");
                 start_wifi_scan();
                 /* After scan, show results via lcd_show_wifi_scan() */
@@ -4914,22 +5022,20 @@ void handle_enter_menu_button_event(const button_event_info_t *event_info,
                 }
                 lcd_show_wifi_scan_screen();
                 break;
-            case 6:
+            case 2:
                 start_wifi_connection();
                 break;
             default:
                 break;
+                sys_state.menu_selection = 0;
             }
             break;
-        case MENU_FACTORY_RESET_CONFIRM:
+        case MENU_FACTORY_RESET:
+
+            sys_lcd.factory_reset.phase = FACTORY_PHASE_CONFIRM;
             lcd_show_factory_reset_screen();
-            vTaskDelay(pdMS_TO_TICKS(500));
-            perform_factory_reset();
-            sys_state.menu_state = MAIN_MENU;
-            sys_state.menu_selection = 0;
-            clear_menu_history();
-            show_menu_screen(MAIN_MENU, 0);
             break;
+
         default:
             break;
         }
@@ -4967,35 +5073,59 @@ void handle_enter_menu_button_event(const button_event_info_t *event_info,
     sys_state.last_activity_time = event_info->timestamp_us / 1000;
 }
 
+/* ── acceleration tiers ──────────────────────────────────────────────────
+ * Returns which increase_value() flags to use based on how long
+ * the button has been continuously held.
+ */
+static void get_accel_step(int64_t hold_duration_ms, bool *fast, bool *big)
+{
+    if (hold_duration_ms < 800)
+    {
+        *fast = false;
+        *big = false; /* normal speed */
+    }
+    else if (hold_duration_ms < 2500)
+    {
+        *fast = true;
+        *big = false; /* ramping up   */
+    }
+    else
+    {
+        *fast = true;
+        *big = true; /* max speed    */
+    }
+}
+
 // Up button event handler - Advanced value increase
 /* ── handle_up_button_event() ──────────────────────────────────────────── */
-void handle_up_button_event(const button_event_info_t *event_info,
+void handle_up_button_event(button_event_info_t *event_info,
                             void *user_data)
 {
     if (!sys_state.system_ready)
         return;
     int64_t current_time = event_info->timestamp_us / 1000;
-
+    value_edit_context_t *config = get_current_value_config();
     switch (event_info->event)
     {
     case BUTTON_EVENT_CLICK:
+        // Reset flashed info if any
         if (sys_state.value_edit_mode)
         {
-            switch (value_edit.edit_type)
+            switch (config->edit_type)
             {
             case VALUE_EDIT_NUMERIC:
                 increase_value(false, false);
                 break;
             case VALUE_EDIT_SELECT:
-                value_edit.selection_index =
-                    (value_edit.selection_index + 1) % value_edit.max_selection;
+                config->selection_index =
+                    (config->selection_index + 1) % config->max_selection;
                 break;
             case VALUE_EDIT_BOOL:
-                value_edit.bool_value = !value_edit.bool_value;
+                config->bool_value = !config->bool_value;
                 break;
             case VALUE_EDIT_LIST:
-                value_edit.list_index =
-                    (value_edit.list_index + 1) % value_edit.list_size;
+                config->list_index =
+                    (config->list_index + 1) % config->list_size;
                 break;
             default:
                 break;
@@ -5014,6 +5144,19 @@ void handle_up_button_event(const button_event_info_t *event_info,
                                                 : sys_state.menu_selection - 1;
             sys_state.detail_parent_selection = sys_state.menu_selection;
             sys_state.detail_parent_menu = MENU_DIAGNOSTIC;
+            show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
+        }
+        else if (sys_state.menu_state == MENU_FACTORY_RESET && !sys_state.in_detail_view)
+        {
+            int n = 0;
+            const menu_item_t *items = get_menu_items(MENU_FACTORY_RESET, &n);
+            if (!items || n == 0)
+                break;
+            sys_state.menu_selection =
+                (sys_state.menu_selection == 0) ? n - 1
+                                                : sys_state.menu_selection - 1;
+            sys_state.detail_parent_selection = sys_state.menu_selection;
+            sys_state.detail_parent_menu = MENU_FACTORY_RESET;
             show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
         }
         else if (!sys_state.in_detail_view && sys_state.menu_state != MENU_NONE)
@@ -5057,10 +5200,10 @@ void handle_up_button_event(const button_event_info_t *event_info,
     case BUTTON_EVENT_LONG_PRESS:
         if (sys_state.value_edit_mode)
         {
-            sys_state.fast_increment_active = true;
+            sys_state.hold_start_time = current_time;
             sys_state.repeat_count = 0;
-            for (int i = 0; i < 10; i++)
-                increase_value(true, false);
+            sys_state.fast_increment_active = false;
+            increase_value(false, false);
             lcd_show_value_edit_screen();
         }
         else if (sys_state.in_detail_view &&
@@ -5084,13 +5227,16 @@ void handle_up_button_event(const button_event_info_t *event_info,
     case BUTTON_EVENT_REPEAT:
         if (sys_state.value_edit_mode)
         {
+            if (sys_state.hold_start_time == 0)
+                sys_state.hold_start_time = current_time;
+
+            int64_t held_ms = current_time - sys_state.hold_start_time;
+            bool fast, big;
+            get_accel_step(held_ms, &fast, &big);
+
             sys_state.repeat_count++;
-            if ((current_time - sys_state.last_increment_time) <
-                FAST_INCREMENT_THRESHOLD_MS)
-                sys_state.fast_increment_active = true;
-            bool fast = sys_state.fast_increment_active ||
-                        (sys_state.repeat_count > 5);
-            increase_value(fast, false);
+            sys_state.fast_increment_active = fast;
+            increase_value(fast, big);
             lcd_show_value_edit_screen();
         }
         else if (!sys_state.in_detail_view &&
@@ -5111,6 +5257,7 @@ void handle_up_button_event(const button_event_info_t *event_info,
     case BUTTON_EVENT_RELEASE:
         sys_state.repeat_count = 0;
         sys_state.fast_increment_active = false;
+        sys_state.hold_start_time = 0;
         break;
 
     default:
@@ -5120,39 +5267,40 @@ void handle_up_button_event(const button_event_info_t *event_info,
     sys_state.last_activity_time = current_time;
     sys_state.last_increment_time = current_time;
 }
+
 // Down button event handler - Advanced value decrease
 /* ── handle_down_button_event() ─────────────────────────────────────────── */
-void handle_down_button_event(const button_event_info_t *event_info,
+void handle_down_button_event(button_event_info_t *event_info,
                               void *user_data)
 {
     if (!sys_state.system_ready)
         return;
     int64_t current_time = event_info->timestamp_us / 1000;
-
+    value_edit_context_t *config = get_current_value_config();
     switch (event_info->event)
     {
     case BUTTON_EVENT_CLICK:
         if (sys_state.value_edit_mode)
         {
-            switch (value_edit.edit_type)
+            switch (config->edit_type)
             {
             case VALUE_EDIT_NUMERIC:
                 decrease_value(false, false);
                 break;
             case VALUE_EDIT_SELECT:
-                value_edit.selection_index =
-                    (value_edit.selection_index > 0)
-                        ? value_edit.selection_index - 1
-                        : value_edit.max_selection - 1;
+                config->selection_index =
+                    (config->selection_index > 0)
+                        ? config->selection_index - 1
+                        : config->max_selection - 1;
                 break;
             case VALUE_EDIT_BOOL:
-                value_edit.bool_value = !value_edit.bool_value;
+                config->bool_value = !config->bool_value;
                 break;
             case VALUE_EDIT_LIST:
-                value_edit.list_index =
-                    (value_edit.list_index > 0)
-                        ? value_edit.list_index - 1
-                        : value_edit.list_size - 1;
+                config->list_index =
+                    (config->list_index > 0)
+                        ? config->list_index - 1
+                        : config->list_size - 1;
                 break;
             default:
                 break;
@@ -5170,6 +5318,18 @@ void handle_down_button_event(const button_event_info_t *event_info,
                 (sys_state.menu_selection + 1) % n;
             sys_state.detail_parent_selection = sys_state.menu_selection;
             sys_state.detail_parent_menu = MENU_DIAGNOSTIC;
+            show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
+        }
+        else if (sys_state.menu_state == MENU_FACTORY_RESET && !sys_state.in_detail_view)
+        {
+            int n = 0;
+            const menu_item_t *items = get_menu_items(MENU_FACTORY_RESET, &n);
+            if (!items || n == 0)
+                break;
+            sys_state.menu_selection =
+                (sys_state.menu_selection + 1) % n;
+            sys_state.detail_parent_selection = sys_state.menu_selection;
+            sys_state.detail_parent_menu = MENU_FACTORY_RESET;
             show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
         }
         else if (!sys_state.in_detail_view && sys_state.menu_state != MENU_NONE)
@@ -5222,10 +5382,10 @@ void handle_down_button_event(const button_event_info_t *event_info,
     case BUTTON_EVENT_LONG_PRESS:
         if (sys_state.value_edit_mode)
         {
-            sys_state.fast_increment_active = true;
+            sys_state.hold_start_time = current_time;
             sys_state.repeat_count = 0;
-            for (int i = 0; i < 10; i++)
-                decrease_value(true, false);
+            sys_state.fast_increment_active = false;
+            decrease_value(false, false);
             lcd_show_value_edit_screen();
         }
         else if (sys_state.in_detail_view &&
@@ -5259,13 +5419,16 @@ void handle_down_button_event(const button_event_info_t *event_info,
     case BUTTON_EVENT_REPEAT:
         if (sys_state.value_edit_mode)
         {
+            if (sys_state.hold_start_time == 0)
+                sys_state.hold_start_time = current_time;
+
+            int64_t held_ms = current_time - sys_state.hold_start_time;
+            bool fast, big;
+            get_accel_step(held_ms, &fast, &big);
+
             sys_state.repeat_count++;
-            if ((current_time - sys_state.last_increment_time) <
-                FAST_INCREMENT_THRESHOLD_MS)
-                sys_state.fast_increment_active = true;
-            bool fast = sys_state.fast_increment_active ||
-                        (sys_state.repeat_count > 5);
-            decrease_value(fast, false);
+            sys_state.fast_increment_active = fast;
+            decrease_value(fast, big);
             lcd_show_value_edit_screen();
         }
         else if (!sys_state.in_detail_view &&
@@ -5284,6 +5447,7 @@ void handle_down_button_event(const button_event_info_t *event_info,
     case BUTTON_EVENT_RELEASE:
         sys_state.repeat_count = 0;
         sys_state.fast_increment_active = false;
+        sys_state.hold_start_time = 0;
         break;
 
     default:
@@ -5295,7 +5459,7 @@ void handle_down_button_event(const button_event_info_t *event_info,
 }
 
 /* ── handle_back_button_event() ─────────────────────────────────────────── */
-void handle_back_button_event(const button_event_info_t *event_info,
+void handle_back_button_event(button_event_info_t *event_info,
                               void *user_data)
 {
     if (!sys_state.system_ready)
@@ -5308,7 +5472,6 @@ void handle_back_button_event(const button_event_info_t *event_info,
         if (sys_state.value_edit_mode)
         {
             exit_value_edit_mode(false);
-            sys_state.value_edit_mode = false;
             lcd_show_value_canceled_screen();
             vTaskDelay(pdMS_TO_TICKS(800));
             show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
@@ -5364,7 +5527,7 @@ void handle_back_button_event(const button_event_info_t *event_info,
         case MENU_MONITORING:
         case MENU_DIAGNOSTIC:
         case MENU_WIFI_CONFIG:
-        case MENU_FACTORY_RESET_CONFIRM:
+        case MENU_FACTORY_RESET:
             sys_state.inverter.inverter_state = sys_state.inverter.previous_inverter_state;
             sys_state.menu_state = MENU_NONE;
             sys_state.menu_selection = 0;
@@ -5504,6 +5667,15 @@ void inverter_power_on(void)
     ESP_LOGI(INV_TAG, "Inverter powered on");
 }
 
+// Helper functions to apply settings
+static void apply_voltage_threshold(float v) { inverter_set_output_voltage(v); }
+static void apply_frequency(float v) { inverter_set_output_frequency(v); }
+static void apply_current_limit(float v) { inverter_set_current_limit(v); }
+static void apply_temperature_limit(float v) { thermal_protection_set_limit(v); }
+static void apply_battery_cutoff(float v) { battery_monitor_set_cutoff(v); }
+static void apply_wifi(float v) { sys_state.wifi.enabled = (bool)v; }
+static void apply_bluetooth(float v) { sys_state.bluetooth.enabled = (bool)v; } /* adjust to your actual field */
+
 /* ── shutdown_inverter() ────────────────────────────────────────────────── */
 void shutdown_inverter(void)
 {
@@ -5557,11 +5729,11 @@ void enter_diagnostic_mode(void)
     xSemaphoreGive(sys_state_mutex);
 
     /* Entry animation via flash messages */
-    lcd_flash_message("Entering Diag.  ", "Please wait.    ", 500);
+    lcd_flash_info("Entering Diag.  ", "Please wait.    ", 500);
     vTaskDelay(pdMS_TO_TICKS(500));
-    lcd_flash_message("Entering Diag.  ", "Please wait..   ", 500);
+    lcd_flash_info("Entering Diag.  ", "Please wait..   ", 500);
     vTaskDelay(pdMS_TO_TICKS(500));
-    lcd_flash_message("Entering Diag.  ", "Please wait...  ", 500);
+    lcd_flash_info("Entering Diag.  ", "Please wait...  ", 500);
     vTaskDelay(pdMS_TO_TICKS(500));
 
     show_menu_screen(MENU_DIAGNOSTIC, 0);
@@ -5570,7 +5742,7 @@ void enter_diagnostic_mode(void)
 /* ── exit_diagnostic_mode() ─────────────────────────────────────────────── */
 void exit_diagnostic_mode(void)
 {
-    lcd_flash_message(" Exiting Diag.. ", "                ", 1500);
+    lcd_flash_info(" Exiting Diag.. ", "                ", 1500);
     vTaskDelay(pdMS_TO_TICKS(1500));
 
     xSemaphoreTake(sys_state_mutex, pdMS_TO_TICKS(SYS_STATE_MUTEX_TIMEOUT_MS));
@@ -5682,9 +5854,9 @@ void perform_factory_reset(void)
     sys_state.cutoff_voltage = 11.5f;
     sys_state.display.scroll_speed = DEFAULT_SCROLL_SPEED;
 
-    lcd_flash_message("CLEARING LOGS   ", "Please wait...  ", 1000);
+    lcd_flash_info("CLEARING LOGS   ", "Please wait...  ", 1000);
     vTaskDelay(pdMS_TO_TICKS(1000));
-    lcd_flash_message("CALIBRATION     ", "Resetting...    ", 1000);
+    lcd_flash_info("CALIBRATION     ", "Resetting...    ", 1000);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
     update_buzzer(2000, 50);
@@ -6044,10 +6216,10 @@ void handle_menu_timeout(void)
  */
 void lcd_display_startup_screen(void)
 {
-    lcd_flash_message("C-TECH SYSTEMS  ", "Starting...     ", 1000);
+    lcd_flash_info("C-TECH SYSTEMS  ", "Starting...     ", 1000);
 
 #if LCD_ROWS >= 4
-    lcd_flash_message("                ", "  Version 1.0   ", 1000);
+    lcd_flash_info("                ", "  Version 1.0   ", 1000);
     // check if lcd has more than 2 rows and clear them if so
     for (uint8_t r = 2; r < LCD_ROWS; r++)
     {
@@ -6082,14 +6254,6 @@ void lcd_draw_brand_screen(void)
         first_draw = false;
     }
 }
-
-/*------------------------------------------------------------------------------
-  LCD DISPLAY CONFIGURATION
-------------------------------------------------------------------------------*/
-// Display update intervals
-#define LCD_REFRESH_RATE_MS 500       // Update every 500ms
-#define LCD_BLINK_INTERVAL_MS 1000    // Blink rate for warnings
-#define LCD_ROTATION_INTERVAL_MS 5000 // Auto-rotate every 5 seconds
 
 /*------------------------------------------------------------------------------
   DISPLAY SCREEN TYPES
@@ -6147,38 +6311,6 @@ void lcd_display_confirmation_screen(void)
     lcd_show_confirm("Save Changes?   ", "Enter=Yes Back=N");
 }
 
-// System initialization
-void button_system_init(void)
-{
-    sys_state.menu_selection = 0;
-    sys_state.safety_conditions_met = true; // Set based on actual conditions
-    sys_state.last_activity_time = 0;
-    sys_state.power_button_sequence_count = 0;
-
-    // Initialize value adjustment context
-    sys_state.current_value_type.edit_type = value_edit.edit_type;
-    sys_state.value_edit_mode = false;
-    sys_state.value_changed = false;
-    sys_state.pending_confirmation = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-
-    // Initialize system parameters with default values
-    sys_state.inverter.output_voltage = 220.0f;
-    sys_state.inverter.output_frequency = 50.0f;
-    sys_state.current_limit = 20.0f;
-    sys_state.temperature_limit = 70.0f;
-    sys_state.cutoff_voltage = 11.5f;
-
-    printf("Button system initialized\n");
-    printf("Default values loaded:\n");
-    printf("- Output Voltage: %.1f V\n", sys_state.inverter.output_voltage);
-    printf("- Frequency: %.2f Hz\n", sys_state.inverter.output_frequency);
-    printf("- Current Limit: %.1f A\n", sys_state.current_limit);
-    printf("- Temperature Limit: %.1f °C\n", sys_state.temperature_limit);
-    printf("- Battery Cutoff: %.2f V\n", sys_state.cutoff_voltage);
-}
-
 // Advanced value adjustment implementation
 void increase_value(bool fast_mode, bool precision_mode)
 {
@@ -6187,10 +6319,10 @@ void increase_value(bool fast_mode, bool precision_mode)
 
     ets_printf("Increase value called (fast: %d, precision: %d)\n",
                fast_mode, precision_mode);
-    value_edit_context_t *config = get_current_value_config();
+    value_edit_context_t *ctx = get_current_value_config();
     float *current_value = get_current_value_pointer();
     ets_printf("Current value: %.3f\n", *current_value);
-    if (!config || !current_value)
+    if (!ctx || !current_value)
         return;
 
     float increment = calculate_increment(fast_mode, precision_mode);
@@ -6213,28 +6345,28 @@ void increase_value(bool fast_mode, bool precision_mode)
     {
         ets_printf("Value change valid: %.3f -> %.3f\n", *current_value, new_value);
         *current_value = new_value;
-        value_edit.current_value = new_value;
+        sys_state.current_value_type->current_value = new_value;
         sys_state.value_changed = true;
 
         // Apply live update if enabled
-        if (config->live_update && !config->is_critical)
+        if (ctx->live_update && !ctx->is_critical)
         {
-            update_system_parameter(config, new_value);
+            update_system_parameter(ctx, new_value);
         }
 
         // Set pending confirmation for critical values
-        if (config->is_critical)
+        if (ctx->is_critical)
         {
             sys_state.pending_confirmation = true;
         }
 
         printf("Value increased to: %.*f %s\n",
-               config->decimal_places, new_value, config->unit);
+               ctx->decimal_places, new_value, ctx->unit);
     }
     else
     {
         printf("Value at maximum limit: %.*f %s\n",
-               config->decimal_places, config->max_value, config->unit);
+               ctx->decimal_places, ctx->max_value, ctx->unit);
     }
 }
 
@@ -6243,9 +6375,9 @@ void decrease_value(bool fast_mode, bool precision_mode)
     if (!sys_state.value_edit_mode)
         return;
 
-    value_edit_context_t *config = get_current_value_config();
+    value_edit_context_t *ctx = get_current_value_config();
     float *current_value = get_current_value_pointer();
-    if (!config || !current_value)
+    if (!ctx || !current_value)
         return;
 
     float increment = calculate_increment(fast_mode, precision_mode);
@@ -6267,28 +6399,28 @@ void decrease_value(bool fast_mode, bool precision_mode)
     if (validate_value_range(new_value))
     {
         *current_value = new_value;
-        value_edit.current_value = new_value;
+        sys_state.current_value_type->current_value = new_value;
         sys_state.value_changed = true;
 
         // Apply live update if enabled
-        if (config->live_update && !config->is_critical)
+        if (ctx->live_update && !ctx->is_critical)
         {
-            update_system_parameter(config, new_value);
+            update_system_parameter(ctx, new_value);
         }
 
         // Set pending confirmation for critical values
-        if (config->is_critical)
+        if (ctx->is_critical)
         {
             sys_state.pending_confirmation = true;
         }
 
         printf("Value decreased to: %.*f %s\n",
-               config->decimal_places, new_value, config->unit);
+               ctx->decimal_places, new_value, ctx->unit);
     }
     else
     {
         printf("Value at minimum limit: %.*f %s\n",
-               config->decimal_places, config->min_value, config->unit);
+               ctx->decimal_places, ctx->min_value, ctx->unit);
     }
 }
 
@@ -6297,7 +6429,7 @@ void enter_value_edit_mode(value_edit_context_t *value_type)
     if (sys_state.value_edit_mode)
         return;
 
-    sys_state.current_value_type.edit_type = value_type->edit_type;
+    sys_state.current_value_type = value_type;
     sys_state.value_edit_mode = true;
     sys_state.value_changed = false;
     sys_state.pending_confirmation = false;
@@ -6310,9 +6442,9 @@ void enter_value_edit_mode(value_edit_context_t *value_type)
         sys_state.edit_backup_value = *current_value;
     }
 
-    value_edit_context_t *config = get_current_value_config();
+    value_edit_context_t *ctx = get_current_value_config();
     printf("Entering edit mode for %s (%.3f %s)\n",
-           config->label, *current_value, config->unit);
+           ctx->label, *current_value, ctx->unit);
     printf("Use UP/DOWN to adjust, ENTER to save, BACK to cancel\n");
 }
 
@@ -6321,16 +6453,16 @@ void exit_value_edit_mode(bool save_changes)
     if (!sys_state.value_edit_mode)
         return;
 
-    value_edit_context_t *config = get_current_value_config();
+    value_edit_context_t *ctx = get_current_value_config();
     float *current_value = get_current_value_pointer();
 
     if (save_changes && sys_state.value_changed)
     {
-        if (config->is_critical && sys_state.pending_confirmation)
+        if (ctx->is_critical && sys_state.pending_confirmation)
         {
             printf("Saving critical value change: %s = %.*f %s\n",
-                   config->label, config->decimal_places,
-                   *current_value, config->unit);
+                   ctx->label, ctx->decimal_places,
+                   *current_value, ctx->unit);
         }
 
         // Apply the change to system
@@ -6345,7 +6477,7 @@ void exit_value_edit_mode(bool save_changes)
     }
 
     sys_state.value_edit_mode = false;
-    sys_state.current_value_type.edit_type = VALUE_TYPE_NONE;
+    sys_state.current_value_type = NULL;
     sys_state.value_changed = false;
     sys_state.pending_confirmation = false;
 }
@@ -6355,16 +6487,16 @@ void apply_value_change(void)
     if (!sys_state.value_edit_mode || !sys_state.value_changed)
         return;
 
-    value_edit_context_t *config = get_current_value_config();
+    value_edit_context_t *ctx = get_current_value_config();
     float *current_value = get_current_value_pointer();
 
-    if (config && current_value)
+    if (ctx && current_value)
     {
-        update_system_parameter(config, *current_value);
+        update_system_parameter(ctx, *current_value);
         sys_state.pending_confirmation = false;
         printf("Applied %s: %.*f %s\n",
-               config->label, config->decimal_places,
-               *current_value, config->unit);
+               ctx->label, ctx->decimal_places,
+               *current_value, ctx->unit);
     }
 }
 
@@ -6374,26 +6506,26 @@ void reset_value_to_backup(void)
         return;
 
     float *current_value = get_current_value_pointer();
-    value_edit_context_t *config = get_current_value_config();
+    value_edit_context_t *ctx = get_current_value_config();
 
-    if (current_value && config)
+    if (current_value && ctx)
     {
         *current_value = sys_state.edit_backup_value;
-        config->current_value = sys_state.edit_backup_value;
+        ctx->current_value = sys_state.edit_backup_value;
         sys_state.value_changed = false;
         sys_state.pending_confirmation = false;
 
         printf("Value reset to: %.*f %s\n",
-               config->decimal_places, sys_state.edit_backup_value, config->unit);
+               ctx->decimal_places, sys_state.edit_backup_value, ctx->unit);
     }
 }
 
 float *get_current_value_pointer(void)
 {
-    value_edit_context_t *config = get_current_value_config();
-    if (config)
+    value_edit_context_t *ctx = get_current_value_config();
+    if (ctx)
     {
-        return &config->current_value;
+        return &ctx->current_value;
     }
     return NULL;
 }
@@ -6402,37 +6534,37 @@ value_edit_context_t *get_current_value_config(void)
 {
     if (!sys_state.value_edit_mode)
         return NULL;
-    if (value_edit.label == NULL)
+    if (sys_state.current_value_type->label == NULL)
         return NULL;
-    return &value_edit;
+    return sys_state.current_value_type;
 }
 
 float calculate_increment(bool fast_mode, bool precision_mode)
 {
-    value_edit_context_t *config = get_current_value_config();
-    if (!config)
+    value_edit_context_t *ctx = get_current_value_config();
+    if (!ctx)
         return 0.0f;
 
     if (precision_mode)
     {
-        return config->increment_precision;
+        return ctx->increment_precision;
     }
     else if (fast_mode)
     {
-        return config->increment_large;
+        return ctx->increment_large;
     }
     else
     {
-        return config->increment_small;
+        return ctx->increment_small;
     }
 }
 
 bool validate_value_range(float new_value)
 {
-    value_edit_context_t *config = get_current_value_config();
-    if (!config)
+    value_edit_context_t *ctx = get_current_value_config();
+    if (!ctx)
         return false;
-    return (new_value >= config->min_value && new_value <= config->max_value);
+    return (new_value >= ctx->min_value && new_value <= ctx->max_value);
 }
 
 void handle_value_confirmation(void)
@@ -6440,10 +6572,10 @@ void handle_value_confirmation(void)
     if (!sys_state.value_edit_mode || !sys_state.pending_confirmation)
         return;
 
-    value_edit_context_t *config = get_current_value_config();
+    value_edit_context_t *ctx = get_current_value_config();
     void *current_value_ptr = get_current_value_pointer();
 
-    if (!config || !current_value_ptr)
+    if (!ctx || !current_value_ptr)
     {
         printf("Error: Invalid value configuration\n");
         return;
@@ -6461,14 +6593,14 @@ void handle_value_confirmation(void)
     bool safety_check_passed = true;
 
     // ======== Handle based on edit type ========
-    switch (config->edit_type)
+    switch (ctx->edit_type)
     {
     case VALUE_EDIT_NUMERIC:
     {
         float *current_value = (float *)current_value_ptr;
 
         // Perform category-based safety checks
-        if (strstr(config->label, "Voltage"))
+        if (strstr(ctx->label, "Voltage"))
         {
             if (*current_value < 10.0f || *current_value > 260.0f)
             {
@@ -6476,7 +6608,7 @@ void handle_value_confirmation(void)
                 safety_check_passed = false;
             }
         }
-        else if (strstr(config->label, "Current"))
+        else if (strstr(ctx->label, "Current"))
         {
             if (*current_value < 0.1f || *current_value > 50.0f)
             {
@@ -6484,7 +6616,7 @@ void handle_value_confirmation(void)
                 safety_check_passed = false;
             }
         }
-        else if (strstr(config->label, "Temperature"))
+        else if (strstr(ctx->label, "Temperature"))
         {
             if (*current_value < 20.0f || *current_value > 80.0f)
             {
@@ -6492,7 +6624,7 @@ void handle_value_confirmation(void)
                 safety_check_passed = false;
             }
         }
-        else if (strstr(config->label, "Timeout"))
+        else if (strstr(ctx->label, "Timeout"))
         {
             if (*current_value < 1000.0f || *current_value > 600000.0f)
             {
@@ -6503,9 +6635,9 @@ void handle_value_confirmation(void)
 
         if (safety_check_passed)
         {
-            update_system_parameter(config, *current_value);
+            update_system_parameter(ctx, *current_value);
             printf("Numeric value confirmed: %s = %.3f %s\n",
-                   config->label, *current_value, config->unit);
+                   ctx->label, *current_value, ctx->unit);
         }
         break;
     }
@@ -6514,19 +6646,19 @@ void handle_value_confirmation(void)
     {
         int selected_index = *(int *)current_value_ptr;
         printf("Selected option for %s: %d (%s)\n",
-               config->label, selected_index, config->options[selected_index]);
+               ctx->label, selected_index, ctx->options[selected_index]);
 
-        update_system_parameter(config, (float)selected_index);
+        update_system_parameter(ctx, (float)selected_index);
         break;
     }
 
     case VALUE_EDIT_BOOL:
     {
         bool state = *(bool *)current_value_ptr;
-        printf("%s set to: %s\n", config->label, state ? "ON" : "OFF");
+        printf("%s set to: %s\n", ctx->label, state ? "ON" : "OFF");
 
-        update_system_parameter(config, (float)state);
-        if (strcmp(config->label, "WiFi") == 0)
+        update_system_parameter(ctx, (float)state);
+        if (strcmp(ctx->label, "WiFi") == 0)
             start_wifi_scan();
         break;
     }
@@ -6534,15 +6666,15 @@ void handle_value_confirmation(void)
     case VALUE_EDIT_LIST:
     {
         const char *selected_str = (const char *)current_value_ptr;
-        printf("%s selected: %s\n", config->label, selected_str);
+        printf("%s selected: %s\n", ctx->label, selected_str);
 
-        update_system_parameter(config, 0); // store index if needed
+        update_system_parameter(ctx, 0); // store index if needed
         // eeprom_save_string(config->eeprom_addr, selected_str);
         break;
     }
 
     default:
-        printf("Unknown value edit type for %s\n", config->label);
+        printf("Unknown value edit type for %s\n", ctx->label);
         safety_check_passed = false;
         break;
     }
@@ -6550,13 +6682,13 @@ void handle_value_confirmation(void)
     // ======== Post-confirmation handling ========
     if (safety_check_passed)
     {
-        printf("Value confirmed and applied for %s\n", config->label);
+        printf("Value confirmed and applied for %s\n", ctx->label);
         sys_state.pending_confirmation = false;
         sys_state.value_changed = true;
         exit_value_edit_mode(true);
 
-        printf("AUDIT: Parameter changed - %s\n", config->label);
-        lcd_flash_message("Value Saved!    ", config->label, 1000);
+        printf("AUDIT: Parameter changed - %s\n", ctx->label);
+        lcd_flash_info("Value Saved!    ", ctx->label, 1000);
     }
     else
     {
@@ -6564,64 +6696,23 @@ void handle_value_confirmation(void)
         reset_value_to_backup();
         sys_state.pending_confirmation = false;
         exit_value_edit_mode(false);
-        lcd_flash_message("Change Rejected ", "                ", 1000);
+        lcd_flash_info("Change Rejected ", "                ", 1000);
     }
 
     sys_state.menu_state = MENU_NONE;
     lcd_update_menu_screen();
 }
 
-void update_system_parameter(value_edit_context_t *context_type, float value)
+void update_system_parameter(value_edit_context_t *ctx, float value)
 {
-    // Update the actual inverter system parameters
-    switch (context_type->edit_type)
+    if (!ctx->apply)
     {
-
-    case VALUE_EDIT_NUMERIC:
-        if (strcmp(context_type->label, "Voltage Threshold") == 0)
-        {
-            printf("System: Setting output voltage to %.1f V\n", value);
-            inverter_set_output_voltage(value);
-        }
-        else if (strcmp(context_type->label, "Frequency Range") == 0)
-        {
-            printf("System: Setting output frequency to %.2f Hz\n", value);
-            inverter_set_output_frequency(value);
-        }
-        else if (strcmp(context_type->label, "Current Limit") == 0)
-        {
-            printf("System: Setting current limit to %.1f A\n", value);
-            inverter_set_current_limit(value);
-        }
-        else if (strcmp(context_type->label, "Temp Alarm") == 0)
-        {
-            printf("System: Setting temperature limit to %.1f °C\n", value);
-            thermal_protection_set_limit(value);
-        }
-        else if (strcmp(context_type->label, "Battery Cutoff") == 0)
-        {
-            printf("System: Setting battery cutoff to %.2f V\n", value);
-            battery_monitor_set_cutoff(value);
-        }
-        else if (strcmp(context_type->label, "Sys Timeout") == 0)
-        {
-            printf("System: Setting system timeout to %.0f ms\n", value);
-            set_system_timeout((uint32_t)value);
-        }
-        break;
-    case VALUE_EDIT_BOOL:
-        if (strcmp(context_type->label, "WiFi") == 0)
-        {
-            sys_state.wifi.enabled = (bool)value;
-            printf("System: WiFi %s\n", sys_state.wifi.enabled ? "Enabled" : "Disabled");
-        }
-        break;
-    case VALUE_EDIT_SELECT:
-        // Handle selection updates if needed
-        break;
-    default:
-        break;
+        printf("System: '%s' has no live-apply handler\n", ctx->label);
+        return;
     }
+    ctx->apply(value);
+    printf("System: '%s' -> %.*f %s\n",
+           ctx->label, ctx->decimal_places, value, ctx->unit);
 }
 
 /**
@@ -6833,13 +6924,10 @@ static esp_err_t init_power_button(void)
     config.debounce_ms = DEBOUNCE_THRESHOLD_MS;
     config.long_press_ms = LONG_PRESS_MS; // Quick long press for volume
     config.double_click_ms = 500;
-    config.triple_click_ms = 500;
     config.controller_name = "Power Button";
     config.active_low = true;
     config.enable_pullup = true;
-    config.enable_power_management = false;
-    config.hold_repeat_ms = 100;                     // Fast repeat for smooth volume control
-    config.active_level = config.active_low ? 0 : 1; // Active level based on wiring
+    config.hold_repeat_ms = 100; // Fast repeat for smooth volume control
 
     // Step 2.3: Validate configuration
     esp_err_t ret = button_controller_validate_config(&config);
@@ -6868,18 +6956,6 @@ static esp_err_t init_power_button(void)
         ESP_LOGE(APP_TAG, "🔋 Failed to register power button event callback: %s", esp_err_to_name(ret));
         return ret;
     }
-    ESP_LOGI(APP_TAG, "🔋 Power button event callback registered ✓");
-
-    // Step 2.6: Register error callback
-    ret = button_controller_register_error_callback(g_app_state.power_button,
-                                                    button_error_handler,
-                                                    "PowerButton");
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(APP_TAG, "🔋 Failed to register power button error callback: %s", esp_err_to_name(ret));
-        return ret;
-    }
-    ESP_LOGI(APP_TAG, "🔋 Power button error callback registered ✓");
 
     // Step 2.7: Start button monitoring
     ret = button_controller_start(g_app_state.power_button);
@@ -6907,13 +6983,10 @@ static esp_err_t init_menu_button(void)
     config.debounce_ms = DEBOUNCE_THRESHOLD_MS;
     config.long_press_ms = LONG_PRESS_MS; // Quick long press for volume
     config.double_click_ms = 400;
-    config.triple_click_ms = 400;
     config.controller_name = "Menu Button";
     config.active_low = true;
     config.enable_pullup = true;
-    config.enable_power_management = false;
-    config.hold_repeat_ms = 100;                     // Fast repeat for smooth volume control
-    config.active_level = config.active_low ? 0 : 1; // Active level based on wiring
+    config.hold_repeat_ms = 100; // Fast repeat for smooth volume control
 
     // Step 2.2: Validate and create
     esp_err_t ret = button_controller_validate_config(&config);
@@ -6938,15 +7011,6 @@ static esp_err_t init_menu_button(void)
     if (ret != ESP_OK)
     {
         ESP_LOGE(APP_TAG, "📱 Failed to register menu button event callback: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = button_controller_register_error_callback(g_app_state.menu_button,
-                                                    button_error_handler,
-                                                    "MenuButton");
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(APP_TAG, "📱 Failed to register menu button error callback: %s", esp_err_to_name(ret));
         return ret;
     }
 
@@ -6975,13 +7039,10 @@ static esp_err_t init_button_up(void)
     config.debounce_ms = DEBOUNCE_THRESHOLD_MS;
     config.long_press_ms = LONG_PRESS_MS; // Quick long press for volume
     config.double_click_ms = 400;
-    config.triple_click_ms = 400;
     config.controller_name = "Volume Up Button";
     config.active_low = true;
     config.enable_pullup = true;
-    config.enable_power_management = false;
-    config.hold_repeat_ms = 100;                     // Fast repeat for smooth volume control
-    config.active_level = config.active_low ? 0 : 1; // Active level based on wiring
+    config.hold_repeat_ms = 100; // Fast repeat for smooth volume control
     esp_err_t ret = button_controller_validate_config(&config);
     if (ret != ESP_OK)
     {
@@ -7003,15 +7064,6 @@ static esp_err_t init_button_up(void)
     if (ret != ESP_OK)
     {
         ESP_LOGE(APP_TAG, "🔊 Failed to register volume up event callback: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = button_controller_register_error_callback(g_app_state.button_up,
-                                                    button_error_handler,
-                                                    "VolumeUpButton");
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(APP_TAG, "🔊 Failed to register volume up error callback: %s", esp_err_to_name(ret));
         return ret;
     }
 
@@ -7039,13 +7091,10 @@ static esp_err_t init_down_button(void)
     config.debounce_ms = DEBOUNCE_THRESHOLD_MS;
     config.long_press_ms = LONG_PRESS_MS; // Quick long press for volume
     config.double_click_ms = 400;
-    config.triple_click_ms = 400;
     config.controller_name = "Volume Down Button";
     config.active_low = true;
     config.enable_pullup = true;
-    config.enable_power_management = false;
-    config.hold_repeat_ms = 100;                     // Fast repeat for smooth volume control
-    config.active_level = config.active_low ? 0 : 1; // Active level based on wiring
+    config.hold_repeat_ms = 100; // Fast repeat for smooth volume control
 
     esp_err_t ret = button_controller_validate_config(&config);
     if (ret != ESP_OK)
@@ -7068,15 +7117,6 @@ static esp_err_t init_down_button(void)
     if (ret != ESP_OK)
     {
         ESP_LOGE(APP_TAG, "🔉 Failed to register volume down event callback: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = button_controller_register_error_callback(g_app_state.button_down,
-                                                    button_error_handler,
-                                                    "VolumeDownButton");
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(APP_TAG, "🔉 Failed to register volume down error callback: %s", esp_err_to_name(ret));
         return ret;
     }
 
@@ -7104,13 +7144,10 @@ static esp_err_t init_back_button(void)
     config.debounce_ms = DEBOUNCE_THRESHOLD_MS;
     config.long_press_ms = LONG_PRESS_MS; // Quick long press for volume
     config.double_click_ms = 400;
-    config.triple_click_ms = 400;
     config.controller_name = "Back Button";
     config.active_low = true;
     config.enable_pullup = true;
-    config.enable_power_management = false;
-    config.hold_repeat_ms = 100;                     // Fast repeat for smooth volume control
-    config.active_level = config.active_low ? 0 : 1; // Active level based on wiring
+    config.hold_repeat_ms = 100; // Fast repeat for smooth volume control
 
     esp_err_t ret = button_controller_validate_config(&config);
     if (ret != ESP_OK)
@@ -7133,15 +7170,6 @@ static esp_err_t init_back_button(void)
     if (ret != ESP_OK)
     {
         ESP_LOGE(APP_TAG, "🔙 Failed to register back button event callback: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = button_controller_register_error_callback(g_app_state.button_back,
-                                                    button_error_handler,
-                                                    "BackButton");
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(APP_TAG, "🔙 Failed to register back button error callback: %s", esp_err_to_name(ret));
         return ret;
     }
 
@@ -7209,13 +7237,6 @@ static void print_system_status(void)
                       "┌─────────────────────────────────────────────────────────────┐\n"
                       "│                    BUTTON SYSTEM STATUS                    │\n"
                       "├─────────────────────────────────────────────────────────────┤");
-
-    // System information
-    esp_chip_info_t chip_info;
-    esp_chip_info(&chip_info);
-    ESP_LOGI(APP_TAG, "│ Chip: %s Rev %d, %d cores, %s Flash           │",
-             CONFIG_IDF_TARGET, chip_info.revision, chip_info.cores,
-             (chip_info.features & CHIP_FEATURE_EMB_FLASH) ? "Embedded" : "External");
 
     ESP_LOGI(APP_TAG, "│ Free Heap: %lu bytes                                    │",
              esp_get_free_heap_size());
@@ -7659,6 +7680,46 @@ void reset_all_button_statistics(void)
     ESP_LOGI(APP_TAG, "📊 All statistics reset to zero");
 }
 
+void log_all_error_flags(uint32_t flags)
+{
+    if (flags == 0)
+    {
+        ESP_LOGI("ERROR_FLAGS", "No errors set");
+        return;
+    }
+
+    ESP_LOGW("ERROR_FLAGS", "Active error flags: 0x%02X", (unsigned int)flags);
+
+    if (flags & ERR_OVER_TEMP)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_OVER_TEMP (0x01)");
+    if (flags & ERR_OVERLOAD)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_OVERLOAD (0x02)");
+    if (flags & ERR_BATTERY_VOLTAGE)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_BATTERY_VOLTAGE (0x03)");
+    if (flags & ERR_LOW_BAT)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_LOW_BAT (0x04)");
+    if (flags & ERR_UNDER_VOLTAGE)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_UNDER_VOLTAGE (0x05)");
+    if (flags & ERR_OVER_VOLTAGE)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_OVER_VOLTAGE (0x06)");
+    if (flags & ERR_INVERTER_VOLTAGE)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_INVERTER_VOLTAGE (0x07)");
+    if (flags & ERR_AC_FAULT)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_AC_FAULT (0x08)");
+    if (flags & ERR_FAN_FAIL)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_FAN_FAIL (0x10)");
+    if (flags & ERR_EEPROM)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_EEPROM (0x20)");
+    if (flags & ERR_HIGH_BAT)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_HIGH_BAT (0x40)");
+    if (flags & ERR_SHORT_CIRCUIT)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_SHORT_CIRCUIT (0x80)");
+    if (flags & ERR_SYSTEM_FAILURE)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_SYSTEM_FAILURE (0x90)");
+    if (flags & ERR_OVER_UNDER_VOLTAGE)
+        ESP_LOGW("ERROR_FLAGS", "  ✓ ERR_OVER_UNDER_VOLTAGE (0x50)");
+}
+
 // ================== UNIFIED MENU INPUT HANDLER ==================
 
 // Helper functions for menu handling
@@ -7748,7 +7809,7 @@ void set_setting_value(int index, int value)
 /* ── menu_exit() ────────────────────────────────────────────────────────── */
 void menu_exit(void)
 {
-    lcd_flash_message("Exiting menu... ", "                ", 1000);
+    lcd_flash_info("Exiting menu... ", "                ", 1000);
     sys_state.display.current_menu = MAIN_MENU;
 }
 
@@ -7764,12 +7825,12 @@ void show_profile_on_lcd(battery_profile_t *profile)
 }
 
 /* ── adjust_factory_reset() ─────────────────────────────────────────────── */
-void adjust_factory_reset(button_event_info_t btn)
+void adjust_factory_reset(button_event_info_t *btn)
 {
     static factory_reset_state_t state = FACTORY_RESET_CONFIRM;
     static bool selection_yes = true;
 
-    switch (btn.gpio_pin)
+    switch (btn->button_id)
     {
     case BTN_UP:
     case BTN_DOWN:
@@ -7783,7 +7844,7 @@ void adjust_factory_reset(button_event_info_t btn)
         {
             lcd_show_factory_progress(0);
             perform_factory_reset();
-            lcd_flash_message("Reset Complete! ", "                ", 1000);
+            lcd_flash_info("Reset Complete! ", "                ", 1000);
             navigate_to_menu(MAIN_MENU);
         }
         else
@@ -7850,23 +7911,10 @@ void init_menu_system()
 // ================== RESTORE STATE ON WAKE =================
 void restore_from_deep_sleep()
 {
-    // Check if RTC memory is valid
-    if (rtc_mem.magic_flag == RTC_MAGIC_FLAG)
-    {
-        sys_state.inverter.inverter_active = rtc_mem.was_inverter_active;
-        sys_state.inverter.connected = rtc_mem.ac_was_connected;
-        sys_state.error.error_flags |= rtc_mem.last_error;
-
-        // Optionally clear RTC data after restoring
-        rtc_mem.magic_flag = 0;
-    }
-    else
-    {
-        // If not valid, assume fresh boot
-        sys_state.inverter.inverter_active = false;
-        sys_state.inverter.connected = false;
-        sys_state.error.error_flags = 0;
-    }
+    // RTC restore is now handled in init_system_state()
+    // This function can be called for additional setup if needed
+    ESP_LOGI("RTC", "RTC memory magic: 0x%08lX", rtc_mem.magic_flag);
+    ESP_LOGI("RTC", "Wake count: %lu", rtc_mem.wake_count);
 }
 
 /* ── enter_deep_sleep() ──────────────────────────────────────────────────── */
@@ -7880,7 +7928,7 @@ void enter_deep_sleep(uint32_t sleep_seconds)
 
     char v[17];
     snprintf(v, 17, "Wake in: %lus   ", sleep_seconds);
-    lcd_flash_message("Entering Sleep  ", v, 2000);
+    lcd_flash_info("Entering Sleep  ", v, 2000);
 
     save_settings();
     update_buzzer(0, 0);
@@ -7971,7 +8019,7 @@ void handle_wakeup(void)
         sys_state.error.error_flags |= rtc_mem.last_error;
     }
 
-    lcd_flash_message(r0, r1, 3000);
+    lcd_flash_info(r0, r1, 3000);
     vTaskDelay(pdMS_TO_TICKS(3000));
 }
 
@@ -7979,7 +8027,7 @@ void handle_wakeup(void)
 void adjust_calibration_setting(button_event_info_t btn)
 {
     static uint8_t calib_step = 0;
-    button_id_t button_id = gpio_to_button_id(btn.gpio_pin);
+    button_id_t button_id = gpio_to_button_id(btn.button_id);
 
     switch (calib_step)
     {
@@ -8007,7 +8055,7 @@ void adjust_calibration_setting(button_event_info_t btn)
             sys_state.inverter.battery.voltage +=
                 sys_state.inverter.battery_voltage_calibration;
             save_settings();
-            lcd_flash_message("Calibration Done", "                ", 1000);
+            lcd_flash_info("Calibration Done", "                ", 1000);
             calib_step = 0;
             sys_state.display.current_menu = MAIN_MENU;
         }
@@ -8140,76 +8188,134 @@ void lcd_set_brightness(uint8_t brightness)
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_PWM_CHANNEL);
 }
 
-// ================== SYSTEM STATE INITIALIZATION ==================
+static bool is_valid_error_code(uint8_t error)
+{
+    switch ((system_errors_t)error)
+    {
+    case ERR_NONE:
+    case ERR_OVER_TEMP:
+    case ERR_OVERLOAD:
+    case ERR_BATTERY_VOLTAGE:
+    case ERR_LOW_BAT:
+    case ERR_UNDER_VOLTAGE:
+    case ERR_OVER_VOLTAGE:
+    case ERR_INVERTER_VOLTAGE:
+    case ERR_AC_FAULT:
+    case ERR_FAN_FAIL:
+    case ERR_EEPROM:
+    case ERR_HIGH_BAT:
+    case ERR_SHORT_CIRCUIT:
+    case ERR_SYSTEM_FAILURE:
+    case ERR_OVER_UNDER_VOLTAGE:
+        return true;
+
+    default:
+        return false;
+    }
+}
+
 void init_system_state()
 {
-    // Step 1: Load persisted settings from NVS
-    // Step 2: Apply fallback defaults (only if needed)
-    memset(&sys_state, 0, sizeof(sys_state)); // Clear system state
-    sys_state.inverter.temperature = 25.0f;   // Default temperature
-    // Step 2: Restore runtime-only data from RTC memory
+    // ✅ STEP 0: CHECK IF COLD BOOT AND CLEAR RTC FIRST
+    esp_sleep_wakeup_cause_t wakeup_cause = esp_sleep_get_wakeup_cause();
+
+    if (wakeup_cause != ESP_SLEEP_WAKEUP_UNDEFINED &&
+        is_valid_error_code(rtc_mem.last_error))
+    {
+        ESP_LOGW(TAG_SYS, "⚠️ Restoring error from RTC: 0x%02X", rtc_mem.last_error);
+        sys_state.error.error_flags = (system_errors_t)rtc_mem.last_error;
+    }
+    else
+    {
+        // Wake from sleep
+        ESP_LOGI(TAG_SYS, "🔵 Wake from sleep (cause: %d)", wakeup_cause);
+        rtc_mem.wake_count++;
+    }
+
+    // ✅ STEP 1: Clear system state
+    memset(&sys_state, 0, sizeof(sys_state));
+
+    // ✅ STEP 2: Initialize safe defaults
+    sys_state.inverter.temperature = 25.0f; // Safe room temperature
     sys_state.inverter.inverter_active = false;
     sys_state.inverter.connected = false;
+
     /* System flags */
     sys_state.system_ready = false;
     sys_state.system_active = false;
     sys_state.output_enabled = false;
     sys_state.calibration_valid = false;
     sys_state.adc_ready = false;
+    sys_state.hold_start_time = 0;
 
     /* Battery defaults */
     sys_state.battery_voltage_system = 12.0f;
     sys_state.battery_cutoff = 11.05f;
     sys_state.low_battery = false;
 
-    /* Inverter defaults */
+    // Initialize system parameters with default values
     sys_state.inverter.battery.voltage = 0.0f;
     sys_state.inverter.output_voltage = 230.0f;
     sys_state.inverter.inverter_output_voltage = 0.0f;
     sys_state.inverter.fan_voltage = 0;
+    sys_state.inverter.output_frequency = 50.0f;
     sys_state.inverter.over_under_voltage = 0.0f;
     sys_state.temperature_limit = 60.0f;
     sys_state.current_limit = 30.0f;
+    sys_state.temperature_limit = 70.0f;
     sys_state.cutoff_voltage = 48.0f;
+
+    // Initialize value adjustment context
+    sys_state.current_value_type->edit_type = VALUE_TYPE_NONE;
+    sys_state.value_edit_mode = false;
+    sys_state.value_changed = false;
+    sys_state.pending_confirmation = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
 
     /* UI / menu */
     sys_state.menu_state = MAIN_MENU;
     sys_state.menu_selection = 0;
     sys_state.in_detail_view = false;
+    sys_state.safety_conditions_met = true; // Set based on actual conditions
+    sys_state.last_activity_time = 0;
+    sys_state.power_button_sequence_count = 0;
 
-    /* Error & fault handling */
-    sys_state.error.error_flags = 0;
+    /* Error handling - SAFE initialization */
+    sys_state.error.error_flags = 0; // Clear all flags
     sys_state.fault_flags = 0;
     sys_state.error_count = 0;
 
     /* Timing */
     sys_state.last_activity_time = esp_timer_get_time();
-    sys_state.error.error_flags |= rtc_mem.last_error;
-    // Step 3: Initialize session state
     sys_state.flags.last_user_activity = xTaskGetTickCount();
     sys_state.flags.last_power_event = xTaskGetTickCount();
+
+    /* Display */
     sys_state.display.display_on = true;
     sys_state.display.scroll_enabled = false;
     sys_state.display.scroll_speed = DEFAULT_SCROLL_SPEED;
-    // Set dummy output voltage and current for testing
+
+    /* Output voltage and current */
     sys_state.inverter.output_voltage = 230.0f;
     sys_state.inverter.output_current = 0.0f;
 
-    // Clear non-persistent error flags on startup
-    sys_state.error.error_flags &= (ERR_EEPROM | ERR_FAN_FAIL);
+    // ✅ ONLY restore error from RTC if we woke from sleep AND it's valid
+    if (wakeup_cause != ESP_SLEEP_WAKEUP_UNDEFINED &&
+        rtc_mem.last_error != 0 &&
+        rtc_mem.last_error < 0x100)
+    {
+        ESP_LOGW(TAG_SYS, "⚠️ Restoring error from RTC: 0x%02X", rtc_mem.last_error);
+        sys_state.error.error_flags = rtc_mem.last_error;
+    }
+    else if (wakeup_cause == ESP_SLEEP_WAKEUP_UNDEFINED)
+    {
+        ESP_LOGI(TAG_SYS, "✓ Cold boot - error flags cleared");
+        sys_state.error.error_flags = 0;
+    }
 
-    // Step 4: Wake cause check
-    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED)
-    {
-        ESP_LOGI(TAG_SYS, "Cold boot detected");
-        memset(&rtc_mem, 0, sizeof(rtc_mem));
-        rtc_mem.wake_count = 0;
-    }
-    else
-    {
-        ESP_LOGI(TAG_SYS, "Wake from sleep detected");
-        rtc_mem.wake_count++;
-    }
+    // ✅ FINAL: Only keep persistent error flags if any
+    sys_state.error.error_flags &= (ERR_EEPROM | ERR_FAN_FAIL);
 }
 
 /* ── handle_critical_error() ─────────────────────────────────────────────── */
@@ -8296,7 +8402,7 @@ _Noreturn void system_restart(void)
 void perform_system_restart(bool factory_reset)
 {
     lcd_watchdog_deinit();
-    lcd_flash_message("System Restart  ", "Please wait...  ", 500);
+    lcd_flash_info("System Restart  ", "Please wait...  ", 500);
     update_buzzer(2000, 30);
     if (!factory_reset)
     {
@@ -8515,6 +8621,11 @@ void error_handler(void)
     static TickType_t fan_fail_start = 0;
     static bool fan_fail_started = false;
 
+    // Get the actual flags value to display
+    uint8_t flags = sys_state.error.error_flags;
+    char code_str[16];
+    snprintf(code_str, 16, "Code: 0x%02X    ", flags);
+
     bool error_found = false;
     for (size_t i = 0; i < sizeof(errors) / sizeof(errors[0]); i++)
     {
@@ -8534,7 +8645,7 @@ void error_handler(void)
                 else if ((xTaskGetTickCount() - low_bat_start) >=
                          pdMS_TO_TICKS(60000))
                 {
-                    shutdown();
+                    shutdown_inverter();
                     sys_state.display.current_menu = MAIN_MENU;
                     low_bat_started = false;
                 }
@@ -8549,7 +8660,7 @@ void error_handler(void)
                 else if ((xTaskGetTickCount() - fan_fail_start) >=
                          pdMS_TO_TICKS(120000))
                 {
-                    shutdown();
+                    shutdown_inverter();
                     sys_state.display.current_menu = MAIN_MENU;
                     fan_fail_started = false;
                 }
@@ -8559,8 +8670,13 @@ void error_handler(void)
     }
 
     if (!error_found)
-        lcd_show_fault("Error: Unknown  ", "System error!   ");
-
+    {
+        // Instead of generic "Unknown", show the actual hex code
+        lcd_show_fault("Error Detected  ", code_str);
+        update_buzzer(2500, 100);
+    }
+    // Log the error state for debugging
+    log_all_error_flags(sys_state.error.error_flags);
     lcd_show_confirm("Press BACK to   ", "Reset system... ");
 
     uint32_t elapsed = 0;
@@ -8583,65 +8699,34 @@ void error_handler(void)
 void edit_voltage_threshold(void)
 {
     sys_state.value_edit_mode = true;
-    value_edit.edit_type = VALUE_EDIT_NUMERIC;
-    value_edit.label = "Voltage Threshold";
-    value_edit.unit = "V";
-    value_edit.temp_value = sys_state.settings.voltage_threshold;
-    value_edit.min_value = 10.0f;
-    value_edit.max_value = 15.0f;
-    value_edit.step_size = 0.1f;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_VOLTAGE];
     lcd_update_value_edit_screen();
 }
 
 void edit_current_limit(void)
 {
     sys_state.value_edit_mode = true;
-    value_edit.edit_type = VALUE_EDIT_NUMERIC;
-    value_edit.label = "Current Limit";
-    value_edit.unit = "A";
-    value_edit.temp_value = sys_state.settings.current_limit;
-    value_edit.min_value = 1.0f;
-    value_edit.max_value = 50.0f;
-    value_edit.step_size = 0.5f;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_CURRENT];
     lcd_show_value_edit_screen();
 }
 
 void edit_frequency_range(void)
 {
+
     sys_state.value_edit_mode = true;
-    value_edit.edit_type = VALUE_EDIT_NUMERIC;
-    value_edit.label = "Frequency Range";
-    value_edit.unit = "Hz";
-    value_edit.temp_value = sys_state.settings.frequency_range;
-    value_edit.min_value = 45.0f;
-    value_edit.max_value = 65.0f;
-    value_edit.step_size = 0.5f;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_FREQUENCY];
     lcd_show_value_edit_screen();
 }
 
 void edit_temperature_alarm(void)
 {
-    sys_state.value_edit_mode = true;
-    value_edit.edit_type = VALUE_EDIT_NUMERIC;
-    value_edit.label = "Temp Alarm";
-    value_edit.unit = "C";
-    value_edit.temp_value = sys_state.settings.temperature_alarm;
-    value_edit.min_value = 30.0f;
-    value_edit.max_value = 100.0f;
-    value_edit.step_size = 1.0f;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_TEMPERATURE];
     lcd_show_value_edit_screen();
 }
 
 void edit_system_timeout(void)
 {
-    sys_state.value_edit_mode = true;
-    value_edit.edit_type = VALUE_EDIT_NUMERIC;
-    value_edit.label = "Sys Timeout";
-    value_edit.unit = "s";
-    value_edit.temp_value = sys_state.settings.system_timeout;
-    value_edit.min_value = 10;
-    value_edit.max_value = 600;
-    value_edit.step_size = 5;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_TIMEOUT];
     lcd_show_value_edit_screen();
 }
 
@@ -8726,7 +8811,7 @@ void app_main(void)
         ESP_LOGI("MAIN", "NVS ready");
 
     restore_from_deep_sleep();
-
+    log_all_error_flags(sys_state.error.error_flags);
     esp_err_t ret = initialize_button_system();
     if (ret != ESP_OK)
     {
@@ -8743,11 +8828,9 @@ void app_main(void)
 
     /* Boot screen starts on LCD_SCREEN_BOOT_BRAND (set by lcd_writer_init) */
     lcd_show_boot_brand();
-
     xTaskCreate(adc_task, "adc_task", 4096, NULL, 5, NULL);
-    xTaskCreate(lcd_task, "lcd_task", 2048, NULL, 4, &lcd_task_handle);
+    xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
     //   xTaskCreate(power_task, "power_task", 4096, NULL, 4, NULL);
-    //   xTaskCreate(button_task, "button_task", 4096, NULL, 10, NULL);
     //   xTaskCreate(display_timeout_task, "disp_timeout", 4096, NULL, 1, NULL);
     //   xTaskCreate(battery_menu_task, "battery_menu", 4096, NULL, 2, NULL); // Only once
     //   xTaskCreate(fan_monitor_task, "fan_monitor_task", 4096, NULL, 5, NULL);
@@ -8755,7 +8838,10 @@ void app_main(void)
     //     === Main Loop (Watchdog + Error Handling) ===
     lcd_watchdog_init(lcd_task_handle);
     while (sys_state.system_ready)
-        vTaskDelay(pdMS_TO_TICKS(1000));
+    {
+        update_lcd_activity_state();
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
 
     ESP_LOGW(APP_TAG, "Main loop ended");
     cleanup_button_system();

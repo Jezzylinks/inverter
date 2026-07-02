@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include "freertos/FreeRTOS.h"
 
 /* ── Screen identifiers ─────────────────────────────────────────────────── */
 typedef enum
@@ -29,6 +30,7 @@ typedef enum
     LCD_SCREEN_FLASH_MSG, /* timed 2-line message then returns */
     LCD_SCREEN_STANDBY,
     LCD_SHOW_TEMP,
+    LCD_SHOW_SETTINGS,
     LCD_SHOW_BAT_VOLTAGE,
     LCD_DISPLAY_BATTERY_SETTINGS,
     LCD_SCREEN_COUNT
@@ -174,4 +176,11 @@ typedef struct
     lcd_two_line_t confirm;
     lcd_flash_data_t flash;
     lcd_standby_data_t standby;
+
+    /* ✅ Activity tracking for sub-page cycling */
+    bool should_cycle_subpages;
+    TickType_t last_user_activity;
+    bool inverter_active;
+    bool inverter_connected;
+
 } lcd_render_state_t;
