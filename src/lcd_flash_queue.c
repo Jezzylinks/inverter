@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <esp_log.h>
+#include "system_state.h"
 
 #define TAG "LCD_FLASH"
 #define LCD_FLASH_QUEUE_DEPTH 16
@@ -34,6 +35,7 @@ static TaskHandle_t s_lcd_task = NULL;
 extern active_flash_t s_active_flash;
 extern lcd_render_state_t sys_lcd;
 static flash_entry_t s_queue[LCD_FLASH_QUEUE_DEPTH];
+extern system_state_t sys_state;
 static uint8_t s_queue_count = 0; /* number of valid entries    */
 
 /* Mutex 1: Protects the active flash struct */
@@ -56,8 +58,6 @@ void lcd_flash_init(TaskHandle_t lcd_task_handle)
 
     memset(s_queue, 0, sizeof(s_queue));
     s_queue_count = 0;
-
-    ESP_LOGI(TAG, "✓ Flash system initialized");
 }
 
 /* ============================================================================
@@ -184,81 +184,90 @@ static uint8_t find_insert_pos(flash_priority_t priority)
     return s_queue_count; /* new entry is lowest → append         */
 }
 
-/**
- * @brief Enqueue flash message with priority
- *
- * ✅ IMMEDIATE DISPLAY:
- * If no flash is currently active, this updates s_active_flash directly
- * and switches the screen. Otherwise, it queues for later.
- *
- * This ensures the first flash displays within ~10ms, not 100ms.
- */
+/* Special sentinel meaning "auto-capture whatever screen is live right now" */
+#define LCD_FLASH_RETURN_AUTO ((lcd_screen_id_t) - 1)
 
-void lcd_flash_enqueue(const char *line0,
-                       const char *line1,
-                       uint32_t duration_ms,
-                       flash_priority_t priority)
+void lcd_flash_enqueue_to(const char *line0,
+                          const char *line1,
+                          uint32_t duration_ms,
+                          flash_priority_t priority,
+                          lcd_screen_id_t return_to_override)
 {
     if (!s_flash_mutex)
         return;
 
-    /* Build the entry before taking locks */
     flash_entry_t entry = {
         .valid = true,
         .priority = priority,
         .duration_ms = duration_ms,
-        .return_to = LCD_SCREEN_MAIN};
+        .return_to = LCD_SCREEN_MAIN /* placeholder, corrected below */
+    };
 
     snprintf(entry.line0, sizeof(entry.line0), "%-16.16s", line0 ? line0 : "");
     snprintf(entry.line1, sizeof(entry.line1), "%-16.16s", line1 ? line1 : "");
 
-    /* ✅ KEY: Check if flash is already active */
     xSemaphoreTake(s_flash_mutex, portMAX_DELAY);
     bool flash_active = s_active_flash.active;
     xSemaphoreGive(s_flash_mutex);
 
     if (!flash_active)
     {
-        /* ✅ NO FLASH CURRENTLY SHOWING: Display this one immediately! */
-
         xSemaphoreTake(s_flash_mutex, portMAX_DELAY);
 
-        /* Update the display flash struct */
+        lcd_screen_id_t current_screen = sys_lcd.screen;
+        lcd_screen_id_t resolved_return;
+
+        if (return_to_override != LCD_FLASH_RETURN_AUTO)
+        {
+            /* Caller explicitly forced a screen — honor it as-is. */
+            resolved_return = return_to_override;
+        }
+        else if (current_screen == LCD_SCREEN_VALUE_EDIT)
+        {
+            /* Special case: leaving value-edit via a flash always
+             * lands on the main screen, not back into value-edit. */
+            resolved_return = LCD_SCREEN_MAIN;
+        }
+        else
+        {
+            /* Normal case: auto-capture whatever was showing. */
+            resolved_return = current_screen;
+        }
+
         strcpy(s_active_flash.line0, entry.line0);
         strcpy(s_active_flash.line1, entry.line1);
         s_active_flash.priority = priority;
         s_active_flash.expire_ms = _lcd_get_time_ms() + duration_ms;
-        s_active_flash.return_to = LCD_SCREEN_MAIN;
+        s_active_flash.return_to = resolved_return;
         s_active_flash.active = true;
 
-        xSemaphoreGive(s_flash_mutex);
-
-        /* Switch screen to flash display */
-        xSemaphoreTake(s_flash_mutex, portMAX_DELAY);
         sys_lcd.screen = LCD_SCREEN_FLASH_MSG;
+
         xSemaphoreGive(s_flash_mutex);
 
-        ESP_LOGI(TAG, "📢 FLASH_IMMEDIATE: '%s' / '%s' (%lu ms, pri=%d)",
-                 entry.line0, entry.line1, duration_ms, priority);
+        ESP_LOGI(TAG, "📢 FLASH_IMMEDIATE: '%s' / '%s' (%lu ms, pri=%d, return_to=%d)",
+                 entry.line0, entry.line1, duration_ms, priority, resolved_return);
     }
     else
     {
-        /* ✅ FLASH ALREADY SHOWING: Queue this one for later */
-
         xSemaphoreTake(s_flash_mutex, portMAX_DELAY);
+
+        /* Queued entries still inherit the currently-active flash's
+         * return_to UNLESS this specific enqueue explicitly overrides it. */
+        entry.return_to = (return_to_override == LCD_FLASH_RETURN_AUTO)
+                              ? s_active_flash.return_to
+                              : return_to_override;
 
         if (s_queue_count < LCD_FLASH_QUEUE_DEPTH)
         {
-            /* Space available — insert in priority order */
             uint8_t pos = find_insert_pos(priority);
             insert_at(pos, &entry);
 
-            ESP_LOGI(TAG, "📋 FLASH_QUEUED: '%s' (pos=%d, queue_size=%d, pri=%d)",
-                     entry.line0, pos, s_queue_count, priority);
+            ESP_LOGI(TAG, "📋 FLASH_QUEUED: '%s' (pos=%d, queue_size=%d, pri=%d, return_to=%d)",
+                     entry.line0, pos, s_queue_count, priority, entry.return_to);
         }
         else
         {
-            /* Queue is full — drop lowest priority if new has higher */
             flash_priority_t tail_pri = s_queue[s_queue_count - 1].priority;
             if (priority > tail_pri)
             {
@@ -279,6 +288,16 @@ void lcd_flash_enqueue(const char *line0,
 
         xSemaphoreGive(s_flash_mutex);
     }
+}
+
+/* Original signature preserved as a thin wrapper — every existing
+ * call site keeps working unchanged, auto-capturing current screen. */
+void lcd_flash_enqueue(const char *line0,
+                       const char *line1,
+                       uint32_t duration_ms,
+                       flash_priority_t priority)
+{
+    lcd_flash_enqueue_to(line0, line1, duration_ms, priority, LCD_FLASH_RETURN_AUTO);
 }
 
 /**

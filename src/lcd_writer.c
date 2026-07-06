@@ -9,10 +9,14 @@
 #include "freertos/semphr.h"
 #include <string.h>
 #include <stdio.h>
+#include "esp_log.h"
+#include "system_state.h"
+#include "lcd_flash_queue.h"
 
 /* These are defined in main.c */
 extern SemaphoreHandle_t sys_state_mutex;
 extern lcd_render_state_t sys_lcd; /* the single render-state instance */
+extern system_state_t sys_state;   /* the single system-state instance */
 
 /* Helper: take mutex, guaranteed short hold */
 #define LCD_LOCK() xSemaphoreTake(sys_state_mutex, portMAX_DELAY)
@@ -256,18 +260,14 @@ void lcd_show_confirm(const char *line0, const char *line1)
     LCD_UNLOCK();
 }
 
+#define FLASH_PRIORITY_NORMAL 0
+
 /* ── Flash message ───────────────────────────────────────────────────────── */
 void lcd_flash_message(const char *line0, const char *line1,
                        uint32_t duration_ms)
 {
-    LCD_LOCK();
-    lcd_screen_id_t prev = sys_lcd.screen;
-    sys_lcd.screen = LCD_SCREEN_FLASH_MSG;
-    set16(sys_lcd.flash.line0, line0);
-    set16(sys_lcd.flash.line1, line1);
-    sys_lcd.flash.duration_ms = duration_ms;
-    sys_lcd.flash.return_to = prev;
-    LCD_UNLOCK();
+    lcd_flash_enqueue_to(line0, line1, duration_ms, FLASH_PRIORITY_NORMAL,
+                         LCD_FLASH_RETURN_AUTO);
 }
 
 void lcd_flash_saved(const char *label, const char *value_str)

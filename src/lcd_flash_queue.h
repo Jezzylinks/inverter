@@ -51,8 +51,6 @@ typedef struct
   bool valid;
 } flash_entry_t;
 
-#define LCD_FLASH_QUEUE_DEPTH 4
-
 /* ── Public API ──────────────────────────────────────────────────────── */
 
 /* Call once before any task starts. */
@@ -61,6 +59,11 @@ void lcd_flash_enqueue(const char *line0,
                        const char *line1,
                        uint32_t duration_ms,
                        flash_priority_t priority);
+void lcd_flash_enqueue_to(const char *line0,
+                          const char *line1,
+                          uint32_t duration_ms,
+                          flash_priority_t priority,
+                          lcd_screen_id_t return_to_override);
 
 /*
  * Convenience wrappers — use these instead of calling lcd_flash_enqueue

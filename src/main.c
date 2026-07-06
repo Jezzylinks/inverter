@@ -45,6 +45,9 @@
 #include "lcd_watchdog.h"
 #include "lcd_flash_queue.h"
 
+// System state
+#include "system_state.h"
+
 /* ── All original #defines─────────────────────────────── */
 #define WIFI_SSID "johnson"
 #define WIFI_PASS "internet"
@@ -289,18 +292,6 @@
 // Queue for button events
 QueueHandle_t button_event_queue;
 
-// Inverter system states
-typedef enum
-{
-    INVERTER_OFF,
-    INVERTER_STARTING,
-    INVERTER_ON,
-    INVERTER_STANDBY,
-    INVERTER_FAULT,
-    INVERTER_DIAGNOSTIC,
-    INVERTER_FACTORY_RESET
-} inverter_state_t;
-
 // ADC Configuration
 typedef enum
 {
@@ -330,25 +321,6 @@ typedef struct
     uint8_t index;
 } MovingAverageFilter;
 
-typedef enum
-{
-    ERR_NONE = 0x00,
-    ERR_OVER_TEMP = 0x01,
-    ERR_OVERLOAD = 0x02,
-    ERR_BATTERY_VOLTAGE = 0x03,
-    ERR_LOW_BAT = 0x04,
-    ERR_UNDER_VOLTAGE = 0x05,
-    ERR_OVER_VOLTAGE = 0x06,
-    ERR_INVERTER_VOLTAGE = 0x07,
-    ERR_AC_FAULT = 0x08,
-    ERR_FAN_FAIL = 0x10,
-    ERR_EEPROM = 0x20,
-    ERR_HIGH_BAT = 0x40,
-    ERR_SHORT_CIRCUIT = 0x80,
-    ERR_SYSTEM_FAILURE = 0x90,
-    ERR_OVER_UNDER_VOLTAGE = 0x50,
-    ERR_COUNT
-} system_errors_t;
 // static bool editing_battery_menu = false;
 //  end
 /* ── Global handles (unchanged) ───────────────────────────────────────── */
@@ -364,16 +336,6 @@ const uint64_t wakeup_pin_mask =
 
 static bool nvs_initialized = false;
 
-/* ── All original type definitions kept verbatim ──────────────────────── */
-/* (inverter_state_t, battery_profile_t, system_state_t, etc. — unchanged) */
-/* ... [identical to original — omitted here for brevity in this comment,  */
-/*      paste all original structs/enums here verbatim] ...                */
-
-/*==============================================================================
-  HELPER: build a pre-formatted 16-char menu row from label + indicator
-  Called by any function that used to call lcd_draw_menu_scroll() directly.
-==============================================================================*/
-
 // battery submenu started here
 typedef enum
 {
@@ -382,127 +344,6 @@ typedef enum
     BATTERY_CUTOFF_MENU_SELECT_VOLTAGE,
     BATTERY_CUTOFF_MENU_EDIT_CUTOFF
 } battery_cutoff_menu_state_t;
-
-typedef enum
-{
-    BATTERY_CHEMISTRY_LEAD_ACID = 0,
-    BATTERY_CHEMISTRY_AGM,
-    BATTERY_CHEMISTRY_GEL,
-    BATTERY_CHEMISTRY_LITHIUM_ION,
-    BATTERY_CHEMISTRY_LIFEPO4,
-    BATTERY_CHEMISTRY_NIMH,
-    BATTERY_CHEMISTRY_TYPE_COUNT
-} battery_chemistry_t;
-
-typedef enum
-{
-    VOLTAGE_SYSTEM_12V = 12,
-    VOLTAGE_SYSTEM_24V = 24,
-    VOLTAGE_SYSTEM_48V = 48,
-    VOLTAGE_SYSTEM_96V = 96
-} voltage_system_t;
-
-// Battery type enumeration
-typedef enum
-{
-    BATTERY_LEAD_ACID = 0,
-    BATTERY_AGM,
-    BATTERY_GEL,
-    BATTERY_LIFEPO4,
-    BATTERY_LITHIUM_ION,
-    BATTERY_NIMH,
-    BATTERY_TYPE_COUNT
-} battery_type_t;
-
-// Base profiles for 12V system (all other voltages are multiples of these)
-typedef struct
-{
-    char name_prefix[8]; // e.g., "Lead-Acid"
-    battery_chemistry_t chemistry;
-    float depth_of_discharge_max;
-
-    battery_type_t profile_id;
-    voltage_system_t nominal_voltage;
-    float capacity_ah;
-    uint16_t usable_capacity_ah;
-
-    // 12V reference voltages (will be scaled)
-    float bulk_charge_voltage_12v;
-    float float_charge_voltage_12v;
-    float equalization_voltage_12v;
-    float full_charge_voltage_12v;
-    float nominal_voltage_actual_12v;
-    float low_voltage_warning_12v;
-    float low_voltage_alarm_12v;
-    float cutoff_voltage_12v;
-    float cutoff_voltage_min_12v;
-    float high_battery_voltage_12v;
-    float recharge_voltage_12v;
-    float overvoltage_protection_12v;
-    float undervoltage_protection_12v;
-
-    // Current per 100Ah (will be scaled by capacity)
-    float max_charge_current_per_100ah;
-    float max_discharge_current_per_100ah;
-    float recommended_charge_current_per_100ah;
-    float trickle_charge_current_per_100ah;
-
-    // Temperature parameters (same for all voltages)
-    float temp_coefficient;
-    float operating_temp_min;
-    float operating_temp_max;
-    float charge_temp_min;
-    float charge_temp_max;
-    float discharge_temp_min;
-    float discharge_temp_max;
-
-    // Timing parameters (same for all voltages)
-    uint16_t bulk_charge_timeout_min;
-    uint16_t absorption_time_min;
-    uint16_t float_time_min;
-    uint16_t equalization_time_min;
-    uint8_t equalization_interval_days;
-
-    // SOC parameters (same for all voltages)
-    float soc_full_threshold;
-    float soc_empty_threshold;
-    float soc_low_warning;
-
-    // Internal resistance per cell (will be scaled)
-    float internal_resistance_mohm_12v;
-
-    // Cycle life
-    uint16_t cycle_life_rated;
-    float cycle_life_dod;
-
-    // Self-discharge (same for all voltages)
-    float self_discharge_rate;
-
-    // Charge termination
-    float charge_termination_current_per_100ah;
-    float charge_termination_voltage_12v;
-    float charge_termination_timeout;
-
-    // Balancing
-    bool requires_balancing;
-    float balance_start_voltage_12v;
-    float balance_voltage_delta_max;
-
-    // Safety features
-    bool has_bms;
-    bool requires_external_bms;
-    bool supports_temperature_comp;
-
-    // Efficiency
-    float charge_efficiency;
-    float discharge_efficiency;
-
-    // Maintenance
-    bool requires_equalization;
-    bool is_sealed;
-    uint16_t maintenance_interval_days;
-
-} battery_profile_t;
 
 // Base profiles array (12V reference)
 static const battery_profile_t battery_profiles[BATTERY_TYPE_COUNT] = {
@@ -1005,129 +846,10 @@ void select_battery_type(button_id_t btn)
 
 typedef struct
 {
-    float voltage;             // Current battery voltage
-    float voltage_filtered;    // Filtered voltage (smooth out spikes)
-    float battery_temperature; // Battery temp
-    float battery_soc;         // State of Charge in percentage
-    bool is_low;               // Below warning threshold
-    bool is_critical;          // Below cutoff threshold
-    uint32_t low_count;        // Consecutive low readings (debouncing)
-    uint32_t critical_count;   // Consecutive critical readings
-    uint32_t last_reading_time;
-    TickType_t battery_last_update_tick;
-} battery_state_t;
-
-typedef struct
-{
-    inverter_state_t inverter_state;
-    inverter_state_t previous_inverter_state;
-    float temperature;
-    float actual_current;
-    float output_frequency;
-    float output_voltage; // e.g., 220V
-    float low_bat_egs002_signal;
-    bool inverter_active;
-    uint8_t operating_mode;
-    uint8_t load_percentage;
-
-    // Battery System Configuration
-    battery_state_t battery;
-    bool adc_data_valid;
-
-    float fan_voltage;
-    float over_under_voltage;
-    float inverter_output_voltage;
-
-    // Hardware status
-    float fan_connection;
-    bool connected;
-    bool low_battery;
-    bool overload;
-    int battery_voltage_system; // 12, 24, 48, 96
-    float output_current;
-    bool wifi_enabled;
-    float battery_voltage_calibration; // Calibration value for battery voltage
-    bool boot_complete;
-} inverter_status;
-
-typedef struct
-{
-    bool connected;
-    float control_level;
-    float speed; // Fan speed in volts
-} fan_status_t;
-
-// Menu system states
-typedef enum
-{
-    MENU_NONE,
-    MAIN_MENU,
-    MENU_SETTINGS,
-    MENU_MONITORING,
-    MENU_DIAGNOSTIC,
-    MENU_WIFI_CONFIG,
-    MENU_OUTPUT_VOLTAGE_SETTING,
-    MENU_FREQUENCY_SETTING,
-    MENU_CURRENT_LIMIT,
-    MENU_BATTERY_CUTOFF_SETTINGS,
-    MENU_SCROLL_SETTINGS,
-    MENU_TEMP_SETTING,
-    MENU_SYSTEM_INFO,
-    MENU_FACTORY_RESET,
-    WIFI_ACTIVATION,
-    MENU_COUNT
-} menu_state_t;
-
-typedef struct
-{
-    int32_t brightness;
-    int32_t backlight_timeout;
-    bool auto_shutdown_enabled;
-    bool display_on;
-    bool scroll_enabled;
-    uint8_t scroll_speed;
-    menu_state_t current_menu;
-    uint8_t menu_position;
-    uint8_t selected_index;
-} display_status_t;
-
-typedef struct
-{
-    system_errors_t error_flags; // Bitmask of active faults (ERR_OVER_TEMP etc.)
-    char last_error_msg[32];     // Short description of last fault, always NUL-terminated
-                                 // 32 chars fits "Over/Under Voltage\0" with room to spare
-                                 // Replaces last_error_log[256] (wasteful) and msg (unsafe ptr)
-} system_fault_state_t;
-
-typedef struct
-{
     uint8_t error_code;    // Raw error code (ERR_OVER_TEMP etc. cast to uint8_t)
     uint32_t timestamp_ms; // xTaskGetTickCount() * portTICK_PERIOD_MS at log time
     char description[16];  // Human-readable, NUL-terminated, matches last_error_msg width
 } error_log_entry_t;
-
-typedef struct
-{
-    uint32_t last_user_activity;
-    uint32_t last_power_event;
-} system_flags_t;
-
-// menu editing variable
-typedef struct
-{
-    float temp_value;   // for editing numeric parameters
-    uint8_t edit_step;  // current editing step
-    bool value_changed; // flag for unsaved changes
-} menu_edit_state_t;
-
-typedef enum
-{
-    VALUE_EDIT_NUMERIC = 0,
-    VALUE_EDIT_BOOL,
-    VALUE_EDIT_SELECT,
-    VALUE_EDIT_LIST,
-    VALUE_TYPE_NONE
-} value_edit_type_t;
 
 typedef enum
 {
@@ -1143,192 +865,7 @@ typedef enum
     VALUE_TYPE_COUNT
 } value_edit_param_t;
 
-typedef void (*param_apply_fn)(float value);
-// Value configuration structure
-typedef struct
-{
-    value_edit_type_t edit_type;
-    float temp_value;
-    float min_value;
-    float max_value;
-    float step_size;
-    bool bool_value;
-    int list_index;
-    int list_size;
-    const char **list;
-    bool active;
-    int selection_index;
-    int max_selection;
-    const char *label;
-    const char *unit;
-    uint8_t decimal_places;
-    float increment_precision;
-    float increment_small; // Normal increment
-    float increment_large; // Fast increment (long press/repeat)
-    float current_value;
-    const char *options[10]; // For select/list types
-    bool is_critical;
-    bool live_update;
-    param_apply_fn apply; // NULL => no live hardware effect
-} value_edit_context_t;
-
-typedef struct
-{
-    bool enabled;
-    char ssid[32];
-    char password[64];
-} wifi_state_t;
-
-typedef struct
-{
-    bool enabled;
-    char device_name[32];
-    char pairing_code[16];
-} bluetooth_state_t;
-
-typedef struct
-{
-    float voltage_threshold; // V
-    float current_limit;     // A
-    float frequency_range;   // Hz
-    float temperature_alarm; // °C
-    int system_timeout;      // Seconds
-} settings_t;
-
-typedef enum
-{
-    BOOT_SCREEN_BRAND,
-    BOOT_SCREEN_INIT,
-    BOOT_SCREEN_MAIN
-} boot_screen_t;
-
-typedef struct
-{
-    boot_screen_t current_screen;
-    uint32_t boot_screen_timestamp_ms; // Time to display each boot screen
-} boot_screen_config_t;
-
-typedef struct
-{
-    // Battery
-    float battery_voltage;
-    bool battery_fresh;
-    uint8_t load_percentage;
-    float max_power_w; // Maximum power rating (e.g., 1000W)
-    inverter_state_t inverter_state;
-    bool blink_state;
-    // Fault info
-    uint16_t fault_code;
-    uint32_t last_update_time;
-    uint32_t last_screen_change;
-} lcd_display_state_t;
-
-// Final grouped system_state_t
-typedef struct
-{
-    menu_state_t menu_state;
-    uint8_t menu_selection;
-    uint8_t max_menu_items;
-    volatile bool system_ready;
-    bool safety_conditions_met;
-    int64_t last_activity_time;
-    uint32_t power_button_sequence_count;
-    int64_t power_sequence_start_time;
-    bool in_detail_view;
-    bool in_confirmation_screen;
-    bool in_info_screen;
-    menu_state_t detail_parent_menu;
-    int detail_parent_selection;
-    inverter_state_t pre_detail_inverter_state;
-
-    // Value adjustment context
-    value_edit_context_t *current_value_type;
-    bool value_edit_mode;
-    settings_t settings;
-    bool value_changed;
-    bool pending_confirmation;
-    int64_t last_increment_time;
-    uint8_t repeat_count;
-    bool fast_increment_active;
-
-    // Status mode
-    fan_status_t fan;
-    display_status_t display;
-    system_fault_state_t error;
-    system_flags_t flags;
-    lcd_display_state_t lcd_state;
-    menu_edit_state_t menu_edit;
-    uint8_t actual_temperature;
-    uint8_t actual_current;
-    bool output_enabled;
-
-    bool system_active;    // Indicates if the system is currently active
-    bool calibration_mode; // Indicates if the system is in calibration mode
-
-    // Inverter System Parameters (Voltage, Current, temp, frequency e.t.c)
-    inverter_status inverter;
-
-    float temperature_limit; // e.g., 60°C
-    float over_under_voltage;
-    float current_limit;               // e.g., 30A
-    float cutoff_voltage;              // e.g., 48V
-    uint8_t battery_voltage_system;    // 12, 24, 48, 96
-    battery_profile_t battery_profile; // Current battery profile
-    float power_factor;                // pf
-    float efficiency;
-    uint64_t error_count;
-    uint64_t memory_usage;
-    uint64_t uptime_hours;
-    wifi_state_t wifi;
-    bluetooth_state_t bluetooth;
-    uint64_t system_timeout;
-    bool calibration_valid;
-    bool load_connected;
-    volatile bool adc_ready;
-    boot_screen_config_t lcd_boot_state;
-    bool adc_data_valid;
-    uint32_t tick_ms;
-
-    // Battery status
-    bool low_battery;
-    float battery_temp;
-    bool battery_charging;
-    float battery_cutoff; // Battery cutoff voltage (V)
-    bool precharge_complete;
-
-    // Value editing backup
-    float edit_backup_value;
-    int selected_ssid_index;
-
-    // Fault management
-    uint32_t fault_flags;
-    float insulation_resistance;
-    float dc_injection;
-    float ac_output_current;
-    float dc_output_current;
-    float dc_input_current;
-    float heatsink_temperature;
-    float transformer_temperature;
-    float ambient_temperature;
-    float dc_input_voltage;
-    float ac_input_voltage;
-
-    // Safety features
-    bool fan_running;
-    float dc_component_ac;
-    float dc_bus_positive;
-    float dc_bus_negative;
-    uint32_t time_since_last_shutdown;
-    bool emergency_stop_active;
-    float last_power_off_time;
-
-    // LCD status
-    lcd_render_state_t lcd_render;
-    uint32_t hold_start_time;
-
-} system_state_t;
-
-static system_state_t sys_state;
+system_state_t sys_state;
 
 typedef struct
 {
@@ -1685,18 +1222,18 @@ static value_edit_context_t value_edit[] = {
         .unit = "V",
         .label = "Voltage Threshold",
         .is_critical = true,
-        .live_update = false,
+        .live_update = true,
         .apply = apply_voltage_threshold,
         .step_size = 1.0f,
-    },
+        .current_value = 220.0f},
 
-    [VALUE_TYPE_FREQUENCY] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 45.0f, .max_value = 65.0f, .increment_small = 0.1f, .increment_large = 1.0f, .increment_precision = 0.01f, .decimal_places = 2, .unit = "Hz", .label = "Frequency", .is_critical = true, .live_update = true, .step_size = 0.1f, .apply = apply_frequency},
+    [VALUE_TYPE_FREQUENCY] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 45.0f, .max_value = 65.0f, .increment_small = 0.1f, .increment_large = 1.0f, .increment_precision = 0.01f, .decimal_places = 2, .unit = "Hz", .label = "Frequency", .is_critical = true, .live_update = true, .step_size = 0.1f, .current_value = 50.0f, .apply = apply_frequency},
 
-    [VALUE_TYPE_CURRENT] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 1.0f, .max_value = 50.0f, .increment_small = 0.5f, .increment_large = 2.0f, .increment_precision = 0.1f, .decimal_places = 1, .unit = "A", .label = "Current Limit", .is_critical = false, .live_update = true, .step_size = 0.1f, .apply = apply_current_limit},
+    [VALUE_TYPE_CURRENT] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 1.0f, .max_value = 50.0f, .increment_small = 0.5f, .increment_large = 2.0f, .increment_precision = 0.1f, .decimal_places = 1, .unit = "A", .label = "Current Limit", .is_critical = true, .live_update = true, .step_size = 0.1f, .current_value = 25.0f, .apply = apply_current_limit},
 
-    [VALUE_TYPE_TEMPERATURE] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 40.0f, .max_value = 85.0f, .increment_small = 1.0f, .increment_large = 5.0f, .increment_precision = 0.5f, .decimal_places = 1, .unit = "°C", .label = "Temperature Limit", .is_critical = false, .live_update = true, .step_size = 0.5f, .apply = apply_temperature_limit},
+    [VALUE_TYPE_TEMPERATURE] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 40.0f, .max_value = 85.0f, .increment_small = 1.0f, .increment_large = 5.0f, .increment_precision = 0.5f, .decimal_places = 1, .unit = "°C", .label = "Temperature Limit", .is_critical = true, .live_update = true, .step_size = 0.5f, .current_value = 60.0f, .apply = apply_temperature_limit},
 
-    [VALUE_TYPE_BATTERY_VOLTAGE] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 10.0f, .max_value = 15.0f, .increment_small = 0.1f, .increment_large = 0.5f, .increment_precision = 0.01f, .decimal_places = 2, .unit = "V", .label = "Battery Cutoff", .is_critical = true, .live_update = true, .step_size = 0.5f, .apply = apply_battery_cutoff},
+    [VALUE_TYPE_BATTERY_VOLTAGE] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 10.0f, .max_value = 15.0f, .increment_small = 0.1f, .increment_large = 0.5f, .increment_precision = 0.01f, .decimal_places = 2, .unit = "V", .label = "Battery Cutoff", .is_critical = true, .live_update = true, .step_size = 0.5f, .current_value = 12.0f, .apply = apply_battery_cutoff},
 
     [VALUE_TYPE_MENU_SELECTION] = {.edit_type = VALUE_EDIT_SELECT, .min_value = 0, .max_value = 0, .temp_value = 0, .unit = "", .label = "Menu Select", .is_critical = false, .live_update = false, .apply = NULL},
 
@@ -3601,102 +3138,6 @@ void lcd_update_menu_screen(void)
     show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
 }
 
-/**
- * @brief Display value editing screen
- */
-void lcd_update_value_edit_screen(void)
-{
-    /* =========================================================================
-     * STEP 1: DIRTY CHECKING - Compare with previous frame
-     * ========================================================================= */
-
-    /* ✅ Store previous frame's display text (static, persists across calls) */
-    static char prev_line1[32] = {0};
-    static char prev_line2[32] = {0};
-
-    /* Generate current frame's display text */
-    char line1[32], line2[32];
-    snprintf(line1, sizeof(line1), "%s", sys_state.current_value_type->label);
-    snprintf(line2, sizeof(line2), "%.2f %s", sys_state.current_value_type->temp_value,
-             sys_state.current_value_type->unit);
-
-    /* ✅ Check if text content changed */
-    bool line1_changed = (strcmp(prev_line1, line1) != 0);
-    bool line2_changed = (strcmp(prev_line2, line2) != 0);
-    bool text_changed = line1_changed || line2_changed;
-
-    /* =========================================================================
-     * STEP 2: LCD CLEAR - Only if text changed
-     * ========================================================================= */
-
-    if (text_changed)
-    {
-        /* ✅ Only clear when content actually differs */
-        lcd_clear();
-
-        /* Save current state for next frame */
-        strncpy(prev_line1, line1, sizeof(prev_line1) - 1);
-        prev_line1[sizeof(prev_line1) - 1] = '\0';
-
-        strncpy(prev_line2, line2, sizeof(prev_line2) - 1);
-        prev_line2[sizeof(prev_line2) - 1] = '\0';
-        ESP_LOGI("TEXT_CHANGED", "Text for display changed");
-    }
-
-    /* =========================================================================
-     * STEP 3: FLASH MESSAGE - Display current values
-     * ========================================================================= */
-
-    /* ✅ Flash the value while in edit mode (5s timeout), or no flash (0ms) */
-    uint32_t flash_duration_ms = sys_state.value_edit_mode ? 5000 : 0;
-    lcd_flash_info(line1, line2, flash_duration_ms);
-
-    /* =========================================================================
-     * STEP 4: BLINKING CURSOR - Visual feedback for edit mode
-     * ========================================================================= */
-
-    /* ✅ Cursor blink state (toggles every LCD_BLINK_INTERVAL_MS) */
-    static bool blink_state = false;
-    static int64_t last_blink_time_ms = 0;
-
-    int64_t current_time_ms = esp_timer_get_time() / 1000; // Convert to ms
-    int64_t time_since_blink = current_time_ms - last_blink_time_ms;
-
-    /* ✅ Toggle blink every interval */
-    if (time_since_blink > LCD_BLINK_INTERVAL_MS)
-    {
-        blink_state = !blink_state;
-        last_blink_time_ms = current_time_ms;
-    }
-
-    /* ✅ Draw blinking cursor if in edit mode */
-    if (sys_state.value_edit_mode && sys_state.current_value_type->unit && sys_state.current_value_type->label)
-    {
-        /* Generate the value string (what we're displaying) */
-        char value_str[17];
-        int value_len = snprintf(value_str, sizeof(value_str),
-                                 "%.2f %s",
-                                 sys_state.current_value_type->temp_value,
-                                 sys_state.current_value_type->unit);
-
-        /* ✅ Display blinking cursor at end of value */
-        if (blink_state && value_len < 16)
-        {
-            /* Position cursor immediately after the value string on row 1 */
-            lcd_set_cursor(value_len, 1);
-
-            /* Write cursor character (underscore) */
-            lcd_print_string("_");
-        }
-        else if (!blink_state)
-        {
-            /* ✅ Erase cursor during off phase */
-            lcd_set_cursor(value_len, 1);
-            lcd_print_string(" ");
-        }
-    }
-}
-
 void update_lcd_activity_state(void)
 {
     xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
@@ -4755,10 +4196,6 @@ menu_state_t display_menu_state(void)
     return sys_state.menu_state;
 }
 
-// == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == ==
-// BUTTON EVENT HANDLERS - WHERE ALL LCD FUNCTIONS ARE CALLED
-// ============================================================================
-
 // ENTER/MENU BUTTON - Navigate menus and enter/confirm values
 /* ── handle_enter_menu_button_event() ──────────────────────────────────── */
 
@@ -4780,17 +4217,19 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 handle_value_confirmation();
                 sys_state.pending_confirmation = false;
                 sys_state.value_changed = false;
+                sys_state.value_edit_mode = false;
             }
             else
             {
+                apply_value_change();
                 exit_value_edit_mode(true);
-                sys_state.value_edit_mode = false;
             }
-            lcd_show_value_saved_screen();
+            sys_state.menu_selection = 0;
+            sys_state.menu_state = MAIN_MENU;
             vTaskDelay(pdMS_TO_TICKS(800));
-            show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
             break;
         }
+
         /* Menu navigation */
         switch (sys_state.menu_state)
         {
@@ -4844,6 +4283,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 break;
             }
             sys_state.value_edit_mode = true;
+            /* pending_confirmation intentionally NOT set here —
+             * it starts false and only becomes true when a change
+             * to a critical value is made via up/down. */
             break;
 
         case MENU_MONITORING:
@@ -4892,7 +4334,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
 
         case MENU_FACTORY_RESET:
             sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
-            adjust_factory_reset(&event_info);
+            adjust_factory_reset(event_info);
+            break;
+
         default:
             break;
         }
@@ -4902,10 +4346,21 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         if (sys_state.value_edit_mode)
         {
             if (sys_state.pending_confirmation)
+            {
                 handle_value_confirmation();
+                sys_state.pending_confirmation = false;
+                sys_state.value_changed = false;
+            }
             else
+            {
                 apply_value_change();
-            lcd_show_value_edit_screen();
+                exit_value_edit_mode(true);
+            }
+            sys_state.value_edit_mode = false;
+            sys_state.pending_confirmation = false;
+            sys_state.menu_selection = 0;
+            sys_state.menu_state = MAIN_MENU;
+            vTaskDelay(pdMS_TO_TICKS(800));
             break;
         }
         switch (sys_state.menu_state)
@@ -5014,24 +4469,17 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             case 1:
                 lcd_show_wifi_connecting("Scanning...");
                 start_wifi_scan();
-                /* After scan, show results via lcd_show_wifi_scan() */
-                if (ap_count > 0)
-                {
-                    // const char (*ssids)[9] = NULL; /* build from ap_records */
-                    /* simplified: caller handles wifi scan screen via lcd_show_wifi_scan */
-                }
                 lcd_show_wifi_scan_screen();
                 break;
             case 2:
                 start_wifi_connection();
                 break;
             default:
-                break;
                 sys_state.menu_selection = 0;
+                break;
             }
             break;
         case MENU_FACTORY_RESET:
-
             sys_lcd.factory_reset.phase = FACTORY_PHASE_CONFIRM;
             lcd_show_factory_reset_screen();
             break;
@@ -5114,6 +4562,7 @@ void handle_up_button_event(button_event_info_t *event_info,
             switch (config->edit_type)
             {
             case VALUE_EDIT_NUMERIC:
+                ESP_LOGI("VALUE EDIT", "Increasing numeric value");
                 increase_value(false, false);
                 break;
             case VALUE_EDIT_SELECT:
@@ -5473,8 +4922,9 @@ void handle_back_button_event(button_event_info_t *event_info,
         {
             exit_value_edit_mode(false);
             lcd_show_value_canceled_screen();
+            sys_lcd.screen = LCD_SCREEN_MAIN;
             vTaskDelay(pdMS_TO_TICKS(800));
-            show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
+            sys_state.pending_confirmation = false;
             sys_state.last_activity_time = esp_timer_get_time() / 1000;
             return;
         }
@@ -6316,12 +5766,9 @@ void increase_value(bool fast_mode, bool precision_mode)
 {
     if (!sys_state.value_edit_mode)
         return;
-
-    ets_printf("Increase value called (fast: %d, precision: %d)\n",
-               fast_mode, precision_mode);
     value_edit_context_t *ctx = get_current_value_config();
     float *current_value = get_current_value_pointer();
-    ets_printf("Current value: %.3f\n", *current_value);
+    ESP_LOGI("Current-Value", "Current value: %.3f", *current_value);
     if (!ctx || !current_value)
         return;
 
@@ -6340,10 +5787,11 @@ void increase_value(bool fast_mode, bool precision_mode)
 
     new_value = *current_value + increment;
 
+    ESP_LOGI("NEW_VALUE", "Attempting to increase value: %.3f -> %.3f (increment: %.3f)", *current_value, new_value, increment);
     // Validate range
     if (validate_value_range(new_value))
     {
-        ets_printf("Value change valid: %.3f -> %.3f\n", *current_value, new_value);
+        ESP_LOGI("NEW_VALUE", "Value change valid: %.3f -> %.3f", *current_value, new_value);
         *current_value = new_value;
         sys_state.current_value_type->current_value = new_value;
         sys_state.value_changed = true;
@@ -6351,6 +5799,7 @@ void increase_value(bool fast_mode, bool precision_mode)
         // Apply live update if enabled
         if (ctx->live_update && !ctx->is_critical)
         {
+            ESP_LOGI("NEW_VALUE", "Applying live update: %.3f", new_value);
             update_system_parameter(ctx, new_value);
         }
 
@@ -6360,13 +5809,11 @@ void increase_value(bool fast_mode, bool precision_mode)
             sys_state.pending_confirmation = true;
         }
 
-        printf("Value increased to: %.*f %s\n",
-               ctx->decimal_places, new_value, ctx->unit);
+        ESP_LOGI("NEW_VALUE", "Value increased to: %.3f %s", new_value, ctx->unit);
     }
     else
     {
-        printf("Value at maximum limit: %.*f %s\n",
-               ctx->decimal_places, ctx->max_value, ctx->unit);
+        ESP_LOGI("NEW_VALUE", "Value at maximum limit: %.3f %s", ctx->max_value, ctx->unit);
     }
 }
 
@@ -6398,13 +5845,15 @@ void decrease_value(bool fast_mode, bool precision_mode)
     // Validate range
     if (validate_value_range(new_value))
     {
+        ESP_LOGI("NEW_VALUE", "Value change valid: %.3f -> %.3f", *current_value, new_value);
         *current_value = new_value;
         sys_state.current_value_type->current_value = new_value;
         sys_state.value_changed = true;
 
         // Apply live update if enabled
-        if (ctx->live_update && !ctx->is_critical)
+        if (ctx->live_update && ctx->is_critical)
         {
+            ESP_LOGI("NEW_VALUE", "Applying live update: %.3f", new_value);
             update_system_parameter(ctx, new_value);
         }
 
@@ -6414,13 +5863,11 @@ void decrease_value(bool fast_mode, bool precision_mode)
             sys_state.pending_confirmation = true;
         }
 
-        printf("Value decreased to: %.*f %s\n",
-               ctx->decimal_places, new_value, ctx->unit);
+        ESP_LOGI("NEW_VALUE", "Value decreased to: %.3f %s", new_value, ctx->unit);
     }
     else
     {
-        printf("Value at minimum limit: %.*f %s\n",
-               ctx->decimal_places, ctx->min_value, ctx->unit);
+        ESP_LOGI("NEW_VALUE", "Value at minimum limit: %.3f %s", ctx->min_value, ctx->unit);
     }
 }
 
@@ -6456,22 +5903,28 @@ void exit_value_edit_mode(bool save_changes)
     value_edit_context_t *ctx = get_current_value_config();
     float *current_value = get_current_value_pointer();
 
+    if (!ctx || !current_value)
+    {
+        /* Nothing valid to save/restore — just clear state and bail */
+        sys_state.value_edit_mode = false;
+        sys_state.current_value_type = NULL;
+        sys_state.value_changed = false;
+        sys_state.pending_confirmation = false;
+        return;
+    }
+
     if (save_changes && sys_state.value_changed)
     {
         if (ctx->is_critical && sys_state.pending_confirmation)
         {
-            printf("Saving critical value change: %s = %.*f %s\n",
-                   ctx->label, ctx->decimal_places,
-                   *current_value, ctx->unit);
+            ESP_LOGI("VALUE_EDIT", "Critical value change confirmed: %s = %.3f %s",
+                     ctx->label, *current_value, ctx->unit);
         }
-
-        // Apply the change to system
         apply_value_change();
         printf("Value saved successfully\n");
     }
     else if (!save_changes && sys_state.value_changed)
     {
-        // Restore backup value
         reset_value_to_backup();
         printf("Changes cancelled, value restored\n");
     }
@@ -6532,13 +5985,12 @@ float *get_current_value_pointer(void)
 
 value_edit_context_t *get_current_value_config(void)
 {
-    if (!sys_state.value_edit_mode)
+    if (!sys_state.value_edit_mode || !sys_state.current_value_type)
         return NULL;
     if (sys_state.current_value_type->label == NULL)
         return NULL;
     return sys_state.current_value_type;
 }
-
 float calculate_increment(bool fast_mode, bool precision_mode)
 {
     value_edit_context_t *ctx = get_current_value_config();
@@ -6563,7 +6015,12 @@ bool validate_value_range(float new_value)
 {
     value_edit_context_t *ctx = get_current_value_config();
     if (!ctx)
+    {
+        ESP_LOGI("VALIDATE", "Invalid value configuration");
         return false;
+    }
+    ESP_LOGI("VALIDATE", "Validating new value: %.3f (min: %.3f, max: %.3f)",
+             new_value, ctx->min_value, ctx->max_value);
     return (new_value >= ctx->min_value && new_value <= ctx->max_value);
 }
 
@@ -6682,7 +6139,6 @@ void handle_value_confirmation(void)
     // ======== Post-confirmation handling ========
     if (safety_check_passed)
     {
-        printf("Value confirmed and applied for %s\n", ctx->label);
         sys_state.pending_confirmation = false;
         sys_state.value_changed = true;
         exit_value_edit_mode(true);
@@ -6698,9 +6154,6 @@ void handle_value_confirmation(void)
         exit_value_edit_mode(false);
         lcd_flash_info("Change Rejected ", "                ", 1000);
     }
-
-    sys_state.menu_state = MENU_NONE;
-    lcd_update_menu_screen();
 }
 
 void update_system_parameter(value_edit_context_t *ctx, float value)
@@ -6711,8 +6164,7 @@ void update_system_parameter(value_edit_context_t *ctx, float value)
         return;
     }
     ctx->apply(value);
-    printf("System: '%s' -> %.*f %s\n",
-           ctx->label, ctx->decimal_places, value, ctx->unit);
+    ESP_LOGI("SYSTEM_PARAM", "Updated %s to %.3f %s", ctx->label, value, ctx->unit);
 }
 
 /**
@@ -6731,6 +6183,7 @@ bool inverter_set_output_voltage(float voltage_setpoint)
     }
     printf("HAL: Setting output voltage to %.1f V\n", voltage_setpoint);
     // Update the sys_state output voltage
+    sys_state.current_value_type->current_value = voltage_setpoint;
     sys_state.inverter.output_voltage = voltage_setpoint;
     return true;
 }
@@ -7887,6 +7340,7 @@ void init_menu_system()
     sys_state.system_ready = true;
     sys_state.inverter.inverter_state = INVERTER_OFF;
     sys_state.menu_selection = 0;
+    sys_state.pending_confirmation = false;
 
     // lcd_display_state
     sys_state.lcd_state.blink_state = false;
@@ -8216,21 +7670,6 @@ static bool is_valid_error_code(uint8_t error)
 
 void init_system_state()
 {
-    // ✅ STEP 0: CHECK IF COLD BOOT AND CLEAR RTC FIRST
-    esp_sleep_wakeup_cause_t wakeup_cause = esp_sleep_get_wakeup_cause();
-
-    if (wakeup_cause != ESP_SLEEP_WAKEUP_UNDEFINED &&
-        is_valid_error_code(rtc_mem.last_error))
-    {
-        ESP_LOGW(TAG_SYS, "⚠️ Restoring error from RTC: 0x%02X", rtc_mem.last_error);
-        sys_state.error.error_flags = (system_errors_t)rtc_mem.last_error;
-    }
-    else
-    {
-        // Wake from sleep
-        ESP_LOGI(TAG_SYS, "🔵 Wake from sleep (cause: %d)", wakeup_cause);
-        rtc_mem.wake_count++;
-    }
 
     // ✅ STEP 1: Clear system state
     memset(&sys_state, 0, sizeof(sys_state));
@@ -8266,7 +7705,7 @@ void init_system_state()
     sys_state.cutoff_voltage = 48.0f;
 
     // Initialize value adjustment context
-    sys_state.current_value_type->edit_type = VALUE_TYPE_NONE;
+    sys_state.current_value_type = NULL;
     sys_state.value_edit_mode = false;
     sys_state.value_changed = false;
     sys_state.pending_confirmation = false;
@@ -8300,18 +7739,21 @@ void init_system_state()
     sys_state.inverter.output_voltage = 230.0f;
     sys_state.inverter.output_current = 0.0f;
 
-    // ✅ ONLY restore error from RTC if we woke from sleep AND it's valid
+    // ✅ STEP 0: CHECK IF COLD BOOT AND CLEAR RTC FIRST
+    esp_sleep_wakeup_cause_t wakeup_cause = esp_sleep_get_wakeup_cause();
+
+    ESP_LOGI(TAG_SYS, "Wakeup cause: %d", wakeup_cause);
     if (wakeup_cause != ESP_SLEEP_WAKEUP_UNDEFINED &&
-        rtc_mem.last_error != 0 &&
-        rtc_mem.last_error < 0x100)
+        is_valid_error_code(rtc_mem.last_error))
     {
         ESP_LOGW(TAG_SYS, "⚠️ Restoring error from RTC: 0x%02X", rtc_mem.last_error);
-        sys_state.error.error_flags = rtc_mem.last_error;
+        sys_state.error.error_flags = (system_errors_t)rtc_mem.last_error;
     }
-    else if (wakeup_cause == ESP_SLEEP_WAKEUP_UNDEFINED)
+    else
     {
-        ESP_LOGI(TAG_SYS, "✓ Cold boot - error flags cleared");
-        sys_state.error.error_flags = 0;
+        // Wake from sleep
+        ESP_LOGI(TAG_SYS, "🔵 Wake from sleep (cause: %d)", wakeup_cause);
+        rtc_mem.wake_count++;
     }
 
     // ✅ FINAL: Only keep persistent error flags if any
@@ -8698,9 +8140,14 @@ void error_handler(void)
 // Value editing functions
 void edit_voltage_threshold(void)
 {
-    sys_state.value_edit_mode = true;
     sys_state.current_value_type = &value_edit[VALUE_TYPE_VOLTAGE];
-    lcd_update_value_edit_screen();
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = false;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    lcd_show_value_edit_screen();
 }
 
 void edit_current_limit(void)

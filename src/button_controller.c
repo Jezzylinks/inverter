@@ -290,7 +290,7 @@ static esp_err_t configure_button_gpio(button_handle_t controller)
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = controller->config.enable_pullup ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_NEGEDGE // Falling edge (active low)
+        .intr_type = GPIO_INTR_ANYEDGE /* CHANGED: was GPIO_INTR_NEGEDGE — now catches release too */
     };
 
     esp_err_t ret = gpio_config(&io_conf);
@@ -493,9 +493,6 @@ static void button_determine_state_from_gpio(button_controller_t *btn)
                                        pdMS_TO_TICKS(btn->config.double_click_ms), 0);
                     xTimerReset(btn->click_timeout_timer, 0);
                 }
-
-                ESP_LOGI(BUTTON_TAG, "[%s] Click #%d", btn->config.controller_name,
-                         btn->consecutive_clicks);
             }
             else
             {
@@ -525,7 +522,7 @@ static void button_determine_state_from_gpio(button_controller_t *btn)
             atomic_store(&btn->current_state, BUTTON_STATE_IDLE);
             queue_event_fast(btn, BUTTON_EVENT_RELEASE, duration_ms);
 
-            ESP_LOGI(BUTTON_TAG, "[%s] Released from long press", btn->config.controller_name);
+            // ESP_LOGI(BUTTON_TAG, "[%s] Released from long press", btn->config.controller_name);
         }
         break;
 
@@ -550,7 +547,7 @@ static void button_determine_state_from_gpio(button_controller_t *btn)
                 if (btn->long_press_timer)
                     xTimerStart(btn->long_press_timer, 0);
 
-                ESP_LOGI(BUTTON_TAG, "[%s] Click continuation", btn->config.controller_name);
+                /// ESP_LOGI(BUTTON_TAG, "[%s] Click continuation", btn->config.controller_name);
             }
             else
             {
@@ -632,7 +629,7 @@ static void long_press_timer_callback(TimerHandle_t xTimer)
         xTimerStart(btn->hold_repeat_timer, 0);
     }
 
-    ESP_LOGI(BUTTON_TAG, "[%s] Long press detected", btn->config.controller_name);
+    // ESP_LOGI(BUTTON_TAG, "[%s] Long press detected", btn->config.controller_name);
 }
 
 /**
@@ -776,7 +773,7 @@ static void button_event_processing_task(void *pvParameters)
         }
     }
 
-    ESP_LOGI(BUTTON_TAG, "✓ Event task stopped for %s", btn->config.controller_name);
+    // ESP_LOGI(BUTTON_TAG, "✓ Event task stopped for %s", btn->config.controller_name);
     vTaskDelete(NULL);
 }
 

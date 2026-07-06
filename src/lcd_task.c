@@ -30,6 +30,8 @@ extern active_flash_t s_active_flash;
 #define LCD_ADDR 0x27
 #define SDA_PIN 21
 #define SCL_PIN 22
+#define LCD_BLINK_INTERVAL_MS 500
+#define LCD_FLASH_QUEUE_DEPTH 4
 
 static const char *TAG = "LCD_TASK";
 
@@ -191,8 +193,29 @@ static void draw_menu(const lcd_two_line_t *d)
 
 static void draw_value_edit(const lcd_value_edit_data_t *d)
 {
-    draw_commit(d->label,
-                d->pending_confirm ? "Confirm? ENT/NO " : d->value_str);
+    static bool blink_state = false;
+    static int64_t last_blink_time_ms = 0;
+
+    draw_commit(d->label, d->value_str);
+
+    /* ── Blinking cursor after the value text ── */
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    if (now_ms - last_blink_time_ms > LCD_BLINK_INTERVAL_MS)
+    {
+        blink_state = !blink_state;
+        last_blink_time_ms = now_ms;
+    }
+
+    /* Trim trailing padding spaces to find where the cursor goes */
+    int len = strlen(d->value_str);
+    while (len > 0 && d->value_str[len - 1] == ' ')
+        len--;
+
+    if (len < 16)
+    {
+        lcd_set_cursor(len, 1);
+        lcd_print_string(blink_state ? "_" : " ");
+    }
 }
 
 static void draw_detail(const lcd_detail_data_t *d)
@@ -511,7 +534,6 @@ void lcd_task(void *arg)
                     xSemaphoreGive(sys_state_mutex);
 
                     main_page_last_change_ms = now_ms;
-                    ESP_LOGD(TAG, "📄 Sub-page cycled to: %d", snap.main.sub_page);
                 }
             }
         }
@@ -521,9 +543,12 @@ void lcd_task(void *arg)
         if (snap.screen != last_screen)
         {
             lcd_clear();
+            memset(s_last_row0, ' ', 16);
+            s_last_row0[16] = '\0';
+            memset(s_last_row1, ' ', 16);
+            s_last_row1[16] = '\0';
             last_screen = snap.screen;
             need_clear = false;
-            ESP_LOGI(TAG, "📄 Screen changed to: %d", snap.screen);
         }
         else if (need_clear)
         {

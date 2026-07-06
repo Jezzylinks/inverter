@@ -36,6 +36,8 @@ typedef enum
     LCD_SCREEN_COUNT
 } lcd_screen_id_t;
 
+#define LCD_FLASH_RETURN_AUTO ((lcd_screen_id_t) - 1)
+
 /* ── Per-screen data payloads ────────────────────────────────────────────── */
 
 typedef struct
@@ -81,6 +83,11 @@ typedef struct
 {
     char label[17];
     char value_str[17];
+    float min_value;
+    float max_value;
+    float value;
+    uint8_t decimal_places;
+    char unit[9];
     bool pending_confirm;
 } lcd_value_edit_data_t;
 

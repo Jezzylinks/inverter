@@ -189,6 +189,7 @@ extern "C"
         bool active_low;
         bool enable_pullup;
         char *controller_name;
+        bool enable_multi_click;
     } button_config_t;
 
     /**
