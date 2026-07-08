@@ -1154,7 +1154,7 @@ void start_wifi_scan(void);
 void lcd_show_wifi_scan_screen(void);
 void start_wifi_connection(void);
 void stop_wifi_connection(void);
-void clear_all_settings(void);
+void clear_settings(void);
 void reload_default_settings(void);
 // Function to save the frequency setting to NVS
 void save_frequency_to_nvs(int frequency);
@@ -3530,21 +3530,6 @@ void stop_wifi_connection(void)
     ESP_LOGI(WIFI_TAG, "WiFi stopped");
 }
 
-/* ── clear_all_settings() ───────────────────────────────────────────────── */
-void clear_all_settings(void)
-{
-    lcd_flash_info("Clearing        ", "Settings...     ", 500);
-    xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
-    sys_lcd.screen = LCD_SCREEN_FLASH_MSG;
-    s_active_flash.active = true;
-    xSemaphoreGive(sys_state_mutex);
-    esp_err_t err = nvs_flash_erase();
-    if (err == ESP_OK)
-        nvs_flash_init();
-    reload_default_settings();
-    lcd_flash_info("Done            ", "All cleared!    ", 1000);
-}
-
 void reload_default_settings(void)
 {
     const char *TAG = "Default_config";
@@ -3622,13 +3607,32 @@ void error_log_clear(void)
             sizeof(sys_state.error.last_error_msg) - 1);
 }
 
-/* ── erase_all_logs() ───────────────────────────────────────────────────── */
-void erase_all_logs(void)
+/* ── erase_logs() ────────────────────────────────────────────────────────
+ * Wraps the existing erase_all_logs() with the same
+ * sys_lcd.factory_reset phase/progress reporting used by
+ * clear_settings() and perform_factory_reset(), so draw_factory_reset()
+ * renders this consistently. Does not touch settings or battery profile —
+ * erase_all_logs() only opens the separate "log_storage" NVS namespace.
+ */
+void erase_logs(void)
 {
+    ESP_LOGI(TAG_SYS, "Erasing error logs only");
+
+    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
+    atomic_store(&sys_lcd.factory_reset.progress_pct, 0);
+
+    /* Step 1: clear in-RAM ring buffer + counters (fast, no I/O) */
+    error_log_clear();
+    atomic_store(&sys_lcd.factory_reset.progress_pct, 30);
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    /* Step 2: erase the log_storage NVS namespace — separate namespace
+     * from NVS_NS_SYSTEM, so this genuinely cannot touch settings or
+     * battery profile data, unlike the settings/battery namespace
+     * collision flagged in clear_settings(). */
     sys_state.error_count = 0;
     sys_state.uptime_hours = 0;
     sys_state.memory_usage = 0;
-    error_log_clear();
 
     nvs_handle_t h;
     esp_err_t err = nvs_open("log_storage", NVS_READWRITE, &h);
@@ -3637,24 +3641,36 @@ void erase_all_logs(void)
         nvs_erase_all(h);
         nvs_commit(h);
         nvs_close(h);
-        ESP_LOGI(LOG_TAG, "Logs cleared from NVS.");
+        ESP_LOGI(TAG_SYS, "Logs cleared from NVS.");
     }
     else
     {
-        ESP_LOGW(LOG_TAG, "Failed to open NVS for log clearing: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG_SYS, "Failed to open log_storage NVS: %s", esp_err_to_name(err));
+        atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
+        lcd_flash_info("Erase Failed!   ", "                ", 1500);
+        return;
     }
+    atomic_store(&sys_lcd.factory_reset.progress_pct, 80);
+    vTaskDelay(pdMS_TO_TICKS(200));
 
-// === 3. If using an SD card or external storage, add code here to clear logs from there ===
 #ifdef USE_SD_LOGGING
-    ESP_LOGI(LOG_TAG, "Clearing logs from SD card...");
+    ESP_LOGI(TAG_SYS, "Clearing logs from SD card...");
     remove("/sdcard/logs/system_log.txt");
     remove("/sdcard/logs/error_log.txt");
-    ESP_LOGI(LOG_TAG, "Logs cleared from SD card.");
 #endif
 
-    // === 4. Notify user via LCD and buzzer ===
+    atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
+
     update_buzzer(1000, 50);
+    vTaskDelay(pdMS_TO_TICKS(150));
+    buzzer_off();
+    sys_state.power_button_sequence_count = 0;
     lcd_flash_info("Logs Cleared    ", "System Clean    ", 1500);
+    ESP_LOGI(TAG_SYS, "Error logs erased");
+    sys_lcd.screen = LCD_SCREEN_MAIN;
+    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
 }
 
 typedef struct
@@ -4224,10 +4240,38 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 apply_value_change();
                 exit_value_edit_mode(true);
             }
+            sys_state.pending_confirmation = false;
+            sys_state.menu_state = MENU_NONE;
             sys_state.menu_selection = 0;
-            sys_state.menu_state = MAIN_MENU;
-            vTaskDelay(pdMS_TO_TICKS(800));
             break;
+        }
+
+        if (sys_state.menu_state == MENU_FACTORY_RESET && atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_CONFIRM)
+        {
+            switch (sys_state.factory_reset.pending_action)
+            {
+            case FACTORY_ACTION_RESET_ALL:
+                ESP_LOGI(TAG_SYS, "Factory reset confirmed by user");
+                atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
+                atomic_store(&sys_lcd.factory_reset.progress_pct, 0);
+                perform_factory_reset();
+                atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
+                break;
+            case FACTORY_ACTION_CLEAR_SETTINGS:
+                ESP_LOGI(TAG_SYS, "Clear Settings confirmed by user");
+                clear_settings();
+                atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
+                break;
+            case FACTORY_ACTION_ERASE_LOGS:
+                ESP_LOGI(TAG_SYS, "Erase Logs confirmed by user");
+                erase_logs();
+                atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
+                break;
+            default:
+                ESP_LOGI(TAG_SYS, "No factory setting");
+                break;
+            }
+            sys_state.factory_reset.pending_action = FACTORY_ACTION_NONE; // single clear point, always runs
         }
 
         /* Menu navigation */
@@ -4283,9 +4327,6 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 break;
             }
             sys_state.value_edit_mode = true;
-            /* pending_confirmation intentionally NOT set here —
-             * it starts false and only becomes true when a change
-             * to a critical value is made via up/down. */
             break;
 
         case MENU_MONITORING:
@@ -4334,7 +4375,21 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
 
         case MENU_FACTORY_RESET:
             sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
-            adjust_factory_reset(event_info);
+            switch (sys_state.menu_selection)
+            {
+            case 0:
+                sys_state.factory_reset.pending_action = FACTORY_ACTION_RESET_ALL;
+                atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_RESET_ALL);
+                break;
+            case 1:
+                sys_state.factory_reset.pending_action = FACTORY_ACTION_CLEAR_SETTINGS;
+                atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_CLEAR_SETTINGS);
+                break;
+            case 2:
+                sys_state.factory_reset.pending_action = FACTORY_ACTION_ERASE_LOGS;
+                atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_ERASE_LOGS);
+                break;
+            }
             break;
 
         default:
@@ -4348,19 +4403,13 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             if (sys_state.pending_confirmation)
             {
                 handle_value_confirmation();
-                sys_state.pending_confirmation = false;
-                sys_state.value_changed = false;
             }
             else
             {
-                apply_value_change();
                 exit_value_edit_mode(true);
             }
-            sys_state.value_edit_mode = false;
-            sys_state.pending_confirmation = false;
             sys_state.menu_selection = 0;
             sys_state.menu_state = MAIN_MENU;
-            vTaskDelay(pdMS_TO_TICKS(800));
             break;
         }
         switch (sys_state.menu_state)
@@ -4392,7 +4441,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             case 3:
                 next = MENU_FACTORY_RESET;
                 sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
-                sys_lcd.factory_reset.phase = FACTORY_PHASE_DONE;
+                sys_lcd.factory_reset.phase = FACTORY_PHASE_CONFIRM;
                 break;
             }
             if (next != MENU_NONE)
@@ -4917,18 +4966,44 @@ void handle_back_button_event(button_event_info_t *event_info,
     switch (event_info->event)
     {
     case BUTTON_EVENT_CLICK:
-        /* P1 cancel value edit */
+        /* P1 cancel factory reset */
+        if (sys_state.menu_state == MENU_FACTORY_RESET)
+        {
+            ESP_LOGI("FACTORY_RESET", "We are at factory reset screen");
+            factory_reset_phase_t phase = atomic_load(&sys_lcd.factory_reset.phase);
+
+            if (phase == FACTORY_PHASE_PROGRESS)
+            {
+                return;
+            }
+
+            sys_state.factory_reset.pending_action = FACTORY_ACTION_NONE;
+            atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
+            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
+            sys_state.last_activity_time = esp_timer_get_time() / 1000;
+            sys_state.menu_selection = 0;
+            sys_state.menu_state = MAIN_MENU;
+            show_menu_screen(MENU_FACTORY_RESET, sys_state.menu_selection);
+            return;
+        }
+
+        else if (sys_state.factory_reset.pending_action == FACTORY_ACTION_NONE && sys_state.menu_state == MAIN_MENU)
+        {
+            sys_lcd.screen = LCD_SCREEN_MAIN;
+        }
+
+        /* P2 cancel value edit */
         if (sys_state.value_edit_mode)
         {
             exit_value_edit_mode(false);
             lcd_show_value_canceled_screen();
-            sys_lcd.screen = LCD_SCREEN_MAIN;
-            vTaskDelay(pdMS_TO_TICKS(800));
+            sys_state.menu_state = MENU_NONE;
             sys_state.pending_confirmation = false;
+            sys_state.menu_selection = 0;
             sys_state.last_activity_time = esp_timer_get_time() / 1000;
             return;
         }
-        /* P2 exit detail view */
+        /* P3 exit detail view */
         if (sys_state.in_detail_view)
         {
             sys_state.in_detail_view = false;
@@ -4937,7 +5012,7 @@ void handle_back_button_event(button_event_info_t *event_info,
             show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
             return;
         }
-        /* P3 exit confirm */
+        /* P4 exit confirm */
         if (sys_state.in_confirmation_screen)
         {
             sys_state.in_confirmation_screen = false;
@@ -4945,7 +5020,7 @@ void handle_back_button_event(button_event_info_t *event_info,
             show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
             return;
         }
-        /* P4 exit info screen */
+        /* P5 exit info screen */
         if (sys_state.in_info_screen)
         {
             sys_state.in_info_screen = false;
@@ -4953,7 +5028,8 @@ void handle_back_button_event(button_event_info_t *event_info,
             go_to_main_screen();
             return;
         }
-        /* P5 pop history */
+
+        /* P6 pop history */
         if (menu_history.depth > 0)
         {
             menu_state_t prev;
@@ -4970,14 +5046,14 @@ void handle_back_button_event(button_event_info_t *event_info,
                 return;
             }
         }
-        /* P6 fallback */
+        /* P7 fallback */
         switch (sys_state.menu_state)
         {
+        case MENU_FACTORY_RESET:
         case MENU_SETTINGS:
         case MENU_MONITORING:
         case MENU_DIAGNOSTIC:
         case MENU_WIFI_CONFIG:
-        case MENU_FACTORY_RESET:
             sys_state.inverter.inverter_state = sys_state.inverter.previous_inverter_state;
             sys_state.menu_state = MENU_NONE;
             sys_state.menu_selection = 0;
@@ -5282,6 +5358,51 @@ void lcd_draw_diagnostics_screen(uint8_t index)
     row0[16] = '\0';
     row1[16] = '\0';
     lcd_show_diagnostic_detail(row0, row1);
+}
+
+/* ── clear_settings() ────────────────────────────────────────────────────
+ * Resets configurable settings (voltage/current/frequency thresholds,
+ * display prefs, WiFi creds) back to defaults, without touching the
+ * battery profile, error logs, or calibration data.
+ *
+ * NOTE: does NOT erase the NVS_NS_SYSTEM namespace before saving — that
+ * namespace also holds battery profile keys (bat_type, bat_capacity, etc,
+ * written by battery_save_configuration()), so an nvs_erase_namespace()
+ * call here would silently wipe those too. Relying on save_settings()'s
+ * nvs_set_* calls to overwrite the old setting keys in place avoids that,
+ * at the cost of not guaranteeing removal of stale/orphaned keys that are
+ * no longer written by any current code path.
+ */
+void clear_settings(void)
+{
+    ESP_LOGI(TAG_SYS, "Clearing settings only (battery profile untouched)");
+
+    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
+    atomic_store(&sys_lcd.factory_reset.progress_pct, 0);
+
+    /* Step 1: reset in-RAM settings to hardcoded defaults */
+    reload_default_settings();
+    atomic_store(&sys_lcd.factory_reset.progress_pct, 50);
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    /* Step 2: persist defaults directly — overwrites old setting keys
+     * in NVS_NS_SYSTEM without erasing the namespace, so battery
+     * profile keys in the same namespace survive untouched. */
+    save_settings();
+    atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
+
+    update_buzzer(1500, 40);
+    vTaskDelay(pdMS_TO_TICKS(150));
+    buzzer_off();
+    sys_state.power_button_sequence_count = 0;
+    lcd_flash_info("Settings Cleared", "Defaults Loaded ", 1500);
+    sys_lcd.screen = LCD_SCREEN_MAIN;
+    ESP_LOGI(TAG_SYS, "Settings cleared and defaults saved");
+
+    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
 }
 
 /* ── perform_factory_reset() ────────────────────────────────────────────── */
@@ -5657,54 +5778,6 @@ void handle_menu_timeout(void)
     }
 }
 
-// ============================================================================
-// LCD SCREEN DISPLAY FUNCTIONS
-// ============================================================================
-
-/**
- * @brief Display initial startup message
- */
-void lcd_display_startup_screen(void)
-{
-    lcd_flash_info("C-TECH SYSTEMS  ", "Starting...     ", 1000);
-
-#if LCD_ROWS >= 4
-    lcd_flash_info("                ", "  Version 1.0   ", 1000);
-    // check if lcd has more than 2 rows and clear them if so
-    for (uint8_t r = 2; r < LCD_ROWS; r++)
-    {
-        draw_row(r, "                ");
-        draw_row(r + 1, "Version 1.0     ");
-    }
-#endif
-}
-
-/**
- * @brief Draw brand/logo screen
- */
-void lcd_draw_brand_screen(void)
-{
-    static bool first_draw = true;
-
-    if (first_draw)
-    {
-        lcd_clear();
-
-        // Display startup screen
-        lcd_display_startup_screen();
-
-#if LCD_ROWS >= 4
-        for (uint8_t r = 2; r < LCD_ROWS; r++)
-        {
-            draw_row(r, "                ");
-            draw_row(r + 1, "  Please Wait   ");
-        }
-#endif
-
-        first_draw = false;
-    }
-}
-
 /*------------------------------------------------------------------------------
   DISPLAY SCREEN TYPES
 ------------------------------------------------------------------------------*/
@@ -5720,12 +5793,6 @@ static inline float clamp_float(float value, float min, float max)
         return max;
     return value;
 }
-
-/*------------------------------------------------------------------------------
-  16x2 LCD DISPLAY SYSTEM FOR INVERTER
-  Line 0: Battery Voltage + State/Status
-  Line 1: Load/Power + Mode
-------------------------------------------------------------------------------*/
 
 typedef struct
 {
@@ -5915,11 +5982,6 @@ void exit_value_edit_mode(bool save_changes)
 
     if (save_changes && sys_state.value_changed)
     {
-        if (ctx->is_critical && sys_state.pending_confirmation)
-        {
-            ESP_LOGI("VALUE_EDIT", "Critical value change confirmed: %s = %.3f %s",
-                     ctx->label, *current_value, ctx->unit);
-        }
         apply_value_change();
         printf("Value saved successfully\n");
     }
@@ -6139,7 +6201,6 @@ void handle_value_confirmation(void)
     // ======== Post-confirmation handling ========
     if (safety_check_passed)
     {
-        sys_state.pending_confirmation = false;
         sys_state.value_changed = true;
         exit_value_edit_mode(true);
 
@@ -6150,10 +6211,10 @@ void handle_value_confirmation(void)
     {
         printf("Safety check failed or value invalid, reverting changes\n");
         reset_value_to_backup();
-        sys_state.pending_confirmation = false;
         exit_value_edit_mode(false);
         lcd_flash_info("Change Rejected ", "                ", 1000);
     }
+    sys_state.pending_confirmation = false;
 }
 
 void update_system_parameter(value_edit_context_t *ctx, float value)
@@ -6381,6 +6442,7 @@ static esp_err_t init_power_button(void)
     config.active_low = true;
     config.enable_pullup = true;
     config.hold_repeat_ms = 100; // Fast repeat for smooth volume control
+    config.enable_multi_click = true;
 
     // Step 2.3: Validate configuration
     esp_err_t ret = button_controller_validate_config(&config);
@@ -6439,7 +6501,8 @@ static esp_err_t init_menu_button(void)
     config.controller_name = "Menu Button";
     config.active_low = true;
     config.enable_pullup = true;
-    config.hold_repeat_ms = 100; // Fast repeat for smooth volume control
+    config.hold_repeat_ms = 100;      // Fast repeat for smooth volume control
+    config.enable_multi_click = true; // Enable multi-click detection
 
     // Step 2.2: Validate and create
     esp_err_t ret = button_controller_validate_config(&config);
@@ -6495,7 +6558,8 @@ static esp_err_t init_button_up(void)
     config.controller_name = "Volume Up Button";
     config.active_low = true;
     config.enable_pullup = true;
-    config.hold_repeat_ms = 100; // Fast repeat for smooth volume control
+    config.hold_repeat_ms = 100;       // Fast repeat for smooth volume control
+    config.enable_multi_click = false; // Enable multi-click detection
     esp_err_t ret = button_controller_validate_config(&config);
     if (ret != ESP_OK)
     {
@@ -6547,8 +6611,8 @@ static esp_err_t init_down_button(void)
     config.controller_name = "Volume Down Button";
     config.active_low = true;
     config.enable_pullup = true;
-    config.hold_repeat_ms = 100; // Fast repeat for smooth volume control
-
+    config.hold_repeat_ms = 100;       // Fast repeat for smooth volume control
+    config.enable_multi_click = false; // Enable multi-click detection
     esp_err_t ret = button_controller_validate_config(&config);
     if (ret != ESP_OK)
     {
@@ -6600,7 +6664,8 @@ static esp_err_t init_back_button(void)
     config.controller_name = "Back Button";
     config.active_low = true;
     config.enable_pullup = true;
-    config.hold_repeat_ms = 100; // Fast repeat for smooth volume control
+    config.hold_repeat_ms = 100;       // Fast repeat for smooth volume control
+    config.enable_multi_click = false; // Enable multi-click detection
 
     esp_err_t ret = button_controller_validate_config(&config);
     if (ret != ESP_OK)
@@ -7275,42 +7340,6 @@ void show_profile_on_lcd(battery_profile_t *profile)
     snprintf(l, 17, "Battery:%4.1fV  ", (float)profile->nominal_voltage * 10);
     snprintf(v, 17, "Cutoff:%5.1fV   ", profile->cutoff_voltage_12v * 10);
     lcd_show_monitor_detail(l, v);
-}
-
-/* ── adjust_factory_reset() ─────────────────────────────────────────────── */
-void adjust_factory_reset(button_event_info_t *btn)
-{
-    static factory_reset_state_t state = FACTORY_RESET_CONFIRM;
-    static bool selection_yes = true;
-
-    switch (btn->button_id)
-    {
-    case BTN_UP:
-    case BTN_DOWN:
-        selection_yes = !selection_yes;
-        lcd_show_confirm("Factory Reset?  ",
-                         selection_yes ? "> Yes   No      "
-                                       : "  Yes > No      ");
-        break;
-    case BTN_ENTER_MENU:
-        if (state == FACTORY_RESET_CONFIRM && selection_yes)
-        {
-            lcd_show_factory_progress(0);
-            perform_factory_reset();
-            lcd_flash_info("Reset Complete! ", "                ", 1000);
-            navigate_to_menu(MAIN_MENU);
-        }
-        else
-        {
-            navigate_to_menu(sys_state.display.current_menu);
-        }
-        break;
-    case BTN_BACK:
-        navigate_to_menu(sys_state.display.current_menu);
-        break;
-    default:
-        break;
-    }
 }
 
 // Assume that these are the possible frequency options or ranges

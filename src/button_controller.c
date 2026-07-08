@@ -221,6 +221,7 @@ void button_controller_get_default_config(button_config_t *config)
     config->active_low = true;
     config->enable_pullup = true;
     config->hold_repeat_ms = 500;
+    config->enable_multi_click = true; /* NEW: preserves old behavior unless overridden */
 }
 
 esp_err_t button_controller_validate_config(const button_config_t *config)
@@ -273,10 +274,6 @@ static void release_controller(button_handle_t handle)
         handle->in_use = false;
 }
 
-// ============================================================================
-// SECTION 6: GPIO AND INTERRUPT HANDLING
-// ============================================================================
-
 /**
  * @brief Configure GPIO for button input with hardware debounce
  */
@@ -290,8 +287,7 @@ static esp_err_t configure_button_gpio(button_handle_t controller)
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = controller->config.enable_pullup ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_ANYEDGE /* CHANGED: was GPIO_INTR_NEGEDGE — now catches release too */
-    };
+        .intr_type = GPIO_INTR_ANYEDGE};
 
     esp_err_t ret = gpio_config(&io_conf);
     if (ret != ESP_OK)
@@ -325,21 +321,13 @@ static void IRAM_ATTR button_gpio_isr_handler(void *arg)
     if (!btn)
         return;
 
-    // Record ISR hit
     atomic_fetch_add(&btn->stats.isr_calls, 1);
-
-    // Record GPIO level for hysteresis
     btn->last_gpio_level = gpio_get_level(btn->config.gpio_pin);
 
-    // Disable further interrupts (debounce suppression)
-    gpio_intr_disable(btn->config.gpio_pin);
     atomic_store(&btn->debounce_pending, true);
 
-    // Trigger debounce timer
     if (btn->debounce_timer)
-    {
         xTimerResetFromISR(btn->debounce_timer, &task_woken);
-    }
 
     if (task_woken)
         portYIELD_FROM_ISR();
@@ -467,44 +455,54 @@ static void button_determine_state_from_gpio(button_controller_t *btn)
     case BUTTON_STATE_PRESSED:
         if (!is_pressed)
         {
-            // Button released
             uint32_t duration_ms = get_press_duration_ms(btn);
             btn->release_time_us = now;
             btn->last_release_time_us = now;
             btn->is_pressed = false;
 
-            // Stop long press timer
             if (btn->long_press_timer && xTimerIsTimerActive(btn->long_press_timer))
                 xTimerStop(btn->long_press_timer, 0);
             if (btn->hold_repeat_timer && xTimerIsTimerActive(btn->hold_repeat_timer))
                 xTimerStop(btn->hold_repeat_timer, 0);
 
-            // Check if qualifies as click (short press)
             if (duration_ms < btn->config.long_press_ms && !btn->long_press_triggered)
             {
                 btn->consecutive_clicks++;
-                atomic_store(&btn->current_state, BUTTON_STATE_RELEASED);
-                btn->waiting_for_timeout = true;
 
-                // Start/restart click timeout
-                if (btn->click_timeout_timer)
+                if (!btn->config.enable_multi_click)
                 {
-                    xTimerChangePeriod(btn->click_timeout_timer,
-                                       pdMS_TO_TICKS(btn->config.double_click_ms), 0);
-                    xTimerReset(btn->click_timeout_timer, 0);
+                    /* Instant click — no waiting to see if a second click follows */
+                    atomic_store(&btn->current_state, BUTTON_STATE_IDLE);
+                    atomic_fetch_add(&btn->stats.short_presses, 1);
+                    queue_event_fast(btn, BUTTON_EVENT_CLICK, duration_ms);
+                    btn->consecutive_clicks = 0;
+
+                    ESP_LOGD(BUTTON_TAG, "[%s] Instant click", btn->config.controller_name);
+                }
+                else
+                {
+                    atomic_store(&btn->current_state, BUTTON_STATE_RELEASED);
+                    btn->waiting_for_timeout = true;
+
+                    if (btn->click_timeout_timer)
+                    {
+                        xTimerChangePeriod(btn->click_timeout_timer,
+                                           pdMS_TO_TICKS(btn->config.double_click_ms), 0);
+                        xTimerReset(btn->click_timeout_timer, 0);
+                    }
+
+                    ESP_LOGD(BUTTON_TAG, "[%s] Click #%d", btn->config.controller_name,
+                             btn->consecutive_clicks);
                 }
             }
             else
             {
-                // Long press was triggered or duration too long
                 atomic_store(&btn->current_state, BUTTON_STATE_IDLE);
                 btn->consecutive_clicks = 0;
                 queue_event_fast(btn, BUTTON_EVENT_RELEASE, duration_ms);
             }
         }
         break;
-
-    // ---- LONG PRESS / REPEAT STATE ----
     case BUTTON_STATE_LONG_PRESS_ACTIVE:
     case BUTTON_STATE_REPEAT_ACTIVE:
         if (!is_pressed)
@@ -526,7 +524,6 @@ static void button_determine_state_from_gpio(button_controller_t *btn)
         }
         break;
 
-    // ---- RELEASED STATE (waiting for more clicks) ----
     case BUTTON_STATE_RELEASED:
         if (is_pressed)
         {
@@ -537,6 +534,7 @@ static void button_determine_state_from_gpio(button_controller_t *btn)
             {
                 // Valid multi-click continuation
                 btn->press_start_time_us = now;
+                btn->long_press_triggered = false;
                 atomic_store(&btn->current_state, BUTTON_STATE_PRESSED);
 
                 // Stop click timeout
@@ -546,13 +544,10 @@ static void button_determine_state_from_gpio(button_controller_t *btn)
                 // Restart long press detection
                 if (btn->long_press_timer)
                     xTimerStart(btn->long_press_timer, 0);
-
-                /// ESP_LOGI(BUTTON_TAG, "[%s] Click continuation", btn->config.controller_name);
             }
             else
             {
-                // New sequence - finalize previous clicks and start new
-                // This will be handled by click_timeout_timer
+                btn->consecutive_clicks = 0;
                 btn->press_start_time_us = now;
                 atomic_store(&btn->current_state, BUTTON_STATE_PRESSED);
 
@@ -583,11 +578,7 @@ static void debounce_timer_callback(TimerHandle_t xTimer)
     if (!btn || !atomic_load(&btn->debounce_pending))
         return;
 
-    // Process state with debounced GPIO level
     button_determine_state_from_gpio(btn);
-
-    // Re-enable interrupt
-    gpio_intr_enable(btn->config.gpio_pin);
     atomic_store(&btn->debounce_pending, false);
 }
 

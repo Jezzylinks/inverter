@@ -18,6 +18,9 @@
 #include <stdio.h>
 #include <math.h>
 #include "lcd_flash_queue.h"
+#include <stdatomic.h>
+
+#define BOOT_TOTAL_STEPS 3
 
 static uint32_t _lcd_get_time_ms(void);
 
@@ -82,30 +85,6 @@ static void draw_row(uint8_t row, const char *text)
     lcd_integrity_snapshot(s_last_row0, s_last_row1);
 }
 
-static void draw_progress_bar(uint8_t row, uint8_t pct)
-{
-    static uint8_t dots = 1;
-    static uint32_t last_update_ms = 0;
-
-    uint32_t now = now_ms();
-
-    if ((now - last_update_ms) >= 500)
-    {
-        dots++;
-        if (dots > 3)
-            dots = 1;
-
-        last_update_ms = now;
-    }
-
-    char row1[17];
-
-    snprintf(row1, sizeof(row1),
-             "Please wait%.*s",
-             dots, "...");
-    draw_row(1, row1);
-}
-
 static const char *rssi_bars(int8_t rssi)
 {
     if (rssi >= -50)
@@ -122,16 +101,56 @@ static const char *rssi_bars(int8_t rssi)
 /*==============================================================================
   Per-screen draw functions
 ==============================================================================*/
+#define LCD_COLS 16
+
+void lcd_display_startup_screen(uint8_t progress)
+{
+    draw_commit(" C-TECH SYSTEMS ", "  Version 1.0   ");
+}
 
 static void draw_boot_brand(void)
 {
-    draw_commit("C-TECH SYSTEMS  ", " Starting...    ");
+    lcd_display_startup_screen(20);
+}
+
+static void format_progress_line(char *out, uint8_t pct)
+{
+    if (pct > 100)
+        pct = 100;
+
+    char pct_str[5];
+    snprintf(pct_str, sizeof(pct_str), "%3u%%", pct); // "  0%" .. "100%"
+
+    int bar_slots = LCD_COLS - 2 /*brackets*/ - 4 /*" NN%"*/;
+    uint8_t filled = (pct * bar_slots) / 100;
+
+    out[0] = '[';
+    for (int i = 0; i < bar_slots; i++)
+        out[i + 1] = (i < filled) ? '#' : '-';
+    out[bar_slots + 1] = ']';
+    out[bar_slots + 2] = ' ';
+    memcpy(&out[bar_slots + 3], pct_str, 4);
+    out[LCD_COLS] = '\0';
 }
 
 static void draw_boot_init(const lcd_boot_init_data_t *d)
 {
-    draw_row(0, "Initializing... ");
-    draw_progress_bar(1, d->progress_pct);
+    static bool label_drawn = false;
+    static uint8_t last_pct = 0xFF; // sentinel forces first draw
+
+    if (!label_drawn)
+    {
+        draw_row(0, "Initializing    ");
+        label_drawn = true;
+    }
+
+    if (d->progress_pct != last_pct)
+    {
+        char line1[LCD_COLS + 1];
+        format_progress_line(line1, d->progress_pct);
+        draw_row(1, line1);
+        last_pct = d->progress_pct;
+    }
 }
 
 /**
@@ -263,22 +282,77 @@ static void draw_fault(const lcd_fault_data_t *d)
 
 static void draw_factory_reset(const lcd_factory_reset_data_t *d)
 {
+    factory_reset_action_t action = atomic_load(&d->action);
 
     switch (d->phase)
     {
     case FACTORY_PHASE_CONFIRM:
-        draw_commit("FACTORY RESET?  ", "Hold=Yes Back=No");
-        break;
-    case FACTORY_PHASE_PROGRESS:
     {
-        char r1[17];
-        snprintf(r1, 17, "Progress: %3d%%  ", d->progress_pct);
-        draw_commit("RESETTING...    ", r1);
+        const char *r0, *r1;
+        switch (action)
+        {
+        case FACTORY_ACTION_CLEAR_SETTINGS:
+            r0 = "CLEAR SETTINGS? ";
+            r1 = "[OK]=Yes Back=No";
+            break;
+        case FACTORY_ACTION_ERASE_LOGS:
+            r0 = "ERASE LOGS?     ";
+            r1 = "[OK]=Yes Back=No";
+            break;
+        case FACTORY_ACTION_RESET_ALL:
+        default:
+            r0 = "FACTORY RESET?  ";
+            r1 = "[OK]=Yes Back=No";
+            break;
+        }
+        draw_commit(r0, r1);
         break;
     }
-    case FACTORY_PHASE_DONE:
-        draw_commit("RESET COMPLETE  ", "Restarting...   ");
+
+    case FACTORY_PHASE_PROGRESS:
+    {
+        const char *r0;
+        switch (action)
+        {
+        case FACTORY_ACTION_CLEAR_SETTINGS:
+            r0 = "CLEARING...     ";
+            break;
+        case FACTORY_ACTION_ERASE_LOGS:
+            r0 = "ERASING LOGS... ";
+            break;
+        case FACTORY_ACTION_RESET_ALL:
+        default:
+            r0 = "RESETTING...    ";
+            break;
+        }
+        char r1[17];
+        snprintf(r1, 17, "Progress: %3d%%  ", atomic_load(&d->progress_pct));
+        draw_commit(r0, r1);
         break;
+    }
+
+    case FACTORY_PHASE_DONE:
+    {
+        const char *r0, *r1;
+        switch (action)
+        {
+        case FACTORY_ACTION_CLEAR_SETTINGS:
+            r0 = "SETTINGS CLEARED";
+            r1 = "                ";
+            break;
+        case FACTORY_ACTION_ERASE_LOGS:
+            r0 = "LOGS ERASED     ";
+            r1 = "                ";
+            break;
+        case FACTORY_ACTION_RESET_ALL:
+        default:
+            r0 = "RESET COMPLETE  ";
+            r1 = "Restarting...   ";
+            break;
+        }
+        draw_commit(r0, r1);
+        break;
+    }
     }
 }
 
@@ -405,10 +479,6 @@ void lcd_task(void *arg)
     static uint32_t main_page_last_change_ms = 0;
     const uint32_t MAIN_PAGE_INTERVAL_MS = 2000; // 5 seconds
 
-    /* Integrity check state */
-    static uint32_t corruption_count = 0;
-    const uint32_t REINIT_THRESHOLD = 10;
-
     /* Initialize LCD subsystems */
     sys_lcd.main.sub_page = MAIN_SUB_OUTPUT;
     sys_lcd.main.sub_page_interval_ms = 5000;
@@ -433,41 +503,6 @@ void lcd_task(void *arg)
         xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
         memcpy(&snap, &sys_lcd, sizeof(snap));
         xSemaphoreGive(sys_state_mutex);
-
-        /* ====== STEP 3: INTEGRITY CHECK ====== */
-        if (!lcd_integrity_check())
-        {
-            corruption_count++;
-            ESP_LOGW(TAG, "⚠️ INTEGRITY_CHECK_FAILED: count=%lu", corruption_count);
-
-            if (corruption_count % REINIT_THRESHOLD == 0)
-            {
-                uint32_t reinit_count = corruption_count / REINIT_THRESHOLD;
-                ESP_LOGW(TAG, "⚠️ LCD corruption detected (#%lu), reinitializing...",
-                         reinit_count);
-
-                /* Save state that should persist */
-                uint8_t saved_sub_page = sys_lcd.main.sub_page;
-                lcd_screen_id_t saved_screen = sys_lcd.screen;
-
-                /* Reinitialize LCD hardware */
-                lcd_task_reinit(NULL);
-
-                /* Restore persisted state */
-                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
-                sys_lcd.main.sub_page = saved_sub_page;
-                sys_lcd.screen = saved_screen;
-                xSemaphoreGive(sys_state_mutex);
-
-                ESP_LOGI(TAG, "✓ LCD reinitialized, sub_page=%d", saved_sub_page);
-                need_clear = true;
-            }
-
-            vTaskDelay(pdMS_TO_TICKS(50));
-            ESP_LOGI(TAG, "⏭️  SKIP_ITERATION: integrity check failed");
-            /* ✅ FIX: Only continue on actual failures, not after every check */
-            continue;
-        }
 
         /* ====== STEP 4: FLASH MESSAGE HANDLING ====== */
         /* ✅ KEY: Check if active flash has expired */
@@ -563,7 +598,6 @@ void lcd_task(void *arg)
         {
             last_draw_screen = snap.screen;
         }
-
         switch (snap.screen)
         {
         case LCD_SCREEN_BOOT_BRAND:
@@ -575,7 +609,21 @@ void lcd_task(void *arg)
             break;
 
         case LCD_SCREEN_BOOT_INIT:
-            draw_boot_init(&snap.boot_init);
+            lcd_boot_init_data_t d = {.progress_pct = 0};
+            draw_boot_init(&d);
+
+            // step 1 work here
+            d.progress_pct = (1 * 100) / BOOT_TOTAL_STEPS;
+            draw_boot_init(&d);
+
+            // step 2 work here
+            d.progress_pct = (2 * 100) / BOOT_TOTAL_STEPS;
+            draw_boot_init(&d);
+
+            // step 3 work here
+            d.progress_pct = (3 * 100) / BOOT_TOTAL_STEPS;
+            draw_boot_init(&d);
+
             vTaskDelay(pdMS_TO_TICKS(2000));
             xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
             sys_lcd.screen = LCD_SCREEN_MAIN;
@@ -634,9 +682,6 @@ void lcd_task(void *arg)
             draw_standby(&snap.standby);
             break;
         case LCD_SCREEN_FLASH_MSG:
-
-            /* ✅ FIX: DIRTY CHECKING FOR FLASH MESSAGES */
-            /* Only clear when flash CONTENT changes, not every frame */
 
             static char prev_flash_line0[17] = {0};
             static char prev_flash_line1[17] = {0};
