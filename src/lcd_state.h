@@ -40,6 +40,7 @@ extern "C"
         LCD_SHOW_SETTINGS,
         LCD_SHOW_BAT_VOLTAGE,
         LCD_DISPLAY_BATTERY_SETTINGS,
+        LCD_SCREEN_LOADING,
         LCD_SCREEN_COUNT
     } lcd_screen_id_t;
 
@@ -81,6 +82,19 @@ extern "C"
         uint32_t sub_page_last_change_ms;
         uint32_t sub_page_interval_ms;
     } lcd_main_data_t;
+
+    typedef struct
+    {
+        char title[17];
+
+        uint32_t start_ms;
+        uint32_t duration_ms;
+
+        lcd_screen_id_t next_screen;
+
+        bool active;
+
+    } lcd_loading_data_t;
 
     typedef struct
     {
@@ -127,7 +141,8 @@ extern "C"
 
     typedef enum
     {
-        FACTORY_PHASE_CONFIRM = 0,
+        FACTORY_PHASE_IDLE = 0,
+        FACTORY_PHASE_CONFIRM,
         FACTORY_PHASE_PROGRESS,
         FACTORY_PHASE_DONE,
     } factory_reset_phase_t;
@@ -202,6 +217,7 @@ extern "C"
         lcd_two_line_t confirm;
         lcd_flash_data_t flash;
         lcd_standby_data_t standby;
+        lcd_loading_data_t loading;
 
         /* ✅ Activity tracking for sub-page cycling */
         bool should_cycle_subpages;

@@ -140,6 +140,24 @@ void lcd_flash_clear(void)
     ESP_LOGI(TAG, "✓ Active flash cleared");
 }
 
+/**
+ * @brief Clear the active flash and return where it should fall back to.
+ *
+ * Combines the clear + return_to read into a single critical section
+ * so no other task can enqueue a new flash in between (which would
+ * otherwise get silently overwritten by the stale return_to below).
+ */
+lcd_screen_id_t lcd_flash_clear_and_get_return(void)
+{
+    xSemaphoreTake(s_flash_mutex, portMAX_DELAY);
+    lcd_screen_id_t return_to = s_active_flash.return_to;
+    s_active_flash.active = false;
+    xSemaphoreGive(s_flash_mutex);
+
+    ESP_LOGI(TAG, "✓ Active flash cleared (return_to=%d)", return_to);
+    return return_to;
+}
+
 static void copy_entry(flash_entry_t *dst, const flash_entry_t *src)
 {
     memcpy(dst, src, sizeof(flash_entry_t));
@@ -244,9 +262,6 @@ void lcd_flash_enqueue_to(const char *line0,
         sys_lcd.screen = LCD_SCREEN_FLASH_MSG;
 
         xSemaphoreGive(s_flash_mutex);
-
-        ESP_LOGI(TAG, "📢 FLASH_IMMEDIATE: '%s' / '%s' (%lu ms, pri=%d, return_to=%d)",
-                 entry.line0, entry.line1, duration_ms, priority, resolved_return);
     }
     else
     {
@@ -277,7 +292,7 @@ void lcd_flash_enqueue_to(const char *line0,
                 uint8_t pos = find_insert_pos(priority);
                 insert_at(pos, &entry);
 
-                ESP_LOGI(TAG, "📋 FLASH_QUEUED (replaced): '%s' (queue_size=%d)",
+                ESP_LOGD(TAG, "📋 FLASH_QUEUED (replaced): '%s' (queue_size=%d)",
                          entry.line0, s_queue_count);
             }
             else
@@ -288,16 +303,6 @@ void lcd_flash_enqueue_to(const char *line0,
 
         xSemaphoreGive(s_flash_mutex);
     }
-}
-
-/* Original signature preserved as a thin wrapper — every existing
- * call site keeps working unchanged, auto-capturing current screen. */
-void lcd_flash_enqueue(const char *line0,
-                       const char *line1,
-                       uint32_t duration_ms,
-                       flash_priority_t priority)
-{
-    lcd_flash_enqueue_to(line0, line1, duration_ms, priority, LCD_FLASH_RETURN_AUTO);
 }
 
 /**
@@ -399,20 +404,40 @@ void lcd_flash_queue_purge_below(flash_priority_t min_priority)
 
 void lcd_flash_info(const char *l0, const char *l1, uint32_t ms)
 {
-    lcd_flash_enqueue(l0, l1, ms, FLASH_PRI_INFO);
+    lcd_flash_enqueue_to(l0, l1, ms, FLASH_PRI_INFO, LCD_FLASH_RETURN_AUTO);
+}
+
+void lcd_flash_info_to(const char *l0, const char *l1, uint32_t ms, lcd_screen_id_t return_to)
+{
+    lcd_flash_enqueue_to(l0, l1, ms, FLASH_PRI_INFO, return_to);
 }
 
 void lcd_flash_warning(const char *l0, const char *l1, uint32_t ms)
 {
-    lcd_flash_enqueue(l0, l1, ms, FLASH_PRI_WARNING);
+    lcd_flash_enqueue_to(l0, l1, ms, FLASH_PRI_WARNING, LCD_FLASH_RETURN_AUTO);
+}
+
+void lcd_flash_warning_to(const char *l0, const char *l1, uint32_t ms, lcd_screen_id_t return_to)
+{
+    lcd_flash_enqueue_to(l0, l1, ms, FLASH_PRI_WARNING, return_to);
 }
 
 void lcd_flash_fault(const char *l0, const char *l1, uint32_t ms)
 {
-    lcd_flash_enqueue(l0, l1, ms, FLASH_PRI_FAULT);
+    lcd_flash_enqueue_to(l0, l1, ms, FLASH_PRI_FAULT, LCD_FLASH_RETURN_AUTO);
+}
+
+void lcd_flash_fault_to(const char *l0, const char *l1, uint32_t ms, lcd_screen_id_t return_to)
+{
+    lcd_flash_enqueue_to(l0, l1, ms, FLASH_PRI_FAULT, return_to);
 }
 
 void lcd_flash_critical(const char *l0, const char *l1, uint32_t ms)
 {
-    lcd_flash_enqueue(l0, l1, ms, FLASH_PRI_CRITICAL);
+    lcd_flash_enqueue_to(l0, l1, ms, FLASH_PRI_CRITICAL, LCD_FLASH_RETURN_AUTO);
+}
+
+void lcd_flash_critical_to(const char *l0, const char *l1, uint32_t ms, lcd_screen_id_t return_to)
+{
+    lcd_flash_enqueue_to(l0, l1, ms, FLASH_PRI_CRITICAL, return_to);
 }

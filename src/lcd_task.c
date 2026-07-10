@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <math.h>
 #include "lcd_flash_queue.h"
+#include "lcd_writer.h"
 #include <stdatomic.h>
 
 #define BOOT_TOTAL_STEPS 3
@@ -35,6 +36,9 @@ extern active_flash_t s_active_flash;
 #define SCL_PIN 22
 #define LCD_BLINK_INTERVAL_MS 500
 #define LCD_FLASH_QUEUE_DEPTH 4
+
+static uint8_t loading_progress(uint32_t elapsed,
+                                uint32_t duration);
 
 static const char *TAG = "LCD_TASK";
 
@@ -338,11 +342,11 @@ static void draw_factory_reset(const lcd_factory_reset_data_t *d)
         {
         case FACTORY_ACTION_CLEAR_SETTINGS:
             r0 = "SETTINGS CLEARED";
-            r1 = "                ";
+            r1 = "DEFAULT LOADED  ";
             break;
         case FACTORY_ACTION_ERASE_LOGS:
             r0 = "LOGS ERASED     ";
-            r1 = "                ";
+            r1 = "System Clean    ";
             break;
         case FACTORY_ACTION_RESET_ALL:
         default:
@@ -350,7 +354,23 @@ static void draw_factory_reset(const lcd_factory_reset_data_t *d)
             r1 = "Restarting...   ";
             break;
         }
-        draw_commit(r0, r1);
+        ESP_LOGI("FLASH_AGAIN", "ReDRAWING AGAIN");
+        if (atomic_load(&sys_lcd.factory_reset.action) == FACTORY_ACTION_RESET_ALL)
+            draw_commit(r0, r1);
+        else
+            lcd_flash_info_to(r0, r1, 1500, LCD_SCREEN_MAIN);
+        break;
+    }
+
+    case FACTORY_PHASE_IDLE:
+    {
+        static int last_selection = -1;
+        if (atomic_load(&d->action) != FACTORY_ACTION_NONE || last_selection < 0)
+        {
+            /* fall back to a generic prompt if selection context isn't available */
+            draw_commit("Factory Reset   ", "Select an option");
+            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
+        }
         break;
     }
     }
@@ -413,6 +433,63 @@ static void draw_standby(const lcd_standby_data_t *d)
     else
         snprintf(r1, 17, "STD_BY BAT:%3d%% ", d->battery_pct);
     draw_commit("Vonix Inverter  ", r1);
+}
+
+static uint8_t loading_progress(uint32_t elapsed,
+                                uint32_t duration)
+{
+    if (elapsed >= duration)
+        return 100;
+
+    float t = (float)elapsed / duration;
+
+    if (t < 0.80f)
+    {
+        return (uint8_t)(t * 100.0f);
+    }
+
+    float remain = (t - 0.80f) / 0.20f;
+
+    return 80 + (uint8_t)(remain * 20.0f);
+}
+
+static void draw_loading_bar(uint8_t pct)
+{
+    char row[17];
+
+    uint8_t blocks = (pct * 10) / 100;
+
+    row[0] = '[';
+
+    for (int i = 0; i < 10; i++)
+    {
+        row[i + 1] = (i < blocks) ? 0xFF : '-';
+    }
+
+    row[11] = ']';
+    row[12] = '\0';
+
+    draw_row(1, row);
+}
+
+static void draw_loading(const lcd_loading_data_t *d)
+{
+    static uint8_t last_pct = 255;
+
+    uint32_t elapsed =
+        _lcd_get_time_ms() - d->start_ms;
+
+    uint8_t pct =
+        loading_progress(elapsed,
+                         d->duration_ms);
+
+    draw_row(0, "Loading...");
+
+    if (pct != last_pct)
+    {
+        draw_loading_bar(pct);
+        last_pct = pct;
+    }
 }
 
 /*==============================================================================
@@ -513,28 +590,22 @@ void lcd_task(void *arg)
         {
             ESP_LOGI(TAG, "✓ Flash expired");
 
-            lcd_flash_clear();
+            lcd_screen_id_t fallback_screen = lcd_flash_clear_and_get_return();
 
-            /* Check if more messages are queued */
             if (lcd_flash_queue_has_pending())
             {
                 flash_entry_t next;
-
                 if (lcd_flash_dequeue(&next))
                 {
-                    /* Re-enqueue to activate (now that active is cleared) */
-                    lcd_flash_enqueue(next.line0, next.line1,
-                                      next.duration_ms, next.priority);
+                    lcd_flash_enqueue_to(next.line0, next.line1,
+                                         next.duration_ms, next.priority, next.return_to);
                 }
             }
             else
             {
-                /* No more queued — return to previous screen */
                 xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
-                sys_lcd.screen = s_active_flash.return_to;
+                sys_lcd.screen = fallback_screen;
                 xSemaphoreGive(sys_state_mutex);
-
-                ESP_LOGI(TAG, "✓ Returned to screen: %d", s_active_flash.return_to);
             }
         }
 
@@ -610,22 +681,24 @@ void lcd_task(void *arg)
 
         case LCD_SCREEN_BOOT_INIT:
             lcd_boot_init_data_t d = {.progress_pct = 0};
-            draw_boot_init(&d);
+            // draw_boot_init(&d);
 
-            // step 1 work here
-            d.progress_pct = (1 * 100) / BOOT_TOTAL_STEPS;
-            draw_boot_init(&d);
+            // // step 1 work here
+            // d.progress_pct = (1 * 100) / BOOT_TOTAL_STEPS;
+            // draw_boot_init(&d);
 
-            // step 2 work here
-            d.progress_pct = (2 * 100) / BOOT_TOTAL_STEPS;
-            draw_boot_init(&d);
+            // // step 2 work here
+            // d.progress_pct = (2 * 100) / BOOT_TOTAL_STEPS;
+            // draw_boot_init(&d);
 
-            // step 3 work here
-            d.progress_pct = (3 * 100) / BOOT_TOTAL_STEPS;
-            draw_boot_init(&d);
+            // // step 3 work here
+            // d.progress_pct = (3 * 100) / BOOT_TOTAL_STEPS;
+            // draw_boot_init(&d);
 
-            vTaskDelay(pdMS_TO_TICKS(2000));
+            // vTaskDelay(pdMS_TO_TICKS(2000));
+
             xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+            lcd_show_loading("Initializing..", 3000, LCD_SCREEN_MAIN);
             sys_lcd.screen = LCD_SCREEN_MAIN;
             xSemaphoreGive(sys_state_mutex);
             break;
@@ -698,7 +771,7 @@ void lcd_task(void *arg)
                 if (flash_content_changed)
                 {
                     /* ✅ Only clear if flash MESSAGE changed (not every frame) */
-                    lcd_clear();
+                    // lcd_clear();
 
                     /* Save for next frame comparison */
                     strncpy(prev_flash_line0, flash.line0, sizeof(prev_flash_line0) - 1);
@@ -720,6 +793,31 @@ void lcd_task(void *arg)
                 draw_commit(flash.line0, flash.line1);
             }
             break;
+
+        case LCD_SCREEN_LOADING:
+        {
+            draw_loading(&snap.loading);
+
+            uint32_t elapsed =
+                _lcd_get_time_ms() - snap.loading.start_ms;
+
+            if (elapsed >= snap.loading.duration_ms)
+            {
+                xSemaphoreTake(sys_state_mutex,
+                               portMAX_DELAY);
+
+                sys_lcd.loading.active = false;
+
+                sys_lcd.screen =
+                    sys_lcd.loading.next_screen;
+
+                xSemaphoreGive(sys_state_mutex);
+
+                need_clear = true;
+            }
+
+            break;
+        }
 
         default:
             ESP_LOGW(TAG, "⚠️ Unknown screen: %d", snap.screen);

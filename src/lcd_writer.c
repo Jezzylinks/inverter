@@ -22,6 +22,16 @@ extern system_state_t sys_state;   /* the single system-state instance */
 #define LCD_LOCK() xSemaphoreTake(sys_state_mutex, portMAX_DELAY)
 #define LCD_UNLOCK() xSemaphoreGive(sys_state_mutex)
 
+/**
+ * Get current time in milliseconds (using FreeRTOS ticks)
+ */
+static uint32_t _lcd_get_time_ms(void)
+{
+    TickType_t ticks = xTaskGetTickCount();
+
+    return (uint32_t)(ticks * portTICK_PERIOD_MS);
+}
+
 /* Safely copy a string into a 16-char LCD field */
 static void set16(char *dst, const char *src)
 {
@@ -292,4 +302,27 @@ void lcd_show_standby(float bat_v, uint8_t bat_pct, bool ac_connected)
     sys_lcd.standby.battery_pct = bat_pct;
     sys_lcd.standby.ac_connected = ac_connected;
     LCD_UNLOCK();
+}
+
+void lcd_show_loading(const char *title,
+                      uint32_t duration_ms,
+                      lcd_screen_id_t next_screen)
+{
+    xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+
+    memset(&sys_lcd.loading, 0, sizeof(sys_lcd.loading));
+
+    snprintf(sys_lcd.loading.title,
+             sizeof(sys_lcd.loading.title),
+             "%-16.16s",
+             title);
+
+    sys_lcd.loading.start_ms = _lcd_get_time_ms();
+    sys_lcd.loading.duration_ms = duration_ms;
+    sys_lcd.loading.next_screen = next_screen;
+    sys_lcd.loading.active = true;
+
+    sys_lcd.screen = LCD_SCREEN_LOADING;
+
+    xSemaphoreGive(sys_state_mutex);
 }

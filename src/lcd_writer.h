@@ -17,6 +17,9 @@ void lcd_writer_init(void);
 void lcd_show_boot_brand(void);
 void lcd_show_boot_init(uint8_t progress_pct);
 void lcd_boot_complete(void); /* switches to LCD_SCREEN_MAIN    */
+void lcd_show_loading(const char *title,
+                      uint32_t duration_ms,
+                      lcd_screen_id_t next_screen);
 
 /* ── Normal operating screen ─────────────────────────────────────────────── */
 /* Call from adc_task every cycle — lcd_task reads and decides sub-page      */

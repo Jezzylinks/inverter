@@ -3623,7 +3623,7 @@ void erase_logs(void)
 
     /* Step 1: clear in-RAM ring buffer + counters (fast, no I/O) */
     error_log_clear();
-    atomic_store(&sys_lcd.factory_reset.progress_pct, 30);
+    atomic_store(&sys_lcd.factory_reset.progress_pct, 1000);
     vTaskDelay(pdMS_TO_TICKS(200));
 
     /* Step 2: erase the log_storage NVS namespace — separate namespace
@@ -3661,16 +3661,12 @@ void erase_logs(void)
 
     atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
     vTaskDelay(pdMS_TO_TICKS(200));
-    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
 
     update_buzzer(1000, 50);
     vTaskDelay(pdMS_TO_TICKS(150));
     buzzer_off();
     sys_state.power_button_sequence_count = 0;
-    lcd_flash_info("Logs Cleared    ", "System Clean    ", 1500);
     ESP_LOGI(TAG_SYS, "Error logs erased");
-    sys_lcd.screen = LCD_SCREEN_MAIN;
-    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
 }
 
 typedef struct
@@ -4246,7 +4242,8 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             break;
         }
 
-        if (sys_state.menu_state == MENU_FACTORY_RESET && atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_CONFIRM)
+        if (sys_state.menu_state == MENU_FACTORY_RESET &&
+            atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_CONFIRM)
         {
             switch (sys_state.factory_reset.pending_action)
             {
@@ -4255,23 +4252,28 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
                 atomic_store(&sys_lcd.factory_reset.progress_pct, 0);
                 perform_factory_reset();
+                vTaskDelay(pdMS_TO_TICKS(1500));
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
                 break;
             case FACTORY_ACTION_CLEAR_SETTINGS:
                 ESP_LOGI(TAG_SYS, "Clear Settings confirmed by user");
                 clear_settings();
+                vTaskDelay(pdMS_TO_TICKS(1500));
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
                 break;
             case FACTORY_ACTION_ERASE_LOGS:
                 ESP_LOGI(TAG_SYS, "Erase Logs confirmed by user");
                 erase_logs();
+                vTaskDelay(pdMS_TO_TICKS(1500));
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
                 break;
             default:
-                ESP_LOGI(TAG_SYS, "No factory setting");
                 break;
             }
-            sys_state.factory_reset.pending_action = FACTORY_ACTION_NONE; // single clear point, always runs
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
+            sys_state.menu_state = MENU_NONE;
+            break;
         }
 
         /* Menu navigation */
@@ -4374,7 +4376,18 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             break;
 
         case MENU_FACTORY_RESET:
-            sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
+            if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_DONE)
+            {
+                sys_lcd.screen = LCD_SCREEN_MAIN;
+                atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
+                break;
+            }
+            else if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_IDLE)
+            {
+                sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
+                atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
+            }
+
             switch (sys_state.menu_selection)
             {
             case 0:
@@ -4390,6 +4403,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_ERASE_LOGS);
                 break;
             }
+            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
             break;
 
         default:
@@ -4441,7 +4455,6 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             case 3:
                 next = MENU_FACTORY_RESET;
                 sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
-                sys_lcd.factory_reset.phase = FACTORY_PHASE_CONFIRM;
                 break;
             }
             if (next != MENU_NONE)
@@ -4977,13 +4990,25 @@ void handle_back_button_event(button_event_info_t *event_info,
                 return;
             }
 
+            if (phase == FACTORY_PHASE_CONFIRM)
+            {
+                /* Cancel the Yes/No prompt, go back to the action list (not main menu) */
+                sys_state.factory_reset.pending_action = FACTORY_ACTION_NONE;
+                atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
+                atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
+                sys_state.last_activity_time = esp_timer_get_time() / 1000;
+                show_menu_screen(MENU_FACTORY_RESET, sys_state.menu_selection);
+                return;
+            }
+
+            /* phase == FACTORY_PHASE_IDLE: exit the list back to the main menu */
             sys_state.factory_reset.pending_action = FACTORY_ACTION_NONE;
             atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
-            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
+            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
             sys_state.last_activity_time = esp_timer_get_time() / 1000;
             sys_state.menu_selection = 0;
             sys_state.menu_state = MAIN_MENU;
-            show_menu_screen(MENU_FACTORY_RESET, sys_state.menu_selection);
+            show_menu_screen(MAIN_MENU, sys_state.menu_selection);
             return;
         }
 
@@ -5375,7 +5400,6 @@ void lcd_draw_diagnostics_screen(uint8_t index)
  */
 void clear_settings(void)
 {
-    ESP_LOGI(TAG_SYS, "Clearing settings only (battery profile untouched)");
 
     atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
     atomic_store(&sys_lcd.factory_reset.progress_pct, 0);
@@ -5390,19 +5414,13 @@ void clear_settings(void)
      * profile keys in the same namespace survive untouched. */
     save_settings();
     atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
-    vTaskDelay(pdMS_TO_TICKS(300));
-
-    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
     update_buzzer(1500, 40);
     vTaskDelay(pdMS_TO_TICKS(150));
     buzzer_off();
     sys_state.power_button_sequence_count = 0;
-    lcd_flash_info("Settings Cleared", "Defaults Loaded ", 1500);
-    sys_lcd.screen = LCD_SCREEN_MAIN;
     ESP_LOGI(TAG_SYS, "Settings cleared and defaults saved");
-
-    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
 }
 
 /* ── perform_factory_reset() ────────────────────────────────────────────── */

@@ -55,10 +55,6 @@ typedef struct
 
 /* Call once before any task starts. */
 void lcd_flash_init(TaskHandle_t lcd_task_handle);
-void lcd_flash_enqueue(const char *line0,
-                       const char *line1,
-                       uint32_t duration_ms,
-                       flash_priority_t priority);
 void lcd_flash_enqueue_to(const char *line0,
                           const char *line1,
                           uint32_t duration_ms,
@@ -73,10 +69,17 @@ void lcd_flash_info(const char *line0, const char *line1, uint32_t ms);
 void lcd_flash_warning(const char *line0, const char *line1, uint32_t ms);
 void lcd_flash_fault(const char *line0, const char *line1, uint32_t ms);
 void lcd_flash_critical(const char *line0, const char *line1, uint32_t ms);
+
+void lcd_flash_info_to(const char *line0, const char *line1, uint32_t ms, lcd_screen_id_t return_to);
+void lcd_flash_warning_to(const char *line0, const char *line1, uint32_t ms, lcd_screen_id_t return_to);
+void lcd_flash_fault_to(const char *line0, const char *line1, uint32_t ms, lcd_screen_id_t return_to);
+void lcd_flash_critical_to(const char *line0, const char *line1, uint32_t ms, lcd_screen_id_t return_to);
+
 bool lcd_flash_is_active(void);
 bool lcd_flash_get(active_flash_t *flash);
 bool lcd_flash_is_expired(void);
 void lcd_flash_clear(void);
+lcd_screen_id_t lcd_flash_clear_and_get_return(void);
 
 /*
  * Called exclusively by lcd_task to dequeue the next message.
