@@ -84,7 +84,7 @@ static button_handle_t g_gpio_to_controller[GPIO_NUM_MAX] = {NULL};
 // Button mapping table
 static const button_mapping_t button_mappings[] = {
     {GPIO_BUTTON_POWER, BTN_POWER, "Power"},
-    {GPIO_BUTTON_ENTER_MENU, BTN_ENTER_MENU, "Enter/Menu"},
+    {GPIO_BUTTON_ENTER_MENU, BTN_ENTER, "Enter/Menu"},
     {GPIO_BUTTON_UP, BTN_UP, "Up"},
     {GPIO_BUTTON_DOWN, BTN_DOWN, "Down"},
     {GPIO_BUTTON_BACK, BTN_BACK, "Back"}};

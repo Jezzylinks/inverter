@@ -1,0 +1,58 @@
+#ifndef SECURITY_H
+#define SECURITY_H
+
+#include <stdbool.h>
+#include <stdint.h>
+#include "esp_err.h"
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+#define SECURITY_PIN_LEN 4
+#define SECURITY_MAX_ATTEMPTS 3
+#define SECURITY_LOCKOUT_MS (30 * 1000) // 30s, tune later
+#define SECURITY_DEFAULT_PIN {0, 0, 0, 0}
+
+    /**
+     * Must be called once during app init, after NVS is ready.
+     * Loads the stored PIN hash/salt. If none exists (first boot),
+     * provisions the default PIN (0000) and sets the force-change flag.
+     */
+    esp_err_t security_init(void);
+
+    /**
+     * Verify a 4-digit PIN against the stored hash.
+     * Updates internal attempt counter / lockout state as a side effect.
+     * Returns false immediately (without consuming an attempt) if currently locked out.
+     */
+    bool security_verify_pin(const uint8_t pin[SECURITY_PIN_LEN]);
+
+    /**
+     * Hash and persist a new PIN to NVS. Clears the force-change flag.
+     * Caller is responsible for having verified the old PIN first, if required.
+     */
+    esp_err_t security_set_pin(const uint8_t new_pin[SECURITY_PIN_LEN]);
+
+    /** True if a PIN-entry attempt is currently blocked by lockout. */
+    bool security_is_locked_out(void);
+
+    /** Milliseconds remaining in the current lockout, 0 if not locked out. */
+    int64_t security_lockout_remaining_ms(void);
+
+    /** True if the PIN is still the factory default and must be changed. */
+    bool security_pin_change_required(void);
+
+    /**
+     * Resets the in-RAM attempt counter and clears lockout state.
+     * Called internally on successful verification; exposed in case
+     * a higher-level policy (e.g. reboot) needs to force-clear it.
+     */
+    void security_reset_attempts(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // SECURITY_H

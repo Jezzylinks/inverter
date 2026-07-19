@@ -53,7 +53,7 @@ void lcd_clear_fault(void); /* returns to LCD_SCREEN_MAIN     */
 
 /* ── Factory reset ───────────────────────────────────────────────────────── */
 void lcd_show_factory_confirm(void);
-void lcd_show_factory_progress(uint8_t pct);
+void lcd_show_factory_progress();
 void lcd_show_factory_done(void);
 
 /* ── Wi-Fi ───────────────────────────────────────────────────────────────── */

@@ -40,6 +40,7 @@ extern "C"
         MENU_SYSTEM_INFO,
         MENU_FACTORY_RESET,
         WIFI_ACTIVATION,
+        MENU_SECURITY,
         MENU_COUNT
     } menu_state_t;
 
@@ -57,6 +58,16 @@ extern "C"
         uint32_t last_update_time;
         uint32_t last_screen_change;
     } lcd_display_state_t;
+
+    typedef struct
+    {
+        uint32_t uptime_seconds;
+        float cpu_load;
+        float ram_usage;
+        float temperature;
+        bool system_ok;
+        char last_error[32];
+    } diagnostic_data_t;
 
     typedef enum
     {
@@ -91,7 +102,7 @@ extern "C"
         float increment_small; // Normal increment
         float increment_large; // Fast increment (long press/repeat)
         float current_value;
-        const char *options[10]; // For select/list types
+        const char *const *options;
         bool is_critical;
         bool live_update;
         param_apply_fn apply; // NULL => no live hardware effect

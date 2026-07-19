@@ -29,6 +29,7 @@
 #include "esp_wifi.h"
 #include "esp_wifi_types.h"
 #include "freertos/event_groups.h"
+#include "security/security.h"
 
 #include "sdkconfig.h"
 #include "rom/ets_sys.h"
@@ -45,6 +46,8 @@
 #include "lcd_watchdog.h"
 #include "lcd_flash_queue.h"
 
+// SECURITY
+#include "security/change_pin_flow.h"
 // System state
 #include "system_state.h"
 
@@ -141,7 +144,11 @@
 #define ALERT_TONE_VOLUME 200
 #define WAKEUP_BUTTON_1 GPIO_BTN_ENTER
 #define WAKEUP_BUTTON_2 GPIO_BTN_BACK
+
+// Tags
 #define tag "LCD"
+#define NVS_LOAD_TAG "NVS_LOAD"
+
 #define BUTTON_NONE -1
 #define BATTERY_MENU_COUNT 3
 #define BATTERY_PROFILE_VERSION 1
@@ -189,9 +196,9 @@
 #define RTC_MAGIC_FLAG 0xA5A5A5A5
 #define BUTTON_MAX 5
 #define DEBOUNCE_THRESHOLD_MS 50
-#define LONG_PRESS_MS 1500
+#define LONG_PRESS_MS 1000
 #define HOLD_PRESS_MS 500
-#define VERY_LONG_PRESS_MS 3000
+#define VERY_LONG_PRESS_MS 2000
 #define DOUBLE_CLICK_MS 400
 #define REPEAT_INITIAL_DELAY_MS 500
 #define REPEAT_INTERVAL_MS 100
@@ -283,6 +290,7 @@
 #define WIFI_FAIL_BIT BIT1
 #define MAX_RETRY 5
 #define LOG_TAG "LOG_MANAGER"
+#define NVS_TAG "NVS"
 #define MAX_ERROR_LOG_ENTRIES 10
 
 // static int fan_disconnect_count = 0;
@@ -671,10 +679,6 @@ bool battery_save_configuration(battery_type_t battery_type,
 
     nvs_close(nvs_handle);
 
-    printf("Battery configuration saved successfully!\n");
-    printf("  Type: %d, Voltage: %dV, Capacity: %dAh\n",
-           battery_type, voltage_system, capacity_ah);
-
     return true;
 }
 
@@ -813,11 +817,11 @@ void select_battery_type(button_id_t btn)
         selected = (selected - 1 + BATTERY_TYPE_COUNT) % BATTERY_TYPE_COUNT;
         updated = true;
         break;
-    case BTN_ENTER_MENU:
+    case BTN_ENTER:
     {
-        esp_err_t err = battery_save_configuration(
+        bool saved = battery_save_configuration(
             (battery_type_t)selected, VOLTAGE_SYSTEM_48V, 200);
-        if (err == ESP_OK)
+        if (saved == true)
         {
             snprintf(display_char, sizeof(display_char),
                      "Saved: %s", battery_type_names[selected]);
@@ -862,6 +866,10 @@ typedef enum
     VALUE_TYPE_TIMEOUT,
     VALUE_TYPE_BLUETOOTH,
     VALUE_TYPE_WIFI,
+    VALUE_TYPE_AUTO_SHUTDOWN,
+    VALUE_TYPE_SCROLL_ENABLE,
+    VALUE_TYPE_SCROLL_SPEED,
+    VALUE_TYPE_BATTERY_TYPE,
     VALUE_TYPE_COUNT
 } value_edit_param_t;
 
@@ -886,16 +894,6 @@ static const char *TAG_SYS = "System";
 
 static nvs_handle_t nvs_handler;
 
-// ================== DEFAULT SETTINGS ==================
-// Default settings for the inverter system
-// You can define default values here
-static const int default_settings[] = {
-    48,  // Battery Voltage (e.g., 48V)
-    220, // Output Voltage (e.g., 220V)
-    30,  // Overload Limit (e.g., 30A)
-    60   // Temperature Limit (e.g., 60°C)
-};
-// end DEFAULT SETTINGS
 // Create a struct for both ADC and ADC2
 typedef struct
 {
@@ -914,17 +912,11 @@ typedef enum
     FACTORY_RESET_YES_SELECTED // Yes is selected
 } factory_reset_state_t;
 
-typedef struct
-{
-    uint32_t uptime_seconds;
-    float cpu_load;
-    float ram_usage;
-    float temperature;
-    bool system_ok;
-    char last_error[32];
-} diagnostic_data_t;
-
 diagnostic_data_t diag_data;
+
+// Security Architectural data
+change_pin_ctx_t change_pin_ctx;
+SemaphoreHandle_t change_pin_mutex = NULL;
 
 // Menu editing state
 static menu_edit_state_t menu_edit = {
@@ -973,7 +965,8 @@ static const menu_item_t main_menu_items[] = {
     {"Monitoring", MENU_MONITORING},
     {"Diagnostic", MENU_DIAGNOSTIC},
     {"WiFi Config", MENU_WIFI_CONFIG},
-    {"Factory Reset", MENU_FACTORY_RESET}};
+    {"Factory Reset", MENU_FACTORY_RESET},
+    {"Security", MENU_SECURITY}};
 
 // SETTINGS MENU (5 items)
 static const menu_item_t settings_items[] = {
@@ -981,7 +974,11 @@ static const menu_item_t settings_items[] = {
     {"Current Limit", MENU_SETTINGS},
     {"Freq Range", MENU_SETTINGS},
     {"Temp Alarm", MENU_SETTINGS},
-    {"Sys Timeout", MENU_SETTINGS}};
+    {"Sys Timeout", MENU_SETTINGS},
+    {"Auto Shutdown", MENU_SETTINGS},
+    {"Scroll Enable", MENU_SETTINGS},
+    {"Scroll Speed", MENU_SETTINGS},
+    {"Battery Type", MENU_SETTINGS}};
 
 // MONITORING MENU (6 items)
 static const menu_item_t monitoring_items[] = {
@@ -1015,6 +1012,11 @@ static const menu_item_t factory_reset_items[] = {
     {"Reset All Data", MENU_FACTORY_RESET},
     {"Clear Settings", MENU_FACTORY_RESET},
     {"Erase Logs", MENU_FACTORY_RESET}};
+
+static const menu_item_t security_items[] = {
+    {"View PIN", MENU_SECURITY},
+    {"Change PIN", MENU_SECURITY},
+    {"PIN Reset", MENU_SECURITY}};
 
 // LED channel definitions for easy reference
 typedef enum
@@ -1123,6 +1125,11 @@ static void apply_temperature_limit(float v);
 static void apply_battery_cutoff(float v);
 static void apply_wifi(float v);
 static void apply_bluetooth(float v);
+static void apply_auto_shutdown(float v);
+static void apply_scroll_enable(float v);
+static void apply_scroll_speed(float v);
+static void apply_system_timeout(float v);
+static void apply_battery_type(float v);
 
 // Value adjustment functions
 void increase_value(bool fast_mode, bool precision_mode);
@@ -1144,6 +1151,11 @@ void edit_current_limit(void);
 void edit_frequency_range(void);
 void edit_temperature_alarm(void);
 void edit_system_timeout(void);
+void edit_auto_shutdown(void);
+void edit_scroll_enable(void);
+void edit_scroll_speed(void);
+void edit_battery_type(void);
+void security_pin(void);
 
 // Submenu functions
 void lcd_show_monitoring_detail(const char *label, float value, const char *unit);
@@ -1158,9 +1170,14 @@ void clear_settings(void);
 void reload_default_settings(void);
 // Function to save the frequency setting to NVS
 void save_frequency_to_nvs(int frequency);
-void clamp_values();
-int get_setting_value(int index);
-void set_setting_value(int index, int value);
+esp_err_t get_setting_value(const char *key, int32_t default_val, int32_t *out_value);
+esp_err_t set_setting_value(const char *key, int32_t value);
+esp_err_t set_i32_safe(nvs_handle_t nvs, const char *key, void *value);
+esp_err_t set_u8_safe(nvs_handle_t nvs, const char *key, void *value);
+static bool get_u8_safe(nvs_handle_t handle, const char *key, uint8_t *out);
+static bool get_i32_safe(nvs_handle_t handle, const char *key, int32_t *out);
+static bool validate_and_clamp_settings(void);
+
 void menu_exit();
 menu_state_t display_menu_state();
 void adjust_factory_reset(button_event_info_t *btn);
@@ -1227,19 +1244,171 @@ static value_edit_context_t value_edit[] = {
         .step_size = 1.0f,
         .current_value = 220.0f},
 
-    [VALUE_TYPE_FREQUENCY] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 45.0f, .max_value = 65.0f, .increment_small = 0.1f, .increment_large = 1.0f, .increment_precision = 0.01f, .decimal_places = 2, .unit = "Hz", .label = "Frequency", .is_critical = true, .live_update = true, .step_size = 0.1f, .current_value = 50.0f, .apply = apply_frequency},
+    [VALUE_TYPE_FREQUENCY] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 45.0f,
+        .max_value = 65.0f,
+        .increment_small = 0.1f,
+        .increment_large = 1.0f,
+        .increment_precision = 0.01f,
+        .step_size = 0.1f,
+        .decimal_places = 2,
+        .unit = "Hz",
+        .label = "Frequency",
+        .is_critical = true,
+        .live_update = true,
+        .current_value = 50.0f,
+        .apply = apply_frequency,
+    },
 
-    [VALUE_TYPE_CURRENT] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 1.0f, .max_value = 50.0f, .increment_small = 0.5f, .increment_large = 2.0f, .increment_precision = 0.1f, .decimal_places = 1, .unit = "A", .label = "Current Limit", .is_critical = true, .live_update = true, .step_size = 0.1f, .current_value = 25.0f, .apply = apply_current_limit},
+    [VALUE_TYPE_CURRENT] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 1.0f,
+        .max_value = 50.0f,
+        .increment_small = 0.5f,
+        .increment_large = 2.0f,
+        .increment_precision = 0.1f,
+        .step_size = 0.1f,
+        .decimal_places = 1,
+        .unit = "A",
+        .label = "Current Limit",
+        .is_critical = true,
+        .live_update = true,
+        .current_value = 25.0f,
+        .apply = apply_current_limit,
+    },
 
-    [VALUE_TYPE_TEMPERATURE] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 40.0f, .max_value = 85.0f, .increment_small = 1.0f, .increment_large = 5.0f, .increment_precision = 0.5f, .decimal_places = 1, .unit = "°C", .label = "Temperature Limit", .is_critical = true, .live_update = true, .step_size = 0.5f, .current_value = 60.0f, .apply = apply_temperature_limit},
+    [VALUE_TYPE_TEMPERATURE] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 40.0f,
+        .max_value = 85.0f,
+        .increment_small = 1.0f,
+        .increment_large = 5.0f,
+        .increment_precision = 0.5f,
+        .step_size = 0.5f,
+        .decimal_places = 1,
+        .unit = "°C",
+        .label = "Temperature Limit",
+        .is_critical = true,
+        .live_update = true,
+        .current_value = 60.0f,
+        .apply = apply_temperature_limit,
+    },
 
-    [VALUE_TYPE_BATTERY_VOLTAGE] = {.edit_type = VALUE_EDIT_NUMERIC, .min_value = 10.0f, .max_value = 15.0f, .increment_small = 0.1f, .increment_large = 0.5f, .increment_precision = 0.01f, .decimal_places = 2, .unit = "V", .label = "Battery Cutoff", .is_critical = true, .live_update = true, .step_size = 0.5f, .current_value = 12.0f, .apply = apply_battery_cutoff},
+    [VALUE_TYPE_BATTERY_VOLTAGE] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 10.0f,
+        .max_value = 15.0f,
+        .increment_small = 0.1f,
+        .increment_large = 5.0f,
+        .increment_precision = 0.5f,
+        .step_size = 0.5f,
+        .decimal_places = 2,
+        .unit = "V",
+        .label = "Battery Cutoff",
+        .is_critical = true,
+        .live_update = true,
+        .current_value = 12.0f,
+        .apply = apply_battery_cutoff,
+    },
 
-    [VALUE_TYPE_MENU_SELECTION] = {.edit_type = VALUE_EDIT_SELECT, .min_value = 0, .max_value = 0, .temp_value = 0, .unit = "", .label = "Menu Select", .is_critical = false, .live_update = false, .apply = NULL},
+    [VALUE_TYPE_MENU_SELECTION] = {
+        .edit_type = VALUE_EDIT_SELECT,
+        .min_value = 0,
+        .max_value = 0,
+        .temp_value = 0,
+        .unit = "",
+        .label = "Menu Select",
+        .is_critical = false,
+        .live_update = false,
+        .apply = NULL,
+    },
 
-    [VALUE_TYPE_BLUETOOTH] = {.edit_type = VALUE_EDIT_BOOL, .bool_value = false, .unit = "", .label = "Bluetooth", .is_critical = false, .live_update = true, .apply = apply_bluetooth},
+    [VALUE_TYPE_BLUETOOTH] = {
+        .edit_type = VALUE_EDIT_BOOL,
+        .bool_value = false,
+        .unit = "",
+        .label = "Bluetooth",
+        .is_critical = false,
+        .live_update = true,
+        .apply = apply_bluetooth,
+    },
 
-    [VALUE_TYPE_WIFI] = {.edit_type = VALUE_EDIT_BOOL, .selection_index = 0, .bool_value = false, .unit = "", .label = "WiFi", .is_critical = false, .live_update = true, .apply = apply_wifi},
+    [VALUE_TYPE_WIFI] = {
+        .edit_type = VALUE_EDIT_BOOL,
+        .selection_index = 0,
+        .bool_value = false,
+        .unit = "",
+        .label = "WiFi",
+        .is_critical = false,
+        .live_update = true,
+        .apply = apply_wifi,
+    },
+    [VALUE_TYPE_TIMEOUT] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 5000.0f,
+        .max_value = 300000.0f,
+        .increment_small = 1000.0f,
+        .increment_large = 30000.0f,
+        .increment_precision = 100.0f,
+        .decimal_places = 0,
+        .unit = "ms",
+        .label = "System Timeout",
+        .is_critical = false,
+        .live_update = true,
+        .step_size = 1000.0f,
+        .current_value = 300000.0f,
+        .apply = apply_system_timeout,
+    },
+
+    [VALUE_TYPE_AUTO_SHUTDOWN] = {
+        .edit_type = VALUE_EDIT_BOOL,
+        .current_value = 0.0f,
+        .unit = "",
+        .label = "Auto Shutdown",
+        .is_critical = false,
+        .live_update = true,
+        .apply = apply_auto_shutdown,
+    },
+
+    [VALUE_TYPE_SCROLL_ENABLE] = {
+        .edit_type = VALUE_EDIT_BOOL,
+        .current_value = 0.0f,
+        .unit = "",
+        .label = "Scroll Enable",
+        .is_critical = false,
+        .live_update = true,
+        .apply = apply_scroll_enable,
+    },
+
+    [VALUE_TYPE_SCROLL_SPEED] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 1.0f,
+        .max_value = 10.0f,
+        .increment_small = 1.0f,
+        .increment_large = 2.0f,
+        .increment_precision = 1.0f,
+        .decimal_places = 0,
+        .unit = "",
+        .label = "Scroll Speed",
+        .is_critical = false,
+        .live_update = true,
+        .step_size = 1.0f,
+        .current_value = DEFAULT_SCROLL_SPEED,
+        .apply = apply_scroll_speed,
+    },
+
+    [VALUE_TYPE_BATTERY_TYPE] = {
+        .edit_type = VALUE_EDIT_SELECT,
+        .selection_index = 0,
+        .max_selection = BATTERY_TYPE_COUNT,
+        .options = battery_type_names,
+        .unit = "",
+        .label = "Battery Type",
+        .is_critical = true, /* changes charge/cutoff voltages — confirm before applying */
+        .live_update = false,
+        .apply = apply_battery_type,
+    },
 };
 
 // =============== HARDWARE INITIALIZATION ===============
@@ -1485,6 +1654,188 @@ void all_leds_off()
 void all_leds_on()
 {
     set_all_leds(100);
+}
+
+#define NVS_FLOAT_SCALE 100.0f
+
+typedef struct
+{
+    const char *key;
+    void *field;
+    size_t size;
+    float default_val;
+    bool is_scaled_float;
+} nvs_setting_t;
+
+static nvs_setting_t g_settings[] = {
+    {"bat_volt_system", &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 0, false},
+    {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false},
+    {"bat_type", &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false},
+    {"bat_cap_ah", &sys_state.battery_profile.capacity_ah, sizeof(int32_t), 0, true},
+    {"bat_charge_cur", &sys_state.battery_profile.max_charge_current_per_100ah, sizeof(int32_t), 0, true},
+    {"bat_disc_cur", &sys_state.battery_profile.max_discharge_current_per_100ah, sizeof(int32_t), 0, true},
+    {"bat_full_volt", &sys_state.battery_profile.high_battery_voltage_12v, sizeof(int32_t), 0, true},
+    {"bat_cutoff_volt", &sys_state.battery_profile.cutoff_voltage_12v, sizeof(int32_t), 10.5f, true},
+    {"bat_rech_volt", &sys_state.battery_profile.recharge_voltage_12v, sizeof(int32_t), 14.8f, true},
+    {"brightness", &sys_state.display.brightness, sizeof(int32_t), 100, false},
+    {"backlight_time", &sys_state.display.backlight_timeout, sizeof(int32_t), 30, false},
+    {"auto_shutdown", &sys_state.display.auto_shutdown_enabled, sizeof(uint8_t), 0, false},
+    {"scroll_en", &sys_state.display.scroll_enabled, sizeof(uint8_t), 0, false},
+    {"scroll_spd", &sys_state.display.scroll_speed, sizeof(uint8_t), DEFAULT_SCROLL_SPEED, false},
+    {"out_volt", &sys_state.inverter.output_voltage, sizeof(int32_t), 220.0f, true},
+    {"out_freq", &sys_state.inverter.output_frequency, sizeof(int32_t), 50.0f, true},
+    {"volt_threshold", &sys_state.settings.voltage_threshold, sizeof(int32_t), 12.5f, true},
+    {"current_limit", &sys_state.settings.current_limit, sizeof(int32_t), 50.0f, true},
+    {"temp_alarm", &sys_state.settings.temperature_alarm, sizeof(int32_t), 70.0f, true},
+    {"frequency_range", &sys_state.settings.frequency_range, sizeof(int32_t), 50, false},
+    {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300, false},
+};
+
+#define NVS_SETTINGS_COUNT (sizeof(g_settings) / sizeof(g_settings[0]))
+
+esp_err_t nvs_save_all(nvs_handle_t handle)
+{
+    esp_err_t err = ESP_OK;
+    esp_err_t first_err = ESP_OK;
+    const char *NVS_SAVING_TAG = "NVS_LOAD";
+
+    for (size_t i = 0; i < NVS_SETTINGS_COUNT; i++)
+    {
+        nvs_setting_t *s = &g_settings[i];
+
+        if (s->is_scaled_float)
+        {
+            float *fval = (float *)s->field;
+            int32_t scaled = (int32_t)((*fval) * NVS_FLOAT_SCALE);
+            err = set_i32_safe(handle, s->key, &scaled);
+        }
+        else if (s->size == sizeof(uint8_t))
+        {
+            err = set_u8_safe(handle, s->key, s->field);
+        }
+        else
+        {
+            err = set_i32_safe(handle, s->key, s->field);
+        }
+
+        if (err != ESP_OK)
+        {
+            ESP_LOGW(NVS_SAVING_TAG, "Failed to save '%s': %s", s->key, esp_err_to_name(err));
+            if (first_err == ESP_OK)
+            {
+                first_err = err;
+            }
+        }
+    }
+
+    return first_err;
+}
+
+esp_err_t nvs_load_all(nvs_handle_t handle)
+{
+    for (size_t i = 0; i < NVS_SETTINGS_COUNT; i++)
+    {
+        nvs_setting_t *s = &g_settings[i];
+
+        if (s->is_scaled_float)
+        {
+            int32_t scaled = (int32_t)(s->default_val * NVS_FLOAT_SCALE);
+            bool ok = get_i32_safe(handle, s->key, &scaled);
+            if (!ok)
+            {
+                ESP_LOGW(NVS_LOAD_TAG, "'%s' not found, using default %.2f", s->key, s->default_val);
+            }
+            *(float *)s->field = (float)scaled / NVS_FLOAT_SCALE;
+        }
+        else if (s->size == sizeof(uint8_t))
+        {
+            uint8_t val = (uint8_t)s->default_val;
+            bool ok = get_u8_safe(handle, s->key, &val);
+            if (!ok)
+            {
+                ESP_LOGW(NVS_LOAD_TAG, "'%s' not found, using default %u", s->key, val);
+            }
+            *(uint8_t *)s->field = val;
+        }
+        else
+        {
+            int32_t val = (int32_t)s->default_val;
+            bool ok = get_i32_safe(handle, s->key, &val);
+            if (!ok)
+            {
+                ESP_LOGW(NVS_LOAD_TAG, "'%s' not found, using default %ld", s->key, (long)val);
+            }
+            *(int32_t *)s->field = val;
+        }
+    }
+
+    return ESP_OK;
+}
+
+#define DEFAULT_SETTINGS_COUNT (sizeof(g_settings) / sizeof(g_settings[0]))
+
+esp_err_t get_setting_value(const char *key, int32_t default_val, int32_t *out_value)
+{
+    nvs_handle_t nvs;
+    esp_err_t err;
+
+    if (key == NULL || out_value == NULL)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs);
+    if (err != ESP_OK)
+    {
+        *out_value = default_val;
+        return err;
+    }
+
+    err = nvs_get_i32(nvs, key, out_value);
+    nvs_close(nvs);
+
+    if (err != ESP_OK)
+    {
+        ESP_LOGW("NVS_SETTING", "Key '%s' not found or read failed (%s), using default %ld", key, esp_err_to_name(err), (long)default_val);
+        *out_value = default_val;
+    }
+
+    return err;
+}
+
+esp_err_t set_setting_value(const char *key, int32_t value)
+{
+    nvs_handle_t nvs;
+    esp_err_t err;
+
+    if (key == NULL)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE("NVS_SETTING", "Failed to open NVS for writing: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_i32(nvs, key, value);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE("NVS_SETTING", "Failed to set '%s': %s", key, esp_err_to_name(err));
+        nvs_close(nvs);
+        return err;
+    }
+
+    err = nvs_commit(nvs);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE("NVS_SETTING", "Failed to commit '%s': %s", key, esp_err_to_name(err));
+    }
+
+    nvs_close(nvs);
+    return err;
 }
 
 void nvs_init(bool erase_on_fail)
@@ -1786,11 +2137,6 @@ static bool get_i32_safe(nvs_handle_t handle, const char *key, int32_t *out)
     return nvs_get_i32(handle, key, out) == ESP_OK;
 }
 
-static void apply_default_value(void *dest, size_t size, uint32_t default_val)
-{
-    memcpy(dest, &default_val, size);
-}
-
 bool load_settings()
 {
     nvs_handle_t nvs;
@@ -1802,64 +2148,30 @@ bool load_settings()
     if (err != ESP_OK)
     {
         ESP_LOGE(NVS_LOADING_TAG, "Failed to open NVS: %s", esp_err_to_name(err));
-        load_error = false;
         return false;
     }
 
-    struct
-    {
-        const char *key;
-        bool (*get_fn)(nvs_handle_t, const char *, void *);
-        void *dest;
-        size_t size;
-        uint32_t default_val;
-    } settings[] = {
-        {"brightness", (bool (*)(nvs_handle_t, const char *, void *))get_i32_safe, &sys_state.display.brightness, sizeof(int32_t), 100},
-        {"backlight_time", (bool (*)(nvs_handle_t, const char *, void *))get_i32_safe, &sys_state.display.backlight_timeout, sizeof(int32_t), 30},
-        {"auto_shutdown", (bool (*)(nvs_handle_t, const char *, void *))get_u8_safe, &sys_state.display.auto_shutdown_enabled, sizeof(uint8_t), 0},
-        {"scroll_en", (bool (*)(nvs_handle_t, const char *, void *))get_u8_safe, &sys_state.display.scroll_enabled, sizeof(uint8_t), 0},
-        {"scroll_spd", (bool (*)(nvs_handle_t, const char *, void *))get_u8_safe, &sys_state.display.scroll_speed, sizeof(uint8_t), DEFAULT_SCROLL_SPEED},
-        {"out_volt", (bool (*)(nvs_handle_t, const char *, void *))get_i32_safe, &sys_state.inverter.output_voltage, sizeof(int32_t), 22000},
-        {"out_freq", (bool (*)(nvs_handle_t, const char *, void *))get_i32_safe, &sys_state.inverter.output_frequency, sizeof(int32_t), 5000},
-        {"bat_cutoff_volt", (bool (*)(nvs_handle_t, const char *, void *))get_i32_safe, &sys_state.battery_profile.cutoff_voltage_12v, sizeof(int32_t), 1050},
-        {"bat_recharge_volt", (bool (*)(nvs_handle_t, const char *, void *))get_i32_safe, &sys_state.battery_profile.recharge_voltage_12v, sizeof(int32_t), 1480},
-        {"bat_type", (bool (*)(nvs_handle_t, const char *, void *))get_u8_safe, &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM},
-        {"voltage_threshold", (bool (*)(nvs_handle_t, const char *, void *))get_i32_safe, &sys_state.settings.voltage_threshold, sizeof(int32_t), 12.5},
-        {"current_limit", (bool (*)(nvs_handle_t, const char *, void *))get_i32_safe, &sys_state.settings.current_limit, sizeof(int32_t), 5000},
-        {"temperature_alarm", (bool (*)(nvs_handle_t, const char *, void *))get_i32_safe, &sys_state.settings.temperature_alarm, sizeof(int32_t), 70.0},
-        {"frequency_range", (bool (*)(nvs_handle_t, const char *, void *))get_i32_safe, &sys_state.settings.frequency_range, sizeof(int32_t), 50},
-        {"system_timeout", (bool (*)(nvs_handle_t, const char *, void *))get_i32_safe, &sys_state.settings.system_timeout, sizeof(int32_t), 300}};
+    nvs_load_all(nvs);
 
-    for (size_t i = 0; i < sizeof(settings) / sizeof(settings[0]); i++)
-    {
-        if (!settings[i].get_fn(nvs, settings[i].key, settings[i].dest))
-        {
-            ESP_LOGW(NVS_LOADING_TAG, "Using default for %s: %lu", settings[i].key, settings[i].default_val);
-            apply_default_value(settings[i].dest, settings[i].size, settings[i].default_val);
-            load_error = true;
-        }
-
-        // Rescale int values to float
-        if (strcmp(settings[i].key, "out_volt") == 0 ||
-            strcmp(settings[i].key, "out_freq") == 0 ||
-            strcmp(settings[i].key, "bat_cutoff") == 0 ||
-            strcmp(settings[i].key, "bat_recharge") == 0)
-        {
-            *(float *)settings[i].dest /= 100.0f;
-        }
-    }
-
-    // Load battery profile (type and voltage)
+    /* Load battery profile (type and voltage) */
     if (!battery_load_profile(&sys_state.battery_profile))
     {
         ESP_LOGW("BAT_PROFILE", "Failed to load battery profile, using defaults");
         load_error = true;
     }
 
+    /* Cross-field / range validation — catches corrupted or
+     * inconsistent values that a plain nvs_get_* success wouldn't. */
+    if (validate_and_clamp_settings())
+    {
+        ESP_LOGW(NVS_LOADING_TAG, "One or more loaded settings were out of range and were corrected");
+        load_error = true; /* forces save_settings() below to persist the fix */
+    }
+
     if (load_error)
     {
-        ESP_LOGW(NVS_LOADING_TAG, "Settings loaded with defaults");
-        save_settings(); // Save defaults
+        ESP_LOGW(NVS_LOADING_TAG, "Settings loaded with one or more defaults/corrections");
+        save_settings();
         return false;
     }
 
@@ -1870,10 +2182,9 @@ bool load_settings()
 bool save_settings()
 {
     esp_err_t err;
-    // Open NVS for writing
     if (!nvs_initialized)
     {
-        nvs_init(true); // Initialize NVS if not already done
+        nvs_init(true);
     }
     nvs_handle_t nvs;
     const char *NVS_SAVE_TAG = "NVS_SAVE";
@@ -1884,52 +2195,16 @@ bool save_settings()
         ESP_LOGE(NVS_SAVE_TAG, "Failed to open NVS for writing: %s", esp_err_to_name(err));
         return false;
     }
-    // Prepare settings to save
-    // Use a struct array to hold key-value pairs for settings
-    struct
-    {
-        const char *key;
-        esp_err_t (*set_fn)(nvs_handle_t, const char *, void *);
-        void *value;
-    } settings[] = {
-        {"bat_volt_system", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_u8_safe, &sys_state.inverter.battery_voltage_system},
-        {"inverter_active", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_u8_safe, &sys_state.inverter.inverter_active},
-        {"inverter_volt", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.inverter.output_voltage * 100)}},
-        {"inverter_freq", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.inverter.output_frequency * 100)}},
-        {"bat_cutoff_volt", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.battery_profile.cutoff_voltage_12v * 100)}},
-        {"bat_rech_volt", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.battery_profile.recharge_voltage_12v * 100)}},
-        {"bat_type", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_u8_safe, &sys_state.battery_profile.profile_id},
-        {"bat_cap_ah", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.battery_profile.capacity_ah * 100)}},
-        {"bat_charge_cur", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.battery_profile.max_charge_current_per_100ah * 100)}},
-        {"bat_disc_cur", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.battery_profile.max_discharge_current_per_100ah * 100)}},
-        {"bat_full_volt", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.battery_profile.high_battery_voltage_12v * 100)}},
-        {"bat_cutoff_volt", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.battery_profile.cutoff_voltage_12v * 100)}},
-        {"bat_volt_type", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_u8_safe, &sys_state.battery_profile.profile_id},
-        {"brightness", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &sys_state.display.brightness},
-        {"backlight_time", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &sys_state.display.backlight_timeout},
-        {"auto_shutdown", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_u8_safe, &sys_state.display.auto_shutdown_enabled},
-        {"scroll_en", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_u8_safe, &sys_state.display.scroll_enabled},
-        {"scroll_spd", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_u8_safe, &sys_state.display.scroll_speed},
-        {"out_volt", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.inverter.output_voltage * 100)}},
-        {"out_freq", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.inverter.output_frequency * 100)}},
-        {"bat_cutoff", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.battery_profile.cutoff_voltage_12v * 100)}},
-        {"bat_recharge", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.battery_profile.recharge_voltage_12v * 100)}},
-        {"volt_threshold", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.settings.voltage_threshold * 100)}},
-        {"current_limit", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.settings.current_limit * 100)}},
-        {"temp_alarm", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.settings.temperature_alarm * 100)}},
-        {"frequency_range", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.settings.frequency_range * 100)}},
-        {"system_timeout", (esp_err_t (*)(nvs_handle_t, const char *, void *))set_i32_safe, &(int32_t){(int)(sys_state.settings.system_timeout * 100)}}};
-    // Save all settings
+
     ESP_LOGI(NVS_SAVE_TAG, "Saving settings to NVS...");
-    for (size_t i = 0; i < sizeof(settings) / sizeof(settings[0]); i++)
+    err = nvs_save_all(nvs);
+    if (err != ESP_OK)
     {
-        err = settings[i].set_fn(nvs, settings[i].key, settings[i].value);
-        if (err != ESP_OK)
-        {
-            ESP_LOGE(NVS_SAVE_TAG, "Failed to save %s: %s", settings[i].key, esp_err_to_name(err));
-        }
+        ESP_LOGE(NVS_SAVE_TAG, "One or more settings failed to save: %s", esp_err_to_name(err));
     }
+
     battery_save_configuration(sys_state.battery_profile.profile_id, sys_state.battery_profile.nominal_voltage, sys_state.battery_profile.capacity_ah);
+
     err = nvs_commit(nvs);
     if (err != ESP_OK)
     {
@@ -3195,7 +3470,9 @@ static const menu_item_t *get_menu_items(menu_state_t state, int *item_count)
     case MENU_FACTORY_RESET:
         *item_count = sizeof(factory_reset_items) / sizeof(factory_reset_items[0]);
         return factory_reset_items;
-
+    case MENU_SECURITY:
+        *item_count = sizeof(security_items) / sizeof(security_items[0]);
+        return security_items;
     default:
         *item_count = 0;
         return NULL;
@@ -3468,7 +3745,7 @@ void lcd_show_wifi_scan_screen(void)
                     top = count - 1;
                 lcd_update_wifi_selection(index, top);
                 break;
-            case BTN_ENTER_MENU:
+            case BTN_ENTER:
                 strncpy((char *)sys_state.wifi.ssid,
                         (char *)ap_records[index].ssid,
                         sizeof(sys_state.wifi.ssid) - 1);
@@ -3623,7 +3900,7 @@ void erase_logs(void)
 
     /* Step 1: clear in-RAM ring buffer + counters (fast, no I/O) */
     error_log_clear();
-    atomic_store(&sys_lcd.factory_reset.progress_pct, 1000);
+    atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
     vTaskDelay(pdMS_TO_TICKS(200));
 
     /* Step 2: erase the log_storage NVS namespace — separate namespace
@@ -3635,7 +3912,7 @@ void erase_logs(void)
     sys_state.memory_usage = 0;
 
     nvs_handle_t h;
-    esp_err_t err = nvs_open("log_storage", NVS_READWRITE, &h);
+    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &h);
     if (err == ESP_OK)
     {
         nvs_erase_all(h);
@@ -3667,6 +3944,69 @@ void erase_logs(void)
     buzzer_off();
     sys_state.power_button_sequence_count = 0;
     ESP_LOGI(TAG_SYS, "Error logs erased");
+}
+
+/* ── calibration_reset() ────────────────────────────────────────────────── */
+void calibration_reset(void)
+{
+    ESP_LOGI(TAG_SYS, "Resetting ADC calibration to defaults");
+
+    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
+    atomic_store(&sys_lcd.factory_reset.progress_pct, 0);
+
+    /* Step 1: reset in-RAM calibration values (fast, no I/O) */
+    for (int i = 0; i < ADC_CHANNEL_USE; i++)
+    {
+        adc_calibration[i].calibration_values[0] = 0.0f; // Offset
+        adc_calibration[i].calibration_values[1] = 1.0f; // Gain
+        adc_calibration[i].calibrated = false;
+        adc_calibration[i].calibration_mode = false;
+    }
+    atomic_store(&sys_lcd.factory_reset.progress_pct, 40);
+    vTaskDelay(pdMS_TO_TICKS(150));
+
+    /* Step 2: persist the reset calibration blob to NVS.
+     * Uses the same "adc_cal" key under NVS_NS_SYSTEM as save_calibration(),
+     * so this does not touch settings or battery profile keys stored in
+     * the same namespace. */
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &h);
+    if (err == ESP_OK)
+    {
+        err = nvs_set_blob(h, "adc_cal", adc_calibration, sizeof(adc_calibration));
+        if (err == ESP_OK)
+        {
+            err = nvs_commit(h);
+        }
+        nvs_close(h);
+
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG_SYS, "Failed to save reset calibration: %s", esp_err_to_name(err));
+            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
+            lcd_flash_info("Reset Failed!   ", "                ", 1500);
+            return;
+        }
+    }
+    else
+    {
+        ESP_LOGW(TAG_SYS, "Failed to open NVS for calibration reset: %s", esp_err_to_name(err));
+        atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
+        lcd_flash_info("Reset Failed!   ", "                ", 1500);
+        return;
+    }
+    atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    update_buzzer(1000, 50);
+    vTaskDelay(pdMS_TO_TICKS(150));
+    buzzer_off();
+
+    sys_state.power_button_sequence_count = 0;
+    /* Only the calling task decides DONE, and only after the work above
+     * has actually completed — not the draw path. */
+    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
+    ESP_LOGI(TAG_SYS, "ADC calibration reset to defaults");
 }
 
 typedef struct
@@ -3716,20 +4056,31 @@ void lcd_draw_menu_scroll(menu_state_t menu_st, int selection)
 void lcd_show_value_edit_screen(void)
 {
     value_edit_context_t *config = get_current_value_config();
-    float *current_value = get_current_value_pointer();
-
-    if (!config || !current_value)
+    if (!config)
     {
         lcd_show_value_edit("Error: No param ", "                ", false);
         return;
     }
 
     char v[17];
-    snprintf(v, 17, "%.2f %-11.11s", *current_value,
-             config->unit ? config->unit : "");
+    switch (config->edit_type)
+    {
+    case VALUE_EDIT_NUMERIC:
+        snprintf(v, 17, "%.*f %-11.11s", config->decimal_places,
+                 config->current_value, config->unit ? config->unit : "");
+        break;
+    case VALUE_EDIT_BOOL:
+        snprintf(v, 17, "%-16s", config->current_value != 0.0f ? "ON" : "OFF");
+        break;
+    case VALUE_EDIT_SELECT:
+        snprintf(v, 17, "%-16.16s", config->options[config->selection_index]);
+        break;
+    default:
+        snprintf(v, 17, "%-16s", "");
+        break;
+    }
     lcd_show_value_edit(config->label ? config->label : "Param",
-                        v,
-                        sys_state.pending_confirmation);
+                        v, sys_state.pending_confirmation);
 }
 
 /* ── lcd_show_bt_connecting_screen() ───────────────────────────────────── */
@@ -3758,7 +4109,7 @@ void lcd_show_factory_reset_screen(void)
             {
                 switch (ev.button_id)
                 {
-                case BTN_ENTER_MENU:
+                case BTN_ENTER:
                     lcd_show_factory_progress(0);
                     perform_factory_reset();
                     lcd_show_factory_done();
@@ -3873,6 +4224,13 @@ void handle_power_button_event(button_event_info_t *event_info,
         return;
     int64_t current_time = event_info->timestamp_us / 1000;
 
+    /* Never let the power button interrupt an in-progress factory reset.
+     * The erase/format sequence must run to completion undisturbed. */
+    if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_PROGRESS)
+    {
+        return;
+    }
+
     switch (event_info->event)
     {
 
@@ -3890,8 +4248,8 @@ void handle_power_button_event(button_event_info_t *event_info,
             sys_state.value_edit_mode = false;
             sys_state.value_changed = false;
             sys_state.pending_confirmation = false;
+            sys_state.current_value_type = NULL;
             lcd_flash_info("Edit Cancelled  ", "                ", 600);
-            /* flash auto-returns — nothing else needed */
             break;
         }
         /* P2: cancel confirmation */
@@ -3913,16 +4271,9 @@ void handle_power_button_event(button_event_info_t *event_info,
             show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
             if (back_to_diag)
             {
-                /* re-enter diagnostic display without re-suspending */
-                char l[17], v[17];
-                snprintf(l, 17, "%-16.16s",
-                         get_menu_items(MENU_DIAGNOSTIC, &(int){0})
-                             ? get_menu_items(MENU_DIAGNOSTIC, &(int){0})
-                                   [sys_state.menu_selection]
-                                       .label
-                             : "Diagnostic");
-                snprintf(v, 17, "%-16s", "");
-                lcd_show_diagnostic_detail(l, v);
+                /* Re-enter diagnostic display with the real, live value —
+                 * no more reconstructing a blank row via a compound literal. */
+                lcd_draw_diagnostics_screen(sys_state.menu_selection);
             }
             break;
         }
@@ -3933,9 +4284,13 @@ void handle_power_button_event(button_event_info_t *event_info,
             sys_state.power_button_sequence_count = 0;
             break;
         }
-        /* P5: close menu */
+        /* P5: close menu (also clears any pending factory-reset action
+         * so we don't leave stale state behind) */
         if (sys_state.menu_state != MENU_NONE)
         {
+            sys_state.factory_reset.pending_action = FACTORY_ACTION_NONE;
+            atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
+            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
             sys_state.menu_state = MENU_NONE;
             sys_state.menu_selection = 0;
             sys_state.in_detail_view = false;
@@ -3954,13 +4309,8 @@ void handle_power_button_event(button_event_info_t *event_info,
             break;
         case INVERTER_STANDBY:
         {
-            char r0[17], r1[17];
             uint8_t pct = calculate_battery_percentage(
                 sys_state.inverter.battery.voltage);
-            snprintf(r0, 17, "STANDBY %4.1fV   ",
-                     sys_state.inverter.battery.voltage);
-            snprintf(r1, 17, "BAT:%3d%% AC:%s ",
-                     pct, sys_state.inverter.connected ? "YES" : "NO ");
             lcd_show_standby(sys_state.inverter.battery.voltage, pct,
                              sys_state.inverter.connected);
             break;
@@ -3983,71 +4333,20 @@ void handle_power_button_event(button_event_info_t *event_info,
         break;
     } /* end BUTTON_EVENT_CLICK */
 
-    case BUTTON_EVENT_DOUBLE_CLICK:
+    case BUTTON_EVENT_LONG_PRESS:
     {
-        ESP_LOGI("POWER BUTTON", "Button button clicked twice");
-        if (sys_state.value_edit_mode)
-            break;
-        if (sys_state.inverter.inverter_state == INVERTER_ON ||
-            sys_state.inverter.inverter_state == INVERTER_STARTING)
-        {
-            lcd_flash_info("Stop inverter   ", "before diag!    ", 10000);
-            break;
-        }
-        if (sys_state.inverter.inverter_state != INVERTER_DIAGNOSTIC)
-        {
-            sys_state.in_detail_view = false;
-            sys_state.in_confirmation_screen = false;
-            sys_state.value_edit_mode = false;
-            sys_state.value_changed = false;
-            sys_state.pending_confirmation = false;
-            clear_menu_history();
-            enter_diagnostic_mode();
-        }
-        else
-        {
-            exit_diagnostic_mode();
-        }
-        sys_state.power_button_sequence_count = 0;
-        break;
-    }
 
-    case BUTTON_EVENT_TRIPLE_CLICK:
-    {
-        ESP_LOGI("POWER BUTTON", "cLICKED THREE TIMES");
-        if (sys_state.inverter.inverter_state == INVERTER_ON ||
-            sys_state.inverter.inverter_state == INVERTER_STARTING)
+        if (sys_state.value_edit_mode)
         {
-            lcd_flash_info("Stop inverter   ", "before reset!   ", 1500);
+            lcd_flash_info("Save/Cancel     ", "value first     ", 1200);
             break;
         }
         if (sys_state.inverter.inverter_state == INVERTER_DIAGNOSTIC)
+        {
             exit_diagnostic_mode();
-        if (sys_state.value_edit_mode)
-        {
-            sys_state.value_edit_mode = false;
-            sys_state.value_changed = false;
-            sys_state.pending_confirmation = false;
-        }
-        sys_state.in_detail_view = false;
-        sys_state.in_confirmation_screen = false;
-        push_menu_history(sys_state.menu_state, sys_state.menu_selection);
-        sys_state.menu_state = MENU_FACTORY_RESET;
-        sys_state.menu_selection = 0;
-        sys_state.power_button_sequence_count = 1;
-        sys_state.power_sequence_start_time = current_time;
-        lcd_show_confirm("FACTORY RESET?  ", "Hold=Yes Back=No");
-        break;
-    }
-
-    case BUTTON_EVENT_LONG_PRESS:
-    {
-        if (sys_state.value_edit_mode)
-        {
-            apply_value_change();
-            lcd_show_value_edit_screen();
             break;
         }
+        /* Confirmed factory reset via triple-click + hold */
         if (sys_state.menu_state == MENU_FACTORY_RESET &&
             sys_state.power_button_sequence_count > 0)
         {
@@ -4056,11 +4355,6 @@ void handle_power_button_event(button_event_info_t *event_info,
             lcd_show_factory_progress(0);
             vTaskDelay(pdMS_TO_TICKS(500));
             perform_factory_reset();
-            break;
-        }
-        if (sys_state.inverter.inverter_state == INVERTER_DIAGNOSTIC)
-        {
-            exit_diagnostic_mode();
             break;
         }
         if (sys_state.menu_state != MENU_NONE)
@@ -4078,8 +4372,9 @@ void handle_power_button_event(button_event_info_t *event_info,
             break;
         case INVERTER_ON:
         case INVERTER_STARTING:
+            /* shutdown_inverter() already sets menu_state = MENU_NONE and
+             * redraws the main screen — don't stomp on that afterward. */
             shutdown_inverter();
-            gpio_set_level(GPIO_POWER_RELAY, 0);
             break;
         case INVERTER_FAULT:
             lcd_show_fault("Clearing fault  ", "Please wait...  ");
@@ -4106,34 +4401,61 @@ void handle_power_button_event(button_event_info_t *event_info,
         break;
     }
 
-    case BUTTON_EVENT_VERY_LONG_PRESS:
+    case BUTTON_EVENT_DOUBLE_CLICK:
     {
-        if (sys_state.inverter.inverter_state != INVERTER_ON &&
-            sys_state.inverter.inverter_state != INVERTER_STARTING &&
-            sys_state.inverter.inverter_state != INVERTER_FAULT)
+        ESP_LOGI("POWER BUTTON", "Button clicked twice");
+        if (sys_state.value_edit_mode)
             break;
+        if (sys_state.inverter.inverter_state == INVERTER_ON ||
+            sys_state.inverter.inverter_state == INVERTER_STARTING)
+        {
+            /* was 10000ms — every other flash in this file is ~1500ms */
+            lcd_flash_info("Stop inverter   ", "before diag!    ", 1500);
+            break;
+        }
+        if (sys_state.inverter.inverter_state != INVERTER_DIAGNOSTIC)
+        {
+            sys_state.in_detail_view = false;
+            sys_state.in_confirmation_screen = false;
+            sys_state.value_edit_mode = false;
+            sys_state.value_changed = false;
+            sys_state.pending_confirmation = false;
+            clear_menu_history();
+            enter_diagnostic_mode();
+        }
+        else
+        {
+            exit_diagnostic_mode();
+        }
+        sys_state.power_button_sequence_count = 0;
+        break;
+    }
 
-        lcd_show_fault("!! EMERGENCY !! ", "SYSTEM HALT     ");
-        buzzer_error();
-        vTaskDelay(pdMS_TO_TICKS(500));
-        gpio_set_level(GPIO_POWER_RELAY, 0);
-        inverter_emergency_shutdown();
-
-        sys_state.inverter.inverter_state = INVERTER_OFF;
-        sys_state.inverter.inverter_active = false;
-        sys_state.menu_state = MENU_NONE;
-        sys_state.menu_selection = 0;
+    case BUTTON_EVENT_TRIPLE_CLICK:
+    {
+        ESP_LOGI("POWER BUTTON", "Clicked three times");
+        if (sys_state.inverter.inverter_state == INVERTER_ON ||
+            sys_state.inverter.inverter_state == INVERTER_STARTING)
+        {
+            lcd_flash_info("Stop inverter   ", "before reset!   ", 1500);
+            break;
+        }
+        if (sys_state.inverter.inverter_state == INVERTER_DIAGNOSTIC)
+            exit_diagnostic_mode();
+        if (sys_state.value_edit_mode)
+        {
+            sys_state.value_edit_mode = false;
+            sys_state.value_changed = false;
+            sys_state.pending_confirmation = false;
+        }
         sys_state.in_detail_view = false;
         sys_state.in_confirmation_screen = false;
-        sys_state.value_edit_mode = false;
-        sys_state.value_changed = false;
-        sys_state.pending_confirmation = false;
-        sys_state.power_button_sequence_count = 0;
-        sys_state.error.error_flags = 0;
-        clear_menu_history();
-        go_to_main_screen();
-        led_off(LED_STATUS);
-        ESP_LOGW("POWER", "Emergency shutdown complete");
+        push_menu_history(sys_state.menu_state, sys_state.menu_selection);
+        sys_state.menu_state = MENU_FACTORY_RESET;
+        sys_state.menu_selection = 0;
+        sys_state.power_button_sequence_count = 1;
+        sys_state.power_sequence_start_time = current_time;
+        lcd_show_confirm("FACTORY RESET?  ", "Hold=Yes Back=No");
         break;
     }
 
@@ -4214,37 +4536,75 @@ menu_state_t display_menu_state(void)
 void handle_enter_menu_button_event(button_event_info_t *event_info,
                                     void *user_data)
 {
+
     if (!sys_state.system_ready)
         return;
+
+    if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_PROGRESS)
+    {
+        return;
+    }
+
+    if (sys_state.menu_state == MENU_SECURITY)
+    {
+        security_phase_t phase = atomic_load(&sys_lcd.security.phase);
+
+        if (phase == SECURITY_PHASE_VIEW_STATUS)
+        {
+            atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
+            atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
+            return;
+        }
+
+        if (phase == SECURITY_PHASE_PIN_FLOW)
+        {
+            bool flow_done = false;
+
+            xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
+            switch (atomic_load(&sys_lcd.security.action))
+            {
+            case SECURITY_ACTION_CHANGE_PIN:
+            case SECURITY_ACTION_RESET_PIN:
+                flow_done = change_pin_handle_button(&change_pin_ctx, BTN_ENTER);
+                break;
+            default:
+                flow_done = true;
+                break;
+            }
+            xSemaphoreGive(change_pin_mutex);
+
+            if (flow_done)
+            {
+                atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
+                atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
+            }
+            return;
+        }
+    }
 
     switch (event_info->event)
     {
 
     case BUTTON_EVENT_CLICK:
         /* Value edit save */
+
         if (sys_state.value_edit_mode)
         {
             if (sys_state.pending_confirmation)
             {
                 handle_value_confirmation();
-                sys_state.pending_confirmation = false;
-                sys_state.value_changed = false;
-                sys_state.value_edit_mode = false;
             }
             else
             {
-                apply_value_change();
                 exit_value_edit_mode(true);
             }
-            sys_state.pending_confirmation = false;
-            sys_state.menu_state = MENU_NONE;
-            sys_state.menu_selection = 0;
             break;
         }
 
         if (sys_state.menu_state == MENU_FACTORY_RESET &&
             atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_CONFIRM)
         {
+            const char *done_msg = "                ";
             switch (sys_state.factory_reset.pending_action)
             {
             case FACTORY_ACTION_RESET_ALL:
@@ -4252,27 +4612,36 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
                 atomic_store(&sys_lcd.factory_reset.progress_pct, 0);
                 perform_factory_reset();
-                vTaskDelay(pdMS_TO_TICKS(1500));
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
                 break;
             case FACTORY_ACTION_CLEAR_SETTINGS:
                 ESP_LOGI(TAG_SYS, "Clear Settings confirmed by user");
+                atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
+                atomic_store(&sys_lcd.factory_reset.progress_pct, 0);
                 clear_settings();
-                vTaskDelay(pdMS_TO_TICKS(1500));
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
+                done_msg = "Settings Cleared";
                 break;
             case FACTORY_ACTION_ERASE_LOGS:
                 ESP_LOGI(TAG_SYS, "Erase Logs confirmed by user");
+                atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
+                atomic_store(&sys_lcd.factory_reset.progress_pct, 0);
                 erase_logs();
-                vTaskDelay(pdMS_TO_TICKS(1500));
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
+                done_msg = "Logs Erased     ";
                 break;
             default:
                 break;
             }
-            vTaskDelay(pdMS_TO_TICKS(3000));
+
+            sys_state.factory_reset.pending_action = FACTORY_ACTION_NONE;
+            atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
             atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
             sys_state.menu_state = MENU_NONE;
+            sys_state.menu_selection = 0;
+            clear_menu_history();
+            go_to_main_screen();
+            lcd_flash_info("Done            ", done_msg, 1500);
             break;
         }
 
@@ -4299,16 +4668,32 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             case 4:
                 next = MENU_FACTORY_RESET;
                 break;
+            case 5:
+                next = MENU_SECURITY;
+                break;
             }
             if (next != MENU_NONE)
             {
                 push_menu_history(sys_state.menu_state, sys_state.menu_selection);
                 sys_state.menu_state = next;
                 sys_state.menu_selection = 0;
-                show_menu_screen(next, sys_state.menu_selection);
+
+                if (next == MENU_SECURITY)
+                {
+                    xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+                    sys_lcd.screen = LCD_SCREEN_SECURITY;
+                    atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
+                    atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
+                    xSemaphoreGive(sys_state_mutex);
+                }
+                else
+                {
+                    show_menu_screen(next, sys_state.menu_selection);
+                }
             }
             break;
         }
+
         case MENU_SETTINGS:
             switch (sys_state.menu_selection)
             {
@@ -4327,36 +4712,47 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             case 4:
                 edit_system_timeout();
                 break;
+            case 5:
+                edit_auto_shutdown();
+                break;
+            case 6:
+                edit_scroll_enable();
+                break;
+            case 7:
+                edit_scroll_speed();
+                break;
+            case 8:
+                edit_battery_type();
+                break;
             }
-            sys_state.value_edit_mode = true;
             break;
 
         case MENU_MONITORING:
-            enter_detail_view(MENU_MONITORING, sys_state.menu_selection);
-            switch (sys_state.menu_selection)
+
+            if (sys_state.menu_selection < 6)
             {
-            case 0:
-                lcd_show_monitoring_detail("Voltage", sys_state.inverter.output_voltage, "V");
-                break;
-            case 1:
-                lcd_show_monitoring_detail("Current", sys_state.actual_current, "A");
-                break;
-            case 2:
-                lcd_show_monitoring_detail("Frequency", sys_state.inverter.output_frequency, "Hz");
-                break;
-            case 3:
-                lcd_show_monitoring_detail("Temperature", sys_state.actual_temperature, "C");
-                break;
-            case 4:
-                lcd_show_monitoring_detail("Power Factor", sys_state.power_factor, "");
-                break;
-            case 5:
-                lcd_show_monitoring_detail("Efficiency", sys_state.efficiency, "%");
-                break;
-            default:
-                sys_state.in_detail_view = false;
-                show_menu_screen(MENU_MONITORING, sys_state.menu_selection);
-                break;
+                enter_detail_view(MENU_MONITORING, sys_state.menu_selection);
+                switch (sys_state.menu_selection)
+                {
+                case 0:
+                    lcd_show_monitoring_detail("Voltage", sys_state.inverter.output_voltage, "V");
+                    break;
+                case 1:
+                    lcd_show_monitoring_detail("Current", sys_state.actual_current, "A");
+                    break;
+                case 2:
+                    lcd_show_monitoring_detail("Frequency", sys_state.inverter.output_frequency, "Hz");
+                    break;
+                case 3:
+                    lcd_show_monitoring_detail("Temperature", sys_state.actual_temperature, "C");
+                    break;
+                case 4:
+                    lcd_show_monitoring_detail("Power Factor", sys_state.power_factor, "");
+                    break;
+                case 5:
+                    lcd_show_monitoring_detail("Efficiency", sys_state.efficiency, "%");
+                    break;
+                }
             }
             break;
 
@@ -4372,7 +4768,21 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         }
 
         case MENU_WIFI_CONFIG:
-            show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
+
+            switch (sys_state.menu_selection)
+            {
+            case 1:
+                lcd_show_wifi_connecting("Scanning...");
+                start_wifi_scan();
+                lcd_show_wifi_scan_screen();
+                break;
+            case 2:
+                start_wifi_connection();
+                break;
+            default:
+                show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
+                break;
+            }
             break;
 
         case MENU_FACTORY_RESET:
@@ -4385,7 +4795,6 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             else if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_IDLE)
             {
                 sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
-                atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
             }
 
             switch (sys_state.menu_selection)
@@ -4406,39 +4815,68 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
             break;
 
+        case MENU_SECURITY:
+        {
+
+            switch (sys_state.menu_selection)
+            {
+            case 0: /* Change PIN */
+            {
+                xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
+                change_pin_start_ex(&change_pin_ctx, CHANGE_PIN_MODE_SET_NEW);
+                xSemaphoreGive(change_pin_mutex);
+
+                atomic_store(&sys_lcd.security.action, SECURITY_ACTION_CHANGE_PIN);
+                atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_PIN_FLOW);
+
+                /* Force-change flag: if PIN is still factory default, flash a
+                 * reminder so the user knows why they're being prompted. */
+                if (security_pin_change_required())
+                {
+                    lcd_flash_info("Set your PIN    ", "Default is 0000 ", 1500);
+                }
+                break;
+            }
+
+            case 1: /* View PIN status */
+            {
+                atomic_store(&sys_lcd.security.action, SECURITY_ACTION_VIEW_STATUS);
+                atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_VIEW_STATUS);
+                break;
+            }
+
+            case 2: /* Reset PIN to factory default (0000) */
+            {
+                xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
+                change_pin_start_ex(&change_pin_ctx, CHANGE_PIN_MODE_RESET_DEFAULT);
+                xSemaphoreGive(change_pin_mutex);
+
+                atomic_store(&sys_lcd.security.action, SECURITY_ACTION_RESET_PIN);
+                atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_PIN_FLOW);
+                break;
+            }
+
+            default:
+                break;
+            }
+            break; /* end case MENU_SECURITY */
+        }
         default:
             break;
         }
-        break; /* BUTTON_EVENT_CLICK */
-
+        break;
     case BUTTON_EVENT_LONG_PRESS:
-        if (sys_state.value_edit_mode)
-        {
-            if (sys_state.pending_confirmation)
-            {
-                handle_value_confirmation();
-            }
-            else
-            {
-                exit_value_edit_mode(true);
-            }
-            sys_state.menu_selection = 0;
-            sys_state.menu_state = MAIN_MENU;
-            break;
-        }
         switch (sys_state.menu_state)
         {
         case MENU_NONE:
-            sys_state.menu_state = (sys_state.inverter.inverter_state == INVERTER_ON)
-                                       ? MENU_MONITORING
-                                       : MAIN_MENU;
+            /* Always opens the Main Menu, regardless of inverter state. */
+            sys_state.menu_state = MAIN_MENU;
             sys_state.menu_selection = 0;
-            show_menu_screen(sys_state.menu_state, 0);
+            show_menu_screen(MAIN_MENU, 0);
             break;
         case MAIN_MENU:
         {
             menu_state_t next = MENU_NONE;
-            sys_lcd.screen = LCD_SCREEN_MENU;
             switch (sys_state.menu_selection)
             {
             case 0:
@@ -4466,53 +4904,32 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             }
             break;
         }
-        case MENU_SETTINGS:
-            switch (sys_state.menu_selection)
-            {
-            case 0:
-                edit_voltage_threshold();
-                break;
-            case 1:
-                edit_current_limit();
-                break;
-            case 2:
-                edit_frequency_range();
-                break;
-            case 3:
-                edit_temperature_alarm();
-                break;
-            case 4:
-                edit_system_timeout();
-                break;
-            }
-            sys_state.value_edit_mode = true;
-            break;
+
         case MENU_MONITORING:
-            enter_detail_view(MENU_MONITORING, sys_state.menu_selection);
-            switch (sys_state.menu_selection)
+            if (sys_state.menu_selection < 6)
             {
-            case 0:
-                lcd_show_monitoring_detail("Voltage", sys_state.inverter.output_voltage, "V");
-                break;
-            case 1:
-                lcd_show_monitoring_detail("Current", sys_state.actual_current, "A");
-                break;
-            case 2:
-                lcd_show_monitoring_detail("Frequency", sys_state.inverter.output_frequency, "Hz");
-                break;
-            case 3:
-                lcd_show_monitoring_detail("Temperature", sys_state.actual_temperature, "C");
-                break;
-            case 4:
-                lcd_show_monitoring_detail("Power Factor", sys_state.power_factor, "");
-                break;
-            case 5:
-                lcd_show_monitoring_detail("Efficiency", sys_state.efficiency, "%");
-                break;
-            default:
-                sys_state.in_detail_view = false;
-                show_menu_screen(MENU_MONITORING, sys_state.menu_selection);
-                break;
+                enter_detail_view(MENU_MONITORING, sys_state.menu_selection);
+                switch (sys_state.menu_selection)
+                {
+                case 0:
+                    lcd_show_monitoring_detail("Voltage", sys_state.inverter.output_voltage, "V");
+                    break;
+                case 1:
+                    lcd_show_monitoring_detail("Current", sys_state.actual_current, "A");
+                    break;
+                case 2:
+                    lcd_show_monitoring_detail("Frequency", sys_state.inverter.output_frequency, "Hz");
+                    break;
+                case 3:
+                    lcd_show_monitoring_detail("Temperature", sys_state.actual_temperature, "C");
+                    break;
+                case 4:
+                    lcd_show_monitoring_detail("Power Factor", sys_state.power_factor, "");
+                    break;
+                case 5:
+                    lcd_show_monitoring_detail("Efficiency", sys_state.efficiency, "%");
+                    break;
+                }
             }
             break;
         case MENU_DIAGNOSTIC:
@@ -4537,21 +4954,20 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 start_wifi_connection();
                 break;
             default:
-                sys_state.menu_selection = 0;
                 break;
             }
             break;
         case MENU_FACTORY_RESET:
-            sys_lcd.factory_reset.phase = FACTORY_PHASE_CONFIRM;
+            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
             lcd_show_factory_reset_screen();
             break;
-
         default:
             break;
         }
         break; /* BUTTON_EVENT_LONG_PRESS */
 
     case BUTTON_EVENT_DOUBLE_CLICK:
+
         if (sys_state.value_edit_mode && sys_state.pending_confirmation)
         {
             value_edit_context_t *config = get_current_value_config();
@@ -4563,7 +4979,6 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 sys_state.value_changed = false;
                 sys_state.value_edit_mode = false;
                 lcd_show_value_saved_screen();
-                vTaskDelay(pdMS_TO_TICKS(800));
                 show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
             }
         }
@@ -4578,8 +4993,8 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
 
     default:
         break;
-    }
-
+    } // switch(event_info->event)
+    ESP_LOGI("CONFIRM", "End  of program");
     sys_state.last_activity_time = event_info->timestamp_us / 1000;
 }
 
@@ -4615,6 +5030,16 @@ void handle_up_button_event(button_event_info_t *event_info,
         return;
     int64_t current_time = event_info->timestamp_us / 1000;
     value_edit_context_t *config = get_current_value_config();
+
+    // When in security mode
+    if (sys_state.menu_state == MENU_SECURITY &&
+        atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_PIN_FLOW)
+    {
+        xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
+        change_pin_handle_button(&change_pin_ctx, BTN_UP);
+        xSemaphoreGive(change_pin_mutex);
+        return; // Up just adjusts the current PIN digit -- never finishes the flow
+    }
     switch (event_info->event)
     {
     case BUTTON_EVENT_CLICK:
@@ -4628,11 +5053,12 @@ void handle_up_button_event(button_event_info_t *event_info,
                 increase_value(false, false);
                 break;
             case VALUE_EDIT_SELECT:
-                config->selection_index =
-                    (config->selection_index + 1) % config->max_selection;
+                if (config->max_selection > 0)
+                    config->selection_index =
+                        (config->selection_index + 1) % config->max_selection;
                 break;
             case VALUE_EDIT_BOOL:
-                config->bool_value = !config->bool_value;
+                config->current_value = (config->current_value != 0.0f) ? 0.0f : 1.0f;
                 break;
             case VALUE_EDIT_LIST:
                 config->list_index =
@@ -4788,6 +5214,17 @@ void handle_down_button_event(button_event_info_t *event_info,
         return;
     int64_t current_time = event_info->timestamp_us / 1000;
     value_edit_context_t *config = get_current_value_config();
+
+    // When the user is in security mode
+    if (sys_state.menu_state == MENU_SECURITY &&
+        atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_PIN_FLOW)
+    {
+        xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
+        change_pin_handle_button(&change_pin_ctx, BTN_DOWN);
+        xSemaphoreGive(change_pin_mutex);
+        return;
+    }
+
     switch (event_info->event)
     {
     case BUTTON_EVENT_CLICK:
@@ -4799,13 +5236,14 @@ void handle_down_button_event(button_event_info_t *event_info,
                 decrease_value(false, false);
                 break;
             case VALUE_EDIT_SELECT:
-                config->selection_index =
-                    (config->selection_index > 0)
-                        ? config->selection_index - 1
-                        : config->max_selection - 1;
+                if (config->max_selection > 0)
+                    config->selection_index =
+                        (config->selection_index > 0)
+                            ? config->selection_index - 1
+                            : config->max_selection - 1;
                 break;
             case VALUE_EDIT_BOOL:
-                config->bool_value = !config->bool_value;
+                config->current_value = (config->current_value != 0.0f) ? 0.0f : 1.0f;
                 break;
             case VALUE_EDIT_LIST:
                 config->list_index =
@@ -4976,6 +5414,32 @@ void handle_back_button_event(button_event_info_t *event_info,
     if (!sys_state.system_ready)
         return;
 
+    // User is in Security mode
+
+    if (sys_state.menu_state == MENU_SECURITY &&
+        atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_PIN_FLOW)
+    {
+        bool flow_done = false;
+        xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
+        flow_done = change_pin_handle_button(&change_pin_ctx, BTN_BACK);
+        xSemaphoreGive(change_pin_mutex);
+
+        if (flow_done)
+        {
+            atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
+            atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
+        }
+        return;
+    }
+
+    if (sys_state.menu_state == MENU_SECURITY &&
+        atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_VIEW_STATUS)
+    {
+        atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
+        atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
+        return;
+    }
+
     switch (event_info->event)
     {
     case BUTTON_EVENT_CLICK:
@@ -5022,9 +5486,9 @@ void handle_back_button_event(button_event_info_t *event_info,
         {
             exit_value_edit_mode(false);
             lcd_show_value_canceled_screen();
-            sys_state.menu_state = MENU_NONE;
-            sys_state.pending_confirmation = false;
+            sys_state.menu_state = MAIN_MENU;
             sys_state.menu_selection = 0;
+            sys_state.pending_confirmation = false;
             sys_state.last_activity_time = esp_timer_get_time() / 1000;
             return;
         }
@@ -5101,24 +5565,6 @@ void handle_back_button_event(button_event_info_t *event_info,
             break;
         }
         sys_state.last_activity_time = esp_timer_get_time() / 1000;
-        break;
-
-    case BUTTON_EVENT_LONG_PRESS:
-        if (sys_state.value_edit_mode)
-        {
-            exit_value_edit_mode(false);
-            sys_state.value_edit_mode = false;
-        }
-        if (sys_state.in_detail_view)
-            sys_state.inverter.inverter_state = sys_state.pre_detail_inverter_state;
-        sys_state.in_detail_view = false;
-        sys_state.in_confirmation_screen = false;
-        sys_state.in_info_screen = false;
-        sys_state.menu_state = MENU_NONE;
-        sys_state.menu_selection = 0;
-        clear_menu_history();
-        sys_state.last_activity_time = esp_timer_get_time() / 1000;
-        go_to_main_screen();
         break;
 
     default:
@@ -5226,6 +5672,27 @@ static void apply_temperature_limit(float v) { thermal_protection_set_limit(v); 
 static void apply_battery_cutoff(float v) { battery_monitor_set_cutoff(v); }
 static void apply_wifi(float v) { sys_state.wifi.enabled = (bool)v; }
 static void apply_bluetooth(float v) { sys_state.bluetooth.enabled = (bool)v; } /* adjust to your actual field */
+static void apply_auto_shutdown(float v) { sys_state.display.auto_shutdown_enabled = (uint8_t)v; }
+static void apply_scroll_enable(float v) { sys_state.display.scroll_enabled = (uint8_t)v; }
+static void apply_scroll_speed(float v) { sys_state.display.scroll_speed = (uint8_t)v; }
+static void apply_system_timeout(float v) { set_system_timeout((uint32_t)v); }
+
+/* Battery type change regenerates the active profile at the currently
+ * configured voltage/capacity — it must not just overwrite profile_id
+ * and leave every derived voltage/current field stale. */
+static void apply_battery_type(float v)
+{
+    battery_type_t new_type = (battery_type_t)v;
+    battery_profile_t regenerated;
+    if (battery_generate_profile(new_type,
+                                 (voltage_system_t)sys_state.battery_profile.nominal_voltage,
+                                 sys_state.battery_profile.capacity_ah,
+                                 &regenerated))
+    {
+        sys_state.battery_profile = regenerated;
+        sys_state.battery_profile.profile_id = new_type;
+    }
+}
 
 /* ── shutdown_inverter() ────────────────────────────────────────────────── */
 void shutdown_inverter(void)
@@ -5324,21 +5791,18 @@ void lcd_draw_diagnostics_screen(uint8_t index)
 
     switch (index)
     {
-    case 0: // System Status
+    case 0: /* System Status */
+    {
         /*
          * Row 1 layout (16 chars):
-         *   "OK  HB:12345    "   ← system ok,  heartbeat count
-         *   "FLT HB:12345    "   ← fault,      heartbeat count
-         *
-         * Heartbeat counter gives operators a live "pulse" to confirm
-         * lcd_task is running: it increments ~10 times per second.
+         *   "OK  HB:12345    "   <- system ok,  heartbeat count
+         *   "FLT HB:12345   !"   <- fault,      heartbeat count
          */
         uint32_t hb = lcd_watchdog_get_heartbeat();
         uint32_t last_ms = lcd_watchdog_last_feed_ms();
-        uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-        uint32_t age_ms = (last_ms > 0) ? (now_ms - last_ms) : 0;
+        uint32_t now_ms_val = (uint32_t)(esp_timer_get_time() / 1000);
+        uint32_t age_ms = (last_ms > 0) ? (now_ms_val - last_ms) : 0;
 
-        /* Flag lcd_task as stale if feed is overdue */
         bool lcd_alive = (age_ms < LCD_HEARTBEAT_TIMEOUT_MS);
 
         snprintf(row1, 17, "%s HB:%-6lu%s",
@@ -5346,7 +5810,9 @@ void lcd_draw_diagnostics_screen(uint8_t index)
                  (unsigned long)(hb % 999999),
                  lcd_alive ? " " : "!");
         break;
-    case 1: // Latest Error
+    }
+
+    case 1: /* Latest Error */
     {
         const error_log_entry_t *latest = error_log_get_latest();
         if (!latest)
@@ -5355,26 +5821,34 @@ void lcd_draw_diagnostics_screen(uint8_t index)
             snprintf(row1, 17, "%-16.16s", latest->description);
         break;
     }
-    case 2: // CPU Load
+
+    case 2: /* CPU Load */
         snprintf(row1, 17, "Load:%6.1f%%    ", diag_data.cpu_load);
         break;
-    case 3: // Firmware Version
+
+    case 3: /* Firmware Version */
         snprintf(row1, 17, "%-16.16s", "C-01 Rev A");
         break;
-    case 4: // Uptime
+
+    case 4: /* Uptime */
     {
         unsigned long s = (unsigned long)diag_data.uptime_seconds;
-        unsigned long d = s / 86400UL, h = (s % 86400UL) / 3600UL;
-        unsigned long m = (s % 3600UL) / 60UL, sec = s % 60UL;
+        unsigned long d = s / 86400UL;
+        unsigned long h = (s % 86400UL) / 3600UL;
+        unsigned long m = (s % 3600UL) / 60UL;
+        unsigned long sec = s % 60UL;
+
         if (d > 0)
             snprintf(row1, 17, "%lud %02lu:%02lu:%02lu ", d, h, m, sec);
         else
             snprintf(row1, 17, "   %02lu:%02lu:%02lu    ", h, m, sec);
         break;
     }
-    case 5:
+
+    case 5: /* RAM usage */
         snprintf(row1, 17, "RAM:%6.1f%%     ", diag_data.ram_usage);
         break;
+
     default:
         snprintf(row1, 17, "%-16s", "Unknown item");
         break;
@@ -5428,12 +5902,7 @@ void perform_factory_reset(void)
 {
     sys_state.inverter.inverter_state = INVERTER_FACTORY_RESET;
 
-    lcd_show_factory_progress(0);
-    for (int i = 0; i <= 100; i += 20)
-    {
-        lcd_show_factory_progress((uint8_t)i);
-        vTaskDelay(pdMS_TO_TICKS(200));
-    }
+    lcd_show_factory_progress();
 
     /* Reset all values */
     sys_state.inverter.output_voltage = 220.0f;
@@ -5443,10 +5912,10 @@ void perform_factory_reset(void)
     sys_state.cutoff_voltage = 11.5f;
     sys_state.display.scroll_speed = DEFAULT_SCROLL_SPEED;
 
-    lcd_flash_info("CLEARING LOGS   ", "Please wait...  ", 1000);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    lcd_flash_info("CALIBRATION     ", "Resetting...    ", 1000);
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    error_log_clear();
+    // lcd_flash_info("CLEARING LOGS   ", "Please wait...  ", 1000);
+    calibration_reset();
+    // lcd_flash_info("CALIBRATION     ", "Resetting...    ", 1000);
 
     update_buzzer(2000, 50);
     for (int i = 0; i < 5; i++)
@@ -5846,59 +6315,106 @@ void lcd_display_confirmation_screen(void)
     lcd_show_confirm("Save Changes?   ", "Enter=Yes Back=N");
 }
 
-// Advanced value adjustment implementation
+// Advanced value adjustment implementation — handles all edit_type variants
 void increase_value(bool fast_mode, bool precision_mode)
 {
     if (!sys_state.value_edit_mode)
         return;
     value_edit_context_t *ctx = get_current_value_config();
-    float *current_value = get_current_value_pointer();
-    ESP_LOGI("Current-Value", "Current value: %.3f", *current_value);
-    if (!ctx || !current_value)
+    if (!ctx)
         return;
 
-    float increment = calculate_increment(fast_mode, precision_mode);
-    float new_value = *current_value + increment;
-
-    // Apply acceleration based on repeat count
-    if (sys_state.repeat_count > 10)
+    switch (ctx->edit_type)
     {
-        increment *= 3;
+    case VALUE_EDIT_NUMERIC:
+    {
+        float *current_value = get_current_value_pointer();
+        if (!current_value)
+            return;
+
+        ESP_LOGI("Current-Value", "Current value: %.3f", *current_value);
+
+        float increment = calculate_increment(fast_mode, precision_mode);
+
+        // Apply acceleration based on repeat count
+        if (sys_state.repeat_count > 10)
+            increment *= 3;
+        else if (sys_state.repeat_count > 5)
+            increment *= 2;
+
+        float new_value = *current_value + increment;
+
+        ESP_LOGI("NEW_VALUE", "Attempting to increase value: %.3f -> %.3f (increment: %.3f)",
+                 *current_value, new_value, increment);
+
+        if (validate_value_range(new_value))
+        {
+            *current_value = new_value;
+            sys_state.value_changed = true;
+
+            if (ctx->live_update && !ctx->is_critical)
+            {
+                ESP_LOGI("NEW_VALUE", "Applying live update: %.3f", new_value);
+                update_system_parameter(ctx, new_value);
+            }
+            if (ctx->is_critical)
+                sys_state.pending_confirmation = true;
+
+            ESP_LOGI("NEW_VALUE", "Value increased to: %.3f %s", new_value, ctx->unit);
+        }
+        else
+        {
+            ESP_LOGI("NEW_VALUE", "Value at maximum limit: %.3f %s", ctx->max_value, ctx->unit);
+        }
+        break;
     }
-    else if (sys_state.repeat_count > 5)
-    {
-        increment *= 2;
-    }
 
-    new_value = *current_value + increment;
-
-    ESP_LOGI("NEW_VALUE", "Attempting to increase value: %.3f -> %.3f (increment: %.3f)", *current_value, new_value, increment);
-    // Validate range
-    if (validate_value_range(new_value))
-    {
-        ESP_LOGI("NEW_VALUE", "Value change valid: %.3f -> %.3f", *current_value, new_value);
-        *current_value = new_value;
-        sys_state.current_value_type->current_value = new_value;
+    case VALUE_EDIT_BOOL:
+        ctx->current_value = (ctx->current_value != 0.0f) ? 0.0f : 1.0f;
         sys_state.value_changed = true;
 
-        // Apply live update if enabled
         if (ctx->live_update && !ctx->is_critical)
-        {
-            ESP_LOGI("NEW_VALUE", "Applying live update: %.3f", new_value);
-            update_system_parameter(ctx, new_value);
-        }
-
-        // Set pending confirmation for critical values
+            update_system_parameter(ctx, ctx->current_value);
         if (ctx->is_critical)
-        {
             sys_state.pending_confirmation = true;
-        }
 
-        ESP_LOGI("NEW_VALUE", "Value increased to: %.3f %s", new_value, ctx->unit);
-    }
-    else
-    {
-        ESP_LOGI("NEW_VALUE", "Value at maximum limit: %.3f %s", ctx->max_value, ctx->unit);
+        ESP_LOGI("NEW_VALUE", "%s toggled to: %s", ctx->label,
+                 ctx->current_value != 0.0f ? "ON" : "OFF");
+        break;
+
+    case VALUE_EDIT_SELECT:
+        if (ctx->max_selection > 0)
+        {
+            ctx->selection_index = (ctx->selection_index + 1) % ctx->max_selection;
+            sys_state.value_changed = true;
+
+            if (ctx->live_update && !ctx->is_critical)
+                update_system_parameter(ctx, (float)ctx->selection_index);
+            if (ctx->is_critical)
+                sys_state.pending_confirmation = true;
+
+            ESP_LOGI("NEW_VALUE", "%s selection: %d (%s)", ctx->label,
+                     ctx->selection_index, ctx->options[ctx->selection_index]);
+        }
+        break;
+
+    case VALUE_EDIT_LIST:
+        if (ctx->list_size > 0)
+        {
+            ctx->list_index = (ctx->list_index + 1) % ctx->list_size;
+            sys_state.value_changed = true;
+
+            if (ctx->live_update && !ctx->is_critical)
+                update_system_parameter(ctx, (float)ctx->list_index);
+            if (ctx->is_critical)
+                sys_state.pending_confirmation = true;
+
+            ESP_LOGI("NEW_VALUE", "%s list index: %d", ctx->label, ctx->list_index);
+        }
+        break;
+
+    default:
+        break;
     }
 }
 
@@ -5906,53 +6422,101 @@ void decrease_value(bool fast_mode, bool precision_mode)
 {
     if (!sys_state.value_edit_mode)
         return;
-
     value_edit_context_t *ctx = get_current_value_config();
-    float *current_value = get_current_value_pointer();
-    if (!ctx || !current_value)
+    if (!ctx)
         return;
 
-    float increment = calculate_increment(fast_mode, precision_mode);
-    float new_value = *current_value - increment;
-
-    // Apply acceleration based on repeat count
-    if (sys_state.repeat_count > 10)
+    switch (ctx->edit_type)
     {
-        increment *= 3;
+    case VALUE_EDIT_NUMERIC:
+    {
+        float *current_value = get_current_value_pointer();
+        if (!current_value)
+            return;
+
+        float increment = calculate_increment(fast_mode, precision_mode);
+
+        if (sys_state.repeat_count > 10)
+            increment *= 3;
+        else if (sys_state.repeat_count > 5)
+            increment *= 2;
+
+        float new_value = *current_value - increment;
+
+        if (validate_value_range(new_value))
+        {
+            ESP_LOGI("NEW_VALUE", "Value change valid: %.3f -> %.3f", *current_value, new_value);
+            *current_value = new_value;
+            sys_state.value_changed = true;
+
+            if (ctx->live_update && !ctx->is_critical)
+            {
+                ESP_LOGI("NEW_VALUE", "Applying live update: %.3f", new_value);
+                update_system_parameter(ctx, new_value);
+            }
+            if (ctx->is_critical)
+                sys_state.pending_confirmation = true;
+
+            ESP_LOGI("NEW_VALUE", "Value decreased to: %.3f %s", new_value, ctx->unit);
+        }
+        else
+        {
+            ESP_LOGI("NEW_VALUE", "Value at minimum limit: %.3f %s", ctx->min_value, ctx->unit);
+        }
+        break;
     }
-    else if (sys_state.repeat_count > 5)
-    {
-        increment *= 2;
-    }
 
-    new_value = *current_value - increment;
-
-    // Validate range
-    if (validate_value_range(new_value))
-    {
-        ESP_LOGI("NEW_VALUE", "Value change valid: %.3f -> %.3f", *current_value, new_value);
-        *current_value = new_value;
-        sys_state.current_value_type->current_value = new_value;
+    case VALUE_EDIT_BOOL:
+        /* Toggle is symmetric — Up and Down both flip it. */
+        ctx->current_value = (ctx->current_value != 0.0f) ? 0.0f : 1.0f;
         sys_state.value_changed = true;
 
-        // Apply live update if enabled
-        if (ctx->live_update && ctx->is_critical)
-        {
-            ESP_LOGI("NEW_VALUE", "Applying live update: %.3f", new_value);
-            update_system_parameter(ctx, new_value);
-        }
-
-        // Set pending confirmation for critical values
+        if (ctx->live_update && !ctx->is_critical)
+            update_system_parameter(ctx, ctx->current_value);
         if (ctx->is_critical)
-        {
             sys_state.pending_confirmation = true;
-        }
 
-        ESP_LOGI("NEW_VALUE", "Value decreased to: %.3f %s", new_value, ctx->unit);
-    }
-    else
-    {
-        ESP_LOGI("NEW_VALUE", "Value at minimum limit: %.3f %s", ctx->min_value, ctx->unit);
+        ESP_LOGI("NEW_VALUE", "%s toggled to: %s", ctx->label,
+                 ctx->current_value != 0.0f ? "ON" : "OFF");
+        break;
+
+    case VALUE_EDIT_SELECT:
+        if (ctx->max_selection > 0)
+        {
+            ctx->selection_index = (ctx->selection_index > 0)
+                                       ? ctx->selection_index - 1
+                                       : ctx->max_selection - 1;
+            sys_state.value_changed = true;
+
+            if (ctx->live_update && !ctx->is_critical)
+                update_system_parameter(ctx, (float)ctx->selection_index);
+            if (ctx->is_critical)
+                sys_state.pending_confirmation = true;
+
+            ESP_LOGI("NEW_VALUE", "%s selection: %d (%s)", ctx->label,
+                     ctx->selection_index, ctx->options[ctx->selection_index]);
+        }
+        break;
+
+    case VALUE_EDIT_LIST:
+        if (ctx->list_size > 0)
+        {
+            ctx->list_index = (ctx->list_index > 0)
+                                  ? ctx->list_index - 1
+                                  : ctx->list_size - 1;
+            sys_state.value_changed = true;
+
+            if (ctx->live_update && !ctx->is_critical)
+                update_system_parameter(ctx, (float)ctx->list_index);
+            if (ctx->is_critical)
+                sys_state.pending_confirmation = true;
+
+            ESP_LOGI("NEW_VALUE", "%s list index: %d", ctx->label, ctx->list_index);
+        }
+        break;
+
+    default:
+        break;
     }
 }
 
@@ -6071,6 +6635,7 @@ value_edit_context_t *get_current_value_config(void)
         return NULL;
     return sys_state.current_value_type;
 }
+
 float calculate_increment(bool fast_mode, bool precision_mode)
 {
     value_edit_context_t *ctx = get_current_value_config();
@@ -6219,18 +6784,22 @@ void handle_value_confirmation(void)
     // ======== Post-confirmation handling ========
     if (safety_check_passed)
     {
-        sys_state.value_changed = true;
+        sys_state.value_changed = false;
         exit_value_edit_mode(true);
 
+        show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
+        lcd_flash_info_to(ctx->label, "Value Saved!    ", 1000, LCD_SCREEN_MENU);
+
         printf("AUDIT: Parameter changed - %s\n", ctx->label);
-        lcd_flash_info("Value Saved!    ", ctx->label, 1000);
     }
     else
     {
-        printf("Safety check failed or value invalid, reverting changes\n");
         reset_value_to_backup();
+        sys_state.value_changed = false;
         exit_value_edit_mode(false);
-        lcd_flash_info("Change Rejected ", "                ", 1000);
+
+        show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
+        lcd_flash_info_to("Change Rejected ", "                ", 1000, LCD_SCREEN_MENU);
     }
     sys_state.pending_confirmation = false;
 }
@@ -6243,7 +6812,6 @@ void update_system_parameter(value_edit_context_t *ctx, float value)
         return;
     }
     ctx->apply(value);
-    ESP_LOGI("SYSTEM_PARAM", "Updated %s to %.3f %s", ctx->label, value, ctx->unit);
 }
 
 /**
@@ -7299,47 +7867,170 @@ int get_voltage_index(int voltage)
     return 0; // default to 12V
 }
 
-void clamp_values()
+/**
+ * @brief Validate and clamp settings after loading from NVS.
+ *
+ * Runs range checks that a single nvs_get_* success/failure can't catch —
+ * a value can be technically present in flash and still be dangerous
+ * (wrong order relative to another setting, or corrupted into an
+ * out-of-range number without being an ESP_ERR_NVS_NOT_FOUND).
+ *
+ * @return true if every value needed a value changed from what was loaded
+ *         (caller should persist the corrected values back to NVS).
+ */
+static bool validate_and_clamp_settings(void)
 {
-    sys_state.battery_profile.cutoff_voltage_12v = fmaxf(9.0f, fminf(12.0f, sys_state.battery_profile.cutoff_voltage_12v));
-    sys_state.battery_profile.recharge_voltage_12v = fmaxf(12.0f, fminf(15.0f, sys_state.battery_profile.recharge_voltage_12v));
-}
+    bool corrected = false;
 
-int get_setting_value(int index)
-{
-    nvs_handle_t nvs;
-    char key[16];
-    int32_t value = 0;
-    esp_err_t err;
-
-    snprintf(key, sizeof(key), "setting_%d", index);
-
-    if (nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs) == ESP_OK)
+    if (sys_state.battery_profile.profile_id >= BATTERY_TYPE_COUNT)
     {
-        err = nvs_get_i32(nvs, key, &value);
-        nvs_close(nvs);
-
-        if (err == ESP_OK)
-            return value;
+        ESP_LOGE(TAG_SYS, "Invalid battery type %d loaded — resetting to AGM",
+                 sys_state.battery_profile.profile_id);
+        battery_profile_t regenerated;
+        battery_generate_profile(BATTERY_AGM, VOLTAGE_SYSTEM_12V, 100, &regenerated);
+        sys_state.battery_profile = regenerated;
+        sys_state.battery_profile.profile_id = BATTERY_AGM;
+        corrected = true;
     }
 
-    // Return default value if not found or read fails
-    return default_settings[index];
-}
-
-void set_setting_value(int index, int value)
-{
-    nvs_handle_t nvs;
-    char key[16];
-
-    snprintf(key, sizeof(key), "setting_%d", index);
-
-    if (nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs) == ESP_OK)
+    /* ---- Battery cutoff voltage ---- */
+    float cutoff_floor = sys_state.battery_profile.cutoff_voltage_min_12v;
+    if (sys_state.battery_profile.cutoff_voltage_12v < cutoff_floor)
     {
-        nvs_set_i32(nvs, key, value);
-        nvs_commit(nvs);
-        nvs_close(nvs);
+        ESP_LOGW(TAG_SYS, "Cutoff %.2fV below hw floor %.2fV — clamping",
+                 sys_state.battery_profile.cutoff_voltage_12v, cutoff_floor);
+        sys_state.battery_profile.cutoff_voltage_12v = cutoff_floor;
+        corrected = true;
     }
+
+    /* ---- Battery recharge voltage vs its own ceiling ---- */
+    float recharge_ceiling = sys_state.battery_profile.high_battery_voltage_12v;
+    if (sys_state.battery_profile.recharge_voltage_12v > recharge_ceiling)
+    {
+        ESP_LOGW(TAG_SYS, "Recharge %.2fV above hw ceiling %.2fV — clamping",
+                 sys_state.battery_profile.recharge_voltage_12v, recharge_ceiling);
+        sys_state.battery_profile.recharge_voltage_12v = recharge_ceiling;
+        corrected = true;
+    }
+
+    /* ---- Cross-check: cutoff must stay below recharge by a safety
+     * margin, otherwise the system could oscillate between "shut down,
+     * low battery" and "resume, still low battery" every few seconds. ---- */
+    const float CUTOFF_RECHARGE_MARGIN_V = 0.3f;
+    if (sys_state.battery_profile.cutoff_voltage_12v >=
+        sys_state.battery_profile.recharge_voltage_12v - CUTOFF_RECHARGE_MARGIN_V)
+    {
+        ESP_LOGE(TAG_SYS,
+                 "Cutoff (%.2fV) too close to/above recharge (%.2fV) — "
+                 "forcing recharge = cutoff + %.1fV",
+                 sys_state.battery_profile.cutoff_voltage_12v,
+                 sys_state.battery_profile.recharge_voltage_12v,
+                 CUTOFF_RECHARGE_MARGIN_V);
+        sys_state.battery_profile.recharge_voltage_12v =
+            sys_state.battery_profile.cutoff_voltage_12v + CUTOFF_RECHARGE_MARGIN_V;
+
+        if (sys_state.battery_profile.recharge_voltage_12v > recharge_ceiling)
+        {
+            sys_state.battery_profile.recharge_voltage_12v = recharge_ceiling;
+            sys_state.battery_profile.cutoff_voltage_12v =
+                recharge_ceiling - CUTOFF_RECHARGE_MARGIN_V;
+        }
+        corrected = true;
+    }
+
+    /* ---- Current Limit---- */
+    if (sys_state.current_limit < 1.0f || sys_state.current_limit > 50.0f)
+    {
+        ESP_LOGW(TAG_SYS, "Current limit %.1fA out of range — clamping",
+                 sys_state.current_limit);
+        sys_state.current_limit = clamp_float(sys_state.current_limit, 1.0f, 50.0f);
+        corrected = true;
+    }
+
+    /* ---- Temperature alarm ---- */
+    if (sys_state.temperature_limit < 40.0f || sys_state.temperature_limit > HEATSINK_TEMP_MAX)
+    {
+        ESP_LOGW(TAG_SYS, "Temp alarm %.1fC out of range — clamping",
+                 sys_state.temperature_limit);
+        sys_state.temperature_limit = clamp_float(sys_state.temperature_limit, 40.0f, HEATSINK_TEMP_MAX);
+        corrected = true;
+    }
+
+    /* ---- Output voltage / voltage threshold ---- */
+    if (sys_state.inverter.output_voltage < 100.0f || sys_state.inverter.output_voltage > 240.0f)
+    {
+        ESP_LOGW(TAG_SYS, "Output voltage %.1fV out of range — clamping",
+                 sys_state.inverter.output_voltage);
+        sys_state.inverter.output_voltage = clamp_float(sys_state.inverter.output_voltage, 100.0f, 240.0f);
+        corrected = true;
+    }
+    if (sys_state.settings.voltage_threshold < 100.0f || sys_state.settings.voltage_threshold > 240.0f)
+    {
+        sys_state.settings.voltage_threshold = clamp_float(sys_state.settings.voltage_threshold, 100.0f, 240.0f);
+        corrected = true;
+    }
+
+    /* ---- Output frequency ---- */
+    if (sys_state.inverter.output_frequency < 45.0f || sys_state.inverter.output_frequency > 65.0f)
+    {
+        ESP_LOGW(TAG_SYS, "Output frequency %.2fHz out of range — clamping",
+                 sys_state.inverter.output_frequency);
+        sys_state.inverter.output_frequency = clamp_float(sys_state.inverter.output_frequency, 45.0f, 65.0f);
+        corrected = true;
+    }
+    if (sys_state.settings.frequency_range < MIN_FREQUENCY || sys_state.settings.frequency_range > MAX_FREQUENCY)
+    {
+        sys_state.settings.frequency_range = (sys_state.settings.frequency_range < MIN_FREQUENCY)
+                                                 ? MIN_FREQUENCY
+                                                 : MAX_FREQUENCY;
+        corrected = true;
+    }
+
+    /* ---- System timeout: floor matches MIN_OFF_TIME_MS (rapid-cycle
+     * protection already used elsewhere in the file); ceiling is a
+     * sane upper bound so a corrupted value can't leave the menu open
+     * "forever". ---- */
+    if (sys_state.system_timeout < MIN_OFF_TIME_MS || sys_state.system_timeout > 600000)
+    {
+        ESP_LOGW(TAG_SYS, "System timeout %lu ms out of range — clamping",
+                 (unsigned long)sys_state.system_timeout);
+        sys_state.system_timeout = (sys_state.system_timeout < MIN_OFF_TIME_MS)
+                                       ? MIN_OFF_TIME_MS
+                                       : 600000;
+        corrected = true;
+    }
+
+    /* ---- Scroll speed / enable ---- */
+    if (sys_state.display.scroll_speed < 1 || sys_state.display.scroll_speed > 10)
+    {
+        sys_state.display.scroll_speed = DEFAULT_SCROLL_SPEED;
+        corrected = true;
+    }
+    if (sys_state.display.scroll_enabled && sys_state.display.scroll_speed == 0)
+    {
+        sys_state.display.scroll_speed = DEFAULT_SCROLL_SPEED;
+        corrected = true;
+    }
+    sys_state.display.scroll_enabled = sys_state.display.scroll_enabled ? 1 : 0;
+    sys_state.display.auto_shutdown_enabled = sys_state.display.auto_shutdown_enabled ? 1 : 0;
+
+    /* ---- Backlight timeout: 0 is a valid "never dim" sentinel, but
+     * 1–4 seconds is almost certainly a corrupted/garbage value rather
+     * than an intentional setting. ---- */
+    if (sys_state.display.backlight_timeout > 0 && sys_state.display.backlight_timeout < 5)
+    {
+        sys_state.display.backlight_timeout = 5;
+        corrected = true;
+    }
+
+    /* ---- Brightness ---- */
+    if (sys_state.display.brightness < 0 || sys_state.display.brightness > 255)
+    {
+        sys_state.display.brightness = clamp_float(sys_state.display.brightness, 0, 255);
+        corrected = true;
+    }
+
+    return corrected;
 }
 
 /* ── menu_exit() ────────────────────────────────────────────────────────── */
@@ -7534,7 +8225,7 @@ void adjust_calibration_setting(button_event_info_t btn)
     {
     case 0:
         lcd_show_menu("Calibration Menu", "1.Bat 2.Current ");
-        if (button_id == BTN_ENTER_MENU)
+        if (button_id == BTN_ENTER)
         {
             calib_step = (sys_state.display.menu_position == 8)
                              ? 10
@@ -7548,7 +8239,7 @@ void adjust_calibration_setting(button_event_info_t btn)
         break;
     case 1:
         lcd_show_menu("Bat Calibration ", "Connect known12V");
-        if (button_id == BTN_ENTER_MENU)
+        if (button_id == BTN_ENTER)
         {
             float known = 12.0f;
             sys_state.inverter.battery_voltage_calibration =
@@ -7983,7 +8674,7 @@ void log_error_to_nvs(uint8_t error_code)
         nvs_get_u32(nvs_handler, "count", &error_count);
 
         char key[15];
-        snprintf(key, sizeof(key), "err_%04ld", error_count % 1000);
+        snprintf(key, sizeof(key), "err_%04lu", error_count % 1000);
         nvs_set_u8(nvs_handler, key, error_code);
 
         nvs_set_u32(nvs_handler, "count", error_count + 1);
@@ -8171,7 +8862,7 @@ void error_handler(void)
     uint32_t elapsed = 0;
     while (elapsed < RESET_TIMEOUT_MS)
     {
-        if (gpio_get_level(BTN_ENTER_MENU) == 0)
+        if (gpio_get_level(BTN_ENTER) == 0)
         {
             lcd_show_fault("System Reset    ", "Please wait...  ");
             vTaskDelay(pdMS_TO_TICKS(5000));
@@ -8189,7 +8880,7 @@ void edit_voltage_threshold(void)
 {
     sys_state.current_value_type = &value_edit[VALUE_TYPE_VOLTAGE];
     sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = false;
+    sys_state.pending_confirmation = true;
     sys_state.value_changed = false;
     sys_state.repeat_count = 0;
     sys_state.fast_increment_active = false;
@@ -8199,6 +8890,9 @@ void edit_voltage_threshold(void)
 
 void edit_current_limit(void)
 {
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
     sys_state.value_edit_mode = true;
     sys_state.current_value_type = &value_edit[VALUE_TYPE_CURRENT];
     lcd_show_value_edit_screen();
@@ -8207,6 +8901,11 @@ void edit_current_limit(void)
 void edit_frequency_range(void)
 {
 
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
     sys_state.value_edit_mode = true;
     sys_state.current_value_type = &value_edit[VALUE_TYPE_FREQUENCY];
     lcd_show_value_edit_screen();
@@ -8214,14 +8913,84 @@ void edit_frequency_range(void)
 
 void edit_temperature_alarm(void)
 {
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
     sys_state.current_value_type = &value_edit[VALUE_TYPE_TEMPERATURE];
     lcd_show_value_edit_screen();
 }
 
 void edit_system_timeout(void)
 {
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
     sys_state.current_value_type = &value_edit[VALUE_TYPE_TIMEOUT];
     lcd_show_value_edit_screen();
+}
+
+void edit_auto_shutdown(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_AUTO_SHUTDOWN];
+    sys_state.current_value_type->current_value =
+        sys_state.display.auto_shutdown_enabled ? 1.0f : 0.0f;
+    lcd_show_value_edit_screen();
+}
+
+void edit_scroll_enable(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_SCROLL_ENABLE];
+    sys_state.current_value_type->current_value =
+        sys_state.display.scroll_enabled ? 1.0f : 0.0f;
+    lcd_show_value_edit_screen();
+}
+
+void edit_scroll_speed(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_SCROLL_SPEED];
+    sys_state.current_value_type->current_value = (float)sys_state.display.scroll_speed;
+    lcd_show_value_edit_screen();
+}
+
+void edit_battery_type(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_BATTERY_TYPE];
+    sys_state.current_value_type->selection_index = sys_state.battery_profile.profile_id;
+    lcd_show_value_edit_screen();
+}
+
+void security_pin(void)
+{
 }
 
 /*==============================================================================
@@ -8293,11 +9062,18 @@ void app_main(void)
         return;
     }
 
+    change_pin_mutex = xSemaphoreCreateMutex();
+    if (change_pin_mutex == NULL)
+    {
+        ESP_LOGE(APP_TAG, "Failed to create change_pin_mutex");
+    }
+
     /* ── NEW: initialise render state ─────────────────────────────────── */
     lcd_writer_init();
 
     init_hardware();
     nvs_init(false);
+    security_init();
     init_system_state();
     init_menu_system();
     nvs_print_stats();

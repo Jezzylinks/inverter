@@ -41,6 +41,7 @@ extern "C"
         LCD_SHOW_BAT_VOLTAGE,
         LCD_DISPLAY_BATTERY_SETTINGS,
         LCD_SCREEN_LOADING,
+        LCD_SCREEN_SECURITY,
         LCD_SCREEN_COUNT
     } lcd_screen_id_t;
 
@@ -142,6 +143,7 @@ extern "C"
     typedef enum
     {
         FACTORY_PHASE_IDLE = 0,
+        FACTORY_RESET_PIN_ENTRY,
         FACTORY_PHASE_CONFIRM,
         FACTORY_PHASE_PROGRESS,
         FACTORY_PHASE_DONE,
@@ -162,6 +164,27 @@ extern "C"
         _Atomic factory_reset_action_t action;
 
     } lcd_factory_reset_data_t;
+
+    typedef enum
+    {
+        SECURITY_PHASE_IDLE = 0,
+        SECURITY_PHASE_PIN_FLOW,    // change_pin_ctx_t owns Enter/Up/Down/Back
+        SECURITY_PHASE_VIEW_STATUS, // read-only status screen
+    } security_phase_t;
+
+    typedef enum
+    {
+        SECURITY_ACTION_NONE = 0,
+        SECURITY_ACTION_CHANGE_PIN,
+        SECURITY_ACTION_VIEW_STATUS,
+        SECURITY_ACTION_RESET_PIN,
+    } security_action_t;
+
+    typedef struct
+    {
+        _Atomic security_phase_t phase;
+        _Atomic security_action_t action;
+    } lcd_security_data_t;
 
 #define LCD_WIFI_MAX_AP 10
     typedef struct
@@ -201,7 +224,6 @@ extern "C"
     typedef struct
     {
         lcd_screen_id_t screen;
-
         lcd_boot_init_data_t boot_init;
         lcd_main_data_t main;
         lcd_two_line_t menu;
@@ -212,6 +234,7 @@ extern "C"
         lcd_shutdown_data_t shutdown;
         lcd_fault_data_t fault;
         lcd_factory_reset_data_t factory_reset;
+        lcd_security_data_t security;
         lcd_wifi_scan_data_t wifi_scan;
         lcd_wifi_connect_data_t wifi_connect;
         lcd_two_line_t confirm;

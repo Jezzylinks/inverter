@@ -97,7 +97,6 @@ extern "C"
         BUTTON_EVENT_TRIPLE_CLICK,
         BUTTON_EVENT_MULTI_CLICK,
         BUTTON_EVENT_LONG_PRESS,
-        BUTTON_EVENT_VERY_LONG_PRESS,
         BUTTON_EVENT_MAX
     } button_raw_event_type_t;
 
@@ -127,7 +126,7 @@ extern "C"
     typedef enum
     {
         BTN_POWER = 0,
-        BTN_ENTER_MENU,
+        BTN_ENTER,
         BTN_UP,
         BTN_DOWN,
         BTN_BACK,

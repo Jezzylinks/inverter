@@ -189,12 +189,11 @@ void lcd_show_factory_confirm(void)
     LCD_UNLOCK();
 }
 
-void lcd_show_factory_progress(uint8_t pct)
+void lcd_show_factory_progress()
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
     sys_lcd.factory_reset.phase = FACTORY_PHASE_PROGRESS;
-    sys_lcd.factory_reset.progress_pct = pct;
     LCD_UNLOCK();
 }
 

@@ -15,11 +15,14 @@
 #include "esp_log.h"
 #include "lcd.h"
 #include <string.h>
+
 #include <stdio.h>
 #include <math.h>
 #include "lcd_flash_queue.h"
 #include "lcd_writer.h"
 #include <stdatomic.h>
+#include "system_state.h"
+#include "security/change_pin_flow.h"
 
 #define BOOT_TOTAL_STEPS 3
 
@@ -29,6 +32,9 @@ static uint32_t _lcd_get_time_ms(void);
 extern SemaphoreHandle_t sys_state_mutex;
 extern lcd_render_state_t sys_lcd;
 extern active_flash_t s_active_flash;
+extern diagnostic_data_t diag_data;
+extern change_pin_ctx_t change_pin_ctx;
+extern SemaphoreHandle_t change_pin_mutex;
 
 /* lcd.h hardware config — same as original */
 #define LCD_ADDR 0x27
@@ -135,26 +141,6 @@ static void format_progress_line(char *out, uint8_t pct)
     out[bar_slots + 2] = ' ';
     memcpy(&out[bar_slots + 3], pct_str, 4);
     out[LCD_COLS] = '\0';
-}
-
-static void draw_boot_init(const lcd_boot_init_data_t *d)
-{
-    static bool label_drawn = false;
-    static uint8_t last_pct = 0xFF; // sentinel forces first draw
-
-    if (!label_drawn)
-    {
-        draw_row(0, "Initializing    ");
-        label_drawn = true;
-    }
-
-    if (d->progress_pct != last_pct)
-    {
-        char line1[LCD_COLS + 1];
-        format_progress_line(line1, d->progress_pct);
-        draw_row(1, line1);
-        last_pct = d->progress_pct;
-    }
 }
 
 /**
@@ -287,12 +273,11 @@ static void draw_fault(const lcd_fault_data_t *d)
 static void draw_factory_reset(const lcd_factory_reset_data_t *d)
 {
     factory_reset_action_t action = atomic_load(&d->action);
-
+    const char *r0, *r1;
     switch (d->phase)
     {
     case FACTORY_PHASE_CONFIRM:
     {
-        const char *r0, *r1;
         switch (action)
         {
         case FACTORY_ACTION_CLEAR_SETTINGS:
@@ -315,7 +300,6 @@ static void draw_factory_reset(const lcd_factory_reset_data_t *d)
 
     case FACTORY_PHASE_PROGRESS:
     {
-        const char *r0;
         switch (action)
         {
         case FACTORY_ACTION_CLEAR_SETTINGS:
@@ -329,15 +313,20 @@ static void draw_factory_reset(const lcd_factory_reset_data_t *d)
             r0 = "RESETTING...    ";
             break;
         }
-        char r1[17];
-        snprintf(r1, 17, "Progress: %3d%%  ", atomic_load(&d->progress_pct));
-        draw_commit(r0, r1);
+        // char r1[17];
+        //  snprintf(r1, 17, "Progress: %3d%%  ", atomic_load(&d->progress_pct));
+        //  draw_commit(r0, r1);
+        lcd_show_loading(r0, 1500, LCD_SCREEN_FACTORY_RESET);
+        break;
+    }
+
+    case FACTORY_RESET_PIN_ENTRY:
+    {
         break;
     }
 
     case FACTORY_PHASE_DONE:
     {
-        const char *r0, *r1;
         switch (action)
         {
         case FACTORY_ACTION_CLEAR_SETTINGS:
@@ -358,7 +347,7 @@ static void draw_factory_reset(const lcd_factory_reset_data_t *d)
         if (atomic_load(&sys_lcd.factory_reset.action) == FACTORY_ACTION_RESET_ALL)
             draw_commit(r0, r1);
         else
-            lcd_flash_info_to(r0, r1, 1500, LCD_SCREEN_MAIN);
+            lcd_flash_info_to(r0, r1, 2000, LCD_SCREEN_MAIN);
         break;
     }
 
@@ -435,61 +424,76 @@ static void draw_standby(const lcd_standby_data_t *d)
     draw_commit("Vonix Inverter  ", r1);
 }
 
-static uint8_t loading_progress(uint32_t elapsed,
-                                uint32_t duration)
+static uint8_t loading_progress(uint32_t elapsed, uint32_t duration)
 {
     if (elapsed >= duration)
         return 100;
-
     float t = (float)elapsed / duration;
-
     if (t < 0.80f)
-    {
         return (uint8_t)(t * 100.0f);
-    }
-
     float remain = (t - 0.80f) / 0.20f;
-
     return 80 + (uint8_t)(remain * 20.0f);
 }
 
 static void draw_loading_bar(uint8_t pct)
 {
     char row[17];
-
     uint8_t blocks = (pct * 10) / 100;
-
     row[0] = '[';
-
     for (int i = 0; i < 10; i++)
-    {
         row[i + 1] = (i < blocks) ? 0xFF : '-';
-    }
-
     row[11] = ']';
-    row[12] = '\0';
-
+    /* pad remaining columns so stale characters from a longer
+     * previous line (e.g. progress text) don't linger on-screen */
+    snprintf(row + 12, sizeof(row) - 12, "%-4s", "");
+    row[16] = '\0';
     draw_row(1, row);
 }
 
 static void draw_loading(const lcd_loading_data_t *d)
 {
     static uint8_t last_pct = 255;
+    static uint32_t last_start_ms = 0;
 
-    uint32_t elapsed =
-        _lcd_get_time_ms() - d->start_ms;
+    if (d->start_ms != last_start_ms)
+    {
+        last_pct = 255;
+        last_start_ms = d->start_ms;
+    }
 
-    uint8_t pct =
-        loading_progress(elapsed,
-                         d->duration_ms);
+    uint32_t elapsed = _lcd_get_time_ms() - d->start_ms;
+    uint8_t pct = loading_progress(elapsed, d->duration_ms);
 
-    draw_row(0, "Loading...");
+    char row0[17];
+    snprintf(row0, sizeof(row0), "%-16.16s", d->title);
+    draw_row(0, row0);
 
     if (pct != last_pct)
     {
         draw_loading_bar(pct);
         last_pct = pct;
     }
+}
+
+static void draw_security_status(char line1[17], char line2[17])
+{
+    if (security_pin_change_required())
+    {
+        snprintf(line1, 17, "PIN Status:");
+        snprintf(line2, 17, "Default (0000)");
+    }
+    else if (security_is_locked_out())
+    {
+        uint32_t remaining_s = security_lockout_remaining_ms() / 1000;
+        snprintf(line1, 17, "PIN Status:");
+        snprintf(line2, 17, "Retry in %lus", remaining_s);
+    }
+    else
+    {
+        snprintf(line1, 17, "PIN Status:");
+        snprintf(line2, 17, "Custom, OK");
+    }
+    draw_commit(line1, line2);
 }
 
 /*==============================================================================
@@ -575,10 +579,11 @@ void lcd_task(void *arg)
 
         /* ====== STEP 1: WATCHDOG (always first) ====== */
         lcd_watchdog_feed();
-
+        /* ====== STEP 1b: UPDATE UPTIME ====== */
         /* ====== STEP 2: SNAPSHOT STATE (under mutex) ====== */
         xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
         memcpy(&snap, &sys_lcd, sizeof(snap));
+        diag_data.uptime_seconds = (uint32_t)(esp_timer_get_time() / 1000000ULL);
         xSemaphoreGive(sys_state_mutex);
 
         /* ====== STEP 4: FLASH MESSAGE HANDLING ====== */
@@ -674,33 +679,7 @@ void lcd_task(void *arg)
         case LCD_SCREEN_BOOT_BRAND:
             draw_boot_brand();
             vTaskDelay(pdMS_TO_TICKS(2000));
-            xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
-            sys_lcd.screen = LCD_SCREEN_BOOT_INIT;
-            xSemaphoreGive(sys_state_mutex);
-            break;
-
-        case LCD_SCREEN_BOOT_INIT:
-            lcd_boot_init_data_t d = {.progress_pct = 0};
-            // draw_boot_init(&d);
-
-            // // step 1 work here
-            // d.progress_pct = (1 * 100) / BOOT_TOTAL_STEPS;
-            // draw_boot_init(&d);
-
-            // // step 2 work here
-            // d.progress_pct = (2 * 100) / BOOT_TOTAL_STEPS;
-            // draw_boot_init(&d);
-
-            // // step 3 work here
-            // d.progress_pct = (3 * 100) / BOOT_TOTAL_STEPS;
-            // draw_boot_init(&d);
-
-            // vTaskDelay(pdMS_TO_TICKS(2000));
-
-            xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
-            lcd_show_loading("Initializing..", 3000, LCD_SCREEN_MAIN);
-            sys_lcd.screen = LCD_SCREEN_MAIN;
-            xSemaphoreGive(sys_state_mutex);
+            lcd_show_loading("System Loading  ", 2000, LCD_SCREEN_MAIN);
             break;
 
         case LCD_SCREEN_MAIN:
@@ -797,25 +776,51 @@ void lcd_task(void *arg)
         case LCD_SCREEN_LOADING:
         {
             draw_loading(&snap.loading);
-
-            uint32_t elapsed =
-                _lcd_get_time_ms() - snap.loading.start_ms;
-
+            uint32_t elapsed = _lcd_get_time_ms() - snap.loading.start_ms;
             if (elapsed >= snap.loading.duration_ms)
             {
-                xSemaphoreTake(sys_state_mutex,
-                               portMAX_DELAY);
-
+                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
                 sys_lcd.loading.active = false;
-
-                sys_lcd.screen =
-                    sys_lcd.loading.next_screen;
-
+                sys_lcd.screen = sys_lcd.loading.next_screen;
                 xSemaphoreGive(sys_state_mutex);
-
-                need_clear = true;
             }
+            break;
+        }
 
+        case LCD_SCREEN_SECURITY:
+        {
+            char line1[17], line2[17];
+            security_phase_t sec_phase = atomic_load(&snap.security.phase);
+
+            if (sec_phase == SECURITY_PHASE_PIN_FLOW)
+            {
+                change_pin_ctx_t pin_snap;
+
+                if (xSemaphoreTake(change_pin_mutex, pdMS_TO_TICKS(20)) == pdTRUE)
+                {
+                    memcpy(&pin_snap, &change_pin_ctx, sizeof(pin_snap));
+                    xSemaphoreGive(change_pin_mutex);
+                }
+                else
+                {
+                    /* Mutex busy this tick -- skip this frame's redraw rather
+                     * than block the LCD task or render torn/inconsistent state. */
+                    break;
+                }
+
+                change_pin_render(&pin_snap, line1, line2);
+                draw_commit(line1, line2);
+            }
+            else if (sec_phase == SECURITY_PHASE_VIEW_STATUS)
+            {
+                draw_security_status(line1, line2);
+            }
+            else
+            {
+                snprintf(line1, 17, "%-16s", "Change PIN      ");
+                snprintf(line2, 17, "%-16s", "View  |  Reset  ");
+                draw_commit(line1, line2);
+            }
             break;
         }
 
