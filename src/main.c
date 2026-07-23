@@ -802,6 +802,35 @@ const char *battery_type_names[BATTERY_TYPE_COUNT] = {
     "NiMH"         // BATTERY_NIMH = 5
 };
 
+/* Voltage system names for the settings-menu select item. voltage_system_t
+ * values (12/24/48/96) are not sequential/zero-based, so a select's
+ * 0..N-1 index has to be mapped through voltage_system_values[] below
+ * rather than cast directly like battery_type_t is. */
+#define BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT 4
+const char *battery_voltage_system_names[BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT] = {
+    "12V",
+    "24V",
+    "48V",
+    "96V"};
+static const voltage_system_t voltage_system_values[BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT] = {
+    VOLTAGE_SYSTEM_12V,
+    VOLTAGE_SYSTEM_24V,
+    VOLTAGE_SYSTEM_48V,
+    VOLTAGE_SYSTEM_96V};
+
+/* Reverse lookup: nominal_voltage -> select index, for populating the
+ * select's current selection_index when entering edit mode. Falls back
+ * to index 0 (12V) if the stored value doesn't match any option. */
+static int voltage_system_to_index(voltage_system_t v)
+{
+    for (int i = 0; i < BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT; i++)
+    {
+        if (voltage_system_values[i] == v)
+            return i;
+    }
+    return 0;
+}
+
 // Call this to display and handle selection
 /* ── select_battery_type() ──────────────────────────────────────────────── */
 void select_battery_type(button_id_t btn)
@@ -873,6 +902,7 @@ typedef enum
     VALUE_TYPE_SCROLL_ENABLE,
     VALUE_TYPE_SCROLL_SPEED,
     VALUE_TYPE_BATTERY_TYPE,
+    VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM,
     VALUE_TYPE_COUNT
 } value_edit_param_t;
 
@@ -977,7 +1007,8 @@ static const menu_item_t settings_items[] = {
     {"Auto Shutdown", MENU_SETTINGS},
     {"Scroll Enable", MENU_SETTINGS},
     {"Scroll Speed", MENU_SETTINGS},
-    {"Battery Type", MENU_SETTINGS}};
+    {"Battery Type", MENU_SETTINGS},
+    {"Voltage System", MENU_SETTINGS}};
 
 // MONITORING MENU (6 items)
 static const menu_item_t monitoring_items[] = {
@@ -1127,6 +1158,7 @@ static void apply_scroll_enable(float v);
 static void apply_scroll_speed(float v);
 static void apply_system_timeout(float v);
 static void apply_battery_type(float v);
+static void apply_battery_voltage_system(float v);
 
 // Value adjustment functions
 void increase_value(bool fast_mode, bool precision_mode);
@@ -1152,6 +1184,7 @@ void edit_auto_shutdown(void);
 void edit_scroll_enable(void);
 void edit_scroll_speed(void);
 void edit_battery_type(void);
+void edit_battery_voltage_system(void);
 void security_pin(void);
 
 // Submenu functions
@@ -1405,6 +1438,18 @@ static value_edit_context_t value_edit[] = {
         .is_critical = true, /* changes charge/cutoff voltages — confirm before applying */
         .live_update = false,
         .apply = apply_battery_type,
+    },
+
+    [VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM] = {
+        .edit_type = VALUE_EDIT_SELECT,
+        .selection_index = 0,
+        .max_selection = BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT,
+        .options = battery_voltage_system_names,
+        .unit = "",
+        .label = "Voltage System",
+        .is_critical = true, /* rescales every voltage/current field — confirm before applying */
+        .live_update = false,
+        .apply = apply_battery_voltage_system,
     },
 };
 
@@ -4686,6 +4731,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             case 8:
                 edit_battery_type();
                 break;
+            case 9:
+                edit_battery_voltage_system();
+                break;
             }
             break;
 
@@ -5672,6 +5720,28 @@ static void apply_battery_type(float v)
     {
         sys_state.battery_profile = regenerated;
         sys_state.battery_profile.profile_id = new_type;
+    }
+}
+
+/* Voltage system change regenerates the active profile at the currently
+ * configured battery type/capacity, scaled to the new nominal voltage.
+ * 'v' is the select's 0..N-1 index, not the raw voltage -- must go
+ * through voltage_system_values[] rather than being cast directly. */
+static void apply_battery_voltage_system(float v)
+{
+    int index = (int)v;
+    if (index < 0 || index >= BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT)
+        return;
+
+    voltage_system_t new_voltage = voltage_system_values[index];
+    battery_profile_t regenerated;
+    if (battery_generate_profile((battery_type_t)sys_state.battery_profile.profile_id,
+                                 new_voltage,
+                                 sys_state.battery_profile.capacity_ah,
+                                 &regenerated))
+    {
+        sys_state.battery_profile = regenerated;
+        sys_state.battery_profile.nominal_voltage = new_voltage;
     }
 }
 
@@ -6695,6 +6765,11 @@ void handle_value_confirmation(void)
     {
         sys_state.value_changed = false;
         exit_value_edit_mode(true);
+
+        /* Persist immediately -- without this, a confirmed change (e.g.
+         * Battery Type / Voltage System) only survives if the board
+         * happens to sleep, restart, or fault before losing power. */
+        save_settings();
 
         show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
         lcd_flash_info_to(ctx->label, "Value Saved!    ", 1000, LCD_SCREEN_MENU);
@@ -8845,6 +8920,20 @@ void edit_battery_type(void)
     sys_state.value_edit_mode = true;
     sys_state.current_value_type = &value_edit[VALUE_TYPE_BATTERY_TYPE];
     sys_state.current_value_type->selection_index = sys_state.battery_profile.profile_id;
+    lcd_show_value_edit_screen();
+}
+
+void edit_battery_voltage_system(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM];
+    sys_state.current_value_type->selection_index =
+        voltage_system_to_index((voltage_system_t)sys_state.battery_profile.nominal_voltage);
     lcd_show_value_edit_screen();
 }
 
