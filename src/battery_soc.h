@@ -48,7 +48,13 @@ uint8_t battery_soc_from_voltage(float voltage_v,
 const soc_table_t *battery_soc_get_table(uint8_t chemistry);
 
 /*
- * Convenience wrapper — uses the active battery profile stored in sys_state.
- * Defined in battery_soc.c; reads sys_state.battery_profile internally.
+ * Convenience wrapper around battery_soc_get_table() + battery_soc_from_voltage().
+ *
+ * @param voltage    Measured battery voltage in volts (any system voltage).
+ * @param chemistry  Battery chemistry index — pass sys_state.battery_profile.chemistry
+ *                   (values match battery_chemistry_t in system_state.h, which is
+ *                   kept in the same order as the lookup tables in battery_soc.c).
+ * @param nominal_v  System nominal voltage — pass sys_state.battery_profile.nominal_voltage
+ *                   (12, 24, 48, or 96).
  */
-uint8_t calculate_battery_percentage(float voltage);
+uint8_t calculate_battery_percentage(float voltage, uint8_t chemistry, float nominal_v);

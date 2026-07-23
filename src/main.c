@@ -36,6 +36,7 @@
 #include "sdkconfig.h"
 #include "rom/ets_sys.h"
 #include "utils.h" // Added MIN & MAX
+#include "battery_soc.h"
 #include <stdbool.h>
 #include <button_controller.h>
 
@@ -1076,7 +1077,6 @@ void update_led(led_channel_t led, uint8_t brightness /*uint8_t led*/);
 void adc_task(void *arg);
 static bool adc_calibration_init(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle);
 static void adc_calibration_deinit(adc_cali_handle_t handle);
-uint8_t calculate_battery_percentage(float voltage);
 void power_task(void *arg);
 void error_handler();
 void log_all_error_flags(uint32_t flags);
@@ -2600,7 +2600,9 @@ void adc_task(void *arg)
             sys_state.inverter.output_frequency,
             sys_state.inverter.battery.battery_temperature,
             sys_state.inverter.load_percentage,
-            calculate_battery_percentage(sys_state.inverter.battery.voltage),
+            calculate_battery_percentage(sys_state.inverter.battery.voltage,
+                                        sys_state.battery_profile.chemistry,
+                                        (float)sys_state.battery_profile.nominal_voltage),
             sys_state.inverter.inverter_active,
             sys_state.inverter.connected,
             sys_state.battery_charging);
@@ -4261,7 +4263,9 @@ void handle_power_button_event(button_event_info_t *event_info,
         case INVERTER_STANDBY:
         {
             uint8_t pct = calculate_battery_percentage(
-                sys_state.inverter.battery.voltage);
+                sys_state.inverter.battery.voltage,
+                sys_state.battery_profile.chemistry,
+                (float)sys_state.battery_profile.nominal_voltage);
             lcd_show_standby(sys_state.inverter.battery.voltage, pct,
                              sys_state.inverter.connected);
             break;
