@@ -15,6 +15,18 @@ extern "C"
 #define SECURITY_LOCKOUT_MS (30 * 1000) // 30s, tune later
 #define SECURITY_DEFAULT_PIN {0, 0, 0, 0}
 
+    typedef struct
+    {
+        /* ── NVS-persisted ─────────────────────────────────────────── */
+        uint8_t enabled;       /* 0 = security off, 1 = PIN required       */
+        uint8_t auto_lock_min; /* idle minutes before re-lock (0 = never)  */
+
+        /* ── RAM only ──────────────────────────────────────────────── */
+        bool locked;          /* true = panel is locked, PIN required      */
+        bool pin_verified;    /* true = PIN was verified this session       */
+        uint8_t failed_boots; /* consecutive boots with wrong PIN attempts  */
+    } security_ctx_t;
+
     /**
      * Must be called once during app init, after NVS is ready.
      * Loads the stored PIN hash/salt. If none exists (first boot),

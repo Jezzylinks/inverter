@@ -11,6 +11,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "stdatomic.h"
+#include "security/factory_reset.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -142,31 +143,6 @@ extern "C"
 
     typedef enum
     {
-        FACTORY_PHASE_IDLE = 0,
-        FACTORY_RESET_PIN_ENTRY,
-        FACTORY_PHASE_CONFIRM,
-        FACTORY_PHASE_PROGRESS,
-        FACTORY_PHASE_DONE,
-    } factory_reset_phase_t;
-
-    typedef enum
-    {
-        FACTORY_ACTION_NONE,
-        FACTORY_ACTION_RESET_ALL,
-        FACTORY_ACTION_CLEAR_SETTINGS,
-        FACTORY_ACTION_ERASE_LOGS,
-    } factory_reset_action_t;
-
-    typedef struct
-    {
-        _Atomic factory_reset_phase_t phase;
-        _Atomic uint8_t progress_pct;
-        _Atomic factory_reset_action_t action;
-
-    } lcd_factory_reset_data_t;
-
-    typedef enum
-    {
         SECURITY_PHASE_IDLE = 0,
         SECURITY_PHASE_PIN_FLOW,    // change_pin_ctx_t owns Enter/Up/Down/Back
         SECURITY_PHASE_VIEW_STATUS, // read-only status screen
@@ -184,6 +160,7 @@ extern "C"
     {
         _Atomic security_phase_t phase;
         _Atomic security_action_t action;
+        _Atomic uint8_t menu_selection;
     } lcd_security_data_t;
 
 #define LCD_WIFI_MAX_AP 10
@@ -233,7 +210,7 @@ extern "C"
         lcd_startup_data_t startup;
         lcd_shutdown_data_t shutdown;
         lcd_fault_data_t fault;
-        lcd_factory_reset_data_t factory_reset;
+        factory_reset_ctx_t factory_reset;
         lcd_security_data_t security;
         lcd_wifi_scan_data_t wifi_scan;
         lcd_wifi_connect_data_t wifi_connect;

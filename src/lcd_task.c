@@ -37,6 +37,7 @@ extern active_flash_t s_active_flash;
 extern diagnostic_data_t diag_data;
 extern change_pin_ctx_t change_pin_ctx; /* no static -- external linkage */
 extern SemaphoreHandle_t change_pin_mutex;
+extern system_state_t sys_state;
 
 /* lcd.h hardware config */
 #define LCD_ADDR 0x27
@@ -333,7 +334,7 @@ static void draw_wifi_connecting(const lcd_wifi_connect_data_t *d)
     draw_commit(r0, r1);
 }
 
-static void draw_factory_reset(const lcd_factory_reset_data_t *d)
+static void draw_factory_reset(const factory_reset_ctx_t *d)
 {
     factory_reset_action_t action = atomic_load(&d->action);
     const char *r0, *r1;
@@ -539,24 +540,26 @@ static void draw_security_lockout(void)
     2. Default PIN  -> warn user to change it
     3. Custom PIN   -> confirm all good
 ------------------------------------------------------------------------------*/
-static void draw_security_status(void)
+static void draw_security_status()
 {
-    char r1[17];
-    if (security_is_locked_out())
+    char line1[17], line2[17];
+    if (security_pin_change_required())
     {
-        uint32_t remaining_s =
-            (uint32_t)(security_lockout_remaining_ms() / 1000) + 1;
-        snprintf(r1, sizeof(r1), "Locked  %3lus    ", (unsigned long)remaining_s);
+        snprintf(line1, 17, "PIN Status:");
+        snprintf(line2, 17, "Default (0000)");
     }
-    else if (security_pin_change_required())
+    else if (security_is_locked_out())
     {
-        snprintf(r1, sizeof(r1), "%-16s", "Default (0000)  ");
+        uint32_t remaining_s = security_lockout_remaining_ms() / 1000;
+        snprintf(line1, 17, "PIN Status:");
+        snprintf(line2, 17, "Locked %luds", remaining_s);
     }
     else
     {
-        snprintf(r1, sizeof(r1), "%-16s", "Custom  OK      ");
+        snprintf(line1, 17, "PIN Status:");
+        snprintf(line2, 17, "Custom, OK");
     }
-    draw_commit("PIN Status      ", r1);
+    draw_commit(line1, line2);
 }
 
 /*------------------------------------------------------------------------------

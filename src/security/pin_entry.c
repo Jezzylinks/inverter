@@ -3,6 +3,13 @@
 #include <string.h>
 #include <stdio.h>
 #include "button_controller.h"
+#include "factory_reset.h"
+#include "lcd_state.h"
+#include "system_state.h"
+#include "lcd_flash_queue.h"
+
+extern lcd_render_state_t sys_lcd;
+extern system_state_t sys_state;
 
 void pin_entry_reset(pin_entry_ctx_t *ctx)
 {

@@ -3,7 +3,8 @@
 
 #include "unistd.h"
 #include "stdatomic.h"
-#include <lcd_state.h>
+#include "lcd_state.h"
+#include "security/security.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -418,7 +419,7 @@ extern "C"
         uint8_t actual_current;
         bool output_enabled;
 
-        factory_reset_t factory_reset;
+        factory_reset_ctx_t factory_reset;
 
         bool system_active;    // Indicates if the system is currently active
         bool calibration_mode; // Indicates if the system is in calibration mode
@@ -479,6 +480,8 @@ extern "C"
         uint32_t time_since_last_shutdown;
         bool emergency_stop_active;
         float last_power_off_time;
+        security_ctx_t security;
+        // security_
 
         // LCD status
         lcd_render_state_t lcd_render;

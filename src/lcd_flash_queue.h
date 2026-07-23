@@ -18,6 +18,11 @@
 #include <stdbool.h>
 #include "lcd_state.h" /* for lcd_screen_id_t */
 
+#define FLASH_DURATION_SHORT 1000
+#define FLASH_PRIORITY_NORMAL 1500
+#define FLASH_PRIORITY_HIGH 2000
+#define FLASH_DURATION_LONG 3000
+
 /* ── Priority levels ─────────────────────────────────────────────────── */
 typedef enum
 {

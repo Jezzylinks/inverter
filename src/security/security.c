@@ -9,8 +9,10 @@
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "system_state.h"
 
 static const char *TAG = "security";
+extern system_state_t sys_state;
 
 #define NVS_NAMESPACE "security"
 #define NVS_KEY_HASH "sec_pin_hash"
@@ -127,6 +129,16 @@ esp_err_t security_init(void)
     }
     s_sec.attempts = 0;
     s_sec.lockout_until_ms = 0;
+
+    /* security_en is loaded by nvs_load_all() before this function runs.
+     * If security is disabled, mark initialized but skip PIN provisioning. */
+    if (!sys_state.security.enabled)
+    {
+        ESP_LOGI(TAG, "security disabled, skipping PIN init");
+        s_sec.initialized = true;
+        s_sec.force_change = false;
+        return ESP_OK;
+    }
 
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);

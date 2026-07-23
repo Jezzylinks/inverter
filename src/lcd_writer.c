@@ -18,10 +18,6 @@ extern SemaphoreHandle_t sys_state_mutex;
 extern lcd_render_state_t sys_lcd; /* the single render-state instance */
 extern system_state_t sys_state;   /* the single system-state instance */
 
-/* Helper: take mutex, guaranteed short hold */
-#define LCD_LOCK() xSemaphoreTake(sys_state_mutex, portMAX_DELAY)
-#define LCD_UNLOCK() xSemaphoreGive(sys_state_mutex)
-
 /**
  * Get current time in milliseconds (using FreeRTOS ticks)
  */
@@ -268,8 +264,6 @@ void lcd_show_confirm(const char *line0, const char *line1)
     set16(sys_lcd.confirm.row1, line1);
     LCD_UNLOCK();
 }
-
-#define FLASH_PRIORITY_NORMAL 0
 
 /* ── Flash message ───────────────────────────────────────────────────────── */
 void lcd_flash_message(const char *line0, const char *line1,

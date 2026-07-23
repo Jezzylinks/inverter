@@ -10,6 +10,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* Helper: take mutex, guaranteed short hold */
+#define LCD_LOCK() xSemaphoreTake(sys_state_mutex, portMAX_DELAY)
+#define LCD_UNLOCK() xSemaphoreGive(sys_state_mutex)
+
 /* Call once at startup before any task runs */
 void lcd_writer_init(void);
 

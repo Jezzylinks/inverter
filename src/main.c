@@ -26,10 +26,12 @@
 #include "esp_event.h"
 #include <driver/i2c.h>
 #include "lcd.h"
+#include "lcd_writer.h"
 #include "esp_wifi.h"
 #include "esp_wifi_types.h"
 #include "freertos/event_groups.h"
 #include "security/security.h"
+#include "security/factory_reset.h"
 
 #include "sdkconfig.h"
 #include "rom/ets_sys.h"
@@ -890,10 +892,6 @@ static const char *TAG_ERROR = "ERROR_MONITOR";
 static const char *TAG_NVS = "NVS";
 static const char *TAG_SYS = "System";
 
-// Global Variables
-
-static nvs_handle_t nvs_handler;
-
 // Create a struct for both ADC and ADC2
 typedef struct
 {
@@ -1091,7 +1089,6 @@ void enter_diagnostic_mode(void);
 void exit_diagnostic_mode(void);
 void lcd_draw_diagnostics_screen(uint8_t index);
 void perform_factory_reset(void);
-static void build_menu_rows(menu_state_t menu_st, int selection, char *out_row0, char *out_row1);
 static void show_menu_screen(menu_state_t menu_st, int selection);
 void menu_navigate_up(void);
 void menu_navigate_down(void);
@@ -1689,6 +1686,7 @@ static nvs_setting_t g_settings[] = {
     {"temp_alarm", &sys_state.settings.temperature_alarm, sizeof(int32_t), 70.0f, true},
     {"frequency_range", &sys_state.settings.frequency_range, sizeof(int32_t), 50, false},
     {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300, false},
+    {"security_en", &sys_state.security.enabled, sizeof(uint8_t), false, false},
 };
 
 #define NVS_SETTINGS_COUNT (sizeof(g_settings) / sizeof(g_settings[0]))
@@ -3503,19 +3501,37 @@ void menu_navigate_down(void)
 }
 
 /*==============================================================================
-  HELPER: build a pre-formatted 16-char menu row from label + indicator
-  Called by any function that used to call lcd_draw_menu_scroll() directly.
+  CONVENIENCE: switch to menu screen with freshly-built rows
 ==============================================================================*/
-static void build_menu_rows(menu_state_t menu_st, int selection,
-                            char *out_row0, char *out_row1)
+static void show_menu_screen(menu_state_t menu_st, int selection)
 {
+    const uint8_t security_menu_count = 3;
+
+    if (menu_st == MENU_SECURITY)
+    {
+        if (selection < 0)
+            selection = 0;
+        if (selection >= security_menu_count)
+            selection = security_menu_count - 1;
+
+        LCD_LOCK();
+        sys_lcd.screen = LCD_SCREEN_SECURITY;
+        atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
+        atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
+        atomic_store(&sys_lcd.security.menu_selection, (uint8_t)selection);
+        LCD_UNLOCK();
+        return;
+    }
+
+    char r0[17], r1[17];
+
     int item_count = 0;
     const menu_item_t *items = get_menu_items(menu_st, &item_count);
 
     if (!items || item_count == 0)
     {
-        snprintf(out_row0, 17, "%-16s", "(empty menu)");
-        snprintf(out_row1, 17, "%-16s", "");
+        snprintf(r0, 17, "%-16s", "(empty menu)");
+        snprintf(r1, 17, "%-16s", "");
         return;
     }
 
@@ -3525,7 +3541,7 @@ static void build_menu_rows(menu_state_t menu_st, int selection,
         selection = item_count - 1;
 
     /* Row 0: ">Label           " */
-    snprintf(out_row0, 17, "%c%-15.15s", MENU_ARROW, items[selection].label);
+    snprintf(r0, 17, "%c%-15.15s", MENU_ARROW, items[selection].label);
 
     /* Row 1: " Label     X/N" or just " Label         " */
     int next = (selection + 1) % item_count;
@@ -3537,23 +3553,14 @@ static void build_menu_rows(menu_state_t menu_st, int selection,
         int label_w = LCD_COLS - 1 - ind_len;
         if (label_w < 1)
             label_w = 1;
-        snprintf(out_row1, 17, "%c%-*.*s%s",
+        snprintf(r1, 17, "%c%-*.*s%s",
                  MENU_INDENT, label_w, label_w,
                  items[next].label, ind);
     }
     else
     {
-        snprintf(out_row1, 17, "%c%-15.15s", MENU_INDENT, items[next].label);
+        snprintf(r1, 17, "%c%-15.15s", MENU_INDENT, items[next].label);
     }
-}
-
-/*==============================================================================
-  CONVENIENCE: switch to menu screen with freshly-built rows
-==============================================================================*/
-static void show_menu_screen(menu_state_t menu_st, int selection)
-{
-    char r0[17], r1[17];
-    build_menu_rows(menu_st, selection, r0, r1);
     lcd_show_menu(r0, r1);
 }
 
@@ -3884,68 +3891,6 @@ void error_log_clear(void)
             sizeof(sys_state.error.last_error_msg) - 1);
 }
 
-/* ── erase_logs() ────────────────────────────────────────────────────────
- * Wraps the existing erase_all_logs() with the same
- * sys_lcd.factory_reset phase/progress reporting used by
- * clear_settings() and perform_factory_reset(), so draw_factory_reset()
- * renders this consistently. Does not touch settings or battery profile —
- * erase_all_logs() only opens the separate "log_storage" NVS namespace.
- */
-void erase_logs(void)
-{
-    ESP_LOGI(TAG_SYS, "Erasing error logs only");
-
-    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
-    atomic_store(&sys_lcd.factory_reset.progress_pct, 0);
-
-    /* Step 1: clear in-RAM ring buffer + counters (fast, no I/O) */
-    error_log_clear();
-    atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
-    vTaskDelay(pdMS_TO_TICKS(200));
-
-    /* Step 2: erase the log_storage NVS namespace — separate namespace
-     * from NVS_NS_SYSTEM, so this genuinely cannot touch settings or
-     * battery profile data, unlike the settings/battery namespace
-     * collision flagged in clear_settings(). */
-    sys_state.error_count = 0;
-    sys_state.uptime_hours = 0;
-    sys_state.memory_usage = 0;
-
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &h);
-    if (err == ESP_OK)
-    {
-        nvs_erase_all(h);
-        nvs_commit(h);
-        nvs_close(h);
-        ESP_LOGI(TAG_SYS, "Logs cleared from NVS.");
-    }
-    else
-    {
-        ESP_LOGW(TAG_SYS, "Failed to open log_storage NVS: %s", esp_err_to_name(err));
-        atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
-        lcd_flash_info("Erase Failed!   ", "                ", 1500);
-        return;
-    }
-    atomic_store(&sys_lcd.factory_reset.progress_pct, 80);
-    vTaskDelay(pdMS_TO_TICKS(200));
-
-#ifdef USE_SD_LOGGING
-    ESP_LOGI(TAG_SYS, "Clearing logs from SD card...");
-    remove("/sdcard/logs/system_log.txt");
-    remove("/sdcard/logs/error_log.txt");
-#endif
-
-    atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
-    vTaskDelay(pdMS_TO_TICKS(200));
-
-    update_buzzer(1000, 50);
-    vTaskDelay(pdMS_TO_TICKS(150));
-    buzzer_off();
-    sys_state.power_button_sequence_count = 0;
-    ESP_LOGI(TAG_SYS, "Error logs erased");
-}
-
 /* ── calibration_reset() ────────────────────────────────────────────────── */
 void calibration_reset(void)
 {
@@ -4231,6 +4176,14 @@ void handle_power_button_event(button_event_info_t *event_info,
         return;
     }
 
+    if (sys_state.menu_state == MENU_FACTORY_RESET &&
+        atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
+    {
+        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_POWER);
+        return;
+    }
+    return;
+
     switch (event_info->event)
     {
 
@@ -4288,7 +4241,6 @@ void handle_power_button_event(button_event_info_t *event_info,
          * so we don't leave stale state behind) */
         if (sys_state.menu_state != MENU_NONE)
         {
-            sys_state.factory_reset.pending_action = FACTORY_ACTION_NONE;
             atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
             atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
             sys_state.menu_state = MENU_NONE;
@@ -4545,6 +4497,15 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         return;
     }
 
+    /* ── Factory reset PIN gate (intercept before everything else) ── */
+    if (sys_state.menu_state == MENU_FACTORY_RESET &&
+        atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
+    {
+        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_ENTER);
+        return;
+    }
+    return;
+
     if (sys_state.menu_state == MENU_SECURITY)
     {
         security_phase_t phase = atomic_load(&sys_lcd.security.phase);
@@ -4577,6 +4538,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             {
                 atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
                 atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
+                sys_lcd.screen = LCD_SCREEN_SECURITY;
             }
             return;
         }
@@ -4605,7 +4567,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_CONFIRM)
         {
             const char *done_msg = "                ";
-            switch (sys_state.factory_reset.pending_action)
+            switch (sys_state.factory_reset.action)
             {
             case FACTORY_ACTION_RESET_ALL:
                 ESP_LOGI(TAG_SYS, "Factory reset confirmed by user");
@@ -4614,14 +4576,24 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 perform_factory_reset();
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
                 break;
+
             case FACTORY_ACTION_CLEAR_SETTINGS:
                 ESP_LOGI(TAG_SYS, "Clear Settings confirmed by user");
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
                 atomic_store(&sys_lcd.factory_reset.progress_pct, 0);
                 clear_settings();
+                reload_default_settings();
+                save_settings();
+                atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                update_buzzer(1500, 40);
+                vTaskDelay(pdMS_TO_TICKS(150));
+                buzzer_off();
+                sys_state.power_button_sequence_count = 0;
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
                 done_msg = "Settings Cleared";
                 break;
+
             case FACTORY_ACTION_ERASE_LOGS:
                 ESP_LOGI(TAG_SYS, "Erase Logs confirmed by user");
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
@@ -4630,11 +4602,11 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
                 done_msg = "Logs Erased     ";
                 break;
+
             default:
                 break;
             }
 
-            sys_state.factory_reset.pending_action = FACTORY_ACTION_NONE;
             atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
             atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
             sys_state.menu_state = MENU_NONE;
@@ -4677,19 +4649,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 push_menu_history(sys_state.menu_state, sys_state.menu_selection);
                 sys_state.menu_state = next;
                 sys_state.menu_selection = 0;
-
-                if (next == MENU_SECURITY)
-                {
-                    xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
-                    sys_lcd.screen = LCD_SCREEN_SECURITY;
-                    atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
-                    atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
-                    xSemaphoreGive(sys_state_mutex);
-                }
-                else
-                {
-                    show_menu_screen(next, sys_state.menu_selection);
-                }
+                show_menu_screen(next, sys_state.menu_selection);
             }
             break;
         }
@@ -4800,19 +4760,18 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             switch (sys_state.menu_selection)
             {
             case 0:
-                sys_state.factory_reset.pending_action = FACTORY_ACTION_RESET_ALL;
-                atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_RESET_ALL);
+                factory_reset_begin(&sys_lcd.factory_reset, FACTORY_ACTION_RESET_ALL);
                 break;
             case 1:
-                sys_state.factory_reset.pending_action = FACTORY_ACTION_CLEAR_SETTINGS;
-                atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_CLEAR_SETTINGS);
+                factory_reset_begin(&sys_lcd.factory_reset, FACTORY_ACTION_CLEAR_SETTINGS);
                 break;
             case 2:
-                sys_state.factory_reset.pending_action = FACTORY_ACTION_ERASE_LOGS;
-                atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_ERASE_LOGS);
+                factory_reset_begin(&sys_lcd.factory_reset, FACTORY_ACTION_ERASE_LOGS);
                 break;
             }
-            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
+            pin_entry_reset(&sys_lcd.factory_reset.pin_ctx);
+            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_RESET_PIN_ENTRY);
+            sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
             break;
 
         case MENU_SECURITY:
@@ -5031,6 +4990,14 @@ void handle_up_button_event(button_event_info_t *event_info,
     int64_t current_time = event_info->timestamp_us / 1000;
     value_edit_context_t *config = get_current_value_config();
 
+    // handle_up_button_event():
+    if (sys_state.menu_state == MENU_FACTORY_RESET &&
+        atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
+    {
+        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_UP);
+        return;
+    }
+
     // When in security mode
     if (sys_state.menu_state == MENU_SECURITY &&
         atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_PIN_FLOW)
@@ -5214,6 +5181,14 @@ void handle_down_button_event(button_event_info_t *event_info,
         return;
     int64_t current_time = event_info->timestamp_us / 1000;
     value_edit_context_t *config = get_current_value_config();
+
+    if (sys_state.menu_state == MENU_FACTORY_RESET &&
+        atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
+    {
+        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_DOWN);
+        return;
+    }
+    return;
 
     // When the user is in security mode
     if (sys_state.menu_state == MENU_SECURITY &&
@@ -5416,18 +5391,25 @@ void handle_back_button_event(button_event_info_t *event_info,
 
     // User is in Security mode
 
+    if (sys_state.menu_state == MENU_FACTORY_RESET &&
+        atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
+    {
+        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_DOWN);
+        return;
+    }
+
     if (sys_state.menu_state == MENU_SECURITY &&
         atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_PIN_FLOW)
     {
-        bool flow_done = false;
         xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
-        flow_done = change_pin_handle_button(&change_pin_ctx, BTN_BACK);
+        bool flow_done = change_pin_handle_button(&change_pin_ctx, BTN_BACK);
         xSemaphoreGive(change_pin_mutex);
 
         if (flow_done)
         {
             atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
             atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
+            sys_lcd.screen = LCD_SCREEN_SECURITY;
         }
         return;
     }
@@ -5457,7 +5439,6 @@ void handle_back_button_event(button_event_info_t *event_info,
             if (phase == FACTORY_PHASE_CONFIRM)
             {
                 /* Cancel the Yes/No prompt, go back to the action list (not main menu) */
-                sys_state.factory_reset.pending_action = FACTORY_ACTION_NONE;
                 atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
                 sys_state.last_activity_time = esp_timer_get_time() / 1000;
@@ -5466,7 +5447,6 @@ void handle_back_button_event(button_event_info_t *event_info,
             }
 
             /* phase == FACTORY_PHASE_IDLE: exit the list back to the main menu */
-            sys_state.factory_reset.pending_action = FACTORY_ACTION_NONE;
             atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
             atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
             sys_state.last_activity_time = esp_timer_get_time() / 1000;
@@ -5476,7 +5456,7 @@ void handle_back_button_event(button_event_info_t *event_info,
             return;
         }
 
-        else if (sys_state.factory_reset.pending_action == FACTORY_ACTION_NONE && sys_state.menu_state == MAIN_MENU)
+        else if (atomic_load(&sys_lcd.factory_reset.action) == FACTORY_ACTION_NONE && sys_state.menu_state == MAIN_MENU)
         {
             sys_lcd.screen = LCD_SCREEN_MAIN;
         }
@@ -5859,44 +5839,6 @@ void lcd_draw_diagnostics_screen(uint8_t index)
     lcd_show_diagnostic_detail(row0, row1);
 }
 
-/* ── clear_settings() ────────────────────────────────────────────────────
- * Resets configurable settings (voltage/current/frequency thresholds,
- * display prefs, WiFi creds) back to defaults, without touching the
- * battery profile, error logs, or calibration data.
- *
- * NOTE: does NOT erase the NVS_NS_SYSTEM namespace before saving — that
- * namespace also holds battery profile keys (bat_type, bat_capacity, etc,
- * written by battery_save_configuration()), so an nvs_erase_namespace()
- * call here would silently wipe those too. Relying on save_settings()'s
- * nvs_set_* calls to overwrite the old setting keys in place avoids that,
- * at the cost of not guaranteeing removal of stale/orphaned keys that are
- * no longer written by any current code path.
- */
-void clear_settings(void)
-{
-
-    atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_PROGRESS);
-    atomic_store(&sys_lcd.factory_reset.progress_pct, 0);
-
-    /* Step 1: reset in-RAM settings to hardcoded defaults */
-    reload_default_settings();
-    atomic_store(&sys_lcd.factory_reset.progress_pct, 50);
-    vTaskDelay(pdMS_TO_TICKS(300));
-
-    /* Step 2: persist defaults directly — overwrites old setting keys
-     * in NVS_NS_SYSTEM without erasing the namespace, so battery
-     * profile keys in the same namespace survive untouched. */
-    save_settings();
-    atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-    update_buzzer(1500, 40);
-    vTaskDelay(pdMS_TO_TICKS(150));
-    buzzer_off();
-    sys_state.power_button_sequence_count = 0;
-    ESP_LOGI(TAG_SYS, "Settings cleared and defaults saved");
-}
-
 /* ── perform_factory_reset() ────────────────────────────────────────────── */
 void perform_factory_reset(void)
 {
@@ -5904,7 +5846,7 @@ void perform_factory_reset(void)
 
     lcd_show_factory_progress();
 
-    /* Reset all values */
+    /* Reset runtime values */
     sys_state.inverter.output_voltage = 220.0f;
     sys_state.inverter.output_frequency = 50.0f;
     sys_state.current_limit = 20.0f;
@@ -5913,17 +5855,15 @@ void perform_factory_reset(void)
     sys_state.display.scroll_speed = DEFAULT_SCROLL_SPEED;
 
     error_log_clear();
-    // lcd_flash_info("CLEARING LOGS   ", "Please wait...  ", 1000);
     calibration_reset();
-    // lcd_flash_info("CALIBRATION     ", "Resetting...    ", 1000);
 
     update_buzzer(2000, 50);
     for (int i = 0; i < 5; i++)
     {
         update_led(LED_STATUS, 1);
-        vTaskDelay(200 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(200));
         update_led(LED_STATUS, 0);
-        vTaskDelay(200 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
     buzzer_off();
 
@@ -5933,40 +5873,8 @@ void perform_factory_reset(void)
     lcd_show_factory_done();
     vTaskDelay(pdMS_TO_TICKS(2000));
 
-    ESP_ERROR_CHECK(nvs_flash_erase());
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
-        err == ESP_ERR_NVS_NEW_VERSION_FOUND)
-    {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(err);
-
-    memset(&sys_state, 0, sizeof(system_state_t));
-    sys_state.inverter.output_voltage = 220.0f;
-    sys_state.inverter.temperature = 50.0f;
-    sys_state.display.scroll_speed = DEFAULT_SCROLL_SPEED;
-
-    for (int i = 0; i < ADC_CHANNEL_USE; i++)
-    {
-        adc_calibration[i].calibration_values[0] = 0.0f;
-        adc_calibration[i].calibration_values[1] = 1.0f;
-        adc_calibration[i].calibrated = false;
-        adc_calibration[i].calibration_mode = false;
-    }
-
-    err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs_handler);
-    if (err == ESP_OK)
-    {
-        save_settings();
-        save_calibration();
-        nvs_close(nvs_handler);
-    }
-
-    update_buzzer(3000, 70);
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-    perform_system_restart(true);
+    /* Perform NVS erase, reinitialize, update progress and restart */
+    factory_reset();
 }
 
 bool check_safety_conditions(void)
@@ -8079,7 +7987,7 @@ void init_menu_system()
     sys_state.inverter.inverter_state = INVERTER_OFF;
     sys_state.menu_selection = 0;
     sys_state.pending_confirmation = false;
-
+    sys_state.security.enabled = false;
     // lcd_display_state
     sys_state.lcd_state.blink_state = false;
     sys_state.lcd_boot_state.boot_screen_timestamp_ms = 0;
@@ -8708,56 +8616,6 @@ float filter_update(MovingAverageFilter *f, float new_value)
     f->index = (f->index + 1) % FILTER_DEPTH;
 
     return f->sum / FILTER_DEPTH;
-}
-
-int fan_disconnect_count = 0;
-bool fan_connected_last_state = true;
-
-// 🔍 Check fan connection
-static void check_fan_connection()
-{
-    // Send test pulse (briefly power the fan circuit)
-    gpio_set_level(GPIO_FAN_TEST, 1);
-    vTaskDelay(pdMS_TO_TICKS(1)); // 1ms ON (non-blocking)
-    gpio_set_level(GPIO_FAN_TEST, 0);
-
-    vTaskDelay(pdMS_TO_TICKS(1)); // Let voltage stabilize
-
-    // Read averaged ADC
-    int adc_value = sys_state.inverter.fan_connection;
-
-    if (adc_value < FAN_DISCONNECTED_THRESHOLD)
-    {
-        fan_disconnect_count++;
-        if (fan_disconnect_count >= FAN_DISCONNECT_RETRIES && fan_connected_last_state)
-        {
-            fan_connected_last_state = false;
-            ESP_LOGE("FAN", "❌ Fan disconnected! ADC = %d", adc_value);
-            update_led(LED_ERROR, 100); // Turn on error LED
-            sys_state.error.error_flags |= ERR_FAN_FAIL;
-        }
-    }
-    else
-    {
-        if (!fan_connected_last_state)
-        {
-            ESP_LOGI("FAN", "✅ Fan reconnected. ADC = %d", adc_value);
-        }
-        fan_disconnect_count = 0;
-        fan_connected_last_state = true;
-        update_led(LED_ERROR, 0);                     // Turn off error LED
-        sys_state.error.error_flags &= ~ERR_FAN_FAIL; // Clear the fan fail error flag
-    }
-}
-
-// 📡 Fan monitoring task
-static void fan_monitor_task(void *arg)
-{
-    while (1)
-    {
-        check_fan_connection();
-        vTaskDelay(pdMS_TO_TICKS(FAN_CHECK_INTERVAL_MS));
-    }
 }
 
 void log_error_state()
