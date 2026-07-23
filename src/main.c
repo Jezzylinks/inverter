@@ -4182,7 +4182,6 @@ void handle_power_button_event(button_event_info_t *event_info,
         factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_POWER);
         return;
     }
-    return;
 
     switch (event_info->event)
     {
@@ -4504,7 +4503,6 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_ENTER);
         return;
     }
-    return;
 
     if (sys_state.menu_state == MENU_SECURITY)
     {
@@ -5188,7 +5186,6 @@ void handle_down_button_event(button_event_info_t *event_info,
         factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_DOWN);
         return;
     }
-    return;
 
     // When the user is in security mode
     if (sys_state.menu_state == MENU_SECURITY &&
@@ -5394,7 +5391,7 @@ void handle_back_button_event(button_event_info_t *event_info,
     if (sys_state.menu_state == MENU_FACTORY_RESET &&
         atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
     {
-        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_DOWN);
+        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_BACK);
         return;
     }
 
