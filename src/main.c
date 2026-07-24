@@ -67,7 +67,6 @@
 #define ANIM_DELAY_MS 80
 #define SDA_PIN 21
 #define SCL_PIN 22
-#define BUTTON_DEBOUNCE_TIME_MS 200
 #define CONFIG_USE_ADC 1
 #define CONFIG_USE_BUTTONS 1
 #define CONFIG_USE_LCD 1
@@ -8955,7 +8954,7 @@ void app_main(void)
     lcd_set_brightness(200);
 
     /* Boot screen starts on LCD_SCREEN_BOOT_BRAND (set by lcd_writer_init) */
-    lcd_show_boot_brand();
+    // lcd_show_boot_brand();
     xTaskCreate(adc_task, "adc_task", 4096, NULL, 5, NULL);
     xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
     //   xTaskCreate(power_task, "power_task", 4096, NULL, 4, NULL);
