@@ -51,6 +51,7 @@
 
 // SECURITY
 #include "security/change_pin_flow.h"
+#include "security/protection.h"
 // System state
 #include "system_state.h"
 
@@ -1159,6 +1160,7 @@ static void apply_scroll_speed(float v);
 static void apply_system_timeout(float v);
 static void apply_battery_type(float v);
 static void apply_battery_voltage_system(float v);
+static void sync_battery_protection_thresholds(void);
 
 // Value adjustment functions
 void increase_value(bool fast_mode, bool precision_mode);
@@ -2202,6 +2204,7 @@ bool load_settings()
         ESP_LOGW("BAT_PROFILE", "Failed to load battery profile, using defaults");
         load_error = true;
     }
+    sync_battery_protection_thresholds();
 
     /* Cross-field / range validation — catches corrupted or
      * inconsistent values that a plain nvs_get_* success wouldn't. */
@@ -2637,6 +2640,16 @@ void adc_task(void *arg)
         }
         xEventGroupSetBits(sys_event_group, EVT_ADC_READY | EVT_ADC_VALID);
 
+        /* Advance the graduated protection state machine with this
+         * cycle's readings and fold the result into error_flags. Skipped
+         * during warmup (sample_count < SAMPLES_BEFORE_ERROR_CHECK) since
+         * error_flags was just cleared above and initial ADC samples can
+         * be noisy before the multisampling window settles. */
+        if (sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
+        {
+            check_protections();
+        }
+
         /* Update main screen data for lcd_task */
         lcd_update_main_data(
             sys_state.inverter.battery.voltage,
@@ -2653,8 +2666,6 @@ void adc_task(void *arg)
             sys_state.battery_charging);
 
         /* Show fault screen immediately if error flags are set */
-        // Temporary set error flags to 0
-        sys_state.error.error_flags = 0;
         if (sys_state.error.error_flags && sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
         {
             const char *err = get_error_string(sys_state.error.error_flags);
@@ -3317,64 +3328,95 @@ void process_battery_voltage(void)
     }
 }
 
+/* Reflects one protection.c channel's CURRENT stage into a level-
+ * triggered ERR_* bit, so the rest of the firmware (LCD fault screen,
+ * error LEDs, error log) keeps working exactly as it already expects --
+ * it just reads sys_state.error.error_flags, it doesn't know or care
+ * that protection.c exists underneath. protection_update() must already
+ * have been called for this quantity earlier in the same pass. */
+static void apply_protection_result(protection_quantity_t q, uint32_t err_flag)
+{
+    protection_channel_state_t st;
+    if (!protection_get_state(q, &st))
+        return;
+
+    if (st.stage == PROT_STAGE_FAULT)
+        sys_state.error.error_flags |= err_flag;
+    else
+        sys_state.error.error_flags &= ~err_flag;
+}
+
 void check_protections()
 {
+    uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
 
     // Clear non-critical flags at start (keep persistent ones)
     sys_state.error.error_flags &= (ERR_EEPROM | ERR_FAN_FAIL);
 
-    // Temperature check Not present here. Maybe, in later version
-    // if (sys_state.inverter.temperature > MAX_TEMPERATURE)
-    // {
-    //     sys_state.error.error_flags |= ERR_OVER_TEMP;
-    //     ESP_LOGE("PROTECTION", "Over temp: %.1fC", sys_state.inverter.temperature);
-    // }
-    // else
-    // {
-    //     sys_state.error.error_flags &= ~ERR_OVER_TEMP;
-    // }
+    /* AC voltage -- fed by the "AC Voltage" ADC channel (adc_configs[]),
+     * which already populates sys_state.inverter.output_voltage. */
+    protection_update(PROT_QUANTITY_AC_VOLTAGE, sys_state.inverter.output_voltage, now_ms);
+    apply_protection_result(PROT_QUANTITY_AC_VOLTAGE, ERR_AC_FAULT);
 
-    // Current check
-    if (sys_state.inverter.actual_current > MAX_CURRENT)
+    /* Output current -- NOTE: there is currently no current-sensing ADC
+     * channel anywhere in adc_configs[], so sys_state.inverter.output_current
+     * never leaves its 0.0f init value and this channel can never fault.
+     * Once a real current channel is wired up, this starts working with
+     * no other changes needed here. */
+    protection_update(PROT_QUANTITY_OUTPUT_CURRENT, sys_state.inverter.output_current, now_ms);
+    apply_protection_result(PROT_QUANTITY_OUTPUT_CURRENT, ERR_OVERLOAD);
+
+    /* Temperature -- NOTE: same gap as current. sys_state.inverter.temperature
+     * is pinned at its 25.0C init value for the life of the program; there
+     * is no temperature-sensing ADC channel yet. */
+    protection_update(PROT_QUANTITY_TEMPERATURE, sys_state.inverter.temperature, now_ms);
+    apply_protection_result(PROT_QUANTITY_TEMPERATURE, ERR_OVER_TEMP);
+
+    /* Battery voltage -- one protection.c channel covers both the low
+     * (deep-discharge) and high (overvoltage) sides, scaled to the
+     * active chemistry/voltage-system profile via
+     * sync_battery_protection_thresholds(). protection_channel_state_t
+     * doesn't record which side tripped, so that's inferred here from
+     * last_value against the profile's own cutoff/high thresholds in
+     * order to set the correct one of ERR_LOW_BAT / ERR_HIGH_BAT --
+     * these stay two separate flags since the rest of the firmware
+     * already distinguishes them (LCD messages, error log entries). */
+    protection_update(PROT_QUANTITY_BATTERY_VOLTAGE, sys_state.inverter.battery.voltage, now_ms);
+    protection_channel_state_t bat_state;
+    if (protection_get_state(PROT_QUANTITY_BATTERY_VOLTAGE, &bat_state) &&
+        bat_state.stage == PROT_STAGE_FAULT)
     {
-        sys_state.error.error_flags |= ERR_OVERLOAD;
-        ESP_LOGE("PROTECTION", "Overload: %.1fA", sys_state.inverter.actual_current);
+        if (bat_state.last_value < sys_state.battery_profile.cutoff_voltage_12v)
+        {
+            sys_state.error.error_flags |= ERR_LOW_BAT;
+            sys_state.error.error_flags &= ~ERR_HIGH_BAT;
+        }
+        else
+        {
+            sys_state.error.error_flags |= ERR_HIGH_BAT;
+            sys_state.error.error_flags &= ~ERR_LOW_BAT;
+        }
     }
     else
     {
-        sys_state.error.error_flags &= ~ERR_OVERLOAD;
+        sys_state.error.error_flags &= ~(ERR_LOW_BAT | ERR_HIGH_BAT);
     }
 
-    // Battery voltage checks
-    if (sys_state.inverter.battery.voltage < sys_state.battery_profile.cutoff_voltage_12v)
-    {
-        sys_state.error.error_flags |= ERR_LOW_BAT;
-        ESP_LOGE("PROTECTION", "Low battery: %.1fV", sys_state.inverter.battery.voltage);
-    }
-    else
-    {
-        sys_state.error.error_flags &= ~ERR_LOW_BAT;
-    }
-
-    if (sys_state.inverter.battery.voltage > sys_state.battery_profile.high_battery_voltage_12v)
-    {
-        sys_state.error.error_flags |= ERR_HIGH_BAT;
-        ESP_LOGE("PROTECTION", "High battery: %.1fV", sys_state.inverter.battery.voltage);
-    }
-    else
-    {
-        sys_state.error.error_flags &= ~ERR_HIGH_BAT;
-    }
-
-    // Fan check
+    // Fan check -- protection.c has no fan-speed quantity; kept as-is.
     if (sys_state.inverter.temperature > 70.0f && !sys_state.fan.connected)
     {
         sys_state.error.error_flags |= ERR_FAN_FAIL;
         ESP_LOGE("PROTECTION", "Fan failure at %.1fC", sys_state.inverter.temperature);
     }
+    else
+    {
+        sys_state.error.error_flags &= ~ERR_FAN_FAIL;
+    }
+
     // Step 7: Update error LEDs based on the flags
     // update_led_status(); // This function already controls the error LEDs
 }
+
 
 void update_led_status()
 {
@@ -5709,6 +5751,32 @@ static void apply_system_timeout(float v) { set_system_timeout((uint32_t)v); }
 /* Battery type change regenerates the active profile at the currently
  * configured voltage/capacity — it must not just overwrite profile_id
  * and leave every derived voltage/current field stale. */
+/* Derive protection.c's graduated BATTERY_VOLTAGE thresholds from the
+ * active battery profile, which is already scaled for the currently
+ * configured chemistry and voltage system (12/24/48/96V). Without this,
+ * protection.c's own load_defaults() leaves BATTERY_VOLTAGE pinned at
+ * its hardcoded 24V-class numbers (22.5/21.5/20.5V) regardless of what
+ * the inverter is actually configured for. Call this any time
+ * sys_state.battery_profile changes: after battery_load_profile() at
+ * boot, and after apply_battery_type()/apply_battery_voltage_system()
+ * regenerate the profile at runtime. */
+static void sync_battery_protection_thresholds(void)
+{
+    const battery_profile_t *p = &sys_state.battery_profile;
+    protection_thresholds_t t = {
+        .warning_high = p->high_battery_voltage_12v,
+        .derate_high = p->high_battery_voltage_12v,
+        .fault_high = p->overvoltage_protection_12v,
+        .hysteresis_high = 0.5f,
+        .warning_low = p->low_voltage_warning_12v,
+        .derate_low = p->low_voltage_alarm_12v,
+        .fault_low = p->cutoff_voltage_12v,
+        .hysteresis_low = 0.5f,
+        .has_low_bound = true,
+    };
+    protection_set_thresholds(PROT_QUANTITY_BATTERY_VOLTAGE, &t);
+}
+
 static void apply_battery_type(float v)
 {
     battery_type_t new_type = (battery_type_t)v;
@@ -5720,6 +5788,7 @@ static void apply_battery_type(float v)
     {
         sys_state.battery_profile = regenerated;
         sys_state.battery_profile.profile_id = new_type;
+        sync_battery_protection_thresholds();
     }
 }
 
@@ -5742,6 +5811,7 @@ static void apply_battery_voltage_system(float v)
     {
         sys_state.battery_profile = regenerated;
         sys_state.battery_profile.nominal_voltage = new_voltage;
+        sync_battery_protection_thresholds();
     }
 }
 
@@ -8395,6 +8465,14 @@ void init_system_state()
 
     // ✅ STEP 1: Clear system state
     memset(&sys_state, 0, sizeof(sys_state));
+
+    // ✅ STEP 1.5: Bring up the graduated protection state machine before
+    // anything else touches sys_state.error.error_flags. Thresholds get
+    // re-synced to the actual battery profile once it's loaded below.
+    if (!protection_init())
+    {
+        ESP_LOGE(TAG_SYS, "FATAL: protection_init failed");
+    }
 
     // ✅ STEP 2: Initialize safe defaults
     sys_state.inverter.temperature = 25.0f; // Safe room temperature
