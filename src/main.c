@@ -36,6 +36,7 @@
 #include "sdkconfig.h"
 #include "rom/ets_sys.h"
 #include "utils.h" // Added MIN & MAX
+#include "battery_soc.h"
 #include <stdbool.h>
 #include <button_controller.h>
 
@@ -50,6 +51,7 @@
 
 // SECURITY
 #include "security/change_pin_flow.h"
+#include "security/protection.h"
 // System state
 #include "system_state.h"
 
@@ -800,6 +802,35 @@ const char *battery_type_names[BATTERY_TYPE_COUNT] = {
     "NiMH"         // BATTERY_NIMH = 5
 };
 
+/* Voltage system names for the settings-menu select item. voltage_system_t
+ * values (12/24/48/96) are not sequential/zero-based, so a select's
+ * 0..N-1 index has to be mapped through voltage_system_values[] below
+ * rather than cast directly like battery_type_t is. */
+#define BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT 4
+const char *battery_voltage_system_names[BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT] = {
+    "12V",
+    "24V",
+    "48V",
+    "96V"};
+static const voltage_system_t voltage_system_values[BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT] = {
+    VOLTAGE_SYSTEM_12V,
+    VOLTAGE_SYSTEM_24V,
+    VOLTAGE_SYSTEM_48V,
+    VOLTAGE_SYSTEM_96V};
+
+/* Reverse lookup: nominal_voltage -> select index, for populating the
+ * select's current selection_index when entering edit mode. Falls back
+ * to index 0 (12V) if the stored value doesn't match any option. */
+static int voltage_system_to_index(voltage_system_t v)
+{
+    for (int i = 0; i < BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT; i++)
+    {
+        if (voltage_system_values[i] == v)
+            return i;
+    }
+    return 0;
+}
+
 // Call this to display and handle selection
 /* ── select_battery_type() ──────────────────────────────────────────────── */
 void select_battery_type(button_id_t btn)
@@ -871,6 +902,7 @@ typedef enum
     VALUE_TYPE_SCROLL_ENABLE,
     VALUE_TYPE_SCROLL_SPEED,
     VALUE_TYPE_BATTERY_TYPE,
+    VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM,
     VALUE_TYPE_COUNT
 } value_edit_param_t;
 
@@ -975,7 +1007,8 @@ static const menu_item_t settings_items[] = {
     {"Auto Shutdown", MENU_SETTINGS},
     {"Scroll Enable", MENU_SETTINGS},
     {"Scroll Speed", MENU_SETTINGS},
-    {"Battery Type", MENU_SETTINGS}};
+    {"Battery Type", MENU_SETTINGS},
+    {"Voltage System", MENU_SETTINGS}};
 
 // MONITORING MENU (6 items)
 static const menu_item_t monitoring_items[] = {
@@ -1075,7 +1108,6 @@ void update_led(led_channel_t led, uint8_t brightness /*uint8_t led*/);
 void adc_task(void *arg);
 static bool adc_calibration_init(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle);
 static void adc_calibration_deinit(adc_cali_handle_t handle);
-uint8_t calculate_battery_percentage(float voltage);
 void power_task(void *arg);
 void error_handler();
 void log_all_error_flags(uint32_t flags);
@@ -1126,6 +1158,8 @@ static void apply_scroll_enable(float v);
 static void apply_scroll_speed(float v);
 static void apply_system_timeout(float v);
 static void apply_battery_type(float v);
+static void apply_battery_voltage_system(float v);
+static void sync_battery_protection_thresholds(void);
 
 // Value adjustment functions
 void increase_value(bool fast_mode, bool precision_mode);
@@ -1151,6 +1185,7 @@ void edit_auto_shutdown(void);
 void edit_scroll_enable(void);
 void edit_scroll_speed(void);
 void edit_battery_type(void);
+void edit_battery_voltage_system(void);
 void security_pin(void);
 
 // Submenu functions
@@ -1404,6 +1439,18 @@ static value_edit_context_t value_edit[] = {
         .is_critical = true, /* changes charge/cutoff voltages — confirm before applying */
         .live_update = false,
         .apply = apply_battery_type,
+    },
+
+    [VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM] = {
+        .edit_type = VALUE_EDIT_SELECT,
+        .selection_index = 0,
+        .max_selection = BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT,
+        .options = battery_voltage_system_names,
+        .unit = "",
+        .label = "Voltage System",
+        .is_critical = true, /* rescales every voltage/current field — confirm before applying */
+        .live_update = false,
+        .apply = apply_battery_voltage_system,
     },
 };
 
@@ -2156,6 +2203,7 @@ bool load_settings()
         ESP_LOGW("BAT_PROFILE", "Failed to load battery profile, using defaults");
         load_error = true;
     }
+    sync_battery_protection_thresholds();
 
     /* Cross-field / range validation — catches corrupted or
      * inconsistent values that a plain nvs_get_* success wouldn't. */
@@ -2591,6 +2639,16 @@ void adc_task(void *arg)
         }
         xEventGroupSetBits(sys_event_group, EVT_ADC_READY | EVT_ADC_VALID);
 
+        /* Advance the graduated protection state machine with this
+         * cycle's readings and fold the result into error_flags. Skipped
+         * during warmup (sample_count < SAMPLES_BEFORE_ERROR_CHECK) since
+         * error_flags was just cleared above and initial ADC samples can
+         * be noisy before the multisampling window settles. */
+        if (sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
+        {
+            check_protections();
+        }
+
         /* Update main screen data for lcd_task */
         lcd_update_main_data(
             sys_state.inverter.battery.voltage,
@@ -2599,14 +2657,14 @@ void adc_task(void *arg)
             sys_state.inverter.output_frequency,
             sys_state.inverter.battery.battery_temperature,
             sys_state.inverter.load_percentage,
-            calculate_battery_percentage(sys_state.inverter.battery.voltage),
+            calculate_battery_percentage(sys_state.inverter.battery.voltage,
+                                        sys_state.battery_profile.chemistry,
+                                        (float)sys_state.battery_profile.nominal_voltage),
             sys_state.inverter.inverter_active,
             sys_state.inverter.connected,
             sys_state.battery_charging);
 
         /* Show fault screen immediately if error flags are set */
-        // Temporary set error flags to 0
-        sys_state.error.error_flags = 0;
         if (sys_state.error.error_flags && sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
         {
             const char *err = get_error_string(sys_state.error.error_flags);
@@ -3269,64 +3327,95 @@ void process_battery_voltage(void)
     }
 }
 
+/* Reflects one protection.c channel's CURRENT stage into a level-
+ * triggered ERR_* bit, so the rest of the firmware (LCD fault screen,
+ * error LEDs, error log) keeps working exactly as it already expects --
+ * it just reads sys_state.error.error_flags, it doesn't know or care
+ * that protection.c exists underneath. protection_update() must already
+ * have been called for this quantity earlier in the same pass. */
+static void apply_protection_result(protection_quantity_t q, uint32_t err_flag)
+{
+    protection_channel_state_t st;
+    if (!protection_get_state(q, &st))
+        return;
+
+    if (st.stage == PROT_STAGE_FAULT)
+        sys_state.error.error_flags |= err_flag;
+    else
+        sys_state.error.error_flags &= ~err_flag;
+}
+
 void check_protections()
 {
+    uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
 
     // Clear non-critical flags at start (keep persistent ones)
     sys_state.error.error_flags &= (ERR_EEPROM | ERR_FAN_FAIL);
 
-    // Temperature check Not present here. Maybe, in later version
-    // if (sys_state.inverter.temperature > MAX_TEMPERATURE)
-    // {
-    //     sys_state.error.error_flags |= ERR_OVER_TEMP;
-    //     ESP_LOGE("PROTECTION", "Over temp: %.1fC", sys_state.inverter.temperature);
-    // }
-    // else
-    // {
-    //     sys_state.error.error_flags &= ~ERR_OVER_TEMP;
-    // }
+    /* AC voltage -- fed by the "AC Voltage" ADC channel (adc_configs[]),
+     * which already populates sys_state.inverter.output_voltage. */
+    protection_update(PROT_QUANTITY_AC_VOLTAGE, sys_state.inverter.output_voltage, now_ms);
+    apply_protection_result(PROT_QUANTITY_AC_VOLTAGE, ERR_AC_FAULT);
 
-    // Current check
-    if (sys_state.inverter.actual_current > MAX_CURRENT)
+    /* Output current -- NOTE: there is currently no current-sensing ADC
+     * channel anywhere in adc_configs[], so sys_state.inverter.output_current
+     * never leaves its 0.0f init value and this channel can never fault.
+     * Once a real current channel is wired up, this starts working with
+     * no other changes needed here. */
+    protection_update(PROT_QUANTITY_OUTPUT_CURRENT, sys_state.inverter.output_current, now_ms);
+    apply_protection_result(PROT_QUANTITY_OUTPUT_CURRENT, ERR_OVERLOAD);
+
+    /* Temperature -- NOTE: same gap as current. sys_state.inverter.temperature
+     * is pinned at its 25.0C init value for the life of the program; there
+     * is no temperature-sensing ADC channel yet. */
+    protection_update(PROT_QUANTITY_TEMPERATURE, sys_state.inverter.temperature, now_ms);
+    apply_protection_result(PROT_QUANTITY_TEMPERATURE, ERR_OVER_TEMP);
+
+    /* Battery voltage -- one protection.c channel covers both the low
+     * (deep-discharge) and high (overvoltage) sides, scaled to the
+     * active chemistry/voltage-system profile via
+     * sync_battery_protection_thresholds(). protection_channel_state_t
+     * doesn't record which side tripped, so that's inferred here from
+     * last_value against the profile's own cutoff/high thresholds in
+     * order to set the correct one of ERR_LOW_BAT / ERR_HIGH_BAT --
+     * these stay two separate flags since the rest of the firmware
+     * already distinguishes them (LCD messages, error log entries). */
+    protection_update(PROT_QUANTITY_BATTERY_VOLTAGE, sys_state.inverter.battery.voltage, now_ms);
+    protection_channel_state_t bat_state;
+    if (protection_get_state(PROT_QUANTITY_BATTERY_VOLTAGE, &bat_state) &&
+        bat_state.stage == PROT_STAGE_FAULT)
     {
-        sys_state.error.error_flags |= ERR_OVERLOAD;
-        ESP_LOGE("PROTECTION", "Overload: %.1fA", sys_state.inverter.actual_current);
+        if (bat_state.last_value < sys_state.battery_profile.cutoff_voltage_12v)
+        {
+            sys_state.error.error_flags |= ERR_LOW_BAT;
+            sys_state.error.error_flags &= ~ERR_HIGH_BAT;
+        }
+        else
+        {
+            sys_state.error.error_flags |= ERR_HIGH_BAT;
+            sys_state.error.error_flags &= ~ERR_LOW_BAT;
+        }
     }
     else
     {
-        sys_state.error.error_flags &= ~ERR_OVERLOAD;
+        sys_state.error.error_flags &= ~(ERR_LOW_BAT | ERR_HIGH_BAT);
     }
 
-    // Battery voltage checks
-    if (sys_state.inverter.battery.voltage < sys_state.battery_profile.cutoff_voltage_12v)
-    {
-        sys_state.error.error_flags |= ERR_LOW_BAT;
-        ESP_LOGE("PROTECTION", "Low battery: %.1fV", sys_state.inverter.battery.voltage);
-    }
-    else
-    {
-        sys_state.error.error_flags &= ~ERR_LOW_BAT;
-    }
-
-    if (sys_state.inverter.battery.voltage > sys_state.battery_profile.high_battery_voltage_12v)
-    {
-        sys_state.error.error_flags |= ERR_HIGH_BAT;
-        ESP_LOGE("PROTECTION", "High battery: %.1fV", sys_state.inverter.battery.voltage);
-    }
-    else
-    {
-        sys_state.error.error_flags &= ~ERR_HIGH_BAT;
-    }
-
-    // Fan check
+    // Fan check -- protection.c has no fan-speed quantity; kept as-is.
     if (sys_state.inverter.temperature > 70.0f && !sys_state.fan.connected)
     {
         sys_state.error.error_flags |= ERR_FAN_FAIL;
         ESP_LOGE("PROTECTION", "Fan failure at %.1fC", sys_state.inverter.temperature);
     }
+    else
+    {
+        sys_state.error.error_flags &= ~ERR_FAN_FAIL;
+    }
+
     // Step 7: Update error LEDs based on the flags
     // update_led_status(); // This function already controls the error LEDs
 }
+
 
 void update_led_status()
 {
@@ -4181,7 +4270,6 @@ void handle_power_button_event(button_event_info_t *event_info,
         factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_POWER);
         return;
     }
-    return;
 
     switch (event_info->event)
     {
@@ -4261,7 +4349,9 @@ void handle_power_button_event(button_event_info_t *event_info,
         case INVERTER_STANDBY:
         {
             uint8_t pct = calculate_battery_percentage(
-                sys_state.inverter.battery.voltage);
+                sys_state.inverter.battery.voltage,
+                sys_state.battery_profile.chemistry,
+                (float)sys_state.battery_profile.nominal_voltage);
             lcd_show_standby(sys_state.inverter.battery.voltage, pct,
                              sys_state.inverter.connected);
             break;
@@ -4503,7 +4593,6 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_ENTER);
         return;
     }
-    return;
 
     if (sys_state.menu_state == MENU_SECURITY)
     {
@@ -4682,6 +4771,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 break;
             case 8:
                 edit_battery_type();
+                break;
+            case 9:
+                edit_battery_voltage_system();
                 break;
             }
             break;
@@ -5187,7 +5279,6 @@ void handle_down_button_event(button_event_info_t *event_info,
         factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_DOWN);
         return;
     }
-    return;
 
     // When the user is in security mode
     if (sys_state.menu_state == MENU_SECURITY &&
@@ -5393,7 +5484,7 @@ void handle_back_button_event(button_event_info_t *event_info,
     if (sys_state.menu_state == MENU_FACTORY_RESET &&
         atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
     {
-        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_DOWN);
+        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_BACK);
         return;
     }
 
@@ -5659,6 +5750,32 @@ static void apply_system_timeout(float v) { set_system_timeout((uint32_t)v); }
 /* Battery type change regenerates the active profile at the currently
  * configured voltage/capacity — it must not just overwrite profile_id
  * and leave every derived voltage/current field stale. */
+/* Derive protection.c's graduated BATTERY_VOLTAGE thresholds from the
+ * active battery profile, which is already scaled for the currently
+ * configured chemistry and voltage system (12/24/48/96V). Without this,
+ * protection.c's own load_defaults() leaves BATTERY_VOLTAGE pinned at
+ * its hardcoded 24V-class numbers (22.5/21.5/20.5V) regardless of what
+ * the inverter is actually configured for. Call this any time
+ * sys_state.battery_profile changes: after battery_load_profile() at
+ * boot, and after apply_battery_type()/apply_battery_voltage_system()
+ * regenerate the profile at runtime. */
+static void sync_battery_protection_thresholds(void)
+{
+    const battery_profile_t *p = &sys_state.battery_profile;
+    protection_thresholds_t t = {
+        .warning_high = p->high_battery_voltage_12v,
+        .derate_high = p->high_battery_voltage_12v,
+        .fault_high = p->overvoltage_protection_12v,
+        .hysteresis_high = 0.5f,
+        .warning_low = p->low_voltage_warning_12v,
+        .derate_low = p->low_voltage_alarm_12v,
+        .fault_low = p->cutoff_voltage_12v,
+        .hysteresis_low = 0.5f,
+        .has_low_bound = true,
+    };
+    protection_set_thresholds(PROT_QUANTITY_BATTERY_VOLTAGE, &t);
+}
+
 static void apply_battery_type(float v)
 {
     battery_type_t new_type = (battery_type_t)v;
@@ -5670,6 +5787,30 @@ static void apply_battery_type(float v)
     {
         sys_state.battery_profile = regenerated;
         sys_state.battery_profile.profile_id = new_type;
+        sync_battery_protection_thresholds();
+    }
+}
+
+/* Voltage system change regenerates the active profile at the currently
+ * configured battery type/capacity, scaled to the new nominal voltage.
+ * 'v' is the select's 0..N-1 index, not the raw voltage -- must go
+ * through voltage_system_values[] rather than being cast directly. */
+static void apply_battery_voltage_system(float v)
+{
+    int index = (int)v;
+    if (index < 0 || index >= BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT)
+        return;
+
+    voltage_system_t new_voltage = voltage_system_values[index];
+    battery_profile_t regenerated;
+    if (battery_generate_profile((battery_type_t)sys_state.battery_profile.profile_id,
+                                 new_voltage,
+                                 sys_state.battery_profile.capacity_ah,
+                                 &regenerated))
+    {
+        sys_state.battery_profile = regenerated;
+        sys_state.battery_profile.nominal_voltage = new_voltage;
+        sync_battery_protection_thresholds();
     }
 }
 
@@ -6693,6 +6834,11 @@ void handle_value_confirmation(void)
     {
         sys_state.value_changed = false;
         exit_value_edit_mode(true);
+
+        /* Persist immediately -- without this, a confirmed change (e.g.
+         * Battery Type / Voltage System) only survives if the board
+         * happens to sleep, restart, or fault before losing power. */
+        save_settings();
 
         show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
         lcd_flash_info_to(ctx->label, "Value Saved!    ", 1000, LCD_SCREEN_MENU);
@@ -8319,6 +8465,14 @@ void init_system_state()
     // ✅ STEP 1: Clear system state
     memset(&sys_state, 0, sizeof(sys_state));
 
+    // ✅ STEP 1.5: Bring up the graduated protection state machine before
+    // anything else touches sys_state.error.error_flags. Thresholds get
+    // re-synced to the actual battery profile once it's loaded below.
+    if (!protection_init())
+    {
+        ESP_LOGE(TAG_SYS, "FATAL: protection_init failed");
+    }
+
     // ✅ STEP 2: Initialize safe defaults
     sys_state.inverter.temperature = 25.0f; // Safe room temperature
     sys_state.inverter.inverter_active = false;
@@ -8843,6 +8997,20 @@ void edit_battery_type(void)
     sys_state.value_edit_mode = true;
     sys_state.current_value_type = &value_edit[VALUE_TYPE_BATTERY_TYPE];
     sys_state.current_value_type->selection_index = sys_state.battery_profile.profile_id;
+    lcd_show_value_edit_screen();
+}
+
+void edit_battery_voltage_system(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM];
+    sys_state.current_value_type->selection_index =
+        voltage_system_to_index((voltage_system_t)sys_state.battery_profile.nominal_voltage);
     lcd_show_value_edit_screen();
 }
 

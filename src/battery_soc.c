@@ -196,58 +196,12 @@ const soc_table_t *battery_soc_get_table(uint8_t chemistry)
     return &s_tables[chemistry];
 }
 
-/* ── Convenience wrapper — reads sys_state ───────────────────────────── */
-/* sys_state is defined in main.c; forward-declare the minimum needed.     */
-/* If you move this to a separate compilation unit, include your main header */
-extern struct
+/* ── Convenience wrapper ──────────────────────────────────────────────
+ * Chemistry and nominal voltage are passed in explicitly by the caller
+ * (sys_state.battery_profile.chemistry / .nominal_voltage) rather than
+ * this module reaching backward into main.c's global state. */
+uint8_t calculate_battery_percentage(float voltage, uint8_t chemistry, float nominal_v)
 {
-    uint8_t chemistry;
-    float nominal_voltage_actual_12v;
-}
-__attribute__((weak)) _soc_profile_stub; /* never used — silences linker */
-
-/* The real implementation uses sys_state directly. */
-#include "freertos/FreeRTOS.h" /* for portability — no OS calls made here */
-
-/* Declared in main.c as part of system_state_t.battery_profile */
-typedef struct battery_profile_s
-{
-    uint8_t chemistry;
-    float nominal_voltage;
-    /* ... other fields not needed here ... */
-} battery_profile_ref_t;
-
-extern battery_profile_ref_t *_get_active_battery_profile(void)
-    __attribute__((weak));
-
-uint8_t calculate_battery_percentage(float voltage)
-{
-    /*
-     * Try to get the active profile chemistry and nominal voltage.
-     * If sys_state is not accessible from this translation unit,
-     * fall back to the lead-acid table with 12 V nominal.
-     */
-    uint8_t chemistry = 0; /* default: lead-acid                      */
-    float nominal_v = 12.0f;
-
-    /* Access sys_state.battery_profile via the extern declared in main.c.  */
-    /* In practice this translation unit is compiled together with main.c,  */
-    /* so we can use the extern directly.                                    */
-    extern void *_sys_state_battery_profile_ptr(uint8_t *chem, float *nom_v);
-    /* This symbol is provided by a shim at the bottom of battery_soc.c.   */
-    _sys_state_battery_profile_ptr(&chemistry, &nominal_v);
-
     const soc_table_t *table = battery_soc_get_table(chemistry);
     return battery_soc_from_voltage(voltage, nominal_v, table);
-}
-
-/*
- * Shim: defined weak so main.c can override with the real sys_state access.
- * If not overridden, returns lead-acid defaults.
- */
-__attribute__((weak)) void *_sys_state_battery_profile_ptr(uint8_t *chem, float *nom_v)
-{
-    *chem = 0; /* lead-acid */
-    *nom_v = 12.0f;
-    return NULL;
 }
