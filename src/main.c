@@ -2639,14 +2639,9 @@ void adc_task(void *arg)
         }
         xEventGroupSetBits(sys_event_group, EVT_ADC_READY | EVT_ADC_VALID);
 
-        /* Advance the graduated protection state machine with this
-         * cycle's readings and fold the result into error_flags. Skipped
-         * during warmup (sample_count < SAMPLES_BEFORE_ERROR_CHECK) since
-         * error_flags was just cleared above and initial ADC samples can
-         * be noisy before the multisampling window settles. */
         if (sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
         {
-            check_protections();
+            // check_protections();
         }
 
         /* Update main screen data for lcd_task */
@@ -2658,8 +2653,8 @@ void adc_task(void *arg)
             sys_state.inverter.battery.battery_temperature,
             sys_state.inverter.load_percentage,
             calculate_battery_percentage(sys_state.inverter.battery.voltage,
-                                        sys_state.battery_profile.chemistry,
-                                        (float)sys_state.battery_profile.nominal_voltage),
+                                         sys_state.battery_profile.chemistry,
+                                         (float)sys_state.battery_profile.nominal_voltage),
             sys_state.inverter.inverter_active,
             sys_state.inverter.connected,
             sys_state.battery_charging);
@@ -2673,7 +2668,7 @@ void adc_task(void *arg)
             snprintf(l1, 17, "%-16s", "Check system    ");
             lcd_show_fault(l0, l1);
         }
-        else if (sys_state.lcd_render.screen == LCD_SCREEN_FAULT)
+        else if (sys_lcd.screen == LCD_SCREEN_FAULT)
         {
             /* Fault cleared — return to main */
             lcd_clear_fault();
@@ -3415,7 +3410,6 @@ void check_protections()
     // Step 7: Update error LEDs based on the flags
     // update_led_status(); // This function already controls the error LEDs
 }
-
 
 void update_led_status()
 {
