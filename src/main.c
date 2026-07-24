@@ -54,6 +54,9 @@
 #include "security/protection.h"
 // System state
 #include "system_state.h"
+#include "events/event_dispatcher.h"
+#include "events/event_routes.h"
+#include "events/system_events.h"
 
 /* ── All original #defines─────────────────────────────── */
 #define WIFI_SSID "johnson"
@@ -302,6 +305,7 @@
 
 // Queue for button events
 QueueHandle_t button_event_queue;
+QueueHandle_t protection_event_queue;
 
 // ADC Configuration
 typedef enum
@@ -3340,75 +3344,45 @@ static void apply_protection_result(protection_quantity_t q, uint32_t err_flag)
         sys_state.error.error_flags &= ~err_flag;
 }
 
-void check_protections()
+void check_protections(void)
 {
-    uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    uint32_t now_ms =
+        xTaskGetTickCount() * portTICK_PERIOD_MS;
 
-    // Clear non-critical flags at start (keep persistent ones)
-    sys_state.error.error_flags &= (ERR_EEPROM | ERR_FAN_FAIL);
+    sys_state.error.error_flags &=
+        (ERR_EEPROM | ERR_FAN_FAIL);
 
-    /* AC voltage -- fed by the "AC Voltage" ADC channel (adc_configs[]),
-     * which already populates sys_state.inverter.output_voltage. */
-    protection_update(PROT_QUANTITY_AC_VOLTAGE, sys_state.inverter.output_voltage, now_ms);
-    apply_protection_result(PROT_QUANTITY_AC_VOLTAGE, ERR_AC_FAULT);
+    protection_update(
+        PROT_QUANTITY_AC_VOLTAGE,
+        sys_state.inverter.output_voltage,
+        now_ms);
 
-    /* Output current -- NOTE: there is currently no current-sensing ADC
-     * channel anywhere in adc_configs[], so sys_state.inverter.output_current
-     * never leaves its 0.0f init value and this channel can never fault.
-     * Once a real current channel is wired up, this starts working with
-     * no other changes needed here. */
-    protection_update(PROT_QUANTITY_OUTPUT_CURRENT, sys_state.inverter.output_current, now_ms);
-    apply_protection_result(PROT_QUANTITY_OUTPUT_CURRENT, ERR_OVERLOAD);
+    protection_update(
+        PROT_QUANTITY_OUTPUT_CURRENT,
+        sys_state.inverter.output_current,
+        now_ms);
 
-    /* Temperature -- NOTE: same gap as current. sys_state.inverter.temperature
-     * is pinned at its 25.0C init value for the life of the program; there
-     * is no temperature-sensing ADC channel yet. */
-    protection_update(PROT_QUANTITY_TEMPERATURE, sys_state.inverter.temperature, now_ms);
-    apply_protection_result(PROT_QUANTITY_TEMPERATURE, ERR_OVER_TEMP);
+    protection_update(
+        PROT_QUANTITY_TEMPERATURE,
+        sys_state.inverter.temperature,
+        now_ms);
 
-    /* Battery voltage -- one protection.c channel covers both the low
-     * (deep-discharge) and high (overvoltage) sides, scaled to the
-     * active chemistry/voltage-system profile via
-     * sync_battery_protection_thresholds(). protection_channel_state_t
-     * doesn't record which side tripped, so that's inferred here from
-     * last_value against the profile's own cutoff/high thresholds in
-     * order to set the correct one of ERR_LOW_BAT / ERR_HIGH_BAT --
-     * these stay two separate flags since the rest of the firmware
-     * already distinguishes them (LCD messages, error log entries). */
-    protection_update(PROT_QUANTITY_BATTERY_VOLTAGE, sys_state.inverter.battery.voltage, now_ms);
-    protection_channel_state_t bat_state;
-    if (protection_get_state(PROT_QUANTITY_BATTERY_VOLTAGE, &bat_state) &&
-        bat_state.stage == PROT_STAGE_FAULT)
+    protection_update(
+        PROT_QUANTITY_BATTERY_VOLTAGE,
+        sys_state.inverter.battery.voltage,
+        now_ms);
+
+    if (sys_state.inverter.temperature > 70.0f &&
+        !sys_state.fan.connected)
     {
-        if (bat_state.last_value < sys_state.battery_profile.cutoff_voltage_12v)
-        {
-            sys_state.error.error_flags |= ERR_LOW_BAT;
-            sys_state.error.error_flags &= ~ERR_HIGH_BAT;
-        }
-        else
-        {
-            sys_state.error.error_flags |= ERR_HIGH_BAT;
-            sys_state.error.error_flags &= ~ERR_LOW_BAT;
-        }
+        sys_state.error.error_flags |=
+            ERR_FAN_FAIL;
     }
     else
     {
-        sys_state.error.error_flags &= ~(ERR_LOW_BAT | ERR_HIGH_BAT);
+        sys_state.error.error_flags &=
+            ~ERR_FAN_FAIL;
     }
-
-    // Fan check -- protection.c has no fan-speed quantity; kept as-is.
-    if (sys_state.inverter.temperature > 70.0f && !sys_state.fan.connected)
-    {
-        sys_state.error.error_flags |= ERR_FAN_FAIL;
-        ESP_LOGE("PROTECTION", "Fan failure at %.1fC", sys_state.inverter.temperature);
-    }
-    else
-    {
-        sys_state.error.error_flags &= ~ERR_FAN_FAIL;
-    }
-
-    // Step 7: Update error LEDs based on the flags
-    // update_led_status(); // This function already controls the error LEDs
 }
 
 void update_led_status()
@@ -9072,6 +9046,8 @@ esp_err_t nvs_set_float(const char *key, float value)
 ==============================================================================*/
 void app_main(void)
 {
+    system_events_init();
+    event_dispatcher_init();
     sys_event_group = xEventGroupCreate();
     configASSERT(sys_event_group);
     sys_state_mutex = xSemaphoreCreateMutex();
