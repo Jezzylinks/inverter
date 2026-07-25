@@ -2,6 +2,7 @@
 #include "stdarg.h"
 #include "event_dispatcher.h"
 #include "esp_log.h"
+#include "freertos/task.h"
 #include "utility/led.h"
 #include "utility/buzzer.h"
 #include "string.h"
@@ -225,18 +226,33 @@ void event_route_dispatch(const system_event_t *evt)
     switch (evt->category)
     {
     case EVENT_CATEGORY_PROTECTION:
+    {
+        const event_route_t *route = event_route_find(evt);
+        if (route != NULL)
+        {
+            for (uint8_t i = 0; i < route->subscriber_count; i++)
+                event_dispatcher_send(route->subscribers[i], evt);
+        }
+        else
+        {
+            event_dispatcher_send(EVENT_SUB_LCD, evt);
+            event_dispatcher_send(EVENT_SUB_LOGGER, evt);
+        }
+        event_dispatcher_send(EVENT_SUB_MONITOR, evt);
+        break;
+    }
 
+    case EVENT_CATEGORY_SYSTEM:
         event_dispatcher_send(EVENT_SUB_LCD, evt);
         event_dispatcher_send(EVENT_SUB_LED, evt);
         event_dispatcher_send(EVENT_SUB_BUZZER, evt);
-        event_dispatcher_send(EVENT_SUB_RELAY, evt);
         event_dispatcher_send(EVENT_SUB_LOGGER, evt);
-
         break;
 
     case EVENT_CATEGORY_BUTTON:
 
         event_dispatcher_send(EVENT_SUB_LCD, evt);
+        event_dispatcher_send(EVENT_SUB_BUZZER, evt);
         break;
 
     default:
@@ -465,30 +481,55 @@ void buzzer_event_task(void *pv)
             continue;
         }
 
-        switch (evt.action)
+        switch (evt.category)
         {
-        case EVENT_ACTION_WARNING:
-
-            buzzer_beep(100, 80, 1500);
-
+        case EVENT_CATEGORY_PROTECTION:
+            switch (evt.action)
+            {
+            case EVENT_ACTION_WARNING:
+                buzzer_beep(1800, 50, 150);
+                break;
+            case EVENT_ACTION_DERATE:
+                buzzer_beep(1400, 60, 100);
+                vTaskDelay(pdMS_TO_TICKS(80));
+                buzzer_beep(1400, 60, 100);
+                break;
+            case EVENT_ACTION_SHUTDOWN:
+                buzzer_beep(800, 85, 200);
+                vTaskDelay(pdMS_TO_TICKS(60));
+                buzzer_beep(800, 85, 200);
+                vTaskDelay(pdMS_TO_TICKS(60));
+                buzzer_beep(800, 85, 200);
+                break;
+            case EVENT_ACTION_RECOVERED:
+                buzzer_beep(1600, 50, 80);
+                buzzer_beep(2200, 60, 120);
+                break;
+            default:
+                break;
+            }
             break;
 
-        case EVENT_ACTION_DERATE:
-
-            buzzer_beep(100, 80, 1500);
-
+        case EVENT_CATEGORY_SYSTEM:
+            if (evt.action == EVENT_ACTION_ON)
+            {
+                buzzer_beep(1200, 60, 70);
+                buzzer_beep(1700, 65, 70);
+                buzzer_beep(2300, 70, 120);
+            }
+            else if (evt.action == EVENT_ACTION_OFF)
+            {
+                buzzer_beep(2000, 60, 90);
+                buzzer_beep(1400, 60, 90);
+                buzzer_beep(800, 60, 150);
+            }
             break;
 
-        case EVENT_ACTION_SHUTDOWN:
-
-            buzzer_beep(100, 80, 1500);
-
-            break;
-
-        case EVENT_ACTION_RECOVERED:
-
-            buzzer_beep(100, 80, 1500);
-
+        case EVENT_CATEGORY_BUTTON:
+            if (evt.action == EVENT_ACTION_PRESSED)
+            {
+                buzzer_beep(2500, 25, 15);
+            }
             break;
 
         default:

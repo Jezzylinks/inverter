@@ -447,6 +447,8 @@ static void button_determine_state_from_gpio(button_controller_t *btn)
             if (btn->long_press_timer)
                 xTimerStart(btn->long_press_timer, 0);
 
+            queue_event_fast(btn, BUTTON_EVENT_PRESS, 0);
+
             ESP_LOGI(BUTTON_TAG, "[%s] Press started", btn->config.controller_name);
         }
         break;

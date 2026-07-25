@@ -7,46 +7,8 @@
 #include "events/event_dispatcher.h"
 #include "events/system_events.h"
 
-extern led_pattern_t pattern;
 #define LED_REPEAT_FOREVER UINT16_MAX
 
-static const led_pattern_t led_patterns[] =
-    {
-        [EVENT_ACTION_INFO] =
-            {
-                .type = LED_PATTERN_BLINK,
-                .led = LED_STATUS,
-                .on_time_ms = 100,
-                .off_time_ms = 100,
-                .repeat = 1,
-            },
-
-        [EVENT_ACTION_WARNING] =
-            {
-                .type = LED_PATTERN_BLINK,
-                .led = LED_STATUS,
-                .on_time_ms = 250,
-                .off_time_ms = 250,
-                .repeat = 3,
-            },
-
-        [EVENT_ACTION_ERROR] =
-            {
-                .type = LED_PATTERN_BLINK,
-                .led = LED_ERROR,
-                .on_time_ms = 100,
-                .off_time_ms = 100,
-                .repeat = LED_REPEAT_FOREVER,
-            },
-
-        [EVENT_ACTION_SUCCESS] =
-            {
-                .type = LED_PATTERN_ON,
-                .led = LED_STATUS,
-                .brightness = 100,
-                .repeat = 1,
-            },
-};
 
 void led_init(void)
 {
@@ -205,6 +167,13 @@ void led_execute_pattern(const led_pattern_t *pattern)
         return;
     }
 
+    /* blink_led()/pulse_led() take a uint8_t count, so a 16-bit
+     * LED_REPEAT_FOREVER (UINT16_MAX) would otherwise silently truncate
+     * to 255 via implicit narrowing. There's no cancellable "forever"
+     * pattern here (blink_led runs a bounded for-loop), so this is a
+     * capped long burst rather than a true indefinite blink. */
+    uint8_t repeat_count = (pattern->repeat > 255) ? 255 : (uint8_t)pattern->repeat;
+
     switch (pattern->type)
     {
     case LED_PATTERN_OFF:
@@ -219,13 +188,13 @@ void led_execute_pattern(const led_pattern_t *pattern)
         blink_led(pattern->led,
                   pattern->on_time_ms,
                   pattern->off_time_ms,
-                  pattern->repeat);
+                  repeat_count);
         break;
 
     case LED_PATTERN_PULSE:
         pulse_led(pattern->led,
                   pattern->period_ms,
-                  pattern->repeat);
+                  repeat_count);
         break;
 
     case LED_PATTERN_FADE:
@@ -242,6 +211,7 @@ void led_execute_pattern(const led_pattern_t *pattern)
 void led_event_task(void *pv)
 {
     system_event_t evt;
+    led_pattern_t pattern = {0};
 
     while (1)
     {
@@ -255,6 +225,7 @@ void led_event_task(void *pv)
         switch (evt.action)
         {
         case EVENT_ACTION_INFO:
+            pattern.led = LED_STATUS;
             pattern.type = LED_PATTERN_BLINK;
             pattern.on_time_ms = 100;
             pattern.off_time_ms = 100;
@@ -262,6 +233,7 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_ACTION_SUCCESS:
+            pattern.led = LED_STATUS;
             pattern.type = LED_PATTERN_BLINK;
             pattern.on_time_ms = 80;
             pattern.off_time_ms = 80;
@@ -269,6 +241,7 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_ACTION_RECOVERED:
+            pattern.led = LED_ERROR;
             pattern.type = LED_PATTERN_BLINK;
             pattern.on_time_ms = 100;
             pattern.off_time_ms = 100;
@@ -276,6 +249,7 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_ACTION_WARNING:
+            pattern.led = LED_ERROR;
             pattern.type = LED_PATTERN_BLINK;
             pattern.on_time_ms = 500;
             pattern.off_time_ms = 500;
@@ -283,6 +257,7 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_ACTION_DERATE:
+            pattern.led = LED_ERROR;
             pattern.type = LED_PATTERN_BLINK;
             pattern.on_time_ms = 100;
             pattern.off_time_ms = 100;
@@ -290,6 +265,7 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_ACTION_STARTUP:
+            pattern.led = LED_STATUS;
             pattern.type = LED_PATTERN_FADE;
             pattern.brightness = 100;
             pattern.period_ms = 1000;
@@ -297,6 +273,7 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_ACTION_SHUTDOWN:
+            pattern.led = LED_ERROR;
             pattern.type = LED_PATTERN_PULSE;
             pattern.brightness = 100;
             pattern.period_ms = 1000;
@@ -304,6 +281,7 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_ACTION_FAULT:
+            pattern.led = LED_ERROR;
             pattern.type = LED_PATTERN_BLINK;
             pattern.on_time_ms = 250;
             pattern.off_time_ms = 250;
@@ -311,6 +289,7 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_ACTION_CRITICAL:
+            pattern.led = LED_ERROR;
             pattern.type = LED_PATTERN_BLINK;
             pattern.on_time_ms = 50;
             pattern.off_time_ms = 50;
@@ -318,6 +297,7 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_ACTION_USER_INPUT:
+            pattern.led = LED_STATUS;
             pattern.type = LED_PATTERN_BLINK;
             pattern.on_time_ms = 50;
             pattern.off_time_ms = 50;
@@ -325,6 +305,7 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_ACTION_COMMUNICATION:
+            pattern.led = LED_STATUS;
             pattern.type = LED_PATTERN_BLINK;
             pattern.on_time_ms = 75;
             pattern.off_time_ms = 75;
@@ -332,22 +313,29 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_ACTION_CHARGING:
+            pattern.led = LED_STATUS;
             pattern.type = LED_PATTERN_PULSE;
             pattern.brightness = 100;
             pattern.period_ms = 1500;
             pattern.repeat = LED_REPEAT_FOREVER;
             break;
 
+        case EVENT_ACTION_ON:
+            led_on(LED_STATUS);
+            continue;
+
+        case EVENT_ACTION_OFF:
+            led_off(LED_STATUS);
+            continue;
+
         default:
             pattern.type = LED_PATTERN_ON;
+            pattern.led = LED_STATUS;
             pattern.brightness = 100;
             pattern.repeat = 1;
             break;
         }
 
-        if (evt.action < EVENT_ACTION_COUNT)
-        {
-            led_execute_pattern(&led_patterns[evt.action]);
-        }
+        led_execute_pattern(&pattern);
     }
 }
