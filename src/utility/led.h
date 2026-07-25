@@ -32,7 +32,7 @@ typedef struct
     uint16_t period_ms;
 
     uint16_t repeat; // 1..N, or LED_REPEAT_FOREVER
-    bool continuous; // Repeat until stopped
+    uint16_t repeat; // Repeat until stopped
 } led_pattern_t;
 
 void led_init(void);

@@ -8902,10 +8902,10 @@ void app_main(void)
     // lcd_show_boot_brand();
     xTaskCreate(adc_task, "adc_task", 4096, NULL, 5, NULL);
     xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
-    xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, 1);
-    xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, 1);
-    xTaskCreatePinnedToCore(logger_event_task, "logger_evt", 4096, NULL, 5, NULL, 0);
-    xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, 0);
+    // xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, 1);
+    // xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, 1);
+    // xTaskCreatePinnedToCore(logger_event_task, "logger_evt", 4096, NULL, 5, NULL, 0);
+    // xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, 0);
 
     //   xTaskCreate(power_task, "power_task", 4096, NULL, 4, NULL);
     //   xTaskCreate(display_timeout_task, "disp_timeout", 4096, NULL, 1, NULL);

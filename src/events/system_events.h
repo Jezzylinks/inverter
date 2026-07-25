@@ -57,6 +57,12 @@ extern "C"
 
         EVENT_ACTION_WARNING,
 
+        EVENT_ACTION_INFO,
+
+        EVENT_ACTION_ERROR,
+
+        EVENT_ACTION_SUCCESS,
+
         EVENT_ACTION_DERATE,
 
         EVENT_ACTION_SHUTDOWN,

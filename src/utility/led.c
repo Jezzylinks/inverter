@@ -8,6 +8,45 @@
 #include "events/system_events.h"
 
 extern led_pattern_t pattern;
+#define LED_REPEAT_FOREVER UINT16_MAX
+
+static const led_pattern_t led_patterns[] =
+    {
+        [EVENT_ACTION_INFO] =
+            {
+                .type = LED_PATTERN_BLINK,
+                .led = LED_STATUS,
+                .on_time_ms = 100,
+                .off_time_ms = 100,
+                .repeat = 1,
+            },
+
+        [EVENT_ACTION_WARNING] =
+            {
+                .type = LED_PATTERN_BLINK,
+                .led = LED_STATUS,
+                .on_time_ms = 250,
+                .off_time_ms = 250,
+                .repeat = 3,
+            },
+
+        [EVENT_ACTION_ERROR] =
+            {
+                .type = LED_PATTERN_BLINK,
+                .led = LED_ERROR,
+                .on_time_ms = 100,
+                .off_time_ms = 100,
+                .repeat = LED_REPEAT_FOREVER,
+            },
+
+        [EVENT_ACTION_SUCCESS] =
+            {
+                .type = LED_PATTERN_ON,
+                .led = LED_STATUS,
+                .brightness = 100,
+                .repeat = 1,
+            },
+};
 
 void led_init(void)
 {
@@ -209,7 +248,7 @@ void led_event_task(void *pv)
             .on_time_ms = 0,
             .off_time_ms = 0,
             .repeat = 0,
-            .continuous = false};
+            .repeat = 0};
 
     while (1)
     {
@@ -227,7 +266,7 @@ void led_event_task(void *pv)
             pattern.on_time_ms = 500;
             pattern.off_time_ms = 500;
             pattern.repeat = 0;
-            pattern.continuous = true;
+            pattern.repeat = 0;
             break;
 
         case EVENT_ACTION_DERATE:
@@ -235,7 +274,7 @@ void led_event_task(void *pv)
             pattern.on_time_ms = 100;
             pattern.off_time_ms = 100;
             pattern.repeat = 0;
-            pattern.continuous = true;
+            pattern.repeat = true;
             break;
 
         case EVENT_ACTION_SHUTDOWN:
@@ -243,7 +282,7 @@ void led_event_task(void *pv)
             pattern.on_time_ms = 100;
             pattern.off_time_ms = 900;
             pattern.repeat = 0;
-            pattern.continuous = true;
+            pattern.repeat = LED_REPEAT_FOREVER;
             break;
 
         case EVENT_ACTION_RECOVERED:
@@ -251,7 +290,7 @@ void led_event_task(void *pv)
             pattern.on_time_ms = 100;
             pattern.off_time_ms = 100;
             pattern.repeat = 3;
-            pattern.continuous = false;
+            pattern.repeat = 0;
             break;
 
         default:
