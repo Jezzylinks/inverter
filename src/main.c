@@ -901,6 +901,7 @@ typedef enum
     VALUE_TYPE_SCROLL_SPEED,
     VALUE_TYPE_BATTERY_TYPE,
     VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM,
+    VALUE_TYPE_SOUND_ENABLE,
     VALUE_TYPE_COUNT
 } value_edit_param_t;
 
@@ -1006,7 +1007,8 @@ static const menu_item_t settings_items[] = {
     {"Scroll Enable", MENU_SETTINGS},
     {"Scroll Speed", MENU_SETTINGS},
     {"Battery Type", MENU_SETTINGS},
-    {"Voltage System", MENU_SETTINGS}};
+    {"Voltage System", MENU_SETTINGS},
+    {"Sound", MENU_SETTINGS}};
 
 // MONITORING MENU (6 items)
 static const menu_item_t monitoring_items[] = {
@@ -1116,6 +1118,8 @@ void toggle_display();
 // Function prototypes
 void inverter_power_on(void);
 void shutdown_inverter(void);
+static void post_inverter_power_event(bool powered_on);
+static void post_button_click_event(void);
 void enter_diagnostic_mode(void);
 void exit_diagnostic_mode(void);
 void lcd_draw_diagnostics_screen(uint8_t index);
@@ -1159,6 +1163,7 @@ static void apply_scroll_speed(float v);
 static void apply_system_timeout(float v);
 static void apply_battery_type(float v);
 static void apply_battery_voltage_system(float v);
+static void apply_sound_enable(float v);
 static void sync_battery_protection_thresholds(void);
 
 // Value adjustment functions
@@ -1186,6 +1191,7 @@ void edit_scroll_enable(void);
 void edit_scroll_speed(void);
 void edit_battery_type(void);
 void edit_battery_voltage_system(void);
+void edit_sound_enable(void);
 void security_pin(void);
 
 // Submenu functions
@@ -1452,6 +1458,16 @@ static value_edit_context_t value_edit[] = {
         .live_update = false,
         .apply = apply_battery_voltage_system,
     },
+
+    [VALUE_TYPE_SOUND_ENABLE] = {
+        .edit_type = VALUE_EDIT_BOOL,
+        .current_value = 1.0f,
+        .unit = "",
+        .label = "Sound",
+        .is_critical = false,
+        .live_update = true,
+        .apply = apply_sound_enable,
+    },
 };
 
 // =============== HARDWARE INITIALIZATION ===============
@@ -1545,6 +1561,7 @@ static nvs_setting_t g_settings[] = {
     {"backlight_time", &sys_state.display.backlight_timeout, sizeof(int32_t), 30, false},
     {"auto_shutdown", &sys_state.display.auto_shutdown_enabled, sizeof(uint8_t), 0, false},
     {"scroll_en", &sys_state.display.scroll_enabled, sizeof(uint8_t), 0, false},
+    {"sound_en", &sys_state.sound_enabled, sizeof(uint8_t), 1, false},
     {"scroll_spd", &sys_state.display.scroll_speed, sizeof(uint8_t), DEFAULT_SCROLL_SPEED, false},
     {"out_volt", &sys_state.inverter.output_voltage, sizeof(int32_t), 220.0f, true},
     {"out_freq", &sys_state.inverter.output_frequency, sizeof(int32_t), 50.0f, true},
@@ -4029,6 +4046,11 @@ void handle_power_button_event(button_event_info_t *event_info,
 {
     if (!sys_state.system_ready)
         return;
+
+    if (event_info->event == BUTTON_EVENT_PRESS)
+    {
+        post_button_click_event();
+    }
     int64_t current_time = event_info->timestamp_us / 1000;
 
     /* Never let the power button interrupt an in-progress factory reset.
@@ -4355,6 +4377,11 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
     if (!sys_state.system_ready)
         return;
 
+    if (event_info->event == BUTTON_EVENT_PRESS)
+    {
+        post_button_click_event();
+    }
+
     if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_PROGRESS)
     {
         return;
@@ -4548,6 +4575,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 break;
             case 9:
                 edit_battery_voltage_system();
+                break;
+            case 10:
+                edit_sound_enable();
                 break;
             }
             break;
@@ -4852,6 +4882,11 @@ void handle_up_button_event(button_event_info_t *event_info,
 {
     if (!sys_state.system_ready)
         return;
+
+    if (event_info->event == BUTTON_EVENT_PRESS)
+    {
+        post_button_click_event();
+    }
     int64_t current_time = event_info->timestamp_us / 1000;
     value_edit_context_t *config = get_current_value_config();
 
@@ -5044,6 +5079,11 @@ void handle_down_button_event(button_event_info_t *event_info,
 {
     if (!sys_state.system_ready)
         return;
+
+    if (event_info->event == BUTTON_EVENT_PRESS)
+    {
+        post_button_click_event();
+    }
     int64_t current_time = event_info->timestamp_us / 1000;
     value_edit_context_t *config = get_current_value_config();
 
@@ -5252,6 +5292,11 @@ void handle_back_button_event(button_event_info_t *event_info,
 {
     if (!sys_state.system_ready)
         return;
+
+    if (event_info->event == BUTTON_EVENT_PRESS)
+    {
+        post_button_click_event();
+    }
 
     // User is in Security mode
 
@@ -5472,6 +5517,28 @@ static void clear_menu_history(void)
 /* ── inverter_power_on() ────────────────────────────────────────────────── */
 static const char *INV_TAG = "INVERTER";
 
+static void post_button_click_event(void)
+{
+    system_event_t evt = {0};
+    evt.category = EVENT_CATEGORY_BUTTON;
+    evt.action = EVENT_ACTION_PRESSED;
+    evt.source = EVENT_SOURCE_BUTTON;
+    evt.priority = EVENT_PRIORITY_LOW;
+    evt.timestamp = xTaskGetTickCount();
+    system_event_post(&evt);
+}
+
+static void post_inverter_power_event(bool powered_on)
+{
+    system_event_t evt = {0};
+    evt.category = EVENT_CATEGORY_SYSTEM;
+    evt.action = powered_on ? EVENT_ACTION_ON : EVENT_ACTION_OFF;
+    evt.source = EVENT_SOURCE_SYSTEM;
+    evt.priority = EVENT_PRIORITY_NORMAL;
+    evt.timestamp = xTaskGetTickCount();
+    system_event_post(&evt);
+}
+
 void inverter_power_on(void)
 {
     if (!check_safety_conditions())
@@ -5518,8 +5585,7 @@ void inverter_power_on(void)
     sys_state.inverter.inverter_active = true;
     sys_state.menu_state = MENU_NONE;
     go_to_main_screen();
-    buzzer_success();
-    led_on(LED_STATUS);
+    post_inverter_power_event(true);
     ESP_LOGI(INV_TAG, "Inverter powered on");
 }
 
@@ -5533,6 +5599,15 @@ static void apply_wifi(float v) { sys_state.wifi.enabled = (bool)v; }
 static void apply_bluetooth(float v) { sys_state.bluetooth.enabled = (bool)v; } /* adjust to your actual field */
 static void apply_auto_shutdown(float v) { sys_state.display.auto_shutdown_enabled = (uint8_t)v; }
 static void apply_scroll_enable(float v) { sys_state.display.scroll_enabled = (uint8_t)v; }
+
+static void apply_sound_enable(float v)
+{
+    sys_state.sound_enabled = (v != 0.0f);
+    if (!sys_state.sound_enabled)
+    {
+        buzzer_off();
+    }
+}
 static void apply_scroll_speed(float v) { sys_state.display.scroll_speed = (uint8_t)v; }
 static void apply_system_timeout(float v) { set_system_timeout((uint32_t)v); }
 
@@ -5636,7 +5711,7 @@ void shutdown_inverter(void)
         return;
     }
 
-    led_off(LED_STATUS);
+    post_inverter_power_event(false);
     sys_state.inverter.inverter_state = INVERTER_OFF;
     sys_state.inverter.inverter_active = false;
     sys_state.menu_state = MENU_NONE;
@@ -8279,6 +8354,7 @@ void init_system_state()
     /* Battery defaults */
     sys_state.battery_voltage_system = 12.0f;
     sys_state.battery_cutoff = 11.05f;
+    sys_state.sound_enabled = true;
     sys_state.low_battery = false;
 
     // Initialize system parameters with default values
@@ -8764,6 +8840,20 @@ void edit_scroll_enable(void)
     lcd_show_value_edit_screen();
 }
 
+void edit_sound_enable(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_SOUND_ENABLE];
+    sys_state.current_value_type->current_value =
+        sys_state.sound_enabled ? 1.0f : 0.0f;
+    lcd_show_value_edit_screen();
+}
+
 void edit_scroll_speed(void)
 {
     sys_state.edit_backup_value = sys_state.current_value_type->current_value;
@@ -8927,10 +9017,11 @@ void app_main(void)
     // lcd_show_boot_brand();
     xTaskCreate(adc_task, "adc_task", 4096, NULL, 5, NULL);
     xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
-    // xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, 1);
-    // xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, 1);
-    // xTaskCreatePinnedToCore(logger_event_task, "logger_evt", 4096, NULL, 5, NULL, 0);
-    // xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, 0);
+    xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, 1);
+    xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, 1);
+    xTaskCreatePinnedToCore(led_event_task, "led_evt", 2048, NULL, 7, NULL, 1);
+    xTaskCreatePinnedToCore(logger_event_task, "logger_evt", 4096, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, 0);
 
     //   xTaskCreate(power_task, "power_task", 4096, NULL, 4, NULL);
     //   xTaskCreate(display_timeout_task, "disp_timeout", 4096, NULL, 1, NULL);

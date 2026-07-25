@@ -30,10 +30,20 @@ void buzzer_init(void)
     ledc_channel_config(&channel);
 }
 
+#include "system_state.h"
+
+extern system_state_t sys_state;
+
 void update_buzzer(uint16_t freq_hz,
                    uint8_t volume_percent)
 {
     static uint16_t last_freq = 0;
+
+    if (!sys_state.sound_enabled)
+    {
+        ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
+        return;
+    }
 
     if (freq_hz == 0 || volume_percent == 0)
     {

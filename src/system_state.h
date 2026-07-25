@@ -455,6 +455,7 @@ extern "C"
         bool battery_charging;
         float battery_cutoff; // Battery cutoff voltage (V)
         bool precharge_complete;
+        bool sound_enabled; // Global buzzer mute -- gated in update_buzzer()
 
         // Value editing backup
         float edit_backup_value;

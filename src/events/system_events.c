@@ -110,25 +110,25 @@ bool system_event_post_protection(protection_quantity_t quantity,
     {
     case PROT_ACTION_WARN:
 
-        evt.action = PROT_ACTION_WARN;
+        evt.action = EVENT_ACTION_WARNING;
         evt.priority = EVENT_PRIORITY_LOW;
         break;
 
     case PROT_ACTION_DERATE:
 
-        evt.action = PROT_ACTION_DERATE;
+        evt.action = EVENT_ACTION_DERATE;
         evt.priority = EVENT_PRIORITY_NORMAL;
         break;
 
     case PROT_ACTION_SHUTDOWN:
 
-        evt.action = PROT_ACTION_SHUTDOWN;
+        evt.action = EVENT_ACTION_SHUTDOWN;
         evt.priority = EVENT_PRIORITY_CRITICAL;
         break;
 
     case PROT_ACTION_RECOVERED:
 
-        evt.action = PROT_ACTION_RECOVERED;
+        evt.action = EVENT_ACTION_RECOVERED;
         evt.priority = EVENT_PRIORITY_NORMAL;
         break;
 
