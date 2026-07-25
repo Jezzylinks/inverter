@@ -382,10 +382,6 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
 
     case FACTORY_RESET_PIN_ENTRY:
     {
-        /* Factory-reset PIN gate: reuses the security PIN-flow renderer.
-         * The user is verifying the current PIN before the reset is
-         * allowed -- always shown as "Enter PIN:" regardless of which
-         * change_pin sub-phase is active internally. */
         if (security_is_locked_out())
         {
             int64_t remaining_ms = security_lockout_remaining_ms();
@@ -396,20 +392,23 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
             snprintf(r1_buf, sizeof(r1_buf), "Retry in %3lus   ",
                      (unsigned long)remaining_s);
             draw_commit("PIN Locked      ", r1_buf);
+            return;
         }
-        else
-        {
-            change_pin_ctx_t pin_snap;
-            if (xSemaphoreTake(change_pin_mutex, pdMS_TO_TICKS(20)) == pdTRUE)
-            {
-                memcpy(&pin_snap, &change_pin_ctx, sizeof(pin_snap));
-                xSemaphoreGive(change_pin_mutex);
-                char r1_buf[17];
-                pin_entry_render_line(&pin_snap.pin_ctx, r1_buf, sizeof(r1_buf));
-                draw_commit("Enter PIN:      ", r1_buf);
-            }
-            /* else: mutex busy this tick, skip frame silently */
-        }
+
+        factory_reset_ctx_t pin_snap;
+
+        /* If factory_reset_ctx is shared with the button task,
+           protect it with a mutex exactly like change_pin_ctx. */
+        memcpy(&pin_snap, &sys_state.factory_reset, sizeof(pin_snap));
+
+        char r0[17], r1[17];
+
+        snprintf(r0, sizeof(r0), "%-16s", "Enter PIN:      ");
+
+        pin_entry_render_line(&pin_snap.pin_ctx, r1, sizeof(r1));
+
+        draw_commit(r0, r1);
+
         break;
     }
 
@@ -623,6 +622,31 @@ static bool draw_security_pin_flow(change_pin_phase_t flow_phase)
 
     pin_entry_render_line(&pin_snap.pin_ctx, r1, sizeof(r1));
     draw_commit(r0, r1);
+    return true;
+}
+
+static bool draw_factory_reset_pin_flow(void)
+{
+    if (security_is_locked_out())
+    {
+        draw_security_lockout();
+        return true;
+    }
+
+    factory_reset_ctx_t pin_snap;
+
+    /* If factory_reset_ctx is shared with the button task,
+       protect it with a mutex exactly like change_pin_ctx. */
+    memcpy(&pin_snap, &sys_state.factory_reset, sizeof(pin_snap));
+
+    char r0[17], r1[17];
+
+    snprintf(r0, sizeof(r0), "%-16s", "Enter PIN:      ");
+
+    pin_entry_render_line(&pin_snap.pin_ctx, r1, sizeof(r1));
+
+    draw_commit(r0, r1);
+
     return true;
 }
 

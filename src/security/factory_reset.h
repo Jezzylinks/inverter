@@ -56,6 +56,7 @@ extern "C"
     _Atomic factory_reset_phase_t phase;
     _Atomic uint8_t progress_pct;
     _Atomic factory_reset_action_t action;
+    char pin_line[17];
     pin_entry_ctx_t pin_ctx;
 
   } factory_reset_ctx_t;

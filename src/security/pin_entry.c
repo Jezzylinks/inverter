@@ -7,6 +7,7 @@
 #include "lcd_state.h"
 #include "system_state.h"
 #include "lcd_flash_queue.h"
+#include "esp_log.h"
 
 extern lcd_render_state_t sys_lcd;
 extern system_state_t sys_state;

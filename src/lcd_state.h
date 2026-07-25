@@ -45,6 +45,7 @@ extern "C"
         LCD_SCREEN_SECURITY,
         LCD_SCREEN_PROTECTION,
         LCD_SCREEN_SYSTEM_EVENT,
+        LCD_SCREEN_LOGIN,
         LCD_SCREEN_COUNT
     } lcd_screen_id_t;
 

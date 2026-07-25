@@ -5270,28 +5270,33 @@ void handle_back_button_event(button_event_info_t *event_info,
         }
     }
 
-    if (sys_state.menu_state == MENU_SECURITY &&
-        atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_PIN_FLOW)
+    if (sys_state.menu_state == MENU_SECURITY)
     {
-        xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
-        bool flow_done = change_pin_handle_button(&change_pin_ctx, BTN_BACK);
-        xSemaphoreGive(change_pin_mutex);
 
-        if (flow_done)
+        if (atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_PIN_FLOW)
+
+        {
+            xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
+            bool flow_done = change_pin_handle_button(&change_pin_ctx, BTN_BACK);
+            xSemaphoreGive(change_pin_mutex);
+
+            if (flow_done)
+            {
+                ESP_LOGI("DISPLAY MODE", "DISPLAYING MODE");
+                atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
+                atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
+                sys_lcd.screen = LCD_SCREEN_SECURITY;
+            }
+            return;
+        }
+
+        if (
+            atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_VIEW_STATUS)
         {
             atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
             atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
-            sys_lcd.screen = LCD_SCREEN_SECURITY;
+            return;
         }
-        return;
-    }
-
-    if (sys_state.menu_state == MENU_SECURITY &&
-        atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_VIEW_STATUS)
-    {
-        atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
-        atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
-        return;
     }
 
     switch (event_info->event)
@@ -7917,6 +7922,7 @@ void init_menu_system()
     sys_state.menu_selection = 0;
     sys_state.pending_confirmation = false;
     sys_state.security.enabled = false;
+    sys_state.factory_reset.pin_ctx.digit = 0101;
     // lcd_display_state
     sys_state.lcd_state.blink_state = false;
     sys_state.lcd_boot_state.boot_screen_timestamp_ms = 0;

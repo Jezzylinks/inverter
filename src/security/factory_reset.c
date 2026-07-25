@@ -48,12 +48,19 @@ static void handle_pin_entry_button(factory_reset_ctx_t *ctx,
     }
 
     pin_entry_result_t result = pin_entry_handle_button(&ctx->pin_ctx, btn);
+    char pin_line[17];
+    pin_entry_render_line(&ctx->pin_ctx, pin_line, sizeof(pin_line));
 
     switch (result)
     {
     case PIN_ENTRY_IN_PROGRESS:
-        /* Digit adjusted or confirmed but not yet complete -- nothing to do. */
+    {
+        pin_entry_render_line(&ctx->pin_ctx,
+                              sys_lcd.factory_reset.pin_line,
+                              sizeof(sys_lcd.factory_reset.pin_line));
+
         break;
+    }
 
     case PIN_ENTRY_SUBMITTED:
     {
