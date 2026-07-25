@@ -4368,8 +4368,6 @@ menu_state_t display_menu_state(void)
     return sys_state.menu_state;
 }
 
-static const uint8_t demo_pin[SECURITY_PIN_LEN] = {1, 2, 3, 4};
-
 // ENTER/MENU BUTTON - Navigate menus and enter/confirm values
 /* ── handle_enter_menu_button_event() ──────────────────────────────────── */
 
@@ -8851,8 +8849,7 @@ void edit_sound_enable(void)
     sys_state.fast_increment_active = false;
     sys_state.value_edit_mode = true;
     sys_state.current_value_type = &value_edit[VALUE_TYPE_SOUND_ENABLE];
-    sys_state.current_value_type->current_value =
-        sys_state.sound_enabled ? 1.0f : 0.0f;
+    sys_state.current_value_type->current_value = sys_state.sound_enabled ? 1.0f : 0.0f;
     lcd_show_value_edit_screen();
 }
 

@@ -9,7 +9,6 @@
 
 #define LED_REPEAT_FOREVER UINT16_MAX
 
-
 void led_init(void)
 {
 #if CONFIG_USE_LED_PWM
@@ -166,12 +165,6 @@ void led_execute_pattern(const led_pattern_t *pattern)
     {
         return;
     }
-
-    /* blink_led()/pulse_led() take a uint8_t count, so a 16-bit
-     * LED_REPEAT_FOREVER (UINT16_MAX) would otherwise silently truncate
-     * to 255 via implicit narrowing. There's no cancellable "forever"
-     * pattern here (blink_led runs a bounded for-loop), so this is a
-     * capped long burst rather than a true indefinite blink. */
     uint8_t repeat_count = (pattern->repeat > 255) ? 255 : (uint8_t)pattern->repeat;
 
     switch (pattern->type)
