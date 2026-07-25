@@ -41,6 +41,8 @@ extern "C"
 
         EVENT_CATEGORY_LOG,
 
+        EVENT_CATEGORY_FACTORY_RESET,
+
         EVENT_CATEGORY_USER
 
     } event_category_t;
@@ -181,6 +183,10 @@ extern "C"
     const char *event_source_name(event_source_t source);
 
     const char *event_priority_name(event_priority_t priority);
+    bool system_event_post_protection(protection_quantity_t quantity,
+                                      protection_action_t action,
+                                      float value);
+    bool system_event_post(const system_event_t *event);
 
 #ifdef __cplusplus
 }

@@ -94,51 +94,47 @@ bool system_event_receive(system_event_t *event,
  * Event Post
  ******************************************************************************/
 
-bool system_event_post_protection(
-    protection_quantity_t quantity,
-    protection_action_t action,
-    float value)
+bool system_event_post_protection(protection_quantity_t quantity,
+                                  protection_action_t action,
+                                  float value)
 {
-    system_event_t evt =
-        {
-            .category = EVENT_CATEGORY_PROTECTION,
-            .source = EVENT_SOURCE_PROTECTION,
-            .priority = EVENT_PRIORITY_NORMAL,
-            .quantity = quantity,
-            .value = value,
-            .timestamp = xTaskGetTickCount(),
-            .data = 0};
+    system_event_t evt = {0};
+
+    evt.category = EVENT_CATEGORY_PROTECTION;
+    evt.source = EVENT_SOURCE_PROTECTION;
+    evt.quantity = quantity;
+    evt.value = value;
+    evt.timestamp = xTaskGetTickCount();
 
     switch (action)
     {
     case PROT_ACTION_WARN:
 
-        evt.action = EVENT_ACTION_WARNING;
+        evt.action = PROT_ACTION_WARN;
         evt.priority = EVENT_PRIORITY_LOW;
         break;
 
     case PROT_ACTION_DERATE:
 
-        evt.action = EVENT_ACTION_DERATE;
-        evt.priority = EVENT_PRIORITY_HIGH;
+        evt.action = PROT_ACTION_DERATE;
+        evt.priority = EVENT_PRIORITY_NORMAL;
         break;
 
     case PROT_ACTION_SHUTDOWN:
 
-        evt.action = EVENT_ACTION_SHUTDOWN;
+        evt.action = PROT_ACTION_SHUTDOWN;
         evt.priority = EVENT_PRIORITY_CRITICAL;
         break;
 
     case PROT_ACTION_RECOVERED:
 
-        evt.action = EVENT_ACTION_RECOVERED;
+        evt.action = PROT_ACTION_RECOVERED;
         evt.priority = EVENT_PRIORITY_NORMAL;
         break;
 
     case PROT_ACTION_NONE:
 
     default:
-
         return false;
     }
 

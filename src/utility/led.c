@@ -1,0 +1,264 @@
+#include "led.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/ledc.h"
+#include "esp_err.h"
+#include "system_state.h"
+#include "events/event_dispatcher.h"
+#include "events/system_events.h"
+
+extern led_pattern_t pattern;
+
+void led_init(void)
+{
+#if CONFIG_USE_LED_PWM
+
+    ledc_timer_config_t timer = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = LEDC_TIMER_13_BIT,
+        .timer_num = LEDC_TIMER_0,
+        .freq_hz = 5000,
+        .clk_cfg = LEDC_AUTO_CLK};
+
+    ledc_timer_config(&timer);
+
+    typedef struct
+    {
+        gpio_num_t gpio;
+        ledc_channel_t channel;
+    } led_cfg_t;
+
+    static const led_cfg_t leds[] =
+        {
+            {GPIO_STATUS_LED, LED_STATUS},
+            {GPIO_ERROR_LED, LED_ERROR},
+        };
+
+    for (int i = 0; i < sizeof(leds) / sizeof(leds[0]); i++)
+    {
+        ledc_channel_config_t ch = {
+            .gpio_num = leds[i].gpio,
+            .speed_mode = LEDC_LOW_SPEED_MODE,
+            .channel = leds[i].channel,
+            .intr_type = LEDC_INTR_DISABLE,
+            .timer_sel = LEDC_TIMER_0,
+            .duty = 0,
+            .hpoint = 0,
+        };
+
+        ledc_channel_config(&ch);
+    }
+
+    ledc_fade_func_install(0);
+
+    all_leds_off();
+
+#endif
+}
+
+void update_led(led_channel_t led, uint8_t brightness_percent)
+{
+    if (brightness_percent > 100)
+        brightness_percent = 100;
+
+    uint32_t duty =
+        ((1 << 13) - 1) * brightness_percent / 100;
+
+    ledc_set_duty(
+        LEDC_LOW_SPEED_MODE,
+        led,
+        duty);
+
+    ledc_update_duty(
+        LEDC_LOW_SPEED_MODE,
+        led);
+}
+
+void led_on(led_channel_t led)
+{
+    update_led(led, 100);
+}
+
+void led_off(led_channel_t led)
+{
+    update_led(led, 0);
+}
+
+void set_led_brightness(led_channel_t led,
+                        uint8_t brightness)
+{
+    update_led(led, brightness);
+}
+
+void fade_led(led_channel_t led,
+              uint8_t brightness,
+              uint32_t fade_time)
+{
+    if (brightness > 100)
+        brightness = 100;
+
+    uint32_t duty =
+        ((1 << 13) - 1) * brightness / 100;
+
+    ledc_set_fade_with_time(
+        LEDC_LOW_SPEED_MODE,
+        led,
+        duty,
+        fade_time);
+
+    ledc_fade_start(
+        LEDC_LOW_SPEED_MODE,
+        led,
+        LEDC_FADE_NO_WAIT);
+}
+
+void blink_led(led_channel_t led,
+               uint32_t on_ms,
+               uint32_t off_ms,
+               uint8_t count)
+{
+    for (uint8_t i = 0; i < count; i++)
+    {
+        led_on(led);
+        vTaskDelay(pdMS_TO_TICKS(on_ms));
+
+        led_off(led);
+
+        if (i < count - 1)
+            vTaskDelay(pdMS_TO_TICKS(off_ms));
+    }
+}
+
+void pulse_led(led_channel_t led,
+               uint32_t period,
+               uint8_t cycles)
+{
+    for (uint8_t i = 0; i < cycles; i++)
+    {
+        fade_led(led, 100, period / 2);
+        vTaskDelay(pdMS_TO_TICKS(period / 2));
+
+        fade_led(led, 0, period / 2);
+        vTaskDelay(pdMS_TO_TICKS(period / 2));
+    }
+}
+
+void set_all_leds(uint8_t brightness)
+{
+    update_led(LED_STATUS, brightness);
+    update_led(LED_ERROR, brightness);
+}
+
+void all_leds_on(void)
+{
+    set_all_leds(100);
+}
+
+void all_leds_off(void)
+{
+    set_all_leds(0);
+}
+
+void led_execute_pattern(const led_pattern_t *pattern)
+{
+    if (pattern == NULL)
+    {
+        return;
+    }
+
+    switch (pattern->type)
+    {
+    case LED_PATTERN_OFF:
+        led_off(pattern->led);
+        break;
+
+    case LED_PATTERN_ON:
+        set_led_brightness(pattern->led, pattern->brightness);
+        break;
+
+    case LED_PATTERN_BLINK:
+        blink_led(pattern->led,
+                  pattern->on_time_ms,
+                  pattern->off_time_ms,
+                  pattern->repeat);
+        break;
+
+    case LED_PATTERN_PULSE:
+        pulse_led(pattern->led,
+                  pattern->period_ms,
+                  pattern->repeat);
+        break;
+
+    case LED_PATTERN_FADE:
+        fade_led(pattern->led,
+                 pattern->brightness,
+                 pattern->period_ms);
+        break;
+
+    default:
+        break;
+    }
+}
+
+void led_event_task(void *pv)
+{
+    system_event_t evt;
+
+    led_pattern_t pattern =
+        {
+            .on_time_ms = 0,
+            .off_time_ms = 0,
+            .repeat = 0,
+            .continuous = false};
+
+    while (1)
+    {
+        if (!event_dispatcher_receive(EVENT_SUB_LED,
+                                      &evt,
+                                      portMAX_DELAY))
+        {
+            continue;
+        }
+
+        switch (evt.action)
+        {
+        case EVENT_ACTION_WARNING:
+
+            pattern.on_time_ms = 500;
+            pattern.off_time_ms = 500;
+            pattern.repeat = 0;
+            pattern.continuous = true;
+            break;
+
+        case EVENT_ACTION_DERATE:
+
+            pattern.on_time_ms = 100;
+            pattern.off_time_ms = 100;
+            pattern.repeat = 0;
+            pattern.continuous = true;
+            break;
+
+        case EVENT_ACTION_SHUTDOWN:
+
+            pattern.on_time_ms = 100;
+            pattern.off_time_ms = 900;
+            pattern.repeat = 0;
+            pattern.continuous = true;
+            break;
+
+        case EVENT_ACTION_RECOVERED:
+
+            pattern.on_time_ms = 100;
+            pattern.off_time_ms = 100;
+            pattern.repeat = 3;
+            pattern.continuous = false;
+            break;
+
+        default:
+            led_on(LED_STATUS);
+            continue;
+        }
+
+        led_execute_pattern(&pattern);
+    }
+}

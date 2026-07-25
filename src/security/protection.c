@@ -4,6 +4,9 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "system_state.h"
+#include "events/system_events.h"
+
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 static const char *TAG = "protection";
 
@@ -13,9 +16,13 @@ static SemaphoreHandle_t s_mutex;
 extern QueueHandle_t protection_event_queue;
 extern system_state_t sys_state;
 
-typedef void (*protection_error_handler_t)(
-    protection_stage_t stage,
-    float value);
+// Forward declaration functions
+static void ac_voltage_error_handler(protection_stage_t stage, float value);
+static void current_error_handler(protection_stage_t stage, float value);
+static void temperature_error_handler(protection_stage_t stage, float value);
+static void battery_error_handler(protection_stage_t stage, float value);
+
+typedef void (*protection_error_handler_t)(protection_stage_t stage, float value);
 
 typedef struct
 {
@@ -23,12 +30,12 @@ typedef struct
     protection_error_handler_t handler;
 } protection_error_map_t;
 
-static const protection_error_map_t error_map[] =
+static const protection_error_handler_t error_handlers[] =
     {
-        {PROT_QUANTITY_AC_VOLTAGE, ac_voltage_error_handler},
-        {PROT_QUANTITY_OUTPUT_CURRENT, current_error_handler},
-        {PROT_QUANTITY_TEMPERATURE, temperature_error_handler},
-        {PROT_QUANTITY_BATTERY_VOLTAGE, battery_error_handler},
+        [PROT_QUANTITY_AC_VOLTAGE] = ac_voltage_error_handler,
+        [PROT_QUANTITY_OUTPUT_CURRENT] = current_error_handler,
+        [PROT_QUANTITY_TEMPERATURE] = temperature_error_handler,
+        [PROT_QUANTITY_BATTERY_VOLTAGE] = battery_error_handler,
 };
 
 /* Sensible factory defaults for a 24V-class inverter. Tune these to
@@ -103,31 +110,6 @@ bool protection_set_thresholds(protection_quantity_t q, const protection_thresho
     return true;
 }
 
-static void update_error_flag(protection_quantity_t quantity,
-                              protection_stage_t stage)
-{
-    for (size_t i = 0;
-         i < ARRAY_SIZE(error_map);
-         i++)
-    {
-        if (error_map[i].quantity != quantity)
-            continue;
-
-        if (stage == PROT_STAGE_FAULT)
-        {
-            sys_state.error.error_flags |=
-                error_map[i].error_flag;
-        }
-        else
-        {
-            sys_state.error.error_flags &=
-                ~error_map[i].error_flag;
-        }
-
-        return;
-    }
-}
-
 static void ac_voltage_error_handler(
     protection_stage_t stage,
     float value)
@@ -144,7 +126,7 @@ static void ac_voltage_error_handler(
     }
 }
 
-static void output_current_error_handler(
+static void current_error_handler(
     protection_stage_t stage,
     float value)
 {
@@ -203,10 +185,18 @@ static void battery_error_handler(
     }
 }
 
-static void clear_battery_error_flags(void)
+static void protection_update_error_flags(
+    protection_quantity_t quantity,
+    protection_stage_t stage,
+    float value)
 {
-    sys_state.error.error_flags &=
-        ~(ERR_LOW_BAT | ERR_HIGH_BAT);
+    protection_error_handler_t handler =
+        error_handlers[quantity];
+
+    if (handler != NULL)
+    {
+        handler(stage, value);
+    }
 }
 
 /* Figure out which stage `value` falls into given thresholds and the
@@ -249,57 +239,60 @@ static protection_stage_t classify(const protection_thresholds_t *t,
     return raw_stage;
 }
 
-protection_action_t protection_update(protection_quantity_t q, float value, uint32_t now_ms)
+protection_action_t protection_update(protection_quantity_t q,
+                                      float value,
+                                      uint32_t now_ms)
 {
     if (q >= PROT_QUANTITY_COUNT)
+    {
         return PROT_ACTION_NONE;
+    }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
+
     protection_thresholds_t t = s_thresholds[q];
     protection_stage_t prev = s_state[q].stage;
     protection_stage_t next = classify(&t, prev, value);
 
     s_state[q].last_value = value;
-    protection_action_t action;
+
+    protection_action_t action = PROT_ACTION_NONE;
 
     if (next != prev)
     {
+        /* Save the new state */
         s_state[q].stage = next;
         s_state[q].stage_entry_time_ms = now_ms;
 
-        if (q == PROT_QUANTITY_BATTERY_VOLTAGE)
-        {
-            if (next == PROT_STAGE_FAULT)
-            {
-                update_battery_error_flag(value);
-            }
-            else
-            {
-                clear_battery_error_flags();
-            }
-        }
-        else
-        {
-            update_error_flag(q, next);
-        }
+        /* Update system error flags */
+        protection_update_error_flags(q,
+                                      next,
+                                      value);
 
-        if (next == PROT_STAGE_FAULT)
+        /* Determine the protection action */
+        switch (next)
         {
+        case PROT_STAGE_FAULT:
+
             s_state[q].transition_count++;
-
             action = PROT_ACTION_SHUTDOWN;
-        }
-        else if (next == PROT_STAGE_DERATED)
-        {
+            break;
+
+        case PROT_STAGE_DERATED:
+
             action = PROT_ACTION_DERATE;
-        }
-        else if (next == PROT_STAGE_WARNING)
-        {
+            break;
+
+        case PROT_STAGE_WARNING:
+
             action = PROT_ACTION_WARN;
-        }
-        else
-        {
+            break;
+
+        case PROT_STAGE_NORMAL:
+        default:
+
             action = PROT_ACTION_RECOVERED;
+            break;
         }
 
         ESP_LOGW(TAG,
@@ -309,15 +302,14 @@ protection_action_t protection_update(protection_quantity_t q, float value, uint
                  protection_stage_name(next),
                  value);
 
-        /* Automatically notify the event bus */
-        if (action != PROT_ACTION_NONE)
-        {
-            system_event_post_protection(q,
-                                         action,
-                                         value);
-        }
+        /* Notify the rest of the firmware */
+        system_event_post_protection(q,
+                                     action,
+                                     value);
     }
+
     xSemaphoreGive(s_mutex);
+
     return action;
 }
 

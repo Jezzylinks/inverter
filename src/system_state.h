@@ -5,6 +5,7 @@
 #include "stdatomic.h"
 #include "lcd_state.h"
 #include "security/security.h"
+#include "hardware_config.h"
 
 #ifdef __cplusplus
 extern "C"

@@ -54,9 +54,14 @@
 #include "security/protection.h"
 // System state
 #include "system_state.h"
+// Events
 #include "events/event_dispatcher.h"
-#include "events/event_routes.h"
 #include "events/system_events.h"
+#include "events/fault_log.h"
+
+// Utility
+#include "utility/led.h"
+#include "utility/buzzer.h"
 
 /* ── All original #defines─────────────────────────────── */
 #define WIFI_SSID "johnson"
@@ -91,18 +96,6 @@
 #define WATCHDOG_ERROR_CODE 0xFE
 #define STACK_OVERFLOW_ERROR_CODE 0xFC
 #define PERSISTENT_ERROR_CODE 0xFF
-#define GPIO_BTN_UP GPIO_NUM_17
-#define GPIO_BTN_DOWN GPIO_NUM_5
-#define GPIO_BTN_ENTER GPIO_NUM_19
-#define GPIO_BTN_BACK GPIO_NUM_18
-#define GPIO_PWR_BTN GPIO_NUM_0
-#define GPIO_BUZZER GPIO_NUM_13
-#define GPIO_STATUS_LED GPIO_NUM_14
-#define GPIO_ERROR_LED GPIO_NUM_26
-#define GPIO_POWER_RELAY GPIO_NUM_12
-#define GPIO_NEPA_INPUT GPIO_NUM_22
-#define GPIO_FAN GPIO_NUM_33
-#define GPIO_FAN_TEST GPIO_NUM_4
 #define FAN_DISCONNECTED_THRESHOLD 50
 #define FAN_DISCONNECT_RETRIES 3
 #define FAN_CHECK_INTERVAL_MS 10000
@@ -1052,14 +1045,6 @@ static const menu_item_t security_items[] = {
     {"Change PIN", MENU_SECURITY},
     {"PIN Reset", MENU_SECURITY}};
 
-// LED channel definitions for easy reference
-typedef enum
-{
-    LED_STATUS = LEDC_CHANNEL_1,
-    LED_ERROR = LEDC_CHANNEL_2,
-    // LED_OTHER = LEDC_CHANNEL_3,
-} led_channel_t;
-
 // ================== RTC STRUCT ==================
 typedef struct
 {
@@ -1087,6 +1072,18 @@ typedef struct
 
 static app_state_t g_app_state = {0};
 
+// LED controller
+led_pattern_t pattern =
+    {
+        .led = LED_STATUS,
+        .type = LED_PATTERN_BLINK,
+        .brightness = 100,
+        .on_time_ms = 200,
+        .off_time_ms = 200,
+        .repeat = 5,
+        .continuous = false,
+};
+
 // Get current time in milliseconds
 int64_t lcd_get_current_time_ms(void)
 {
@@ -1108,7 +1105,6 @@ void lcd_show_value_edit_screen(void);
 void lcd_show_bt_connecting_screen(const char *device_name);
 void lcd_show_factory_reset_screen(void);
 void update_buzzer(uint16_t freq, uint8_t volume);
-void update_led(led_channel_t led, uint8_t brightness /*uint8_t led*/);
 void adc_task(void *arg);
 static bool adc_calibration_init(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle);
 static void adc_calibration_deinit(adc_cali_handle_t handle);
@@ -1459,248 +1455,69 @@ static value_edit_context_t value_edit[] = {
 };
 
 // =============== HARDWARE INITIALIZATION ===============
-void init_hardware()
+void init_hardware(void)
 {
 #if CONFIG_USE_LCD
     lcd_init(LCD_ADDR, SDA_PIN, SCL_PIN);
 #endif
-    // ===== 1. Configure Output GPIOs (non-PWM) =====
-    const gpio_num_t output_pins[] = {
-        GPIO_POWER_RELAY,
-        GPIO_FAN_TEST};
 
-    gpio_config_t led_conf = {
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE};
+    // ==========================================================
+    // Configure Standard Output GPIOs (Non-PWM)
+    // ==========================================================
+    static const gpio_num_t output_pins[] =
+        {
+            GPIO_POWER_RELAY,
+            GPIO_FAN_TEST,
+        };
 
-    for (int i = 0; i < sizeof(output_pins) / sizeof(output_pins[0]); i++)
+    gpio_config_t gpio_conf =
+        {
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+
+    for (size_t i = 0; i < sizeof(output_pins) / sizeof(output_pins[0]); i++)
     {
-        led_conf.pin_bit_mask = (1ULL << output_pins[i]);
-        gpio_config(&led_conf);
+        gpio_conf.pin_bit_mask = (1ULL << output_pins[i]);
+        ESP_ERROR_CHECK(gpio_config(&gpio_conf));
         gpio_set_level(output_pins[i], 0);
     }
 
-    // ===== 2. Initialize Buzzer PWM =====
-    ledc_timer_config_t buzzer_timer = {
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .duty_resolution = LEDC_TIMER_13_BIT, // Changed to 13-bit to match your function
-        .timer_num = LEDC_TIMER_1,
-        .freq_hz = 2000,
-        .clk_cfg = LEDC_AUTO_CLK};
-    ledc_timer_config(&buzzer_timer);
-
-    ledc_channel_config_t buzzer_channel = {
-        .gpio_num = GPIO_BUZZER,
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = LEDC_CHANNEL_0, // Changed to match your function
-        .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = LEDC_TIMER_1,
-        .duty = 0,
-        .hpoint = 0};
-    ledc_channel_config(&buzzer_channel);
-
+    // ==========================================================
+    // Initialize LED Driver
+    // ==========================================================
 #if CONFIG_USE_LED_PWM
-    // ===== 3. Initialize LED PWM Timer (shared by all LEDs) =====
-    ledc_timer_config_t led_timer = {
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .duty_resolution = LEDC_TIMER_13_BIT, // Changed to 13-bit to match your function
-        .timer_num = LEDC_TIMER_0,
-        .freq_hz = 5000,
-        .clk_cfg = LEDC_AUTO_CLK};
-    ledc_timer_config(&led_timer);
-
-    // Define LED channels
-    typedef struct
-    {
-        gpio_num_t gpio;
-        ledc_channel_t channel;
-    } led_pwm_config_t;
-
-    const led_pwm_config_t led_configs[] = {
-        {GPIO_STATUS_LED, LEDC_CHANNEL_1}, // Changed to start from channel 1
-        {GPIO_ERROR_LED, LEDC_CHANNEL_2},
-    };
-
-    // Configure all LED channels
-    for (int i = 0; i < sizeof(led_configs) / sizeof(led_configs[0]); i++)
-    {
-        ledc_channel_config_t led_channel = {
-            .gpio_num = led_configs[i].gpio,
-            .speed_mode = LEDC_LOW_SPEED_MODE,
-            .channel = led_configs[i].channel,
-            .intr_type = LEDC_INTR_DISABLE,
-            .timer_sel = LEDC_TIMER_0,
-            .duty = 0,
-            .hpoint = 0};
-        ledc_channel_config(&led_channel);
-    }
-
-    // Install fade service for smooth LED transitions
-    ledc_fade_func_install(0);
-    update_led(LED_STATUS, 0); // Ensure LEDs start off
-    update_led(LED_ERROR, 0);
+    led_init();
 #endif
 
-    // ===== 5. Initialize System State Tracking =====
+    // ==========================================================
+    // Initialize Buzzer Driver
+    // ==========================================================
+    buzzer_init();
+
+    // ==========================================================
+    // Initialize System State
+    // ==========================================================
     sys_state.flags.last_user_activity = xTaskGetTickCount();
     sys_state.flags.last_power_event = xTaskGetTickCount();
     sys_state.display.display_on = true;
 
 #if CONFIG_USE_DEEP_SLEEP
-    // ===== 6. Setup Deep Sleep =====
+    // ==========================================================
+    // Configure Deep Sleep Wakeup Sources
+    // ==========================================================
     esp_sleep_enable_ext0_wakeup(GPIO_NUM_14, 1);
-    esp_sleep_enable_timer_wakeup(3600 * 1000000ULL);
+    esp_sleep_enable_timer_wakeup(3600ULL * 1000000ULL);
 #endif
 
 #if CONFIG_USE_DISPLAY_TIMEOUT_TASK
-    // ===== 7. Create Display Timeout Task =====
+    // ==========================================================
+    // Create Display Timeout Task
+    // ==========================================================
     xTaskCreate(display_timeout_task, "Display Timeout", 2048, NULL, 5, NULL);
 #endif
-}
-
-// ================== PWM CONTROL FUNCTIONS ==================
-
-// ===== BUZZER CONTROL =====
-void update_buzzer(uint16_t freq_hz, uint8_t volume_percent)
-{
-    if (freq_hz == 0 || volume_percent == 0)
-    {
-        // Turn off buzzer completely
-        ledc_stop(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
-        return;
-    }
-
-    // 1. Update frequency if changed
-    static uint16_t last_freq = 0;
-    if (freq_hz != last_freq)
-    {
-        ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_1, freq_hz);
-        last_freq = freq_hz;
-    }
-
-    // 2. Validate volume
-    volume_percent = volume_percent > 100 ? 100 : volume_percent;
-
-    // 3. Calculate and set duty cycle (volume) - 13-bit resolution
-    uint32_t duty = (volume_percent / 100.0f) * ((1 << 13) - 1);
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-}
-
-// Buzzer helper functions
-void buzzer_off()
-{
-    update_buzzer(0, 0);
-}
-
-void buzzer_beep(uint16_t freq_hz, uint8_t volume_percent, uint32_t duration_ms)
-{
-    update_buzzer(freq_hz, volume_percent);
-    vTaskDelay(pdMS_TO_TICKS(duration_ms));
-    buzzer_off();
-}
-
-void buzzer_alert()
-{
-    buzzer_beep(2000, 50, 100);
-    vTaskDelay(pdMS_TO_TICKS(100));
-    buzzer_beep(2000, 50, 100);
-}
-
-void buzzer_error()
-{
-    buzzer_beep(500, 70, 500);
-}
-
-void buzzer_success()
-{
-    buzzer_beep(2500, 40, 200);
-}
-
-// ===== LED CONTROL =====
-
-void update_led(led_channel_t led, uint8_t brightness_percent)
-{
-    // Validate input
-    brightness_percent = brightness_percent > 100 ? 100 : brightness_percent;
-
-    // Calculate duty cycle (0-8191 for 13-bit)
-    uint32_t duty = (brightness_percent / 100.0f) * ((1 << 13) - 1);
-
-    // Apply to LED channel
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, led, duty);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, led);
-}
-
-// LED helper functions using percentage-based control
-void led_on(led_channel_t led)
-{
-    update_led(led, 100);
-}
-
-void led_off(led_channel_t led)
-{
-    update_led(led, 0);
-}
-
-void set_led_brightness(led_channel_t led, uint8_t brightness_percent)
-{
-    update_led(led, brightness_percent);
-}
-
-void fade_led(led_channel_t led, uint8_t target_brightness_percent, uint32_t fade_time_ms)
-{
-    // Validate input
-    target_brightness_percent = target_brightness_percent > 100 ? 100 : target_brightness_percent;
-
-    // Calculate duty cycle
-    uint32_t duty = (target_brightness_percent / 100.0f) * ((1 << 13) - 1);
-
-    ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, led, duty, fade_time_ms);
-    ledc_fade_start(LEDC_LOW_SPEED_MODE, led, LEDC_FADE_NO_WAIT);
-}
-
-void blink_led(led_channel_t led, uint32_t on_time_ms, uint32_t off_time_ms, uint8_t count)
-{
-    for (uint8_t i = 0; i < count; i++)
-    {
-        led_on(led);
-        vTaskDelay(pdMS_TO_TICKS(on_time_ms));
-        led_off(led);
-        if (i < count - 1)
-        {
-            vTaskDelay(pdMS_TO_TICKS(off_time_ms));
-        }
-    }
-}
-
-void pulse_led(led_channel_t led, uint32_t period_ms, uint8_t cycles)
-{
-    for (uint8_t i = 0; i < cycles; i++)
-    {
-        fade_led(led, 100, period_ms / 2);
-        vTaskDelay(pdMS_TO_TICKS(period_ms / 2));
-        fade_led(led, 0, period_ms / 2);
-        vTaskDelay(pdMS_TO_TICKS(period_ms / 2));
-    }
-}
-
-void set_all_leds(uint8_t brightness_percent)
-{
-    update_led(LED_STATUS, brightness_percent);
-    update_led(LED_ERROR, brightness_percent);
-}
-
-void all_leds_off()
-{
-    set_all_leds(0);
-}
-
-void all_leds_on()
-{
-    set_all_leds(100);
 }
 
 #define NVS_FLOAT_SCALE 100.0f
@@ -2645,7 +2462,7 @@ void adc_task(void *arg)
 
         if (sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
         {
-            // check_protections();
+            check_protections();
         }
 
         /* Update main screen data for lcd_task */
@@ -2688,7 +2505,7 @@ void adc_task(void *arg)
                 xTaskNotifyGive(lcd_task_handle);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 
     // Cleanup (unreachable in current implementation, but good practice)
@@ -3332,17 +3149,6 @@ void process_battery_voltage(void)
  * it just reads sys_state.error.error_flags, it doesn't know or care
  * that protection.c exists underneath. protection_update() must already
  * have been called for this quantity earlier in the same pass. */
-static void apply_protection_result(protection_quantity_t q, uint32_t err_flag)
-{
-    protection_channel_state_t st;
-    if (!protection_get_state(q, &st))
-        return;
-
-    if (st.stage == PROT_STAGE_FAULT)
-        sys_state.error.error_flags |= err_flag;
-    else
-        sys_state.error.error_flags &= ~err_flag;
-}
 
 void check_protections(void)
 {
@@ -9071,6 +8877,7 @@ void app_main(void)
     security_init();
     init_system_state();
     init_menu_system();
+    fault_log_init();
     nvs_print_stats();
     if (nvs_is_initialized())
         ESP_LOGI("MAIN", "NVS ready");
@@ -9095,6 +8902,11 @@ void app_main(void)
     // lcd_show_boot_brand();
     xTaskCreate(adc_task, "adc_task", 4096, NULL, 5, NULL);
     xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
+    xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, 1);
+    xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, 1);
+    xTaskCreatePinnedToCore(logger_event_task, "logger_evt", 4096, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, 0);
+
     //   xTaskCreate(power_task, "power_task", 4096, NULL, 4, NULL);
     //   xTaskCreate(display_timeout_task, "disp_timeout", 4096, NULL, 1, NULL);
     //   xTaskCreate(battery_menu_task, "battery_menu", 4096, NULL, 2, NULL); // Only once

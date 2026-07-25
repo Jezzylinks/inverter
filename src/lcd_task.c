@@ -25,6 +25,8 @@
 #include "security/security.h"
 #include "security/change_pin_flow.h"
 #include "security/pin_entry.h"
+#include "utility/led.h"
+#include "events/event_dispatcher.h"
 
 #define BOOT_TOTAL_STEPS 3
 
@@ -38,6 +40,7 @@ extern diagnostic_data_t diag_data;
 extern change_pin_ctx_t change_pin_ctx; /* no static -- external linkage */
 extern SemaphoreHandle_t change_pin_mutex;
 extern system_state_t sys_state;
+extern led_pattern_t pattern;
 
 /* lcd.h hardware config */
 #define LCD_ADDR 0x27
@@ -748,6 +751,7 @@ extern flash_entry_t s_queue[LCD_FLASH_QUEUE_DEPTH];
   - Step 7:  Draw current screen
   - Step 8:  Task delay / yield
 ==============================================================================*/
+
 void lcd_task(void *arg)
 {
     lcd_render_state_t snap;
@@ -780,6 +784,8 @@ void lcd_task(void *arg)
         memcpy(&snap, &sys_lcd, sizeof(snap));
         diag_data.uptime_seconds = (uint32_t)(esp_timer_get_time() / 1000000ULL);
         xSemaphoreGive(sys_state_mutex);
+
+        // Edit later conflicting code
 
         /* ====== STEP 4: FLASH EXPIRY ====== */
         if (lcd_flash_is_expired())
@@ -878,6 +884,35 @@ void lcd_task(void *arg)
 
         case LCD_SCREEN_FAULT:
             draw_fault(&snap.fault);
+            break;
+
+        case LCD_SCREEN_SYSTEM_EVENT:
+            // if (!event_dispatcher_receive(EVENT_SUB_LCD,
+            //                               &evt,
+            //                               portMAX_DELAY))
+            // {
+            //     continue;
+            // }
+
+            // switch (evt.category)
+            // {
+            // case EVENT_CATEGORY_PROTECTION:
+
+            //     lcd_show_protection(evt.quantity,
+            //                         evt.action,
+            //                         evt.value);
+
+            //     break;
+
+            // case EVENT_CATEGORY_SYSTEM:
+
+            //     lcd_show_system_event(&evt);
+
+            //     break;
+
+            // default:
+            //     break;
+            // }
             break;
 
         case LCD_SCREEN_FACTORY_RESET:
