@@ -1072,7 +1072,7 @@ typedef struct
 
 static app_state_t g_app_state = {0};
 
-// LED controller
+// GLOBAL LED controller
 led_pattern_t pattern =
     {
         .led = LED_STATUS,
@@ -1081,7 +1081,6 @@ led_pattern_t pattern =
         .on_time_ms = 200,
         .off_time_ms = 200,
         .repeat = 5,
-        .continuous = false,
 };
 
 // Get current time in milliseconds

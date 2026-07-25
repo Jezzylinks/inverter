@@ -31,7 +31,6 @@ typedef struct
     uint16_t off_time_ms;
     uint16_t period_ms;
 
-    uint16_t repeat; // 1..N, or LED_REPEAT_FOREVER
     uint16_t repeat; // Repeat until stopped
 } led_pattern_t;
 

@@ -243,13 +243,6 @@ void led_event_task(void *pv)
 {
     system_event_t evt;
 
-    led_pattern_t pattern =
-        {
-            .on_time_ms = 0,
-            .off_time_ms = 0,
-            .repeat = 0,
-            .repeat = 0};
-
     while (1)
     {
         if (!event_dispatcher_receive(EVENT_SUB_LED,
@@ -261,41 +254,95 @@ void led_event_task(void *pv)
 
         switch (evt.action)
         {
-        case EVENT_ACTION_WARNING:
-
-            pattern.on_time_ms = 500;
-            pattern.off_time_ms = 500;
-            pattern.repeat = 0;
-            pattern.repeat = 0;
-            break;
-
-        case EVENT_ACTION_DERATE:
-
+        case EVENT_ACTION_INFO:
+            pattern.type = LED_PATTERN_BLINK;
             pattern.on_time_ms = 100;
             pattern.off_time_ms = 100;
-            pattern.repeat = 0;
-            pattern.repeat = true;
+            pattern.repeat = 1;
             break;
 
-        case EVENT_ACTION_SHUTDOWN:
-
-            pattern.on_time_ms = 100;
-            pattern.off_time_ms = 900;
-            pattern.repeat = 0;
-            pattern.repeat = LED_REPEAT_FOREVER;
+        case EVENT_ACTION_SUCCESS:
+            pattern.type = LED_PATTERN_BLINK;
+            pattern.on_time_ms = 80;
+            pattern.off_time_ms = 80;
+            pattern.repeat = 2;
             break;
 
         case EVENT_ACTION_RECOVERED:
-
+            pattern.type = LED_PATTERN_BLINK;
             pattern.on_time_ms = 100;
             pattern.off_time_ms = 100;
             pattern.repeat = 3;
-            pattern.repeat = 0;
+            break;
+
+        case EVENT_ACTION_WARNING:
+            pattern.type = LED_PATTERN_BLINK;
+            pattern.on_time_ms = 500;
+            pattern.off_time_ms = 500;
+            pattern.repeat = LED_REPEAT_FOREVER;
+            break;
+
+        case EVENT_ACTION_DERATE:
+            pattern.type = LED_PATTERN_BLINK;
+            pattern.on_time_ms = 100;
+            pattern.off_time_ms = 100;
+            pattern.repeat = LED_REPEAT_FOREVER;
+            break;
+
+        case EVENT_ACTION_STARTUP:
+            pattern.type = LED_PATTERN_FADE;
+            pattern.brightness = 100;
+            pattern.period_ms = 1000;
+            pattern.repeat = 5;
+            break;
+
+        case EVENT_ACTION_SHUTDOWN:
+            pattern.type = LED_PATTERN_PULSE;
+            pattern.brightness = 100;
+            pattern.period_ms = 1000;
+            pattern.repeat = LED_REPEAT_FOREVER;
+            break;
+
+        case EVENT_ACTION_FAULT:
+            pattern.type = LED_PATTERN_BLINK;
+            pattern.on_time_ms = 250;
+            pattern.off_time_ms = 250;
+            pattern.repeat = LED_REPEAT_FOREVER;
+            break;
+
+        case EVENT_ACTION_CRITICAL:
+            pattern.type = LED_PATTERN_BLINK;
+            pattern.on_time_ms = 50;
+            pattern.off_time_ms = 50;
+            pattern.repeat = LED_REPEAT_FOREVER;
+            break;
+
+        case EVENT_ACTION_USER_INPUT:
+            pattern.type = LED_PATTERN_BLINK;
+            pattern.on_time_ms = 50;
+            pattern.off_time_ms = 50;
+            pattern.repeat = 1;
+            break;
+
+        case EVENT_ACTION_COMMUNICATION:
+            pattern.type = LED_PATTERN_BLINK;
+            pattern.on_time_ms = 75;
+            pattern.off_time_ms = 75;
+            pattern.repeat = 2;
+            break;
+
+        case EVENT_ACTION_CHARGING:
+            pattern.type = LED_PATTERN_PULSE;
+            pattern.brightness = 100;
+            pattern.period_ms = 1500;
+            pattern.repeat = LED_REPEAT_FOREVER;
             break;
 
         default:
-            led_on(LED_STATUS);
-            continue;
+            pattern.type = LED_PATTERN_ON;
+            pattern.brightness = 100;
+            pattern.repeat = 1;
+            break;
         }
 
         if (evt.action < EVENT_ACTION_COUNT)

@@ -26,23 +26,14 @@ extern "C"
     typedef enum
     {
         EVENT_CATEGORY_NONE = 0,
-
         EVENT_CATEGORY_PROTECTION,
-
         EVENT_CATEGORY_BUTTON,
-
         EVENT_CATEGORY_LCD,
-
         EVENT_CATEGORY_RELAY,
-
         EVENT_CATEGORY_WIFI,
-
         EVENT_CATEGORY_SYSTEM,
-
         EVENT_CATEGORY_LOG,
-
         EVENT_CATEGORY_FACTORY_RESET,
-
         EVENT_CATEGORY_USER
 
     } event_category_t;
@@ -87,21 +78,13 @@ extern "C"
     typedef enum
     {
         EVENT_SOURCE_UNKNOWN = 0,
-
         EVENT_SOURCE_PROTECTION,
-
         EVENT_SOURCE_ADC,
-
         EVENT_SOURCE_LCD,
-
         EVENT_SOURCE_BUTTON,
-
         EVENT_SOURCE_RELAY,
-
         EVENT_SOURCE_WIFI,
-
         EVENT_SOURCE_SYSTEM,
-
         EVENT_SOURCE_NVS
 
     } event_source_t;
@@ -113,11 +96,8 @@ extern "C"
     typedef enum
     {
         EVENT_PRIORITY_LOW = 0,
-
         EVENT_PRIORITY_NORMAL,
-
         EVENT_PRIORITY_HIGH,
-
         EVENT_PRIORITY_CRITICAL
 
     } event_priority_t;
@@ -129,19 +109,12 @@ extern "C"
     typedef struct
     {
         event_category_t category;
-
         event_action_t action;
-
         event_source_t source;
-
         event_priority_t priority;
-
         protection_quantity_t quantity;
-
         float value;
-
         uint32_t timestamp;
-
         uint32_t data;
 
     } system_event_t;
