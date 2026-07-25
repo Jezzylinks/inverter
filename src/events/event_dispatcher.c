@@ -9,8 +9,11 @@
 #include "fault_log.h"
 #include "system_events.h"
 #include "stdbool.h"
+#include "nvs.h"
 
 static const char *TAG = "EVENT_DISPATCHER";
+#define MONITOR_STATS_NVS_NAMESPACE "monitor_statistics"
+#define MONITOR_STATS_NVS_KEY "monitor_stats"
 
 /******************************************************************************
  * Subscriber Queues
@@ -19,6 +22,26 @@ static const char *TAG = "EVENT_DISPATCHER";
 bool event_dispatcher_send(event_subscriber_t subscriber,
                            const system_event_t *event);
 extern QueueHandle_t g_event_subscriber_queue[EVENT_SUB_COUNT];
+
+typedef struct
+{
+    uint32_t warnings;
+    uint32_t derates;
+    uint32_t shutdowns;
+    uint32_t recoveries;
+    uint32_t ac_faults;
+    uint32_t overload_faults;
+    uint32_t temperature_faults;
+    uint32_t battery_faults;
+    protection_quantity_t last_fault;
+    TickType_t last_fault_time;
+    protection_quantity_t last_event_quantity; // tracks warnings/derates too, not just shutdowns
+    TickType_t last_event_time;
+    TickType_t last_recovery_time;
+} monitor_statistics_t;
+
+static monitor_statistics_t stats;
+static SemaphoreHandle_t stats_mutex = NULL;
 
 static const event_route_t routes[] =
     {
@@ -330,57 +353,111 @@ const event_route_t *event_route_find(
 
 void event_dispatcher_task(void *pv)
 {
-    system_event_t evt;
+    ESP_LOGI(TAG, "Dispatcher task started");
+
+    system_event_t evt = {0};
 
     while (1)
     {
-        if (system_event_receive(&evt, portMAX_DELAY))
+
+        bool ok = system_event_receive(&evt, pdMS_TO_TICKS(1000));
+
+        if (ok)
         {
             event_route_dispatch(&evt);
         }
     }
 }
 
-typedef struct
-{
-    uint32_t warnings;
-
-    uint32_t derates;
-
-    uint32_t shutdowns;
-
-    uint32_t recoveries;
-
-    uint32_t ac_faults;
-
-    uint32_t overload_faults;
-
-    uint32_t temperature_faults;
-
-    uint32_t battery_faults;
-
-    protection_quantity_t last_fault;
-
-    TickType_t last_fault_time;
-
-} monitor_statistics_t;
-
-static monitor_statistics_t stats;
-
 void monitor_statistics_init(void)
 {
-    memset(&stats, 0, sizeof(stats));
+    if (stats_mutex == NULL)
+    {
+        stats_mutex = xSemaphoreCreateMutex();
+    }
+    if (stats_mutex && xSemaphoreTake(stats_mutex, pdMS_TO_TICKS(100)))
+    {
+        memset(&stats, 0, sizeof(stats));
+        xSemaphoreGive(stats_mutex);
+    }
 }
 
-const monitor_statistics_t *monitor_statistics_get(void)
+bool monitor_statistics_get(monitor_statistics_t *out)
 {
-    return &stats;
+    if (out == NULL || stats_mutex == NULL)
+        return false;
+
+    if (!xSemaphoreTake(stats_mutex, pdMS_TO_TICKS(100)))
+        return false;
+
+    *out = stats;
+    xSemaphoreGive(stats_mutex);
+    return true;
+}
+
+bool monitor_statistics_load(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(MONITOR_STATS_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK)
+    {
+        /* Namespace doesn't exist yet (first boot) -- not an error. */
+        return false;
+    }
+
+    monitor_statistics_t loaded;
+    size_t required_size = sizeof(loaded);
+    err = nvs_get_blob(handle, MONITOR_STATS_NVS_KEY, &loaded, &required_size);
+    nvs_close(handle);
+
+    if (err != ESP_OK || required_size != sizeof(loaded))
+    {
+        ESP_LOGW("MON_STATS", "No saved stats found, starting fresh: %s",
+                 esp_err_to_name(err));
+        return false;
+    }
+
+    stats = loaded;
+    ESP_LOGI("MON_STATS", "Loaded lifetime stats: %lu shutdowns, %lu warnings",
+             (unsigned long)stats.shutdowns, (unsigned long)stats.warnings);
+    return true;
+}
+
+bool monitor_statistics_save(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(MONITOR_STATS_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW("MON_STATS", "Failed to open NVS for stats save: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    err = nvs_set_blob(handle, MONITOR_STATS_NVS_KEY, &stats, sizeof(stats));
+    if (err == ESP_OK)
+    {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+
+    if (err != ESP_OK)
+    {
+        ESP_LOGW("MON_STATS", "Failed to save stats: %s", esp_err_to_name(err));
+        return false;
+    }
+    return true;
 }
 
 void monitor_statistics_update(const system_event_t *evt)
 {
-    if (evt == NULL)
+    if (evt == NULL || stats_mutex == NULL)
         return;
+
+    if (!xSemaphoreTake(stats_mutex, pdMS_TO_TICKS(100)))
+        return;
+
+    stats.last_event_quantity = evt->quantity;
+    stats.last_event_time = evt->timestamp;
 
     switch (evt->action)
     {
@@ -393,11 +470,8 @@ void monitor_statistics_update(const system_event_t *evt)
         break;
 
     case EVENT_ACTION_SHUTDOWN:
-
         stats.shutdowns++;
-
         stats.last_fault = evt->quantity;
-
         stats.last_fault_time = evt->timestamp;
 
         switch (evt->quantity)
@@ -405,41 +479,37 @@ void monitor_statistics_update(const system_event_t *evt)
         case PROT_QUANTITY_AC_VOLTAGE:
             stats.ac_faults++;
             break;
-
         case PROT_QUANTITY_OUTPUT_CURRENT:
             stats.overload_faults++;
             break;
-
         case PROT_QUANTITY_TEMPERATURE:
             stats.temperature_faults++;
             break;
-
         case PROT_QUANTITY_BATTERY_VOLTAGE:
             stats.battery_faults++;
             break;
-
         default:
             break;
         }
-
         break;
 
     case EVENT_ACTION_RECOVERED:
-
         stats.recoveries++;
-
+        stats.last_recovery_time = evt->timestamp;
         break;
 
     default:
-
         break;
     }
+
+    xSemaphoreGive(stats_mutex);
 }
 
 void monitor_event_task(void *pv)
 {
     system_event_t evt;
     monitor_statistics_init();
+
     while (1)
     {
         if (!event_dispatcher_receive(EVENT_SUB_MONITOR, &evt, portMAX_DELAY))
@@ -451,13 +521,13 @@ void monitor_event_task(void *pv)
     }
 }
 
-void logger_event_task(void *pv)
+void fault_log_event_task(void *pv)
 {
     system_event_t evt;
 
     while (1)
     {
-        if (!event_dispatcher_receive(EVENT_SUB_LOGGER,
+        if (!event_dispatcher_receive(EVENT_SUB_FAULT_LOG,
                                       &evt,
                                       portMAX_DELAY))
         {

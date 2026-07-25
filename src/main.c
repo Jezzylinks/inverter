@@ -131,7 +131,6 @@
 #define FAULT_REVERSE_POLARITY (1 << 7)
 #define FAULT_WATCHDOG (1 << 8)
 #define SYS_STATE_MUTEX_TIMEOUT_MS 100
-#define NVS_NS_SYSTEM "inv_sys_v2"
 #define DISPLAY_TIMEOUT 300
 #define SLEEP_TIMEOUT 1800
 #define LCD_PWR_GPIO GPIO_NUM_27
@@ -2468,8 +2467,7 @@ void adc_task(void *arg)
                                 &adc1_context.channel_states[i],
                                 adc1_context.handle);
         }
-        // Process battery voltage monitoring
-        process_battery_voltage();
+
         if (sample_count < SAMPLES_BEFORE_ERROR_CHECK)
         {
             sys_state.error.error_flags = 0; // Clear errors during warmup
@@ -2922,8 +2920,6 @@ static void process_adc_reading(const adc_channel_config_t *config,
     // IMPORTANT: Write the value to sys_state
     *(config->target_value) = actual_voltage;
 
-    // Periodic logging
-
     // Check thresholds and set error flags
     bool error_detected = false;
 
@@ -3058,116 +3054,6 @@ void power_task(void *arg)
     }
 }
 
-/**
- * @brief Process battery voltage reading and take action
- */
-void process_battery_voltage(void)
-{
-    const char *TAG = "BATTERY";
-
-    // Get current voltage reading
-    float voltage_raw = sys_state.inverter.battery.voltage;
-
-    // Apply simple low-pass filter to smooth readings
-    // filtered = alpha × new + (1 - alpha) × old
-    if (sys_state.inverter.battery.voltage_filtered == 0.0f)
-    {
-        // First reading - initialize filter
-        sys_state.inverter.battery.voltage_filtered = voltage_raw;
-    }
-    else
-    {
-        sys_state.inverter.battery.voltage_filtered =
-            BATTERY_FILTER_ALPHA * voltage_raw +
-            (1.0f - BATTERY_FILTER_ALPHA) * sys_state.inverter.battery.voltage_filtered;
-    }
-
-    float voltage = sys_state.inverter.battery.voltage_filtered;
-
-    // Check for critical low voltage (with debouncing)
-    if (voltage < sys_state.battery_profile.cutoff_voltage_min_12v)
-    {
-        sys_state.inverter.battery.critical_count++;
-
-        if (sys_state.inverter.battery.critical_count >= BATTERY_DEBOUNCE_COUNT)
-        {
-            if (!sys_state.inverter.battery.is_critical)
-            {
-                // CRITICAL: Battery too low - TAKE ACTION!
-                sys_state.inverter.battery.is_critical = true;
-
-                ESP_LOGE(TAG, "╔════════════════════════════════════════╗");
-                ESP_LOGE(TAG, "║   CRITICAL BATTERY VOLTAGE: %.2fV    ║", voltage);
-                ESP_LOGE(TAG, "║   SHUTTING DOWN INVERTER!            ║");
-                ESP_LOGE(TAG, "╚════════════════════════════════════════╝");
-
-                // TAKE ACTION HERE:
-                shutdown_inverter(); // Turn off inverter
-                blink_led(LED_STATUS, 200, 100, 5);
-                buzzer_beep(1000, 80, 3000);
-                // Optional: Send notification
-                // send_mqtt_alert("Battery critical!");
-            }
-        }
-    }
-    else
-    {
-        // Voltage is above critical - reset counter
-        sys_state.inverter.battery.critical_count = 0;
-
-        // Check if recovering from critical state
-        if (sys_state.inverter.battery.is_critical && voltage > (sys_state.battery_profile.cutoff_voltage_min_12v + 0.3f))
-        {
-            sys_state.inverter.battery.is_critical = false;
-            ESP_LOGI(TAG, "Battery voltage recovered to %.2fV", voltage);
-        }
-    }
-
-    // Check for low voltage warning (with debouncing)
-    if (voltage < sys_state.battery_profile.cutoff_voltage_12v - 0.4)
-    {
-        sys_state.inverter.battery.low_count++;
-
-        if (sys_state.inverter.battery.low_count >= BATTERY_DEBOUNCE_COUNT)
-        {
-            if (!sys_state.inverter.battery.is_low)
-            {
-                sys_state.inverter.battery.is_low = true;
-                ESP_LOGW(TAG, "⚠ Battery low: %.2fV (warning at %.2fV)",
-                         voltage, sys_state.battery_profile.cutoff_voltage_12v - 0.4);
-                blink_led(LED_STATUS, 200, 100, 2);
-                buzzer_beep(500, 70, 500);
-            }
-        }
-    }
-    else
-    {
-        sys_state.inverter.battery.low_count = 0;
-        if (sys_state.inverter.battery.is_low)
-        {
-            sys_state.inverter.battery.is_low = false;
-            ESP_LOGI(TAG, "Battery voltage normal: %.2fV", voltage);
-            update_led(LED_STATUS, 100);
-        }
-    }
-
-    // Log battery status periodically
-    static uint32_t last_log_time = 0;
-    uint32_t now = xTaskGetTickCount();
-    if ((now - last_log_time) > pdMS_TO_TICKS(30000)) // Every 30 seconds
-    {
-        ESP_LOGI("BATTERY_VOLTAGE", "Battery voltage: %.2f", voltage);
-        last_log_time = now;
-    }
-}
-
-/* Reflects one protection.c channel's CURRENT stage into a level-
- * triggered ERR_* bit, so the rest of the firmware (LCD fault screen,
- * error LEDs, error log) keeps working exactly as it already expects --
- * it just reads sys_state.error.error_flags, it doesn't know or care
- * that protection.c exists underneath. protection_update() must already
- * have been called for this quantity earlier in the same pass. */
-
 void check_protections(void)
 {
     uint32_t now_ms =
@@ -3259,9 +3145,6 @@ void update_led_status()
         }
     }
 }
-
-// Function prototype for getting the mode string
-const char *get_mode_string(uint8_t mode);
 
 /**
  * @brief Initialize click detection system
@@ -8959,16 +8842,12 @@ void app_main(void)
 {
 
     system_events_init();
-    ESP_LOGI(APP_TAG, "1");
 
     event_dispatcher_init();
-    ESP_LOGI(APP_TAG, "2");
 
     sys_event_group = xEventGroupCreate();
-    ESP_LOGI(APP_TAG, "3");
 
     configASSERT(sys_event_group);
-    ESP_LOGI(APP_TAG, "4");
 
     sys_state_mutex = xSemaphoreCreateMutex();
     if (!sys_state_mutex)
@@ -9019,15 +8898,9 @@ void app_main(void)
     xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, 1);
     xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, 1);
     xTaskCreatePinnedToCore(led_event_task, "led_evt", 2048, NULL, 7, NULL, 1);
-    xTaskCreatePinnedToCore(logger_event_task, "logger_evt", 4096, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 4096, NULL, 5, NULL, 0);
     xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, 0);
 
-    //   xTaskCreate(power_task, "power_task", 4096, NULL, 4, NULL);
-    //   xTaskCreate(display_timeout_task, "disp_timeout", 4096, NULL, 1, NULL);
-    //   xTaskCreate(battery_menu_task, "battery_menu", 4096, NULL, 2, NULL); // Only once
-    //   xTaskCreate(fan_monitor_task, "fan_monitor_task", 4096, NULL, 5, NULL);
-    //   xTaskCreate(diagnostic_update_task, "diagnostic_update_task", 2048, NULL, 5, NULL);
-    //     === Main Loop (Watchdog + Error Handling) ===
     lcd_watchdog_init(lcd_task_handle);
     while (sys_state.system_ready)
     {

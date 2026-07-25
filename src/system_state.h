@@ -12,6 +12,8 @@ extern "C"
 {
 #endif
 
+#define NVS_NS_SYSTEM "inv_sys_v2"
+
     // Inverter system states
     typedef enum
     {

@@ -22,6 +22,7 @@ extern "C"
         EVENT_SUB_LED,
         EVENT_SUB_BUZZER,
         EVENT_SUB_LOGGER,
+        EVENT_SUB_FAULT_LOG,
         EVENT_SUB_WIFI,
         EVENT_SUB_MONITOR,
         EVENT_SUB_BUTTON,
@@ -66,7 +67,7 @@ extern "C"
     void buzzer_event_task(void *pv);
     void led_event_task(void *pv);
     void monitor_event_task(void *pv);
-    void logger_event_task(void *pv);
+    void fault_log_event_task(void *pv);
 
 #ifdef __cplusplus
 }

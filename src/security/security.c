@@ -14,7 +14,6 @@
 static const char *TAG = "security";
 extern system_state_t sys_state;
 
-#define NVS_NAMESPACE "security"
 #define NVS_KEY_HASH "sec_pin_hash"
 #define NVS_KEY_SALT "sec_pin_salt"
 #define NVS_KEY_FORCE_CHG "sec_force_chg"
@@ -72,7 +71,7 @@ static esp_err_t store_pin(const uint8_t pin[SECURITY_PIN_LEN])
     }
 
     nvs_handle_t h;
-    err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+    err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &h);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
@@ -100,7 +99,7 @@ static esp_err_t store_pin(const uint8_t pin[SECURITY_PIN_LEN])
 static esp_err_t set_force_change_flag(bool force)
 {
     nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &h);
     if (err != ESP_OK)
     {
         return err;
@@ -141,7 +140,7 @@ esp_err_t security_init(void)
     }
 
     nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &h);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
@@ -216,7 +215,7 @@ bool security_verify_pin(const uint8_t pin[SECURITY_PIN_LEN])
     xSemaphoreGive(s_sec.mutex); // release before NVS I/O + hashing (not touching shared state)
 
     nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &h);
+    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &h);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));

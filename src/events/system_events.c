@@ -1,7 +1,5 @@
 #include "system_events.h"
-
 #include "string.h"
-
 #include "esp_log.h"
 
 static const char *TAG = "SYSTEM_EVENTS";
@@ -138,6 +136,7 @@ bool system_event_post_protection(protection_quantity_t quantity,
         return false;
     }
 
+    ESP_LOGI("EVENT_DISPATCHER", "SYSTEM EVENT POST");
     return system_event_post(&evt);
 }
 
