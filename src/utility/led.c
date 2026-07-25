@@ -298,6 +298,9 @@ void led_event_task(void *pv)
             continue;
         }
 
-        led_execute_pattern(&pattern);
+        if (evt.action < EVENT_ACTION_COUNT)
+        {
+            led_execute_pattern(&led_patterns[evt.action]);
+        }
     }
 }
