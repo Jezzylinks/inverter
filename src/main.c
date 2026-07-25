@@ -299,6 +299,7 @@
 // Queue for button events
 QueueHandle_t button_event_queue;
 QueueHandle_t protection_event_queue;
+QueueHandle_t g_event_subscriber_queue[EVENT_SUB_COUNT];
 
 // ADC Configuration
 typedef enum
@@ -5254,11 +5255,19 @@ void handle_back_button_event(button_event_info_t *event_info,
 
     // User is in Security mode
 
-    if (sys_state.menu_state == MENU_FACTORY_RESET &&
-        atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
+    if (sys_state.menu_state == MENU_FACTORY_RESET)
     {
-        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_BACK);
-        return;
+        factory_reset_phase_t phase =
+            atomic_load(&sys_lcd.factory_reset.phase);
+
+        if (phase == FACTORY_RESET_PIN_ENTRY)
+        {
+            factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_BACK);
+            ESP_LOGI("BACK HERE", "HERLL BACK BUTTON");
+            show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
+            sys_lcd.screen = LCD_SCREEN_MENU;
+            return;
+        }
     }
 
     if (sys_state.menu_state == MENU_SECURITY &&
@@ -5289,6 +5298,7 @@ void handle_back_button_event(button_event_info_t *event_info,
     {
     case BUTTON_EVENT_CLICK:
         /* P1 cancel factory reset */
+        ESP_LOGI("BACK BUT", "rEACHED HERE FOR BACK");
         if (sys_state.menu_state == MENU_FACTORY_RESET)
         {
             ESP_LOGI("FACTORY_RESET", "We are at factory reset screen");
@@ -5301,11 +5311,12 @@ void handle_back_button_event(button_event_info_t *event_info,
 
             if (phase == FACTORY_PHASE_CONFIRM)
             {
-                /* Cancel the Yes/No prompt, go back to the action list (not main menu) */
                 atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
-                sys_state.last_activity_time = esp_timer_get_time() / 1000;
-                show_menu_screen(MENU_FACTORY_RESET, sys_state.menu_selection);
+                sys_state.menu_state = MENU_NONE;
+                sys_state.menu_selection = 0;
+                clear_menu_history();
+                go_to_main_screen();
                 return;
             }
 
@@ -8851,10 +8862,19 @@ esp_err_t nvs_set_float(const char *key, float value)
 ==============================================================================*/
 void app_main(void)
 {
+
     system_events_init();
+    ESP_LOGI(APP_TAG, "1");
+
     event_dispatcher_init();
+    ESP_LOGI(APP_TAG, "2");
+
     sys_event_group = xEventGroupCreate();
+    ESP_LOGI(APP_TAG, "3");
+
     configASSERT(sys_event_group);
+    ESP_LOGI(APP_TAG, "4");
+
     sys_state_mutex = xSemaphoreCreateMutex();
     if (!sys_state_mutex)
     {

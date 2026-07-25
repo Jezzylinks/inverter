@@ -85,9 +85,13 @@ static void handle_pin_entry_button(factory_reset_ctx_t *ctx,
     }
 
     case PIN_ENTRY_CANCELLED:
-        /* Back on the first digit -- user chose to exit without resetting. */
         ESP_LOGI(TAG, "PIN entry cancelled");
+
+        pin_entry_reset(&ctx->pin_ctx);
+
+        atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
         atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
+
         break;
 
     default:

@@ -15,9 +15,9 @@ static const char *TAG = "EVENT_DISPATCHER";
  * Subscriber Queues
  ******************************************************************************/
 
-QueueHandle_t g_event_subscriber_queue[EVENT_SUB_COUNT] = {0};
 bool event_dispatcher_send(event_subscriber_t subscriber,
                            const system_event_t *event);
+extern QueueHandle_t g_event_subscriber_queue[EVENT_SUB_COUNT];
 
 static const event_route_t routes[] =
     {
@@ -178,32 +178,33 @@ static const event_route_t routes[] =
 static const size_t route_count =
     sizeof(routes) / sizeof(routes[0]);
 
+static const uint8_t queue_sizes[EVENT_SUB_COUNT] =
+    {
+        [EVENT_SUB_LCD] = 10,
+        [EVENT_SUB_RELAY] = 10,
+        [EVENT_SUB_LED] = 10,
+        [EVENT_SUB_BUZZER] = 10,
+        [EVENT_SUB_LOGGER] = 20,
+        [EVENT_SUB_WIFI] = 10,
+        [EVENT_SUB_MONITOR] = 10,
+        [EVENT_SUB_BUTTON] = 10,
+        [EVENT_SUB_SYSTEM] = 10,
+};
+
 bool event_dispatcher_init(void)
 {
-    const uint8_t queue_sizes[EVENT_SUB_COUNT] =
-        {
-            [EVENT_SUB_LCD] = 10,
-            [EVENT_SUB_LED] = 10,
-            [EVENT_SUB_BUZZER] = 10,
-            [EVENT_SUB_RELAY] = 10,
-            [EVENT_SUB_LOGGER] = 20,
-            [EVENT_SUB_WIFI] = 10,
-        };
 
+    ESP_LOGI(TAG,
+             "Free heap = %lu",
+             esp_get_free_heap_size());
     for (int i = 0; i < EVENT_SUB_COUNT; i++)
     {
+        configASSERT(queue_sizes[i] > 0);
+
         g_event_subscriber_queue[i] =
-            xQueueCreate(queue_sizes[i],
-                         sizeof(system_event_t));
+            xQueueCreate(queue_sizes[i], sizeof(system_event_t));
 
-        if (g_event_subscriber_queue[i] == NULL)
-        {
-            ESP_LOGE(TAG,
-                     "Failed to create subscriber queue %d",
-                     i);
-
-            return false;
-        }
+        configASSERT(g_event_subscriber_queue[i] != NULL);
     }
 
     ESP_LOGI(TAG, "Event dispatcher initialized.");
