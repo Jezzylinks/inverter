@@ -914,6 +914,7 @@ typedef struct
     bool waiting_for_timeout;
     button_id_t button_id;
 } click_detector_t;
+
 static click_detector_t g_click_detectors[BUTTON_MAX_CLICK_COUNT]; // One detector per button
 
 // adc   //added manually
@@ -4344,6 +4345,8 @@ menu_state_t display_menu_state(void)
     vTaskDelay(pdMS_TO_TICKS(1500));
     return sys_state.menu_state;
 }
+
+static const uint8_t demo_pin[SECURITY_PIN_LEN] = {1, 2, 3, 4};
 
 // ENTER/MENU BUTTON - Navigate menus and enter/confirm values
 /* ── handle_enter_menu_button_event() ──────────────────────────────────── */
@@ -7922,7 +7925,6 @@ void init_menu_system()
     sys_state.menu_selection = 0;
     sys_state.pending_confirmation = false;
     sys_state.security.enabled = false;
-    sys_state.factory_reset.pin_ctx.digit = 0101;
     // lcd_display_state
     sys_state.lcd_state.blink_state = false;
     sys_state.lcd_boot_state.boot_screen_timestamp_ms = 0;
