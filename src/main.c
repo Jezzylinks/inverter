@@ -58,6 +58,7 @@
 #include "events/event_dispatcher.h"
 #include "events/system_events.h"
 #include "events/fault_log.h"
+#include "events/protection_handler.h"
 
 // Utility
 #include "utility/led.h"
@@ -8900,6 +8901,7 @@ void app_main(void)
     xTaskCreatePinnedToCore(led_event_task, "led_evt", 2048, NULL, 7, NULL, 1);
     xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 4096, NULL, 5, NULL, 0);
     xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, 0);
+    xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 4096, NULL, 9, NULL, 0);
 
     lcd_watchdog_init(lcd_task_handle);
     while (sys_state.system_ready)

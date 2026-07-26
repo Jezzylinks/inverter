@@ -27,6 +27,7 @@ extern "C"
         EVENT_SUB_MONITOR,
         EVENT_SUB_BUTTON,
         EVENT_SUB_SYSTEM,
+        EVENT_SUB_ENFORCER,
         EVENT_SUB_COUNT
     } event_subscriber_t;
 

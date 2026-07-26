@@ -74,9 +74,9 @@ static void load_defaults(void)
         .derate_high = 1e9f,
         .fault_high = 1e9f,
         .hysteresis_high = 0.0f,
-        .warning_low = 22.5f,
-        .derate_low = 21.5f,
-        .fault_low = 20.5f,
+        .warning_low = 11.5f,
+        .derate_low = 11.0f,
+        .fault_low = 10.5f,
         .hysteresis_low = 0.6f,
         .has_low_bound = true,
     };

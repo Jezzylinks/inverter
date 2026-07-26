@@ -213,6 +213,7 @@ static const uint8_t queue_sizes[EVENT_SUB_COUNT] =
         [EVENT_SUB_MONITOR] = 10,
         [EVENT_SUB_BUTTON] = 10,
         [EVENT_SUB_SYSTEM] = 10,
+        [EVENT_SUB_ENFORCER] = 10,
         [EVENT_SUB_FAULT_LOG] = 10};
 
 bool event_dispatcher_init(void)
@@ -261,7 +262,9 @@ void event_route_dispatch(const system_event_t *evt)
             event_dispatcher_send(EVENT_SUB_LCD, evt);
             event_dispatcher_send(EVENT_SUB_LOGGER, evt);
         }
+
         event_dispatcher_send(EVENT_SUB_MONITOR, evt);
+        event_dispatcher_send(EVENT_SUB_ENFORCER, evt); // <-- always, not just fallback
         break;
     }
 

@@ -136,7 +136,6 @@ bool system_event_post_protection(protection_quantity_t quantity,
         return false;
     }
 
-    ESP_LOGI("EVENT_DISPATCHER", "SYSTEM EVENT POST");
     return system_event_post(&evt);
 }
 
