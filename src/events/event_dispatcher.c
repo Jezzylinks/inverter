@@ -50,154 +50,160 @@ static const event_route_t routes[] =
          **********************************************************************/
         {
             .category = EVENT_CATEGORY_PROTECTION,
-
             .action = EVENT_ACTION_WARNING,
-
             .quantity = PROT_QUANTITY_TEMPERATURE,
-
             .subscriber_count = 3,
-
-            .subscribers =
-                {
-                    EVENT_SUB_LCD,
-                    EVENT_SUB_BUZZER,
-                    EVENT_SUB_LOGGER}},
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
 
         /**********************************************************************
          * TEMPERATURE DERATE
          **********************************************************************/
         {
             .category = EVENT_CATEGORY_PROTECTION,
-
             .action = EVENT_ACTION_DERATE,
-
             .quantity = PROT_QUANTITY_TEMPERATURE,
-
             .subscriber_count = 4,
-
-            .subscribers =
-                {
-                    EVENT_SUB_LCD,
-                    EVENT_SUB_RELAY,
-                    EVENT_SUB_BUZZER,
-                    EVENT_SUB_LOGGER}},
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
 
         /**********************************************************************
          * TEMPERATURE SHUTDOWN
          **********************************************************************/
         {
             .category = EVENT_CATEGORY_PROTECTION,
-
             .action = EVENT_ACTION_SHUTDOWN,
-
             .quantity = PROT_QUANTITY_TEMPERATURE,
-
             .subscriber_count = 5,
-
-            .subscribers =
-                {
-                    EVENT_SUB_LCD,
-                    EVENT_SUB_RELAY,
-                    EVENT_SUB_BUZZER,
-                    EVENT_SUB_LOGGER,
-                    EVENT_SUB_WIFI}},
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
 
         /**********************************************************************
          * TEMPERATURE RECOVERED
          **********************************************************************/
         {
             .category = EVENT_CATEGORY_PROTECTION,
-
             .action = EVENT_ACTION_RECOVERED,
-
             .quantity = PROT_QUANTITY_TEMPERATURE,
-
             .subscriber_count = 4,
-
-            .subscribers =
-                {
-                    EVENT_SUB_LCD,
-                    EVENT_SUB_RELAY,
-                    EVENT_SUB_LOGGER,
-                    EVENT_SUB_WIFI}},
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
 
         /**********************************************************************
          * BATTERY WARNING
          **********************************************************************/
         {
             .category = EVENT_CATEGORY_PROTECTION,
-
             .action = EVENT_ACTION_WARNING,
-
             .quantity = PROT_QUANTITY_BATTERY_VOLTAGE,
-
             .subscriber_count = 3,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
 
-            .subscribers =
-                {
-                    EVENT_SUB_LCD,
-                    EVENT_SUB_BUZZER,
-                    EVENT_SUB_LOGGER}},
+        /**********************************************************************
+         * BATTERY DERATE  <-- NEW
+         **********************************************************************/
+        {
+            .category = EVENT_CATEGORY_PROTECTION,
+            .action = EVENT_ACTION_DERATE,
+            .quantity = PROT_QUANTITY_BATTERY_VOLTAGE,
+            .subscriber_count = 4,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
 
         /**********************************************************************
          * BATTERY SHUTDOWN
          **********************************************************************/
         {
             .category = EVENT_CATEGORY_PROTECTION,
-
             .action = EVENT_ACTION_SHUTDOWN,
-
             .quantity = PROT_QUANTITY_BATTERY_VOLTAGE,
-
             .subscriber_count = 5,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
 
-            .subscribers =
-                {
-                    EVENT_SUB_LCD,
-                    EVENT_SUB_RELAY,
-                    EVENT_SUB_BUZZER,
-                    EVENT_SUB_LOGGER,
-                    EVENT_SUB_WIFI}},
+        /**********************************************************************
+         * BATTERY RECOVERED  <-- NEW
+         **********************************************************************/
+        {
+            .category = EVENT_CATEGORY_PROTECTION,
+            .action = EVENT_ACTION_RECOVERED,
+            .quantity = PROT_QUANTITY_BATTERY_VOLTAGE,
+            .subscriber_count = 4,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
+
+        /**********************************************************************
+         * AC VOLTAGE WARNING  <-- NEW
+         **********************************************************************/
+        {
+            .category = EVENT_CATEGORY_PROTECTION,
+            .action = EVENT_ACTION_WARNING,
+            .quantity = PROT_QUANTITY_AC_VOLTAGE,
+            .subscriber_count = 3,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
+
+        /**********************************************************************
+         * AC VOLTAGE DERATE  <-- NEW
+         **********************************************************************/
+        {
+            .category = EVENT_CATEGORY_PROTECTION,
+            .action = EVENT_ACTION_DERATE,
+            .quantity = PROT_QUANTITY_AC_VOLTAGE,
+            .subscriber_count = 4,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
 
         /**********************************************************************
          * AC VOLTAGE SHUTDOWN
          **********************************************************************/
         {
             .category = EVENT_CATEGORY_PROTECTION,
-
             .action = EVENT_ACTION_SHUTDOWN,
-
             .quantity = PROT_QUANTITY_AC_VOLTAGE,
-
             .subscriber_count = 5,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
 
-            .subscribers =
-                {
-                    EVENT_SUB_LCD,
-                    EVENT_SUB_RELAY,
-                    EVENT_SUB_BUZZER,
-                    EVENT_SUB_LOGGER,
-                    EVENT_SUB_WIFI}},
+        /**********************************************************************
+         * AC VOLTAGE RECOVERED  <-- NEW
+         **********************************************************************/
+        {
+            .category = EVENT_CATEGORY_PROTECTION,
+            .action = EVENT_ACTION_RECOVERED,
+            .quantity = PROT_QUANTITY_AC_VOLTAGE,
+            .subscriber_count = 4,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
+
+        /**********************************************************************
+         * OUTPUT CURRENT WARNING  <-- NEW
+         **********************************************************************/
+        {
+            .category = EVENT_CATEGORY_PROTECTION,
+            .action = EVENT_ACTION_WARNING,
+            .quantity = PROT_QUANTITY_OUTPUT_CURRENT,
+            .subscriber_count = 3,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
+
+        /**********************************************************************
+         * OUTPUT CURRENT DERATE  <-- NEW
+         **********************************************************************/
+        {
+            .category = EVENT_CATEGORY_PROTECTION,
+            .action = EVENT_ACTION_DERATE,
+            .quantity = PROT_QUANTITY_OUTPUT_CURRENT,
+            .subscriber_count = 4,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
 
         /**********************************************************************
          * OUTPUT CURRENT SHUTDOWN
          **********************************************************************/
         {
             .category = EVENT_CATEGORY_PROTECTION,
-
             .action = EVENT_ACTION_SHUTDOWN,
-
             .quantity = PROT_QUANTITY_OUTPUT_CURRENT,
-
             .subscriber_count = 5,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
 
-            .subscribers =
-                {
-                    EVENT_SUB_LCD,
-                    EVENT_SUB_RELAY,
-                    EVENT_SUB_BUZZER,
-                    EVENT_SUB_LOGGER,
-                    EVENT_SUB_WIFI}}};
+        /**********************************************************************
+         * OUTPUT CURRENT RECOVERED  <-- NEW
+         **********************************************************************/
+        {
+            .category = EVENT_CATEGORY_PROTECTION,
+            .action = EVENT_ACTION_RECOVERED,
+            .quantity = PROT_QUANTITY_OUTPUT_CURRENT,
+            .subscriber_count = 4,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}}};
 
 static const size_t route_count =
     sizeof(routes) / sizeof(routes[0]);
@@ -541,6 +547,58 @@ void fault_log_event_task(void *pv)
     }
 }
 
+// Buzzer starts here
+static void alert_led_warn(void)
+{
+    led_execute_pattern(&(led_pattern_t){
+        .led = LED_ERROR,
+        .type = LED_PATTERN_BLINK,
+        .on_time_ms = 500,
+        .off_time_ms = 500,
+        .repeat = 3});
+}
+
+static void alert_led_derate(void)
+{
+    led_execute_pattern(&(led_pattern_t){
+        .led = LED_ERROR,
+        .type = LED_PATTERN_BLINK,
+        .on_time_ms = 150,
+        .off_time_ms = 150,
+        .repeat = 5});
+}
+
+static void alert_led_shutdown(void)
+{
+    led_execute_pattern(&(led_pattern_t){
+        .led = LED_ERROR,
+        .type = LED_PATTERN_BLINK,
+        .on_time_ms = 100,
+        .off_time_ms = 150,
+        .repeat = 10});
+}
+
+static void alert_led_recovered(void)
+{
+    led_execute_pattern(&(led_pattern_t){.led = LED_ERROR, .type = LED_PATTERN_OFF});
+}
+
+static void beep_warning(void) { buzzer_beep(1800, 50, 150); }
+
+static void beep_on(void)
+{
+    buzzer_beep(1200, 60, 70);
+    buzzer_beep(1700, 65, 70);
+    buzzer_beep(2300, 70, 120);
+}
+
+static void beep_off(void)
+{
+    buzzer_beep(2000, 60, 90);
+    buzzer_beep(1400, 60, 90);
+    buzzer_beep(800, 60, 150);
+}
+
 void buzzer_event_task(void *pv)
 {
     system_event_t evt;
@@ -560,23 +618,16 @@ void buzzer_event_task(void *pv)
             switch (evt.action)
             {
             case EVENT_ACTION_WARNING:
-                buzzer_beep(1800, 50, 150);
+                alert_led_warn();
                 break;
             case EVENT_ACTION_DERATE:
-                buzzer_beep(1400, 60, 100);
-                vTaskDelay(pdMS_TO_TICKS(80));
-                buzzer_beep(1400, 60, 100);
+                alert_led_derate();
                 break;
             case EVENT_ACTION_SHUTDOWN:
-                buzzer_beep(800, 85, 200);
-                vTaskDelay(pdMS_TO_TICKS(60));
-                buzzer_beep(800, 85, 200);
-                vTaskDelay(pdMS_TO_TICKS(60));
-                buzzer_beep(800, 85, 200);
+                alert_led_shutdown();
                 break;
             case EVENT_ACTION_RECOVERED:
-                buzzer_beep(1600, 50, 80);
-                buzzer_beep(2200, 60, 120);
+                alert_led_recovered();
                 break;
             default:
                 break;
@@ -586,22 +637,18 @@ void buzzer_event_task(void *pv)
         case EVENT_CATEGORY_SYSTEM:
             if (evt.action == EVENT_ACTION_ON)
             {
-                buzzer_beep(1200, 60, 70);
-                buzzer_beep(1700, 65, 70);
-                buzzer_beep(2300, 70, 120);
+                beep_on();
             }
             else if (evt.action == EVENT_ACTION_OFF)
             {
-                buzzer_beep(2000, 60, 90);
-                buzzer_beep(1400, 60, 90);
-                buzzer_beep(800, 60, 150);
+                beep_off();
             }
             break;
 
         case EVENT_CATEGORY_BUTTON:
             if (evt.action == EVENT_ACTION_PRESSED)
             {
-                buzzer_beep(2500, 25, 15);
+                beep_warning();
             }
             break;
 

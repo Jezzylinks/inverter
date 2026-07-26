@@ -64,10 +64,15 @@ extern "C"
     bool event_dispatcher_receive(event_subscriber_t subscriber,
                                   system_event_t *event,
                                   TickType_t timeout);
+
     void event_dispatcher_task(void *pv);
+
     void buzzer_event_task(void *pv);
+
     void led_event_task(void *pv);
+
     void monitor_event_task(void *pv);
+
     void fault_log_event_task(void *pv);
 
 #ifdef __cplusplus

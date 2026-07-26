@@ -60,5 +60,6 @@ void set_all_leds(uint8_t brightness_percent);
 void all_leds_on(void);
 void all_leds_off(void);
 void led_event_task(void *pv);
+void led_execute_pattern(const led_pattern_t *pattern);
 
 #endif
