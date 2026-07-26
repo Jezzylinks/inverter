@@ -624,6 +624,7 @@ void buzzer_event_task(void *pv)
                 alert_led_derate();
                 break;
             case EVENT_ACTION_SHUTDOWN:
+                ESP_LOGI("EVENT_SHUTDOWN", "I GOT THE INFORMATION");
                 alert_led_shutdown();
                 break;
             case EVENT_ACTION_RECOVERED:
@@ -640,6 +641,14 @@ void buzzer_event_task(void *pv)
                 beep_on();
             }
             else if (evt.action == EVENT_ACTION_OFF)
+            {
+                beep_off();
+            }
+            else if (evt.action == EVENT_ACTION_SUCCESS)
+            {
+                beep_on();
+            }
+            else if (evt.action == EVENT_ACTION_ERROR)
             {
                 beep_off();
             }

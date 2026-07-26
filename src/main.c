@@ -1120,6 +1120,8 @@ void toggle_display();
 void inverter_power_on(void);
 void shutdown_inverter(void);
 static void post_inverter_power_event(bool powered_on);
+static void post_inverter_fault_event(void);
+static void post_inverter_success_event(void);
 static void post_button_click_event(void);
 void enter_diagnostic_mode(void);
 void exit_diagnostic_mode(void);
@@ -5424,6 +5426,28 @@ static void post_inverter_power_event(bool powered_on)
     system_event_post(&evt);
 }
 
+static void post_inverter_fault_event(void)
+{
+    system_event_t evt = {0};
+    evt.category = EVENT_CATEGORY_SYSTEM;
+    evt.action = EVENT_ACTION_ERROR;
+    evt.source = EVENT_SOURCE_SYSTEM;
+    evt.priority = EVENT_PRIORITY_CRITICAL;
+    evt.timestamp = xTaskGetTickCount();
+    system_event_post(&evt);
+}
+
+static void post_inverter_success_event(void)
+{
+    system_event_t evt = {0};
+    evt.category = EVENT_CATEGORY_SYSTEM;
+    evt.action = EVENT_ACTION_SUCCESS;
+    evt.source = EVENT_SOURCE_SYSTEM;
+    evt.priority = EVENT_PRIORITY_NORMAL;
+    evt.timestamp = xTaskGetTickCount();
+    system_event_post(&evt);
+}
+
 void inverter_power_on(void)
 {
     if (!check_safety_conditions())
@@ -5472,6 +5496,55 @@ void inverter_power_on(void)
     go_to_main_screen();
     post_inverter_power_event(true);
     ESP_LOGI(INV_TAG, "Inverter powered on");
+}
+
+/* ── shutdown_inverter() ────────────────────────────────────────────────── */
+void shutdown_inverter(void)
+{
+    if (sys_state.inverter.inverter_state == INVERTER_OFF)
+    {
+        ESP_LOGI(INV_TAG, "shutdown_inverter() called but inverter already off, ignoring");
+        return;
+    }
+
+    lcd_show_shutdown_progress(100, false, 0.0f);
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    if (sys_state.inverter.actual_current > 0.5f)
+    {
+        lcd_show_shutdown_progress(100, true,
+                                   sys_state.inverter.actual_current);
+        vTaskDelay(pdMS_TO_TICKS(1500));
+    }
+
+    /* Ramp down */
+    for (int i = 100; i >= 0; i -= 10)
+    {
+        lcd_show_shutdown_progress((uint8_t)i, false, 0.0f);
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    inverter_set_output_voltage(0);
+    vTaskDelay(pdMS_TO_TICKS(200));
+
+    esp_err_t err = gpio_set_level(GPIO_POWER_RELAY, 0);
+    if (err != ESP_OK)
+    {
+        post_inverter_fault_event();
+        ESP_LOGE(INV_TAG, "Relay open failed: %s", esp_err_to_name(err));
+        lcd_show_fault("** RELAY FAULT  ", "Restarting...   ");
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        perform_system_restart(false);
+        return;
+    }
+
+    post_inverter_power_event(false);
+    sys_state.inverter.inverter_state = INVERTER_OFF;
+    sys_state.inverter.inverter_active = false;
+    sys_state.menu_state = MENU_NONE;
+    sys_state.error.error_flags &= ~SYSTEM_FAILURE_ERROR;
+    go_to_main_screen();
+    ESP_LOGI(INV_TAG, "Inverter powered off");
 }
 
 // Helper functions to apply settings
@@ -5561,48 +5634,6 @@ static void apply_battery_voltage_system(float v)
         sys_state.battery_profile.nominal_voltage = new_voltage;
         sync_battery_protection_thresholds();
     }
-}
-
-/* ── shutdown_inverter() ────────────────────────────────────────────────── */
-void shutdown_inverter(void)
-{
-    lcd_show_shutdown_progress(100, false, 0.0f);
-    vTaskDelay(pdMS_TO_TICKS(500));
-
-    if (sys_state.inverter.actual_current > 0.5f)
-    {
-        lcd_show_shutdown_progress(100, true,
-                                   sys_state.inverter.actual_current);
-        vTaskDelay(pdMS_TO_TICKS(1500));
-    }
-
-    /* Ramp down */
-    for (int i = 100; i >= 0; i -= 10)
-    {
-        lcd_show_shutdown_progress((uint8_t)i, false, 0.0f);
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-
-    inverter_set_output_voltage(0);
-    vTaskDelay(pdMS_TO_TICKS(200));
-
-    esp_err_t err = gpio_set_level(GPIO_POWER_RELAY, 0);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(INV_TAG, "Relay open failed: %s", esp_err_to_name(err));
-        lcd_show_fault("** RELAY FAULT  ", "Restarting...   ");
-        vTaskDelay(pdMS_TO_TICKS(1500));
-        perform_system_restart(false);
-        return;
-    }
-
-    post_inverter_power_event(false);
-    sys_state.inverter.inverter_state = INVERTER_OFF;
-    sys_state.inverter.inverter_active = false;
-    sys_state.menu_state = MENU_NONE;
-    sys_state.error.error_flags &= ~SYSTEM_FAILURE_ERROR;
-    go_to_main_screen();
-    ESP_LOGI(INV_TAG, "Inverter powered off");
 }
 
 /* ── enter_diagnostic_mode() ────────────────────────────────────────────── */

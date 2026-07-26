@@ -320,6 +320,15 @@ void led_event_task(void *pv)
                 have_pattern = true;
                 break;
 
+            case EVENT_ACTION_ERROR:
+                pattern.led = LED_ERROR;
+                pattern.type = LED_PATTERN_BLINK;
+                pattern.on_time_ms = 150;
+                pattern.off_time_ms = 150;
+                pattern.repeat = 4;
+                have_pattern = true;
+                break;
+
             case EVENT_ACTION_CHARGING:
                 pattern.led = LED_STATUS;
                 pattern.type = LED_PATTERN_PULSE;
