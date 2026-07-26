@@ -267,6 +267,7 @@ void event_route_dispatch(const system_event_t *evt)
         {
             event_dispatcher_send(EVENT_SUB_LCD, evt);
             event_dispatcher_send(EVENT_SUB_LOGGER, evt);
+            event_dispatcher_send(EVENT_SUB_FAULT_LOG, evt);
         }
 
         event_dispatcher_send(EVENT_SUB_MONITOR, evt);
@@ -279,12 +280,30 @@ void event_route_dispatch(const system_event_t *evt)
         event_dispatcher_send(EVENT_SUB_LED, evt);
         event_dispatcher_send(EVENT_SUB_BUZZER, evt);
         event_dispatcher_send(EVENT_SUB_LOGGER, evt);
+        event_dispatcher_send(EVENT_SUB_FAULT_LOG, evt);
         break;
 
     case EVENT_CATEGORY_BUTTON:
 
         event_dispatcher_send(EVENT_SUB_LCD, evt);
         event_dispatcher_send(EVENT_SUB_BUZZER, evt);
+        break;
+
+    case EVENT_CATEGORY_FACTORY_RESET:
+        /* Factory reset outcomes are rare and significant -- worth a
+         * persistent record, not just a beep/LED and a log line. */
+        event_dispatcher_send(EVENT_SUB_LCD, evt);
+        event_dispatcher_send(EVENT_SUB_LED, evt);
+        event_dispatcher_send(EVENT_SUB_BUZZER, evt);
+        event_dispatcher_send(EVENT_SUB_LOGGER, evt);
+        event_dispatcher_send(EVENT_SUB_FAULT_LOG, evt);
+        break;
+
+    case EVENT_CATEGORY_WIFI:
+        event_dispatcher_send(EVENT_SUB_LCD, evt);
+        event_dispatcher_send(EVENT_SUB_LED, evt);
+        event_dispatcher_send(EVENT_SUB_BUZZER, evt);
+        event_dispatcher_send(EVENT_SUB_LOGGER, evt);
         break;
 
     default:
@@ -500,11 +519,13 @@ void monitor_statistics_update(const system_event_t *evt)
         default:
             break;
         }
+        monitor_statistics_save();
         break;
 
     case EVENT_ACTION_RECOVERED:
         stats.recoveries++;
         stats.last_recovery_time = evt->timestamp;
+        monitor_statistics_save();
         break;
 
     default:
@@ -518,6 +539,7 @@ void monitor_event_task(void *pv)
 {
     system_event_t evt;
     monitor_statistics_init();
+    monitor_statistics_load(); /* no-op if nothing saved yet (first boot) */
 
     while (1)
     {
@@ -529,3 +551,4 @@ void monitor_event_task(void *pv)
         monitor_statistics_update(&evt);
     }
 }
+

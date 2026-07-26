@@ -1120,6 +1120,9 @@ void shutdown_inverter(void);
 static void post_inverter_power_event(bool powered_on);
 static void post_inverter_fault_event(void);
 static void post_inverter_success_event(void);
+static void post_factory_reset_event(bool success);
+static void post_wifi_event(bool connected);
+static void post_boot_complete_event(void);
 static void post_button_click_event(void);
 void enter_diagnostic_mode(void);
 void exit_diagnostic_mode(void);
@@ -2518,6 +2521,7 @@ void adc_task(void *arg)
             ESP_LOGI(TAG_ADC, "First valid sample: Battery=%.2fV",
                      sys_state.inverter.battery.voltage);
             lcd_boot_complete();
+            post_boot_complete_event();
             if (lcd_task_handle != NULL)
                 xTaskNotifyGive(lcd_task_handle);
         }
@@ -3561,11 +3565,20 @@ void start_wifi_connection(void)
                                            pdMS_TO_TICKS(15000));
 
     if (bits & WIFI_CONNECTED_BIT)
+    {
         lcd_show_wifi_result(true, false, false, sys_state.wifi.ssid);
+        post_wifi_event(true);
+    }
     else if (bits & WIFI_FAIL_BIT)
+    {
         lcd_show_wifi_result(false, true, false, sys_state.wifi.ssid);
+        post_wifi_event(false);
+    }
     else
+    {
         lcd_show_wifi_result(false, false, true, sys_state.wifi.ssid);
+        post_wifi_event(false);
+    }
 
     vEventGroupDelete(s_wifi_event_group);
 }
@@ -5474,12 +5487,45 @@ static void post_inverter_success_event(void)
     system_event_post(&evt);
 }
 
+static void post_factory_reset_event(bool success)
+{
+    system_event_t evt = {0};
+    evt.category = EVENT_CATEGORY_FACTORY_RESET;
+    evt.action = success ? EVENT_ACTION_SUCCESS : EVENT_ACTION_ERROR;
+    evt.source = EVENT_SOURCE_SYSTEM;
+    evt.priority = success ? EVENT_PRIORITY_NORMAL : EVENT_PRIORITY_CRITICAL;
+    evt.timestamp = xTaskGetTickCount();
+    system_event_post(&evt);
+}
+
+static void post_wifi_event(bool connected)
+{
+    system_event_t evt = {0};
+    evt.category = EVENT_CATEGORY_WIFI;
+    evt.action = connected ? EVENT_ACTION_SUCCESS : EVENT_ACTION_ERROR;
+    evt.source = EVENT_SOURCE_WIFI;
+    evt.priority = EVENT_PRIORITY_NORMAL;
+    evt.timestamp = xTaskGetTickCount();
+    system_event_post(&evt);
+}
+
+static void post_boot_complete_event(void)
+{
+    system_event_t evt = {0};
+    evt.category = EVENT_CATEGORY_SYSTEM;
+    evt.action = EVENT_ACTION_STARTUP;
+    evt.source = EVENT_SOURCE_SYSTEM;
+    evt.priority = EVENT_PRIORITY_NORMAL;
+    evt.timestamp = xTaskGetTickCount();
+    system_event_post(&evt);
+}
+
 void inverter_power_on(void)
 {
     if (!check_safety_conditions())
     {
         lcd_show_fault("Safety check    ", "FAILED! See log ");
-        buzzer_error();
+        post_inverter_fault_event();
         vTaskDelay(pdMS_TO_TICKS(2000));
         go_to_main_screen();
         return;
@@ -5510,7 +5556,7 @@ void inverter_power_on(void)
         sys_state.inverter.inverter_active = false;
         sys_state.error.error_flags |= SYSTEM_FAILURE_ERROR;
         lcd_show_fault("** START FAILED ", "Check relay/HW  ");
-        buzzer_error();
+        post_inverter_fault_event();
         vTaskDelay(pdMS_TO_TICKS(2000));
         go_to_main_screen();
         return;
@@ -5803,8 +5849,8 @@ void perform_factory_reset(void)
     error_log_clear();
     calibration_reset();
 
-    post_buzzer_event(true);
-    post_led_event(true);
+    post_factory_reset_event(true);
+
     sys_state.menu_state = MENU_NONE;
     sys_state.power_button_sequence_count = 0;
 
@@ -8099,6 +8145,7 @@ void adjust_calibration_setting(button_event_info_t btn)
                 sys_state.inverter.battery_voltage_calibration;
             save_settings();
             lcd_flash_info("Calibration Done", "                ", 1000);
+            post_inverter_success_event();
             calib_step = 0;
             sys_state.display.current_menu = MAIN_MENU;
         }
