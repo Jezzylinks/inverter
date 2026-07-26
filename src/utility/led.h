@@ -61,5 +61,6 @@ void all_leds_on(void);
 void all_leds_off(void);
 void led_event_task(void *pv);
 void led_execute_pattern(const led_pattern_t *pattern);
+void post_led_event(bool success);
 
 #endif

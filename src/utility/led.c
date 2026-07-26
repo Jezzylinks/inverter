@@ -6,6 +6,7 @@
 #include "system_state.h"
 #include "events/event_dispatcher.h"
 #include "events/system_events.h"
+#include "hardware_config.h"
 
 #define LED_REPEAT_FOREVER UINT16_MAX
 
@@ -201,6 +202,18 @@ void led_execute_pattern(const led_pattern_t *pattern)
     }
 }
 
+void post_led_event(bool success)
+{
+    system_event_t evt = {0};
+    evt.category = EVENT_CATEGORY_SYSTEM;
+    evt.action = success ? EVENT_ACTION_SUCCESS : EVENT_ACTION_ERROR;
+    evt.source = EVENT_SOURCE_SYSTEM;
+    evt.priority = EVENT_PRIORITY_NORMAL;
+    evt.timestamp = xTaskGetTickCount();
+
+    (void)event_dispatcher_send(EVENT_SUB_LED, &evt);
+}
+
 void led_event_task(void *pv)
 {
     system_event_t evt;
@@ -360,12 +373,14 @@ void led_event_task(void *pv)
             switch (evt.action)
             {
             case EVENT_ACTION_ON:
+                ESP_LOGI("EVENT_CATEGORY", "EVENT ACTION OFF LED");
                 direct = true;
                 direct_state = true;
                 direct_led = LED_STATUS;
                 break;
 
             case EVENT_ACTION_OFF:
+                ESP_LOGI("EVENT_CATEGORY", "EVENT ACTION OFF LED");
                 direct = true;
                 direct_state = false;
                 direct_led = LED_STATUS;

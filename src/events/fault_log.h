@@ -99,6 +99,7 @@ extern "C"
 
     const char *fault_log_severity_name(fault_severity_t s);
     const char *fault_log_source_name(fault_source_t s);
+    void fault_log_event_task(void *pv);
 
 #ifdef __cplusplus
 }

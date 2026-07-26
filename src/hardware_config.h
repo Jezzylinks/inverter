@@ -19,5 +19,6 @@
 
 #define GPIO_FAN GPIO_NUM_33
 #define GPIO_FAN_TEST GPIO_NUM_4
+#define CONFIG_USE_LED_PWM 1
 
 #endif

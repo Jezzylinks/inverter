@@ -81,7 +81,6 @@
 #define CONFIG_USE_ADC 1
 #define CONFIG_USE_BUTTONS 1
 #define CONFIG_USE_LCD 1
-#define CONFIG_USE_LED_PWM 1
 #define CONFIG_USE_DEEP_SLEEP 0
 #define CONFIG_USE_DISPLAY_TIMEOUT_TASK 1
 #define USE_ADC2
@@ -1107,7 +1106,6 @@ void lcd_show_bt_edit_screen(const char *label, const char *value);
 void lcd_show_value_edit_screen(void);
 void lcd_show_bt_connecting_screen(const char *device_name);
 void lcd_show_factory_reset_screen(void);
-void update_buzzer(uint16_t freq, uint8_t volume);
 void adc_task(void *arg);
 static bool adc_calibration_init(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle);
 static void adc_calibration_deinit(adc_cali_handle_t handle);
@@ -4114,7 +4112,8 @@ void handle_power_button_event(button_event_info_t *event_info,
             else
             {
                 lcd_show_fault("Fault persists  ", "Check system!   ");
-                buzzer_error();
+                post_buzzer_event(false);
+
                 vTaskDelay(pdMS_TO_TICKS(2000));
                 go_to_main_screen();
             }
@@ -4361,10 +4360,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 reload_default_settings();
                 save_settings();
                 atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
-                vTaskDelay(pdMS_TO_TICKS(1000));
-                update_buzzer(1500, 40);
-                vTaskDelay(pdMS_TO_TICKS(150));
-                buzzer_off();
+                post_buzzer_event(true);
                 sys_state.power_button_sequence_count = 0;
                 atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
                 done_msg = "Settings Cleared";
@@ -5777,16 +5773,8 @@ void perform_factory_reset(void)
     error_log_clear();
     calibration_reset();
 
-    update_buzzer(2000, 50);
-    for (int i = 0; i < 5; i++)
-    {
-        update_led(LED_STATUS, 1);
-        vTaskDelay(pdMS_TO_TICKS(200));
-        update_led(LED_STATUS, 0);
-        vTaskDelay(pdMS_TO_TICKS(200));
-    }
-    buzzer_off();
-
+    post_buzzer_event(true);
+    post_led_event(true);
     sys_state.menu_state = MENU_NONE;
     sys_state.power_button_sequence_count = 0;
 
@@ -7956,7 +7944,7 @@ void enter_deep_sleep(uint32_t sleep_seconds)
     lcd_flash_info("Entering Sleep  ", v, 2000);
 
     save_settings();
-    update_buzzer(0, 0);
+    post_buzzer_event(true);
     update_led(LED_STATUS, 0);
     gpio_set_level(GPIO_POWER_RELAY, 0);
 
@@ -8345,7 +8333,7 @@ void handle_critical_error(void)
 {
     ESP_LOGE(TAG_ERROR, "Critical Error: 0x%02X", sys_state.error.error_flags);
     log_error_to_nvs(sys_state.error.error_flags);
-    update_buzzer(3000, 80);
+    post_buzzer_event(false);
     blink_led(LED_ERROR, 200, 200, 5);
 
     char l0[17], l1[17];
@@ -8425,7 +8413,7 @@ void perform_system_restart(bool factory_reset)
 {
     lcd_watchdog_deinit();
     lcd_flash_info("System Restart  ", "Please wait...  ", 500);
-    update_buzzer(2000, 30);
+    post_buzzer_event(false);
     if (!factory_reset)
     {
         save_settings();
@@ -8604,7 +8592,7 @@ void error_handler(void)
         if (sys_state.error.error_flags == errors[i].flag)
         {
             lcd_show_fault(errors[i].line1, errors[i].line2);
-            update_buzzer(errors[i].buzzer_freq, errors[i].buzzer_vol);
+            post_buzzer_event(true);
             error_found = true;
 
             if (errors[i].flag == ERR_LOW_BAT)
@@ -8645,7 +8633,7 @@ void error_handler(void)
     {
         // Instead of generic "Unknown", show the actual hex code
         lcd_show_fault("Error Detected  ", code_str);
-        update_buzzer(2500, 100);
+        post_buzzer_event(true);
     }
     // Log the error state for debugging
     log_all_error_flags(sys_state.error.error_flags);

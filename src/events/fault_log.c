@@ -8,6 +8,7 @@
 #include "esp_crc.h"
 #include "events/system_events.h"
 #include "system_state.h"
+#include "events/event_dispatcher.h"
 
 static const char *TAG = "fault_log";
 extern system_state_t sys_state;
@@ -483,5 +484,22 @@ const char *fault_log_source_name(fault_source_t s)
         return "Power Meter";
     default:
         return "Other";
+    }
+}
+
+void fault_log_event_task(void *pv)
+{
+    system_event_t evt;
+
+    while (1)
+    {
+        if (!event_dispatcher_receive(EVENT_SUB_FAULT_LOG,
+                                      &evt,
+                                      portMAX_DELAY))
+        {
+            continue;
+        }
+
+        fault_log_add_event(&evt);
     }
 }
