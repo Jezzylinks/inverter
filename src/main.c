@@ -3948,7 +3948,10 @@ void handle_power_button_event(button_event_info_t *event_info,
     if (sys_state.menu_state == MENU_FACTORY_RESET &&
         atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
     {
-        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_POWER);
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
+            factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_POWER);
+        }
         return;
     }
 
@@ -4277,7 +4280,10 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
     if (sys_state.menu_state == MENU_FACTORY_RESET &&
         atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
     {
-        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_ENTER);
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
+            factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_ENTER);
+        }
         return;
     }
 
@@ -4294,6 +4300,11 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
 
         if (phase == SECURITY_PHASE_PIN_FLOW)
         {
+            if (event_info->event != BUTTON_EVENT_CLICK)
+            {
+                return;
+            }
+
             bool flow_done = false;
 
             xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
@@ -4777,7 +4788,10 @@ void handle_up_button_event(button_event_info_t *event_info,
     if (sys_state.menu_state == MENU_FACTORY_RESET &&
         atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
     {
-        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_UP);
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
+            factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_UP);
+        }
         return;
     }
 
@@ -4785,9 +4799,12 @@ void handle_up_button_event(button_event_info_t *event_info,
     if (sys_state.menu_state == MENU_SECURITY &&
         atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_PIN_FLOW)
     {
-        xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
-        change_pin_handle_button(&change_pin_ctx, BTN_UP);
-        xSemaphoreGive(change_pin_mutex);
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
+            xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
+            change_pin_handle_button(&change_pin_ctx, BTN_UP);
+            xSemaphoreGive(change_pin_mutex);
+        }
         return; // Up just adjusts the current PIN digit -- never finishes the flow
     }
     switch (event_info->event)
@@ -4973,7 +4990,10 @@ void handle_down_button_event(button_event_info_t *event_info,
     if (sys_state.menu_state == MENU_FACTORY_RESET &&
         atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
     {
-        factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_DOWN);
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
+            factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_DOWN);
+        }
         return;
     }
 
@@ -4981,9 +5001,12 @@ void handle_down_button_event(button_event_info_t *event_info,
     if (sys_state.menu_state == MENU_SECURITY &&
         atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_PIN_FLOW)
     {
-        xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
-        change_pin_handle_button(&change_pin_ctx, BTN_DOWN);
-        xSemaphoreGive(change_pin_mutex);
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
+            xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
+            change_pin_handle_button(&change_pin_ctx, BTN_DOWN);
+            xSemaphoreGive(change_pin_mutex);
+        }
         return;
     }
 
@@ -5190,10 +5213,12 @@ void handle_back_button_event(button_event_info_t *event_info,
 
         if (phase == FACTORY_RESET_PIN_ENTRY)
         {
-            factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_BACK);
-            ESP_LOGI("BACK HERE", "HERLL BACK BUTTON");
-            show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
-            sys_lcd.screen = LCD_SCREEN_MENU;
+            if (event_info->event == BUTTON_EVENT_CLICK)
+            {
+                factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_BACK);
+                show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
+                sys_lcd.screen = LCD_SCREEN_MENU;
+            }
             return;
         }
     }
@@ -5204,6 +5229,11 @@ void handle_back_button_event(button_event_info_t *event_info,
         if (atomic_load(&sys_lcd.security.phase) == SECURITY_PHASE_PIN_FLOW)
 
         {
+            if (event_info->event != BUTTON_EVENT_CLICK)
+            {
+                return;
+            }
+
             xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
             bool flow_done = change_pin_handle_button(&change_pin_ctx, BTN_BACK);
             xSemaphoreGive(change_pin_mutex);
