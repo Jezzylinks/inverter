@@ -4,6 +4,20 @@
 #include <stdio.h>
 #include "lcd_flash_queue.h"
 #include "button_controller.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "events/system_events.h"
+
+static void post_security_event(bool success)
+{
+    system_event_t evt = {0};
+    evt.category = EVENT_CATEGORY_SYSTEM;
+    evt.action = success ? EVENT_ACTION_SUCCESS : EVENT_ACTION_ERROR;
+    evt.source = EVENT_SOURCE_SYSTEM;
+    evt.priority = success ? EVENT_PRIORITY_NORMAL : EVENT_PRIORITY_LOW;
+    evt.timestamp = xTaskGetTickCount();
+    system_event_post(&evt);
+}
 
 void change_pin_start(change_pin_ctx_t *ctx)
 {
@@ -81,10 +95,12 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
                     if (err == ESP_OK)
                     {
                         lcd_flash_info_to("PIN reset", "                ", 1500, LCD_SCREEN_SECURITY);
+                        post_security_event(true);
                     }
                     else
                     {
                         lcd_flash_info_to("Reset failed", "                ", 1500, LCD_SCREEN_SECURITY);
+                        post_security_event(false);
                     }
                     ctx->phase = CHANGE_PIN_IDLE;
                     return true;
@@ -96,12 +112,14 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
             {
                 // lcd_flash_enqueue("Locked out", FLASH_PRIORITY_HIGH, FLASH_DURATION_LONG);
                 lcd_flash_info_to("Locked out", "Back To Return  ", 4000, LCD_SCREEN_SECURITY);
+                post_security_event(false);
                 ctx->phase = CHANGE_PIN_IDLE;
                 return true;
             }
             else
             {
                 lcd_flash_info_to("Wrong PIN", "Back To Return  ", 4000, LCD_SCREEN_SECURITY);
+                post_security_event(false);
                 pin_entry_reset(&ctx->pin_ctx); // stay, retry
             }
         }
@@ -147,11 +165,13 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
                 if (err == ESP_OK)
                 {
                     lcd_flash_info_to("PIN updated", "                ", 2000, LCD_SCREEN_SECURITY);
+                    post_security_event(true);
                 }
                 else
                 {
                     // lcd_flash_enqueue("Save failed", FLASH_PRIORITY_HIGH, FLASH_DURATION_SHORT);
                     lcd_flash_warning_to("Save failed", "Back To Return  ", 3000, LCD_SCREEN_SECURITY);
+                    post_security_event(false);
                 }
                 // Clear the staged copy either way -- don't leave a new PIN
                 // sitting in RAM longer than needed.
@@ -162,6 +182,7 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
             else
             {
                 lcd_flash_warning_to("Did not match", "                ", 4000, LCD_SCREEN_SECURITY);
+                post_security_event(false);
                 pin_entry_reset(&ctx->pin_ctx);
                 ctx->phase = CHANGE_PIN_ENTER_NEW; // start the new-PIN pair over
             }

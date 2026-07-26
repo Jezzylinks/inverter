@@ -267,6 +267,7 @@ void event_route_dispatch(const system_event_t *evt)
         {
             event_dispatcher_send(EVENT_SUB_LCD, evt);
             event_dispatcher_send(EVENT_SUB_LOGGER, evt);
+            event_dispatcher_send(EVENT_SUB_FAULT_LOG, evt);
         }
 
         event_dispatcher_send(EVENT_SUB_MONITOR, evt);
@@ -279,12 +280,30 @@ void event_route_dispatch(const system_event_t *evt)
         event_dispatcher_send(EVENT_SUB_LED, evt);
         event_dispatcher_send(EVENT_SUB_BUZZER, evt);
         event_dispatcher_send(EVENT_SUB_LOGGER, evt);
+        event_dispatcher_send(EVENT_SUB_FAULT_LOG, evt);
         break;
 
     case EVENT_CATEGORY_BUTTON:
 
         event_dispatcher_send(EVENT_SUB_LCD, evt);
         event_dispatcher_send(EVENT_SUB_BUZZER, evt);
+        break;
+
+    case EVENT_CATEGORY_FACTORY_RESET:
+        /* Factory reset outcomes are rare and significant -- worth a
+         * persistent record, not just a beep/LED and a log line. */
+        event_dispatcher_send(EVENT_SUB_LCD, evt);
+        event_dispatcher_send(EVENT_SUB_LED, evt);
+        event_dispatcher_send(EVENT_SUB_BUZZER, evt);
+        event_dispatcher_send(EVENT_SUB_LOGGER, evt);
+        event_dispatcher_send(EVENT_SUB_FAULT_LOG, evt);
+        break;
+
+    case EVENT_CATEGORY_WIFI:
+        event_dispatcher_send(EVENT_SUB_LCD, evt);
+        event_dispatcher_send(EVENT_SUB_LED, evt);
+        event_dispatcher_send(EVENT_SUB_BUZZER, evt);
+        event_dispatcher_send(EVENT_SUB_LOGGER, evt);
         break;
 
     default:
@@ -548,42 +567,29 @@ void fault_log_event_task(void *pv)
 }
 
 // Buzzer starts here
-static void alert_led_warn(void)
-{
-    led_execute_pattern(&(led_pattern_t){
-        .led = LED_ERROR,
-        .type = LED_PATTERN_BLINK,
-        .on_time_ms = 500,
-        .off_time_ms = 500,
-        .repeat = 3});
-}
-
-static void alert_led_derate(void)
-{
-    led_execute_pattern(&(led_pattern_t){
-        .led = LED_ERROR,
-        .type = LED_PATTERN_BLINK,
-        .on_time_ms = 150,
-        .off_time_ms = 150,
-        .repeat = 5});
-}
-
-static void alert_led_shutdown(void)
-{
-    led_execute_pattern(&(led_pattern_t){
-        .led = LED_ERROR,
-        .type = LED_PATTERN_BLINK,
-        .on_time_ms = 100,
-        .off_time_ms = 150,
-        .repeat = 10});
-}
-
-static void alert_led_recovered(void)
-{
-    led_execute_pattern(&(led_pattern_t){.led = LED_ERROR, .type = LED_PATTERN_OFF});
-}
-
 static void beep_warning(void) { buzzer_beep(1800, 50, 150); }
+
+static void beep_derate(void)
+{
+    buzzer_beep(1400, 60, 100);
+    vTaskDelay(pdMS_TO_TICKS(80));
+    buzzer_beep(1400, 60, 100);
+}
+
+static void beep_shutdown(void)
+{
+    for (int i = 0; i < 3; i++)
+    {
+        buzzer_beep(800, 85, 200);
+        vTaskDelay(pdMS_TO_TICKS(60));
+    }
+}
+
+static void beep_recovered(void)
+{
+    buzzer_beep(1600, 50, 80);
+    buzzer_beep(2200, 60, 120);
+}
 
 static void beep_on(void)
 {
@@ -598,6 +604,22 @@ static void beep_off(void)
     buzzer_beep(1400, 60, 90);
     buzzer_beep(800, 60, 150);
 }
+
+/* Distinct from beep_on/beep_off -- a PIN change, calibration, or
+ * factory-reset outcome shouldn't sound identical to powering the
+ * inverter on or off. */
+static void beep_success(void) { buzzer_beep(2000, 55, 100); }
+
+static void beep_error(void)
+{
+    buzzer_beep(600, 90, 150);
+    vTaskDelay(pdMS_TO_TICKS(60));
+    buzzer_beep(600, 90, 150);
+}
+
+/* Very short, quiet -- keypress feedback. Kept brief so rapid presses
+ * never feel like they're waiting on the buzzer. */
+static void beep_click(void) { buzzer_beep(2500, 25, 15); }
 
 void buzzer_event_task(void *pv)
 {
@@ -618,17 +640,16 @@ void buzzer_event_task(void *pv)
             switch (evt.action)
             {
             case EVENT_ACTION_WARNING:
-                alert_led_warn();
+                beep_warning();
                 break;
             case EVENT_ACTION_DERATE:
-                alert_led_derate();
+                beep_derate();
                 break;
             case EVENT_ACTION_SHUTDOWN:
-                ESP_LOGI("EVENT_SHUTDOWN", "I GOT THE INFORMATION");
-                alert_led_shutdown();
+                beep_shutdown();
                 break;
             case EVENT_ACTION_RECOVERED:
-                alert_led_recovered();
+                beep_recovered();
                 break;
             default:
                 break;
@@ -636,6 +657,8 @@ void buzzer_event_task(void *pv)
             break;
 
         case EVENT_CATEGORY_SYSTEM:
+        case EVENT_CATEGORY_FACTORY_RESET:
+        case EVENT_CATEGORY_WIFI:
             if (evt.action == EVENT_ACTION_ON)
             {
                 beep_on();
@@ -646,18 +669,18 @@ void buzzer_event_task(void *pv)
             }
             else if (evt.action == EVENT_ACTION_SUCCESS)
             {
-                beep_on();
+                beep_success();
             }
             else if (evt.action == EVENT_ACTION_ERROR)
             {
-                beep_off();
+                beep_error();
             }
             break;
 
         case EVENT_CATEGORY_BUTTON:
             if (evt.action == EVENT_ACTION_PRESSED)
             {
-                beep_warning();
+                beep_click();
             }
             break;
 

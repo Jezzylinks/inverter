@@ -279,6 +279,8 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_CATEGORY_SYSTEM:
+        case EVENT_CATEGORY_FACTORY_RESET:
+        case EVENT_CATEGORY_WIFI:
             switch (evt.action)
             {
             case EVENT_ACTION_ON:
