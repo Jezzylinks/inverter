@@ -28,6 +28,7 @@ extern "C"
         LCD_SCREEN_VALUE_EDIT,
         LCD_SCREEN_MONITORING_DETAIL,
         LCD_SCREEN_DIAGNOSTIC,
+        LCD_SCREEN_SETTINGS_VIEW,
         LCD_SCREEN_STARTUP_SEQ,
         LCD_SCREEN_SHUTDOWN_SEQ,
         LCD_SCREEN_FAULT,
@@ -123,7 +124,7 @@ extern "C"
     {
         char label[17];
         char value_str[17];
-    } lcd_detail_data_t; /* monitoring detail AND diagnostic detail */
+    } lcd_detail_data_t; /* monitoring detail, diagnostic detail, AND settings view */
 
     typedef struct
     {
@@ -210,6 +211,7 @@ extern "C"
         lcd_value_edit_data_t value_edit;
         lcd_detail_data_t monitor_detail;
         lcd_detail_data_t diagnostic;
+        lcd_detail_data_t settings_view;
         lcd_startup_data_t startup;
         lcd_shutdown_data_t shutdown;
         lcd_fault_data_t fault;

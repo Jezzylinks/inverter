@@ -898,6 +898,10 @@ void lcd_task(void *arg)
             draw_detail(&snap.diagnostic);
             break;
 
+        case LCD_SCREEN_SETTINGS_VIEW:
+            draw_detail(&snap.settings_view);
+            break;
+
         case LCD_SCREEN_STARTUP_SEQ:
             draw_startup(&snap.startup);
             break;

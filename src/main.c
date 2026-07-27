@@ -994,7 +994,8 @@ static const menu_item_t main_menu_items[] = {
     {"Diagnostic", MENU_DIAGNOSTIC},
     {"WiFi Config", MENU_WIFI_CONFIG},
     {"Factory Reset", MENU_FACTORY_RESET},
-    {"Security", MENU_SECURITY}};
+    {"Security", MENU_SECURITY},
+    {"View Settings", MENU_SYSTEM_INFO}};
 
 // SETTINGS MENU (5 items)
 static const menu_item_t settings_items[] = {
@@ -1201,6 +1202,7 @@ void security_pin(void);
 // Submenu functions
 void lcd_show_monitoring_detail(const char *label, float value, const char *unit);
 void lcd_draw_diagnostics_screen(uint8_t index);
+void lcd_draw_settings_view_screen(uint8_t index);
 
 static void wifi_init_sta(void);
 void start_wifi_scan(void);
@@ -1549,32 +1551,33 @@ typedef struct
     size_t size;
     float default_val;
     bool is_scaled_float;
+    const char *label; /* friendly name for the View Settings screen */
 } nvs_setting_t;
 
 static nvs_setting_t g_settings[] = {
-    {"bat_volt_system", &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 0, false},
-    {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false},
-    {"bat_type", &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false},
-    {"bat_cap_ah", &sys_state.battery_profile.capacity_ah, sizeof(int32_t), 0, true},
-    {"bat_charge_cur", &sys_state.battery_profile.max_charge_current_per_100ah, sizeof(int32_t), 0, true},
-    {"bat_disc_cur", &sys_state.battery_profile.max_discharge_current_per_100ah, sizeof(int32_t), 0, true},
-    {"bat_full_volt", &sys_state.battery_profile.high_battery_voltage_12v, sizeof(int32_t), 0, true},
-    {"bat_cutoff_volt", &sys_state.battery_profile.cutoff_voltage_12v, sizeof(int32_t), 10.5f, true},
-    {"bat_rech_volt", &sys_state.battery_profile.recharge_voltage_12v, sizeof(int32_t), 14.8f, true},
-    {"brightness", &sys_state.display.brightness, sizeof(int32_t), 100, false},
-    {"backlight_time", &sys_state.display.backlight_timeout, sizeof(int32_t), 30, false},
-    {"auto_shutdown", &sys_state.display.auto_shutdown_enabled, sizeof(uint8_t), 0, false},
-    {"scroll_en", &sys_state.display.scroll_enabled, sizeof(uint8_t), 0, false},
-    {"sound_en", &sys_state.sound_enabled, sizeof(uint8_t), 1, false},
-    {"scroll_spd", &sys_state.display.scroll_speed, sizeof(uint8_t), DEFAULT_SCROLL_SPEED, false},
-    {"out_volt", &sys_state.inverter.output_voltage, sizeof(int32_t), 220.0f, true},
-    {"out_freq", &sys_state.inverter.output_frequency, sizeof(int32_t), 50.0f, true},
-    {"volt_threshold", &sys_state.settings.voltage_threshold, sizeof(int32_t), 12.5f, true},
-    {"current_limit", &sys_state.settings.current_limit, sizeof(int32_t), 50.0f, true},
-    {"temp_alarm", &sys_state.settings.temperature_alarm, sizeof(int32_t), 70.0f, true},
-    {"frequency_range", &sys_state.settings.frequency_range, sizeof(int32_t), 50, false},
-    {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300, false},
-    {"security_en", &sys_state.security.enabled, sizeof(uint8_t), false, false},
+    {"bat_volt_system", &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 0, false, "Bat Volt System"},
+    {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false, "Inverter Active"},
+    {"bat_type", &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false, "Battery Type"},
+    {"bat_cap_ah", &sys_state.battery_profile.capacity_ah, sizeof(int32_t), 0, true, "Battery Capacity"},
+    {"bat_charge_cur", &sys_state.battery_profile.max_charge_current_per_100ah, sizeof(int32_t), 0, true, "Max Charge Cur"},
+    {"bat_disc_cur", &sys_state.battery_profile.max_discharge_current_per_100ah, sizeof(int32_t), 0, true, "Max Discharge Cur"},
+    {"bat_full_volt", &sys_state.battery_profile.high_battery_voltage_12v, sizeof(int32_t), 0, true, "Battery Full Volt"},
+    {"bat_cutoff_volt", &sys_state.battery_profile.cutoff_voltage_12v, sizeof(int32_t), 10.5f, true, "Battery Cutoff"},
+    {"bat_rech_volt", &sys_state.battery_profile.recharge_voltage_12v, sizeof(int32_t), 14.8f, true, "Recharge Volt"},
+    {"brightness", &sys_state.display.brightness, sizeof(int32_t), 100, false, "LCD Brightness"},
+    {"backlight_time", &sys_state.display.backlight_timeout, sizeof(int32_t), 30, false, "Backlight Time"},
+    {"auto_shutdown", &sys_state.display.auto_shutdown_enabled, sizeof(uint8_t), 0, false, "Auto Shutdown"},
+    {"scroll_en", &sys_state.display.scroll_enabled, sizeof(uint8_t), 0, false, "Scroll Enable"},
+    {"sound_en", &sys_state.sound_enabled, sizeof(uint8_t), 1, false, "Sound"},
+    {"scroll_spd", &sys_state.display.scroll_speed, sizeof(uint8_t), DEFAULT_SCROLL_SPEED, false, "Scroll Speed"},
+    {"out_volt", &sys_state.inverter.output_voltage, sizeof(int32_t), 220.0f, true, "Output Voltage"},
+    {"out_freq", &sys_state.inverter.output_frequency, sizeof(int32_t), 50.0f, true, "Output Freq"},
+    {"volt_threshold", &sys_state.settings.voltage_threshold, sizeof(int32_t), 12.5f, true, "Voltage Thresh"},
+    {"current_limit", &sys_state.settings.current_limit, sizeof(int32_t), 50.0f, true, "Current Limit"},
+    {"temp_alarm", &sys_state.settings.temperature_alarm, sizeof(int32_t), 70.0f, true, "Temp Alarm"},
+    {"frequency_range", &sys_state.settings.frequency_range, sizeof(int32_t), 50, false, "Freq Range"},
+    {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300, false, "Sys Timeout"},
+    {"security_en", &sys_state.security.enabled, sizeof(uint8_t), false, false, "Security Enable"},
 };
 
 #define NVS_SETTINGS_COUNT (sizeof(g_settings) / sizeof(g_settings[0]))
@@ -4439,6 +4442,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             case 5:
                 next = MENU_SECURITY;
                 break;
+            case 6:
+                next = MENU_SYSTEM_INFO;
+                break;
             }
             if (next != MENU_NONE)
             {
@@ -4446,6 +4452,11 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 sys_state.menu_state = next;
                 sys_state.menu_selection = 0;
                 show_menu_screen(next, sys_state.menu_selection);
+
+                if (next == MENU_SYSTEM_INFO)
+                {
+                    lcd_draw_settings_view_screen(0);
+                }
             }
             break;
         }
@@ -4820,6 +4831,19 @@ void handle_up_button_event(button_event_info_t *event_info,
         }
         return; // Up just adjusts the current PIN digit -- never finishes the flow
     }
+
+    // View Settings screen -- scroll through g_settings[] with wraparound
+    if (sys_state.menu_state == MENU_SYSTEM_INFO)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
+            sys_state.menu_selection =
+                (sys_state.menu_selection + 1) % (uint8_t)NVS_SETTINGS_COUNT;
+            lcd_draw_settings_view_screen(sys_state.menu_selection);
+        }
+        return;
+    }
+
     switch (event_info->event)
     {
     case BUTTON_EVENT_CLICK:
@@ -5019,6 +5043,20 @@ void handle_down_button_event(button_event_info_t *event_info,
             xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
             change_pin_handle_button(&change_pin_ctx, BTN_DOWN);
             xSemaphoreGive(change_pin_mutex);
+        }
+        return;
+    }
+
+    // View Settings screen -- scroll through g_settings[] with wraparound
+    if (sys_state.menu_state == MENU_SYSTEM_INFO)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
+            sys_state.menu_selection =
+                (sys_state.menu_selection == 0)
+                    ? (uint8_t)NVS_SETTINGS_COUNT - 1
+                    : sys_state.menu_selection - 1;
+            lcd_draw_settings_view_screen(sys_state.menu_selection);
         }
         return;
     }
@@ -5268,6 +5306,19 @@ void handle_back_button_event(button_event_info_t *event_info,
             atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
             return;
         }
+    }
+
+    // View Settings screen -- Back exits straight to Main Menu
+    if (sys_state.menu_state == MENU_SYSTEM_INFO)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
+            sys_state.menu_state = MAIN_MENU;
+            sys_state.menu_selection = 0;
+            sys_state.last_activity_time = esp_timer_get_time() / 1000;
+            show_menu_screen(MAIN_MENU, sys_state.menu_selection);
+        }
+        return;
     }
 
     switch (event_info->event)
@@ -5829,6 +5880,78 @@ void lcd_draw_diagnostics_screen(uint8_t index)
     row0[16] = '\0';
     row1[16] = '\0';
     lcd_show_diagnostic_detail(row0, row1);
+}
+
+/* ── lcd_draw_settings_view_screen() ─────────────────────────────────────
+ * Renders g_settings[index] as "Label" / "value" for the View Settings
+ * screen. Generic over the whole table -- adding a new NVS-backed
+ * setting to g_settings[] with a label automatically shows up here,
+ * nothing else to wire. */
+static const char *settings_view_unit_for(const char *label)
+{
+    if (strstr(label, "Volt"))
+        return "V";
+    if (strstr(label, "Cur"))
+        return "A";
+    if (strstr(label, "Freq"))
+        return "Hz";
+    if (strstr(label, "Temp"))
+        return "C";
+    if (strstr(label, "Timeout") || strstr(label, "Time"))
+        return "s";
+    if (strstr(label, "Capacity"))
+        return "Ah";
+    if (strstr(label, "Brightness"))
+        return "%";
+    return "";
+}
+
+void lcd_draw_settings_view_screen(uint8_t index)
+{
+    if (index >= (uint8_t)NVS_SETTINGS_COUNT)
+    {
+        lcd_show_settings_view_detail("Settings Error  ", "Bad item index  ");
+        return;
+    }
+
+    const nvs_setting_t *s = &g_settings[index];
+    char row0[17], row1[17];
+
+    char counter[8];
+    snprintf(counter, sizeof(counter), "%u/%u", (unsigned)(index + 1), (unsigned)NVS_SETTINGS_COUNT);
+    snprintf(row0, 17, "%-11.11s%5s", s->label ? s->label : "(unnamed)", counter);
+
+    if (s->is_scaled_float)
+    {
+        float val = *(float *)s->field;
+        snprintf(row1, 17, "%.2f%-3s        ", val, settings_view_unit_for(s->label));
+    }
+    else if (s->size == sizeof(uint8_t))
+    {
+        uint8_t val = *(uint8_t *)s->field;
+
+        if (strcmp(s->key, "bat_type") == 0 && val < BATTERY_TYPE_COUNT)
+        {
+            snprintf(row1, 17, "%-16.16s", battery_type_names[val]);
+        }
+        else if (val == 0 || val == 1)
+        {
+            snprintf(row1, 17, "%u (%-3s)        ", val, val ? "ON" : "OFF");
+        }
+        else
+        {
+            snprintf(row1, 17, "%u               ", val);
+        }
+    }
+    else
+    {
+        int32_t val = *(int32_t *)s->field;
+        snprintf(row1, 17, "%ld%-3s           ", (long)val, settings_view_unit_for(s->label));
+    }
+
+    row0[16] = '\0';
+    row1[16] = '\0';
+    lcd_show_settings_view_detail(row0, row1);
 }
 
 /* ── perform_factory_reset() ────────────────────────────────────────────── */

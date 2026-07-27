@@ -137,6 +137,15 @@ void lcd_show_diagnostic_detail(const char *label, const char *value_str)
     LCD_UNLOCK();
 }
 
+void lcd_show_settings_view_detail(const char *label, const char *value_str)
+{
+    LCD_LOCK();
+    sys_lcd.screen = LCD_SCREEN_SETTINGS_VIEW;
+    set16(sys_lcd.settings_view.label, label);
+    set16(sys_lcd.settings_view.value_str, value_str);
+    LCD_UNLOCK();
+}
+
 /* ── Inverter sequences ──────────────────────────────────────────────────── */
 void lcd_show_startup_progress(uint8_t pct)
 {
