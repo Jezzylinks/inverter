@@ -292,6 +292,8 @@ void led_event_task(void *pv)
             break;
 
         case EVENT_CATEGORY_SYSTEM:
+        case EVENT_CATEGORY_FACTORY_RESET:
+        case EVENT_CATEGORY_WIFI:
             switch (evt.action)
             {
             case EVENT_ACTION_ON:
@@ -373,14 +375,12 @@ void led_event_task(void *pv)
             switch (evt.action)
             {
             case EVENT_ACTION_ON:
-                ESP_LOGI("EVENT_CATEGORY", "EVENT ACTION OFF LED");
                 direct = true;
                 direct_state = true;
                 direct_led = LED_STATUS;
                 break;
 
             case EVENT_ACTION_OFF:
-                ESP_LOGI("EVENT_CATEGORY", "EVENT ACTION OFF LED");
                 direct = true;
                 direct_state = false;
                 direct_led = LED_STATUS;

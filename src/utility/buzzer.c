@@ -6,6 +6,9 @@
 #include "freertos/task.h"
 #include "utility/led.h"
 #include "hardware_config.h"
+#include "system_state.h"
+
+extern system_state_t sys_state;
 
 #define BUZZER_LEDC_MODE LEDC_LOW_SPEED_MODE
 #define BUZZER_LEDC_TIMER LEDC_TIMER_0
@@ -38,8 +41,25 @@ void buzzer_init(void)
     ESP_ERROR_CHECK(ledc_channel_config(&channel));
 }
 
+static void buzzer_stop(void)
+{
+    ESP_ERROR_CHECK(ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0));
+    ESP_ERROR_CHECK(ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL));
+}
+
 void buzzer_beep(uint32_t frequency, uint8_t duty_percent, uint32_t duration_ms)
 {
+    if (!sys_state.sound_enabled)
+    {
+        /* Still wait out the duration -- callers chain several beeps
+         * back-to-back assuming each one blocks for its length, and this
+         * function only ever runs on its own dedicated task, so silently
+         * skipping the delay would desync multi-tone sequences without
+         * actually saving anything meaningful. */
+        vTaskDelay(pdMS_TO_TICKS(duration_ms));
+        return;
+    }
+
     if (duty_percent > 100)
         duty_percent = 100;
 
@@ -62,24 +82,82 @@ void buzzer_beep(uint32_t frequency, uint8_t duty_percent, uint32_t duration_ms)
 
     vTaskDelay(pdMS_TO_TICKS(duration_ms));
 
-    // Stop buzzer
-    ESP_ERROR_CHECK(ledc_set_duty(
-        BUZZER_LEDC_MODE,
-        BUZZER_LEDC_CHANNEL,
-        0));
+    buzzer_stop();
+}
 
-    ESP_ERROR_CHECK(ledc_update_duty(
-        BUZZER_LEDC_MODE,
-        BUZZER_LEDC_CHANNEL));
+/* ========================================================================
+ *  Lower-level compatibility API -- still called directly from main.c
+ *  in a few places outside the event pipeline (e.g. the Sound On/Off
+ *  settings toggle immediately silencing any tone in progress).
+ * ======================================================================== */
+
+void update_buzzer(uint16_t freq_hz, uint8_t volume_percent)
+{
+    if (!sys_state.sound_enabled || freq_hz == 0 || volume_percent == 0)
+    {
+        buzzer_stop();
+        return;
+    }
+
+    if (volume_percent > 100)
+        volume_percent = 100;
+
+    uint32_t max_duty = (1 << BUZZER_LEDC_RES) - 1;
+    uint32_t duty = (max_duty * volume_percent) / 100;
+
+    ESP_ERROR_CHECK(ledc_set_freq(BUZZER_LEDC_MODE, BUZZER_LEDC_TIMER, freq_hz));
+    ESP_ERROR_CHECK(ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, duty));
+    ESP_ERROR_CHECK(ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL));
+}
+
+void buzzer_off(void)
+{
+    buzzer_stop();
+}
+
+void buzzer_alert(void)
+{
+    buzzer_beep(2200, 70, 200);
+}
+
+void buzzer_error(void)
+{
+    buzzer_beep(600, 90, 150);
+    vTaskDelay(pdMS_TO_TICKS(60));
+    buzzer_beep(600, 90, 150);
+}
+
+void buzzer_success(void)
+{
+    buzzer_beep(2000, 55, 100);
 }
 
 /* ========================================================================
  *  Pattern helpers (blocking, called only from this task context)
  * ======================================================================== */
 
-static void beep_warning(void)
+static void beep_warning(void) { buzzer_beep(1800, 50, 150); }
+
+static void beep_derate(void)
 {
-    buzzer_beep(1800, 50, 150);
+    buzzer_beep(1400, 60, 100);
+    vTaskDelay(pdMS_TO_TICKS(80));
+    buzzer_beep(1400, 60, 100);
+}
+
+static void beep_shutdown(void)
+{
+    for (int i = 0; i < 3; i++)
+    {
+        buzzer_beep(800, 85, 200);
+        vTaskDelay(pdMS_TO_TICKS(60));
+    }
+}
+
+static void beep_recovered(void)
+{
+    buzzer_beep(1600, 50, 80);
+    buzzer_beep(2200, 60, 120);
 }
 
 static void beep_on(void)
@@ -96,41 +174,21 @@ static void beep_off(void)
     buzzer_beep(800, 60, 150);
 }
 
-// Buzzer starts here
-static void alert_led_warn(void)
+/* Distinct from beep_on/beep_off -- a PIN change, calibration, or
+ * factory-reset outcome shouldn't sound identical to powering the
+ * inverter on or off. */
+static void beep_success(void) { buzzer_beep(2000, 55, 100); }
+
+static void beep_error(void)
 {
-    led_execute_pattern(&(led_pattern_t){
-        .led = LED_ERROR,
-        .type = LED_PATTERN_BLINK,
-        .on_time_ms = 500,
-        .off_time_ms = 500,
-        .repeat = 3});
+    buzzer_beep(600, 90, 150);
+    vTaskDelay(pdMS_TO_TICKS(60));
+    buzzer_beep(600, 90, 150);
 }
 
-static void alert_led_derate(void)
-{
-    led_execute_pattern(&(led_pattern_t){
-        .led = LED_ERROR,
-        .type = LED_PATTERN_BLINK,
-        .on_time_ms = 150,
-        .off_time_ms = 150,
-        .repeat = 5});
-}
-
-static void alert_led_shutdown(void)
-{
-    led_execute_pattern(&(led_pattern_t){
-        .led = LED_ERROR,
-        .type = LED_PATTERN_BLINK,
-        .on_time_ms = 100,
-        .off_time_ms = 150,
-        .repeat = 10});
-}
-
-static void alert_led_recovered(void)
-{
-    led_execute_pattern(&(led_pattern_t){.led = LED_ERROR, .type = LED_PATTERN_OFF});
-}
+/* Very short, quiet -- keypress feedback. Kept brief so rapid presses
+ * never feel like they're waiting on the buzzer. */
+static void beep_click(void) { buzzer_beep(2500, 25, 15); }
 
 /* ========================================================================
  *  Task
@@ -160,24 +218,29 @@ void buzzer_event_task(void *pv)
         {
             continue;
         }
-        ESP_LOGI("BUZZER_EVENT", "EVENT DISPATCHED TO BUZZER");
+
         switch (evt.category)
         {
         case EVENT_CATEGORY_PROTECTION:
+            /* led.c's led_event_task already owns the LED side of these
+             * (it's independently subscribed to the same protection
+             * events via the routing table) -- this task's only job for
+             * PROTECTION is to actually make sound, which previously
+             * wasn't happening at all here (this case called LED
+             * functions instead of beeping). */
             switch (evt.action)
             {
             case EVENT_ACTION_WARNING:
-                alert_led_warn();
+                beep_warning();
                 break;
             case EVENT_ACTION_DERATE:
-                alert_led_derate();
+                beep_derate();
                 break;
             case EVENT_ACTION_SHUTDOWN:
-                ESP_LOGI("EVENT_PROTECTION", "EVENT PROTECTED BY SHUTDOWN");
-                alert_led_shutdown();
+                beep_shutdown();
                 break;
             case EVENT_ACTION_RECOVERED:
-                alert_led_recovered();
+                beep_recovered();
                 break;
             default:
                 break;
@@ -185,30 +248,30 @@ void buzzer_event_task(void *pv)
             break;
 
         case EVENT_CATEGORY_SYSTEM:
+        case EVENT_CATEGORY_FACTORY_RESET:
+        case EVENT_CATEGORY_WIFI:
             if (evt.action == EVENT_ACTION_ON)
             {
                 beep_on();
             }
             else if (evt.action == EVENT_ACTION_OFF)
             {
-                ESP_LOGI("EVENT_CATEGORY", "EVENT ACTION OFF BUZZER");
                 beep_off();
             }
             else if (evt.action == EVENT_ACTION_SUCCESS)
             {
-                ESP_LOGI("EVENT_CATEGORY", "EVENT ACTION OFF BUZZER");
-                beep_on();
+                beep_success();
             }
             else if (evt.action == EVENT_ACTION_ERROR)
             {
-                beep_off();
+                beep_error();
             }
             break;
 
         case EVENT_CATEGORY_BUTTON:
             if (evt.action == EVENT_ACTION_PRESSED)
             {
-                beep_warning();
+                beep_click();
             }
             break;
 
