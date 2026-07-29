@@ -2,6 +2,7 @@
 #include "driver/i2c.h"
 #include "esp_log.h"
 #include "rom/ets_sys.h"
+#include "freertos/FreeRTOS.h"
 #include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -29,6 +30,15 @@ static lcd_state_t lcd;
 // I2C
 #define I2C_PORT I2C_NUM_0
 #define I2C_FREQ_HZ 100000
+
+esp_err_t lcd_i2c_probe(void)
+{
+    /* Zero-length write: the I2C driver still clocks out the address
+     * byte and checks for ACK/NACK, but no command/data byte follows,
+     * so this can't corrupt whatever the display currently shows. */
+    return i2c_master_write_to_device(I2C_PORT, lcd_address, NULL, 0,
+                                      pdMS_TO_TICKS(100));
+}
 
 // Pin latch bits
 #define ENABLE_BIT 0x04

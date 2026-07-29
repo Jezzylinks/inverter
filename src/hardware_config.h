@@ -21,4 +21,8 @@
 #define GPIO_FAN_TEST GPIO_NUM_4
 #define CONFIG_USE_LED_PWM 1
 
+/* Shared with main.c's ADC_FAN threshold check (ERR_FAN_FAIL) and
+ * post_fan.c's POST -- keep both in sync via this one definition. */
+#define FAN_SPEED_THRESHOLD 2.0f
+
 #endif

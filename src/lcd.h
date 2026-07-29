@@ -46,6 +46,14 @@ extern "C"
     void lcd_init(uint8_t addr, uint8_t sdaPin, uint8_t sclPin);
 
     /**
+     * @brief Probe the LCD's I2C address for an ACK, without writing any
+     * command/data bytes -- safe to call at any time, won't disturb
+     * whatever is currently on the display.
+     * @return ESP_OK if the LCD ACKs its address, an I2C error otherwise.
+     */
+    esp_err_t lcd_i2c_probe(void);
+
+    /**
      * @brief Initialize I2C bus
      * @param sdaPin GPIO pin for SDA
      * @param sclPin GPIO pin for SCL

@@ -63,6 +63,7 @@
 // Utility
 #include "utility/led.h"
 #include "utility/buzzer.h"
+#include "post/post_manager.h"
 
 /* ── All original #defines─────────────────────────────── */
 #define WIFI_SSID "johnson"
@@ -1121,6 +1122,7 @@ void shutdown_inverter(void);
 static void post_inverter_power_event(bool powered_on);
 static void post_inverter_fault_event(void);
 static void post_inverter_success_event(void);
+static void post_show_result_and_notify(post_result_t result);
 static void post_factory_reset_event(bool success);
 static void post_wifi_event(bool connected);
 static void post_boot_complete_event(void);
@@ -5538,6 +5540,50 @@ static void post_inverter_success_event(void)
     system_event_post(&evt);
 }
 
+/* Bridges post_manager.c's plain pass/fail result (it stays decoupled
+ * from LCD/event specifics on purpose) to actual user feedback: a
+ * SUCCESS/ERROR event (buzzer chime + LED via the existing pipeline)
+ * plus an LCD message -- unless the LCD itself failed POST, in which
+ * case rendering a fault screen on a display that just failed to ACK
+ * its own I2C address would be pointless. */
+static void post_show_result_and_notify(post_result_t result)
+{
+    system_event_t evt = {0};
+    evt.category = EVENT_CATEGORY_SYSTEM;
+    evt.action = result.all_passed ? EVENT_ACTION_SUCCESS : EVENT_ACTION_ERROR;
+    evt.source = EVENT_SOURCE_SYSTEM;
+    evt.priority = result.all_passed ? EVENT_PRIORITY_NORMAL : EVENT_PRIORITY_CRITICAL;
+    evt.timestamp = xTaskGetTickCount();
+    system_event_post(&evt);
+
+    if (result.all_passed)
+    {
+        lcd_flash_info("Self-Test OK    ", "                ", 1500);
+        return;
+    }
+
+    char summary[17] = {0};
+    int pos = 0;
+    if (!result.lcd_ok)
+        pos += snprintf(summary + pos, sizeof(summary) - pos, "LCD ");
+    if (!result.adc_ok)
+        pos += snprintf(summary + pos, sizeof(summary) - pos, "ADC ");
+    if (!result.fan_ok)
+        pos += snprintf(summary + pos, sizeof(summary) - pos, "FAN ");
+
+    char line1[17];
+    snprintf(line1, sizeof(line1), "%-16.16s", summary);
+
+    if (result.lcd_ok)
+    {
+        lcd_show_fault("** POST FAILED  ", line1);
+    }
+    else
+    {
+        ESP_LOGE("POST", "LCD failed POST -- cannot display fault screen. Failed: %s", summary);
+    }
+}
+
 static void post_factory_reset_event(bool success)
 {
     system_event_t evt = {0};
@@ -5986,83 +6032,67 @@ void perform_factory_reset(void)
 
 bool check_safety_conditions(void)
 {
-    battery_profile_t battery;
-    float measured_voltage = 12.0f; // Simulated measurements
-    float measured_current = 10.2f;
-    float measured_temp = 3.0f;
-    sys_state.insulation_resistance = 500.0f; // Simulated insulation resistance in kOhms
-
-    // Load battery profile
-    if (!battery_load_profile(&battery))
+    /* A hardware fault caught by POST at boot shouldn't be forgotten by
+     * the time someone actually tries to power on. */
+    post_result_t post_result = post_get_last_result();
+    if (!post_result.all_passed)
     {
-        printf("Failed to load battery profile!\n");
+        printf("SAFETY CHECK FAILED: POST did not pass (lcd=%d adc=%d fan=%d)\n",
+               post_result.lcd_ok, post_result.adc_ok, post_result.fan_ok);
         return false;
     }
 
-    printf("Battery: %s\n", battery.name_prefix);
-    printf("Measured: %.2fV, %.2fA, %.1f°C\n\n",
-           measured_voltage, measured_current, measured_temp);
+    /* Use the live, already-scaled active profile and a real ADC
+     * reading -- this used to check hardcoded simulated numbers
+     * (12.0V/10.2A/3.0C) against the profile every single time,
+     * regardless of the inverter's actual state. */
+    const battery_profile_t *battery = &sys_state.battery_profile;
+    float measured_voltage = sys_state.inverter.battery.voltage;
+
+    printf("Battery: %s\n", battery->name_prefix);
+    printf("Measured: %.2fV\n\n", measured_voltage);
 
     bool all_checks_passed = true;
 
+    /* NOTE: current and temperature safety checks removed here -- there
+     * is no current or temperature sensor ADC channel wired up
+     * anywhere in this firmware yet (sys_state.inverter.actual_current
+     * is never assigned, and sys_state.inverter.temperature is pinned
+     * at its 25.0C init value for the whole program), so checking them
+     * would just be comparing the profile against more fake numbers.
+     * Add real checks here once those sensors exist. */
+
     // Check overvoltage
-    if (measured_voltage > battery.overvoltage_protection_12v)
+    if (measured_voltage > battery->overvoltage_protection_12v)
     {
         printf("❌ OVERVOLTAGE! %.2fV > %.2fV\n",
-               measured_voltage, battery.overvoltage_protection_12v);
+               measured_voltage, battery->overvoltage_protection_12v);
         all_checks_passed = false;
     }
     else
     {
         printf("✓ Voltage OK (%.2fV <= %.2fV)\n",
-               measured_voltage, battery.overvoltage_protection_12v);
+               measured_voltage, battery->overvoltage_protection_12v);
     }
 
     // Check undervoltage
-    if (measured_voltage < battery.undervoltage_protection_12v)
+    if (measured_voltage < battery->undervoltage_protection_12v)
     {
         printf("❌ UNDERVOLTAGE! %.2fV < %.2fV\n",
-               measured_voltage, battery.undervoltage_protection_12v);
+               measured_voltage, battery->undervoltage_protection_12v);
         all_checks_passed = false;
     }
     else
     {
         printf("✓ Voltage above minimum (%.2fV >= %.2fV)\n",
-               measured_voltage, battery.undervoltage_protection_12v);
-    }
-
-    // Check overcurrent
-    if (measured_current > battery.max_charge_current_per_100ah)
-    {
-        printf("❌ OVERCURRENT! %.2fA > %.2fA\n",
-               measured_current, battery.max_charge_current_per_100ah);
-        all_checks_passed = false;
-    }
-    else
-    {
-        printf("✓ Current OK (%.2fA <= %.2fA)\n",
-               measured_current, battery.max_charge_current_per_100ah);
-    }
-
-    // Check temperature
-    if (measured_temp < battery.charge_temp_min ||
-        measured_temp > battery.charge_temp_max)
-    {
-        printf("❌ TEMPERATURE OUT OF RANGE! %.1f°C (range: %.1f°C to %.1f°C)\n",
-               measured_temp, battery.charge_temp_min, battery.charge_temp_max);
-        all_checks_passed = false;
-    }
-    else
-    {
-        printf("✓ Temperature OK (%.1f°C within %.1f°C to %.1f°C)\n",
-               measured_temp, battery.charge_temp_min, battery.charge_temp_max);
+               measured_voltage, battery->undervoltage_protection_12v);
     }
 
     // Check low battery warning
-    if (measured_voltage < battery.low_voltage_warning_12v)
+    if (measured_voltage < battery->low_voltage_warning_12v)
     {
         printf("⚠️  LOW BATTERY WARNING! %.2fV < %.2fV\n",
-               measured_voltage, battery.low_voltage_warning_12v);
+               measured_voltage, battery->low_voltage_warning_12v);
     }
 
 // Check grid voltage (if grid-tied or hybrid)
@@ -9121,6 +9151,27 @@ void app_main(void)
     xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 4096, NULL, 5, NULL, 0);
     xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, 0);
     xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 4096, NULL, 9, NULL, 0);
+
+    /* Power-On Self-Test: wait for adc_task's warmup to finish so
+     * sys_state.inverter.battery.voltage/output_voltage/fan.speed are
+     * real, multi-sampled readings rather than zero/garbage init values.
+     * Called from app_main's own task, not adc_task -- adc_task keeps
+     * running its own loop the whole time, including throughout
+     * post_fan_test()'s wait, so fan-speed feedback stays live instead
+     * of freezing at a stale value. */
+    EventBits_t adc_bits = xEventGroupWaitBits(sys_event_group,
+                                               EVT_ADC_WARMED_UP,
+                                               pdFALSE, pdTRUE,
+                                               pdMS_TO_TICKS(10000));
+    if (adc_bits & EVT_ADC_WARMED_UP)
+    {
+        post_result_t post_result = post_run_all();
+        post_show_result_and_notify(post_result);
+    }
+    else
+    {
+        ESP_LOGW(APP_TAG, "ADC did not warm up in time; skipping POST");
+    }
 
     lcd_watchdog_init(lcd_task_handle);
     while (sys_state.system_ready)
