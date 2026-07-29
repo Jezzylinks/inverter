@@ -2,45 +2,66 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/gpio.h"
 #include "esp_log.h"
-#include "hardware_config.h"
-#include "system_state.h"
 
-extern system_state_t sys_state;
+#include "fan/fan_driver.h"
+#include "hardware_config.h" /* FAN_SPEED_THRESHOLD_RPM */
 
 static const char *TAG = "POST_FAN";
 
-#define POST_FAN_TEST_DURATION_MS 2000
+/*----------------------------------------------------------
+ * Configuration
+ *---------------------------------------------------------*/
+#define POST_FAN_TEST_DUTY_PERCENT 80
+#define POST_FAN_STABILIZE_MS 300
+#define POST_FAN_MEASURE_WINDOW_MS 500
+#define POST_FAN_SAMPLE_INTERVAL_MS 50
+
+/*----------------------------------------------------------
+ * Public Functions
+ *---------------------------------------------------------*/
 
 bool post_fan_test(void)
 {
-    /* GPIO_FAN_TEST is already configured as an output by init_hardware(),
-     * which always runs before this. */
-    esp_err_t err = gpio_set_level(GPIO_FAN_TEST, 1);
-    if (err != ESP_OK)
+    if (fan_set_speed_percent(POST_FAN_TEST_DUTY_PERCENT) != ESP_OK)
     {
-        ESP_LOGE(TAG, "Failed to drive GPIO_FAN_TEST high: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to command fan PWM");
         return false;
     }
 
-    /* Let the fan physically spin up, and let adc_task (running
-     * concurrently on its own task) take several fresh samples of
-     * ADC_FAN during this wait -- sys_state.fan.speed only updates if
-     * adc_task keeps running while we wait here. */
-    vTaskDelay(pdMS_TO_TICKS(POST_FAN_TEST_DURATION_MS));
+    /* Let the fan physically spin up before trusting the tachometer --
+     * fan_driver's ISR keeps timestamping pulses in the background
+     * throughout this wait regardless of which task is running. */
+    vTaskDelay(pdMS_TO_TICKS(POST_FAN_STABILIZE_MS));
 
-    float speed = sys_state.fan.speed;
+    /* Take the peak RPM reading over the measurement window rather than
+     * a single sample, since a single read could land right after a
+     * bounce-rejected pulse and look artificially low even with a
+     * genuinely spinning, healthy fan. */
+    uint32_t peak_rpm = 0;
+    uint32_t elapsed_ms = 0;
 
-    gpio_set_level(GPIO_FAN_TEST, 0);
-
-    if (speed < FAN_SPEED_THRESHOLD)
+    while (elapsed_ms < POST_FAN_MEASURE_WINDOW_MS)
     {
-        ESP_LOGE(TAG, "Fan speed reading %.2fV below threshold %.2fV",
-                 speed, (float)FAN_SPEED_THRESHOLD);
+        uint32_t rpm = fan_get_rpm();
+        if (rpm > peak_rpm)
+        {
+            peak_rpm = rpm;
+        }
+        vTaskDelay(pdMS_TO_TICKS(POST_FAN_SAMPLE_INTERVAL_MS));
+        elapsed_ms += POST_FAN_SAMPLE_INTERVAL_MS;
+    }
+
+    fan_set_speed_percent(0);
+
+    if (peak_rpm < (uint32_t)FAN_SPEED_THRESHOLD_RPM)
+    {
+        ESP_LOGE(TAG, "Fan RPM %lu below threshold %lu",
+                 (unsigned long)peak_rpm, (unsigned long)FAN_SPEED_THRESHOLD_RPM);
         return false;
     }
 
-    ESP_LOGI(TAG, "Fan OK: %.2fV >= %.2fV", speed, (float)FAN_SPEED_THRESHOLD);
+    ESP_LOGI(TAG, "Fan OK: %lu RPM >= %lu RPM",
+             (unsigned long)peak_rpm, (unsigned long)FAN_SPEED_THRESHOLD_RPM);
     return true;
 }

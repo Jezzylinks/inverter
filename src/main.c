@@ -64,6 +64,7 @@
 #include "utility/led.h"
 #include "utility/buzzer.h"
 #include "post/post_manager.h"
+#include "fan/fan_driver.h"
 
 /* ── All original #defines─────────────────────────────── */
 #define WIFI_SSID "johnson"
@@ -177,9 +178,6 @@
 #define OVER_VOLTAGE_THRESHOLD 260.0f
 #define BATTERY_VOLTAGE_THRESHOLD 12.0f
 #define INVERTER_OUTPUT_VOLTAGE_THRESHOLD 220.0f
-#define FAN_SPEED_THRESHOLD 2.0f
-#define FAN_SPEED_MAX 5.0f
-#define FAN_SPEED_MIN 0.5f
 #define ERROR_ADC_FAILURE 0xFD
 #define ERROR_WATCHDOG_TIMEOUT 0xFE
 #define ERROR_STACK_OVERFLOW 0xFC
@@ -1514,6 +1512,7 @@ void init_hardware(void)
     // ==========================================================
 #if CONFIG_USE_LED_PWM
     led_init();
+    fan_driver_init();
 #endif
 
     // ==========================================================
@@ -2348,16 +2347,6 @@ static const adc_channel_config_t adc_configs[] = {
      .name = "Battery Voltage",
      .voltage_divider_ratio = BATTERY_VOLTAGE_DIVIDER_RATIO},
 
-    {
-        .channel = ADC_FAN, // Replace with actual ADC channel for fan
-        .channel_id = CHANNEL_ID_FAN,
-        .target_value = &sys_state.fan.speed,
-        .threshold_low = FAN_SPEED_THRESHOLD,
-        .has_high_threshold = false,
-        .error_flag = ERR_FAN_FAIL,
-        .name = "Fan Speed",
-        .voltage_divider_ratio = FAN_SPEED_VOLTAGE_DIVIDER_RATIO // Direct connection, no divider
-    },
     {.channel = ADC_INVERTER_OUTPUT_VOLTAGE, // Replace with actual ADC channel for inverter voltage
      .channel_id = CHANNEL_ID_INVERTER_OUTPUT_VOLTAGE,
      .target_value = &sys_state.inverter.output_voltage,
@@ -3091,6 +3080,10 @@ void check_protections(void)
         PROT_QUANTITY_BATTERY_VOLTAGE,
         sys_state.inverter.battery.voltage,
         now_ms);
+
+    uint32_t fan_rpm = fan_get_rpm();
+    sys_state.fan.speed = (float)fan_rpm;
+    sys_state.fan.connected = (fan_rpm >= (uint32_t)FAN_SPEED_THRESHOLD_RPM);
 
     if (sys_state.inverter.temperature > 70.0f &&
         !sys_state.fan.connected)

@@ -11,18 +11,18 @@ extern "C"
     /**
      * @brief Power-On Self-Test for the cooling fan.
      *
-     * This inverter has no tachometer input -- fan speed is sensed as an
-     * analog voltage on ADC_FAN (see adc_configs[] in main.c), already
-     * continuously read and written to sys_state.fan.speed by adc_task.
-     * The test drives GPIO_FAN_TEST high, waits for the fan to spin up
-     * and for adc_task (running concurrently -- this must NOT be called
-     * from adc_task's own context, or sys_state.fan.speed will never be
-     * refreshed during the wait) to report a fresh reading, then checks
-     * it against FAN_SPEED_THRESHOLD before turning the fan back off.
+     * This is a real 4-wire PWM fan with a tachometer (Yellow wire),
+     * driven via fan_driver.c: commands a test PWM duty cycle, lets the
+     * fan physically spin up, measures RPM from the tachometer's pulse
+     * period (not a fixed on/off GPIO command with no feedback), and
+     * confirms it rose above FAN_SPEED_THRESHOLD_RPM before turning the
+     * fan back off.
      *
-     * @return true if fan speed rose above FAN_SPEED_THRESHOLD.
-     * @return false otherwise (fan not spinning, wiring fault, or the
-     *         GPIO/ADC pairing is disconnected).
+     * Sequence: fan on -> 300ms stabilize -> measure for 500ms -> off.
+     *
+     * @return true if measured RPM exceeded FAN_SPEED_THRESHOLD_RPM.
+     * @return false otherwise (fan not spinning, stalled, or the
+     *         PWM/tach wiring is faulty).
      */
     bool post_fan_test(void);
 
