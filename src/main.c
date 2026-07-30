@@ -65,6 +65,7 @@
 #include "utility/buzzer.h"
 #include "post/post_manager.h"
 #include "fan/fan_driver.h"
+#include "utility/quiet_hours.h"
 
 /* ── All original #defines─────────────────────────────── */
 #define WIFI_SSID "johnson"
@@ -900,6 +901,10 @@ typedef enum
     VALUE_TYPE_BATTERY_TYPE,
     VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM,
     VALUE_TYPE_SOUND_ENABLE,
+    VALUE_TYPE_QUIET_HOURS_ENABLE,
+    VALUE_TYPE_QUIET_HOURS_START,
+    VALUE_TYPE_QUIET_HOURS_END,
+    VALUE_TYPE_UTC_OFFSET,
     VALUE_TYPE_COUNT
 } value_edit_param_t;
 
@@ -1008,7 +1013,11 @@ static const menu_item_t settings_items[] = {
     {"Scroll Speed", MENU_SETTINGS},
     {"Battery Type", MENU_SETTINGS},
     {"Voltage System", MENU_SETTINGS},
-    {"Sound", MENU_SETTINGS}};
+    {"Sound", MENU_SETTINGS},
+    {"Quiet Hours", MENU_SETTINGS},
+    {"Quiet Start", MENU_SETTINGS},
+    {"Quiet End", MENU_SETTINGS},
+    {"UTC Offset", MENU_SETTINGS}};
 
 // MONITORING MENU (6 items)
 static const menu_item_t monitoring_items[] = {
@@ -1169,6 +1178,10 @@ static void apply_system_timeout(float v);
 static void apply_battery_type(float v);
 static void apply_battery_voltage_system(float v);
 static void apply_sound_enable(float v);
+static void apply_quiet_hours_enable(float v);
+static void apply_quiet_hours_start(float v);
+static void apply_quiet_hours_end(float v);
+static void apply_utc_offset(float v);
 static void sync_battery_protection_thresholds(void);
 
 // Value adjustment functions
@@ -1197,6 +1210,10 @@ void edit_scroll_speed(void);
 void edit_battery_type(void);
 void edit_battery_voltage_system(void);
 void edit_sound_enable(void);
+void edit_quiet_hours_enable(void);
+void edit_quiet_hours_start(void);
+void edit_quiet_hours_end(void);
+void edit_utc_offset(void);
 void security_pin(void);
 
 // Submenu functions
@@ -1474,6 +1491,67 @@ static value_edit_context_t value_edit[] = {
         .live_update = true,
         .apply = apply_sound_enable,
     },
+
+    [VALUE_TYPE_QUIET_HOURS_ENABLE] = {
+        .edit_type = VALUE_EDIT_BOOL,
+        .current_value = 0.0f,
+        .unit = "",
+        .label = "Quiet Hours",
+        .is_critical = false,
+        .live_update = true,
+        .apply = apply_quiet_hours_enable,
+    },
+
+    [VALUE_TYPE_QUIET_HOURS_START] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 0.0f,
+        .max_value = 23.0f,
+        .increment_small = 1.0f,
+        .increment_large = 4.0f,
+        .increment_precision = 1.0f,
+        .step_size = 1.0f,
+        .decimal_places = 0,
+        .unit = "h",
+        .label = "Quiet Start",
+        .is_critical = false,
+        .live_update = true,
+        .current_value = 22.0f,
+        .apply = apply_quiet_hours_start,
+    },
+
+    [VALUE_TYPE_QUIET_HOURS_END] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 0.0f,
+        .max_value = 23.0f,
+        .increment_small = 1.0f,
+        .increment_large = 4.0f,
+        .increment_precision = 1.0f,
+        .step_size = 1.0f,
+        .decimal_places = 0,
+        .unit = "h",
+        .label = "Quiet End",
+        .is_critical = false,
+        .live_update = true,
+        .current_value = 6.0f,
+        .apply = apply_quiet_hours_end,
+    },
+
+    [VALUE_TYPE_UTC_OFFSET] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = -12.0f,
+        .max_value = 14.0f,
+        .increment_small = 1.0f,
+        .increment_large = 4.0f,
+        .increment_precision = 1.0f,
+        .step_size = 1.0f,
+        .decimal_places = 0,
+        .unit = "h",
+        .label = "UTC Offset",
+        .is_critical = false,
+        .live_update = true,
+        .current_value = 0.0f,
+        .apply = apply_utc_offset,
+    },
 };
 
 // =============== HARDWARE INITIALIZATION ===============
@@ -1513,6 +1591,7 @@ void init_hardware(void)
 #if CONFIG_USE_LED_PWM
     led_init();
     fan_driver_init();
+    quiet_hours_sntp_init();
 #endif
 
     // ==========================================================
@@ -1570,6 +1649,10 @@ static nvs_setting_t g_settings[] = {
     {"auto_shutdown", &sys_state.display.auto_shutdown_enabled, sizeof(uint8_t), 0, false, "Auto Shutdown"},
     {"scroll_en", &sys_state.display.scroll_enabled, sizeof(uint8_t), 0, false, "Scroll Enable"},
     {"sound_en", &sys_state.sound_enabled, sizeof(uint8_t), 1, false, "Sound"},
+    {"quiet_en", &sys_state.quiet_hours_enabled, sizeof(uint8_t), 0, false, "Quiet Hours"},
+    {"quiet_start", &sys_state.quiet_hours_start, sizeof(uint8_t), 22, false, "Quiet Start"},
+    {"quiet_end", &sys_state.quiet_hours_end, sizeof(uint8_t), 6, false, "Quiet End"},
+    {"utc_offset", &sys_state.utc_offset_hours, sizeof(uint8_t), 0, false, "UTC Offset"},
     {"scroll_spd", &sys_state.display.scroll_speed, sizeof(uint8_t), DEFAULT_SCROLL_SPEED, false, "Scroll Speed"},
     {"out_volt", &sys_state.inverter.output_voltage, sizeof(int32_t), 220.0f, true, "Output Voltage"},
     {"out_freq", &sys_state.inverter.output_frequency, sizeof(int32_t), 50.0f, true, "Output Freq"},
@@ -3566,6 +3649,7 @@ void start_wifi_connection(void)
     {
         lcd_show_wifi_result(true, false, false, sys_state.wifi.ssid);
         post_wifi_event(true);
+        quiet_hours_request_sync();
     }
     else if (bits & WIFI_FAIL_BIT)
     {
@@ -4491,6 +4575,18 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 break;
             case 10:
                 edit_sound_enable();
+                break;
+            case 11:
+                edit_quiet_hours_enable();
+                break;
+            case 12:
+                edit_quiet_hours_start();
+                break;
+            case 13:
+                edit_quiet_hours_end();
+                break;
+            case 14:
+                edit_utc_offset();
                 break;
             }
             break;
@@ -5728,6 +5824,15 @@ static void apply_sound_enable(float v)
         buzzer_off();
     }
 }
+
+static void apply_quiet_hours_enable(float v)
+{
+    sys_state.quiet_hours_enabled = (v != 0.0f);
+}
+
+static void apply_quiet_hours_start(float v) { sys_state.quiet_hours_start = (uint8_t)v; }
+static void apply_quiet_hours_end(float v) { sys_state.quiet_hours_end = (uint8_t)v; }
+static void apply_utc_offset(float v) { sys_state.utc_offset_hours = (int8_t)v; }
 static void apply_scroll_speed(float v) { sys_state.display.scroll_speed = (uint8_t)v; }
 static void apply_system_timeout(float v) { set_system_timeout((uint32_t)v); }
 
@@ -8481,6 +8586,10 @@ void init_system_state()
     sys_state.battery_voltage_system = 12.0f;
     sys_state.battery_cutoff = 11.05f;
     sys_state.sound_enabled = true;
+    sys_state.quiet_hours_enabled = false;
+    sys_state.quiet_hours_start = 22;
+    sys_state.quiet_hours_end = 6;
+    sys_state.utc_offset_hours = 0;
     sys_state.low_battery = false;
 
     // Initialize system parameters with default values
@@ -8976,6 +9085,58 @@ void edit_sound_enable(void)
     sys_state.value_edit_mode = true;
     sys_state.current_value_type = &value_edit[VALUE_TYPE_SOUND_ENABLE];
     sys_state.current_value_type->current_value = sys_state.sound_enabled ? 1.0f : 0.0f;
+    lcd_show_value_edit_screen();
+}
+
+void edit_quiet_hours_enable(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_QUIET_HOURS_ENABLE];
+    sys_state.current_value_type->current_value = sys_state.quiet_hours_enabled ? 1.0f : 0.0f;
+    lcd_show_value_edit_screen();
+}
+
+void edit_quiet_hours_start(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_QUIET_HOURS_START];
+    sys_state.current_value_type->current_value = (float)sys_state.quiet_hours_start;
+    lcd_show_value_edit_screen();
+}
+
+void edit_quiet_hours_end(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_QUIET_HOURS_END];
+    sys_state.current_value_type->current_value = (float)sys_state.quiet_hours_end;
+    lcd_show_value_edit_screen();
+}
+
+void edit_utc_offset(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_UTC_OFFSET];
+    sys_state.current_value_type->current_value = (float)sys_state.utc_offset_hours;
     lcd_show_value_edit_screen();
 }
 

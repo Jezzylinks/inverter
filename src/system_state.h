@@ -458,6 +458,10 @@ extern "C"
         float battery_cutoff; // Battery cutoff voltage (V)
         bool precharge_complete;
         bool sound_enabled; // Global buzzer mute -- gated in update_buzzer()
+        bool quiet_hours_enabled;
+        uint8_t quiet_hours_start; // 0-23, local hour
+        uint8_t quiet_hours_end;   // 0-23, local hour (can be < start -- wraps overnight)
+        int8_t utc_offset_hours;  // -12 to +14, applied to NTP-synced UTC time
 
         // Value editing backup
         float edit_backup_value;

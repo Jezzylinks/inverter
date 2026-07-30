@@ -7,6 +7,7 @@
 #include "utility/led.h"
 #include "hardware_config.h"
 #include "system_state.h"
+#include "quiet_hours.h"
 
 extern system_state_t sys_state;
 
@@ -49,7 +50,7 @@ static void buzzer_stop(void)
 
 void buzzer_beep(uint32_t frequency, uint8_t duty_percent, uint32_t duration_ms)
 {
-    if (!sys_state.sound_enabled)
+    if (!sys_state.sound_enabled || quiet_hours_is_active())
     {
         /* Still wait out the duration -- callers chain several beeps
          * back-to-back assuming each one blocks for its length, and this
@@ -93,7 +94,7 @@ void buzzer_beep(uint32_t frequency, uint8_t duty_percent, uint32_t duration_ms)
 
 void update_buzzer(uint16_t freq_hz, uint8_t volume_percent)
 {
-    if (!sys_state.sound_enabled || freq_hz == 0 || volume_percent == 0)
+    if (!sys_state.sound_enabled || quiet_hours_is_active() || freq_hz == 0 || volume_percent == 0)
     {
         buzzer_stop();
         return;
