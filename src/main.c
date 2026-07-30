@@ -206,7 +206,7 @@
 #define LONG_PRESS_THRESHOLD_MS 2000
 #define VERY_LONG_PRESS_THRESHOLD_MS 5000
 #define SEQUENCE_TIMEOUT_MS 3000
-#define MENU_TIMEOUT_MS 30000
+#define MENU_TIMEOUT_MS 300000 // 5 minutes -- return to main screen if no button press while a menu is open
 #define FACTORY_RESET_HOLD_MS 10000
 #define FAST_INCREMENT_THRESHOLD_MS 500
 #define REPEAT_ACCELERATION_MS 100
@@ -9428,6 +9428,7 @@ void app_main(void)
     while (sys_state.system_ready)
     {
         update_lcd_activity_state();
+        handle_menu_timeout();
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
