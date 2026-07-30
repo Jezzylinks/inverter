@@ -1,67 +1,286 @@
 #include "post_fan.h"
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include <string.h>
+
+#include "fan_controller.h"
+#include "fan_tach.h"
+
+#include "esp_check.h"
 #include "esp_log.h"
 
-#include "fan/fan_driver.h"
-#include "hardware_config.h" /* FAN_SPEED_THRESHOLD_RPM */
-
-static const char *TAG = "POST_FAN";
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 /*----------------------------------------------------------
- * Configuration
+ * Private Definitions
  *---------------------------------------------------------*/
-#define POST_FAN_TEST_DUTY_PERCENT 80
-#define POST_FAN_STABILIZE_MS 300
-#define POST_FAN_MEASURE_WINDOW_MS 500
-#define POST_FAN_SAMPLE_INTERVAL_MS 50
+
+#define TAG "post_fan"
+
+/*----------------------------------------------------------
+ * Private Variables
+ *---------------------------------------------------------*/
+
+static post_fan_status_t s_status;
+
+static const fan_tach_config_t s_tach_cfg =
+    {
+        .tach_gpio = FAN_TACH_GPIO,
+
+        .interrupt_type = GPIO_INTR_NEGEDGE,
+
+        .pullup_enable = true,
+
+        .pulldown_enable = false,
+
+        .timer_resolution_hz = FAN_TACH_TIMER_RESOLUTION_HZ,
+
+        .pulses_per_revolution = FAN_TACH_PULSES_PER_REV,
+
+        .timeout_us = FAN_TACH_TIMEOUT_US,
+};
+
+/*----------------------------------------------------------
+ * Private Functions
+ *---------------------------------------------------------*/
+
+static void post_fan_reset_status(void)
+{
+    memset(&s_status, 0, sizeof(s_status));
+
+    s_status.result = POST_FAN_RESULT_TIMEOUT;
+}
+
+static esp_err_t post_fan_prepare(void)
+{
+    ESP_RETURN_ON_ERROR(
+        fan_tach_reset(),
+        TAG,
+        "Failed to reset tachometer");
+
+    ESP_RETURN_ON_ERROR(
+        fan_controller_set_speed(
+            POST_FAN_TEST_SPEED_PERCENT),
+        TAG,
+        "Failed to set fan speed");
+
+    ESP_RETURN_ON_ERROR(
+        fan_controller_on(),
+        TAG,
+        "Failed to start fan");
+
+    return ESP_OK;
+}
 
 /*----------------------------------------------------------
  * Public Functions
  *---------------------------------------------------------*/
 
-bool post_fan_test(void)
+esp_err_t post_fan_init(void)
 {
-    if (fan_set_speed_percent(POST_FAN_TEST_DUTY_PERCENT) != ESP_OK)
+    post_fan_reset_status();
+
+    ESP_RETURN_ON_ERROR(
+        fan_tach_init(&s_tach_cfg),
+        TAG,
+        "Failed to initialize fan tach");
+
+    ESP_RETURN_ON_ERROR(
+        fan_tach_start(),
+        TAG,
+        "Failed to start fan tach");
+
+    ESP_LOGI(TAG,
+             "Fan POST initialized");
+
+    return ESP_OK;
+}
+
+esp_err_t post_fan_stop(void)
+{
+    esp_err_t err;
+
+    err = fan_controller_off();
+
+    if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "Failed to command fan PWM");
-        return false;
+        ESP_LOGW(TAG,
+                 "Failed to stop fan");
     }
 
-    /* Let the fan physically spin up before trusting the tachometer --
-     * fan_driver's ISR keeps timestamping pulses in the background
-     * throughout this wait regardless of which task is running. */
-    vTaskDelay(pdMS_TO_TICKS(POST_FAN_STABILIZE_MS));
+    err = fan_tach_stop();
 
-    /* Take the peak RPM reading over the measurement window rather than
-     * a single sample, since a single read could land right after a
-     * bounce-rejected pulse and look artificially low even with a
-     * genuinely spinning, healthy fan. */
-    uint32_t peak_rpm = 0;
-    uint32_t elapsed_ms = 0;
-
-    while (elapsed_ms < POST_FAN_MEASURE_WINDOW_MS)
+    if (err != ESP_OK)
     {
-        uint32_t rpm = fan_get_rpm();
-        if (rpm > peak_rpm)
+        ESP_LOGW(TAG,
+                 "Failed to stop tachometer");
+    }
+
+    return ESP_OK;
+}
+
+/*----------------------------------------------------------
+ * Public Functions
+ *---------------------------------------------------------*/
+
+post_fan_result_t post_fan_test(void)
+{
+    TickType_t start_tick;
+    TickType_t elapsed_tick;
+
+    esp_err_t err;
+
+    post_fan_reset_status();
+
+    err = post_fan_prepare();
+
+    if (err != ESP_OK)
+    {
+        s_status.result = POST_FAN_RESULT_DRIVER_ERROR;
+
+        return s_status.result;
+    }
+
+    vTaskDelay(
+        pdMS_TO_TICKS(
+            POST_FAN_STARTUP_DELAY_MS));
+
+    start_tick = xTaskGetTickCount();
+
+    while (true)
+    {
+        elapsed_tick =
+            xTaskGetTickCount() - start_tick;
+
+        s_status.elapsed_ms =
+            elapsed_tick * portTICK_PERIOD_MS;
+
+        if (s_status.elapsed_ms >=
+            POST_FAN_TIMEOUT_MS)
         {
-            peak_rpm = rpm;
+            s_status.result =
+                POST_FAN_RESULT_TIMEOUT;
+
+            break;
         }
-        vTaskDelay(pdMS_TO_TICKS(POST_FAN_SAMPLE_INTERVAL_MS));
-        elapsed_ms += POST_FAN_SAMPLE_INTERVAL_MS;
+
+        s_status.tach_detected =
+            fan_tach_is_alive();
+
+        if (!s_status.tach_detected)
+        {
+            vTaskDelay(
+                pdMS_TO_TICKS(20));
+
+            continue;
+        }
+
+        if (!fan_tach_is_ready())
+        {
+            vTaskDelay(
+                pdMS_TO_TICKS(20));
+
+            continue;
+        }
+
+        s_status.rpm =
+            fan_tach_get_rpm();
+
+        if (s_status.rpm >=
+            POST_FAN_MIN_RPM)
+        {
+            s_status.result =
+                POST_FAN_RESULT_PASS;
+
+            break;
+        }
+
+        vTaskDelay(
+            pdMS_TO_TICKS(20));
     }
 
-    fan_set_speed_percent(0);
-
-    if (peak_rpm < (uint32_t)FAN_SPEED_THRESHOLD_RPM)
+    if (s_status.result ==
+        POST_FAN_RESULT_TIMEOUT)
     {
-        ESP_LOGE(TAG, "Fan RPM %lu below threshold %lu",
-                 (unsigned long)peak_rpm, (unsigned long)FAN_SPEED_THRESHOLD_RPM);
-        return false;
+        if (!s_status.tach_detected)
+        {
+            s_status.result =
+                POST_FAN_RESULT_NO_TACH;
+        }
+        else
+        {
+            s_status.result =
+                POST_FAN_RESULT_LOW_RPM;
+        }
     }
 
-    ESP_LOGI(TAG, "Fan OK: %lu RPM >= %lu RPM",
-             (unsigned long)peak_rpm, (unsigned long)FAN_SPEED_THRESHOLD_RPM);
-    return true;
+    post_fan_stop();
+
+    ESP_LOGI(TAG,
+             "POST Result=%d RPM=%lu Time=%lu ms",
+             s_status.result,
+             (unsigned long)s_status.rpm,
+             (unsigned long)s_status.elapsed_ms);
+
+    return s_status.result;
+}
+
+uint32_t post_fan_get_rpm(void)
+{
+    return s_status.rpm;
+}
+
+post_fan_result_t post_fan_get_result(void)
+{
+    return s_status.result;
+}
+
+void post_fan_get_status(
+    post_fan_status_t *status)
+{
+    if (status == NULL)
+    {
+        return;
+    }
+
+    memcpy(status,
+           &s_status,
+           sizeof(post_fan_status_t));
+}
+
+bool post_fan_passed(void)
+{
+    return (s_status.result ==
+            POST_FAN_RESULT_PASS);
+}
+
+const char *post_fan_result_string(
+    post_fan_result_t result)
+{
+    switch (result)
+    {
+    case POST_FAN_RESULT_PASS:
+        return "PASS";
+
+    case POST_FAN_RESULT_INIT_FAILED:
+        return "INIT FAILED";
+
+    case POST_FAN_RESULT_START_FAILED:
+        return "START FAILED";
+
+    case POST_FAN_RESULT_NO_TACH:
+        return "NO TACH";
+
+    case POST_FAN_RESULT_LOW_RPM:
+        return "LOW RPM";
+
+    case POST_FAN_RESULT_TIMEOUT:
+        return "TIMEOUT";
+
+    case POST_FAN_RESULT_DRIVER_ERROR:
+        return "DRIVER ERROR";
+
+    default:
+        return "UNKNOWN";
+    }
 }

@@ -551,4 +551,3 @@ void monitor_event_task(void *pv)
         monitor_statistics_update(&evt);
     }
 }
-
