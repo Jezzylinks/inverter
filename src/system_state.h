@@ -462,6 +462,9 @@ extern "C"
         uint8_t quiet_hours_start; // 0-23, local hour
         uint8_t quiet_hours_end;   // 0-23, local hour (can be < start -- wraps overnight)
         int8_t utc_offset_hours;  // -12 to +14, applied to NTP-synced UTC time
+        uint8_t manual_time_hour;   // last hour the user manually entered via Set Time
+        uint8_t manual_time_minute; // last minute the user manually entered via Set Time
+        bool time_manually_set;     // distinguishes "user set 00:00 on purpose" from "never touched this menu"
 
         // Value editing backup
         float edit_backup_value;

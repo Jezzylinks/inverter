@@ -905,6 +905,8 @@ typedef enum
     VALUE_TYPE_QUIET_HOURS_START,
     VALUE_TYPE_QUIET_HOURS_END,
     VALUE_TYPE_UTC_OFFSET,
+    VALUE_TYPE_SET_TIME_HOUR,
+    VALUE_TYPE_SET_TIME_MINUTE,
     VALUE_TYPE_COUNT
 } value_edit_param_t;
 
@@ -1017,7 +1019,9 @@ static const menu_item_t settings_items[] = {
     {"Quiet Hours", MENU_SETTINGS},
     {"Quiet Start", MENU_SETTINGS},
     {"Quiet End", MENU_SETTINGS},
-    {"UTC Offset", MENU_SETTINGS}};
+    {"UTC Offset", MENU_SETTINGS},
+    {"Set Hour", MENU_SETTINGS},
+    {"Set Minute", MENU_SETTINGS}};
 
 // MONITORING MENU (6 items)
 static const menu_item_t monitoring_items[] = {
@@ -1182,6 +1186,8 @@ static void apply_quiet_hours_enable(float v);
 static void apply_quiet_hours_start(float v);
 static void apply_quiet_hours_end(float v);
 static void apply_utc_offset(float v);
+static void apply_set_time_hour(float v);
+static void apply_set_time_minute(float v);
 static void sync_battery_protection_thresholds(void);
 
 // Value adjustment functions
@@ -1214,6 +1220,8 @@ void edit_quiet_hours_enable(void);
 void edit_quiet_hours_start(void);
 void edit_quiet_hours_end(void);
 void edit_utc_offset(void);
+void edit_set_time_hour(void);
+void edit_set_time_minute(void);
 void security_pin(void);
 
 // Submenu functions
@@ -1552,6 +1560,40 @@ static value_edit_context_t value_edit[] = {
         .current_value = 0.0f,
         .apply = apply_utc_offset,
     },
+
+    [VALUE_TYPE_SET_TIME_HOUR] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 0.0f,
+        .max_value = 23.0f,
+        .increment_small = 1.0f,
+        .increment_large = 4.0f,
+        .increment_precision = 1.0f,
+        .step_size = 1.0f,
+        .decimal_places = 0,
+        .unit = "h",
+        .label = "Set Hour",
+        .is_critical = false,
+        .live_update = true,
+        .current_value = 0.0f,
+        .apply = apply_set_time_hour,
+    },
+
+    [VALUE_TYPE_SET_TIME_MINUTE] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 0.0f,
+        .max_value = 59.0f,
+        .increment_small = 1.0f,
+        .increment_large = 5.0f,
+        .increment_precision = 1.0f,
+        .step_size = 1.0f,
+        .decimal_places = 0,
+        .unit = "m",
+        .label = "Set Minute",
+        .is_critical = false,
+        .live_update = true,
+        .current_value = 0.0f,
+        .apply = apply_set_time_minute,
+    },
 };
 
 // =============== HARDWARE INITIALIZATION ===============
@@ -1653,6 +1695,9 @@ static nvs_setting_t g_settings[] = {
     {"quiet_start", &sys_state.quiet_hours_start, sizeof(uint8_t), 22, false, "Quiet Start"},
     {"quiet_end", &sys_state.quiet_hours_end, sizeof(uint8_t), 6, false, "Quiet End"},
     {"utc_offset", &sys_state.utc_offset_hours, sizeof(uint8_t), 0, false, "UTC Offset"},
+    {"man_hour", &sys_state.manual_time_hour, sizeof(uint8_t), 0, false, "Set Hour"},
+    {"man_min", &sys_state.manual_time_minute, sizeof(uint8_t), 0, false, "Set Minute"},
+    {"time_set", &sys_state.time_manually_set, sizeof(uint8_t), 0, false, "Time Manually Set"},
     {"scroll_spd", &sys_state.display.scroll_speed, sizeof(uint8_t), DEFAULT_SCROLL_SPEED, false, "Scroll Speed"},
     {"out_volt", &sys_state.inverter.output_voltage, sizeof(int32_t), 220.0f, true, "Output Voltage"},
     {"out_freq", &sys_state.inverter.output_frequency, sizeof(int32_t), 50.0f, true, "Output Freq"},
@@ -4588,6 +4633,12 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             case 14:
                 edit_utc_offset();
                 break;
+            case 15:
+                edit_set_time_hour();
+                break;
+            case 16:
+                edit_set_time_minute();
+                break;
             }
             break;
 
@@ -5833,6 +5884,25 @@ static void apply_quiet_hours_enable(float v)
 static void apply_quiet_hours_start(float v) { sys_state.quiet_hours_start = (uint8_t)v; }
 static void apply_quiet_hours_end(float v) { sys_state.quiet_hours_end = (uint8_t)v; }
 static void apply_utc_offset(float v) { sys_state.utc_offset_hours = (int8_t)v; }
+
+/* Both hour and minute are entered as separate menu steps, but each one
+ * re-applies the full HH:MM together from whatever's currently in
+ * sys_state, so the order the user enters them in doesn't matter --
+ * confirming either one sets the clock to (current hour, current
+ * minute), not just the field that was just edited. */
+static void apply_set_time_hour(float v)
+{
+    sys_state.manual_time_hour = (uint8_t)v;
+    sys_state.time_manually_set = true;
+    quiet_hours_set_manual_time(sys_state.manual_time_hour, sys_state.manual_time_minute);
+}
+
+static void apply_set_time_minute(float v)
+{
+    sys_state.manual_time_minute = (uint8_t)v;
+    sys_state.time_manually_set = true;
+    quiet_hours_set_manual_time(sys_state.manual_time_hour, sys_state.manual_time_minute);
+}
 static void apply_scroll_speed(float v) { sys_state.display.scroll_speed = (uint8_t)v; }
 static void apply_system_timeout(float v) { set_system_timeout((uint32_t)v); }
 
@@ -8244,6 +8314,7 @@ void init_menu_system()
         ESP_LOGW(TAG_SYS, "Failed to load settings from NVS, applying defaults");
         sys_state.battery_profile = battery_profiles[BATTERY_CHEMISTRY_LITHIUM_ION];
     }
+    quiet_hours_restore_manual_time();
     // Program reached here indication
     printf("System initialization complete. Ready for operation.\n");
 }
@@ -9137,6 +9208,32 @@ void edit_utc_offset(void)
     sys_state.value_edit_mode = true;
     sys_state.current_value_type = &value_edit[VALUE_TYPE_UTC_OFFSET];
     sys_state.current_value_type->current_value = (float)sys_state.utc_offset_hours;
+    lcd_show_value_edit_screen();
+}
+
+void edit_set_time_hour(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_SET_TIME_HOUR];
+    sys_state.current_value_type->current_value = (float)sys_state.manual_time_hour;
+    lcd_show_value_edit_screen();
+}
+
+void edit_set_time_minute(void)
+{
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    sys_state.pending_confirmation = true;
+    sys_state.value_changed = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.value_edit_mode = true;
+    sys_state.current_value_type = &value_edit[VALUE_TYPE_SET_TIME_MINUTE];
+    sys_state.current_value_type->current_value = (float)sys_state.manual_time_minute;
     lcd_show_value_edit_screen();
 }
 

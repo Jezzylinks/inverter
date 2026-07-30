@@ -1,6 +1,9 @@
 #include "quiet_hours.h"
 
 #include <time.h>
+#include <sys/time.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include "esp_sntp.h"
 #include "esp_log.h"
 #include "system_state.h"
@@ -93,4 +96,89 @@ bool quiet_hours_is_active(void)
 
     /* Overnight window, e.g. start=22, end=6 */
     return hour >= start || hour < end;
+}
+
+/* Standard portable trick for a timegm()-equivalent: not every newlib
+ * build exposes timegm() itself, but setenv/tzset/mktime are always
+ * available, so temporarily forcing TZ=UTC0 around mktime() gives the
+ * same "interpret this struct tm as UTC" result without depending on a
+ * possibly-missing GNU extension. */
+static time_t utc_mktime(struct tm *tm_info)
+{
+    char *old_tz = getenv("TZ");
+    char old_tz_buf[32] = {0};
+    bool had_tz = (old_tz != NULL);
+    if (had_tz)
+    {
+        snprintf(old_tz_buf, sizeof(old_tz_buf), "%s", old_tz);
+    }
+
+    setenv("TZ", "UTC0", 1);
+    tzset();
+
+    time_t result = mktime(tm_info);
+
+    if (had_tz)
+    {
+        setenv("TZ", old_tz_buf, 1);
+    }
+    else
+    {
+        unsetenv("TZ");
+    }
+    tzset();
+
+    return result;
+}
+
+void quiet_hours_set_manual_time(uint8_t hour, uint8_t minute)
+{
+    time_t now = time(NULL);
+    struct tm tm_info;
+    gmtime_r(&now, &tm_info);
+
+    /* The user enters their LOCAL hour/minute; convert to the UTC hour
+     * that needs to be stored so quiet_hours_is_active()'s later
+     * (epoch + utc_offset_hours*3600) -> gmtime_r reconstruction
+     * reproduces exactly what was entered here. */
+    int utc_hour = (int)hour - sys_state.utc_offset_hours;
+    if (utc_hour < 0)
+    {
+        utc_hour += 24;
+        tm_info.tm_mday -= 1;
+    }
+    else if (utc_hour >= 24)
+    {
+        utc_hour -= 24;
+        tm_info.tm_mday += 1;
+    }
+
+    tm_info.tm_hour = utc_hour;
+    tm_info.tm_min = minute;
+    tm_info.tm_sec = 0;
+
+    time_t new_epoch = utc_mktime(&tm_info);
+    struct timeval tv = {.tv_sec = new_epoch, .tv_usec = 0};
+    settimeofday(&tv, NULL);
+
+    s_time_synced = true;
+    ESP_LOGI(TAG, "Manual time set: %02u:%02u local (UTC offset %d)",
+             hour, minute, sys_state.utc_offset_hours);
+}
+
+void quiet_hours_restore_manual_time(void)
+{
+    if (!sys_state.time_manually_set)
+    {
+        return; /* user has never used the Set Time menu */
+    }
+
+    if (s_time_synced)
+    {
+        return; /* SNTP already got a real sync in first */
+    }
+
+    ESP_LOGI(TAG, "Restoring last manually-entered time at boot "
+                  "(cannot account for time elapsed while powered off)");
+    quiet_hours_set_manual_time(sys_state.manual_time_hour, sys_state.manual_time_minute);
 }

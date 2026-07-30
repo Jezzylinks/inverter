@@ -45,6 +45,29 @@ extern "C"
      */
     bool quiet_hours_is_active(void);
 
+    /**
+     * @brief Manually set the wall clock to today's date at HH:MM:00 and
+     * mark the clock as known (equivalent to a real SNTP sync for the
+     * purposes of quiet_hours_time_is_known()/_is_active()).
+     *
+     * NOTE: without a battery-backed external RTC, this can't account
+     * for how long the device was powered off between boots -- on a
+     * cold boot, quiet_hours_restore_manual_time() re-applies whatever
+     * HH:MM was last entered as a best-effort starting point, but the
+     * clock will drift by however long the device was actually off.
+     * SNTP sync (once WiFi is available) always takes priority over
+     * this if it happens.
+     */
+    void quiet_hours_set_manual_time(uint8_t hour, uint8_t minute);
+
+    /**
+     * @brief Re-apply the last manually-entered time at boot, if the
+     * user has ever used the Set Time menu (sys_state.time_manually_set)
+     * and SNTP hasn't already synced a real time first. Call this once,
+     * after load_settings() restores manual_time_hour/_minute from NVS.
+     */
+    void quiet_hours_restore_manual_time(void);
+
 #ifdef __cplusplus
 }
 #endif
