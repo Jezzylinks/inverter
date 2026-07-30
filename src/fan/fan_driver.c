@@ -5,6 +5,7 @@
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "hardware_config.h"
+#include "esp_err.h"
 
 static const char *TAG = "FAN_DRIVER";
 
@@ -12,13 +13,13 @@ static const char *TAG = "FAN_DRIVER";
  * PWM (speed control, GPIO_FAN / Green wire)
  *---------------------------------------------------------*/
 #define FAN_LEDC_MODE LEDC_LOW_SPEED_MODE
-#define FAN_LEDC_TIMER LEDC_TIMER_1  /* deliberately NOT LEDC_TIMER_0 --
-                                       * buzzer and the status/error LEDs
-                                       * already share that timer, and the
-                                       * fan needs a stable, independent
-                                       * PWM frequency that doesn't shift
-                                       * every time a tone or brightness
-                                       * changes elsewhere. */
+#define FAN_LEDC_TIMER LEDC_TIMER_1 /* deliberately NOT LEDC_TIMER_0 --  \
+                                     * buzzer and the status/error LEDs  \
+                                     * already share that timer, and the \
+                                     * fan needs a stable, independent   \
+                                     * PWM frequency that doesn't shift  \
+                                     * every time a tone or brightness   \
+                                     * changes elsewhere. */
 #define FAN_LEDC_CHANNEL LEDC_CHANNEL_3
 #define FAN_LEDC_RES LEDC_TIMER_10_BIT
 
@@ -91,9 +92,9 @@ void fan_driver_init(void)
         .pin_bit_mask = 1ULL << GPIO_FAN_TACH,
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE, /* belt-and-braces alongside the
-                                            * external 4.7k pull-up the
-                                            * open-collector tach output
-                                            * needs */
+                                           * external 4.7k pull-up the
+                                           * open-collector tach output
+                                           * needs */
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_NEGEDGE,
     };

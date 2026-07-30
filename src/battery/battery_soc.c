@@ -18,6 +18,7 @@
 ==============================================================================*/
 #include "battery_soc.h"
 #include <stddef.h>
+#include "system_state.h"
 
 /* ── Lead-Acid (flooded, 12 V, C/20 discharge) ───────────────────────── */
 static const soc_point_t s_lead_acid_pts[] = {
@@ -200,7 +201,7 @@ const soc_table_t *battery_soc_get_table(uint8_t chemistry)
  * Chemistry and nominal voltage are passed in explicitly by the caller
  * (sys_state.battery_profile.chemistry / .nominal_voltage) rather than
  * this module reaching backward into main.c's global state. */
-uint8_t calculate_battery_percentage(float voltage, uint8_t chemistry, float nominal_v)
+uint8_t calculate_battery_percentage(float voltage, battery_chemistry_t chemistry, float nominal_v)
 {
     const soc_table_t *table = battery_soc_get_table(chemistry);
     return battery_soc_from_voltage(voltage, nominal_v, table);

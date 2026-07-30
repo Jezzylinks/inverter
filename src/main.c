@@ -36,9 +36,16 @@
 #include "sdkconfig.h"
 #include "rom/ets_sys.h"
 #include "utils.h" // Added MIN & MAX
-#include "battery_soc.h"
 #include <stdbool.h>
-#include <button_controller.h>
+#include "button_controller.h"
+
+// Battery Management
+#include "battery/battery_estimator.h"
+#include "battery/battery_filter.h"
+#include "battery/battery_health.h"
+#include "battery/battery_rest.h"
+#include "battery/battery_soc.h"
+#include "battery/coulomb_counter.h"
 
 /* ── NEW: lcd_state / lcd_writer headers ──────────────────────────────── */
 #include "lcd_state.h"
@@ -291,15 +298,6 @@
 #define NVS_TAG "NVS"
 #define MAX_ERROR_LOG_ENTRIES 10
 
-// static int fan_disconnect_count = 0;
-// static bool fan_connected_last_state = true;
-// static const char *TAG = "FAN_MONITOR";
-
-// Queue for button events
-QueueHandle_t button_event_queue;
-QueueHandle_t protection_event_queue;
-QueueHandle_t g_event_subscriber_queue[EVENT_SUB_COUNT];
-
 // ADC Configuration
 typedef enum
 {
@@ -329,8 +327,11 @@ typedef struct
     uint8_t index;
 } MovingAverageFilter;
 
-// static bool editing_battery_menu = false;
-//  end
+// Queue for button events
+QueueHandle_t button_event_queue;
+QueueHandle_t protection_event_queue;
+QueueHandle_t g_event_subscriber_queue[EVENT_SUB_COUNT];
+
 /* ── Global handles (unchanged) ───────────────────────────────────────── */
 
 lcd_render_state_t sys_lcd;
@@ -338,6 +339,9 @@ SemaphoreHandle_t sys_state_mutex;
 TaskHandle_t lcd_task_handle = NULL;
 active_flash_t s_active_flash = {0};
 bool g_system_initialized = false;
+static battery_filter_t battery_voltage_filter;
+static battery_rest_t battery_rest;
+static battery_estimator_t battery;
 
 const uint64_t wakeup_pin_mask =
     (1ULL << WAKEUP_BUTTON_1) | (1ULL << WAKEUP_BUTTON_2);
@@ -1639,6 +1643,13 @@ void init_hardware(void)
     // ==========================================================
     // Initialize Buzzer Driver
     // ==========================================================
+    battery_chemistry_t bat_chemistry = sys_state.battery_profile.chemistry;
+    voltage_system_t nominal_voltage = sys_state.battery_profile.nominal_voltage;
+    float capacity_ah = sys_state.battery_profile.capacity_ah;
+
+    // Battery Management Initialization
+    battery_estimator_init(&battery, bat_chemistry, nominal_voltage, capacity_ah);
+
     buzzer_init();
 
     // ==========================================================
@@ -2592,6 +2603,9 @@ void adc_task(void *arg)
             process_adc_reading(&adc_configs[i],
                                 &adc1_context.channel_states[i],
                                 adc1_context.handle);
+            if (adc_configs[i].channel == ADC_BATTERY_VOLTAGE)
+            {
+            }
         }
 
         if (sample_count < SAMPLES_BEFORE_ERROR_CHECK)
@@ -3043,7 +3057,11 @@ static void process_adc_reading(const adc_channel_config_t *config,
 
     // Calculate actual voltage
     float actual_voltage = adc_voltage * config->voltage_divider_ratio;
-
+    // filter battery value
+    if (config->channel_id == CHANNEL_ID_BATTERY_VOLTAGE)
+    {
+        battery_filter_update(&battery_voltage_filter, actual_voltage);
+    }
     // IMPORTANT: Write the value to sys_state
     *(config->target_value) = actual_voltage;
 
