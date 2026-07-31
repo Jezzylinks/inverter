@@ -6,6 +6,11 @@
 #include "lcd_state.h"
 #include "security/security.h"
 #include "hardware_config.h"
+#include "battery/battery_storage.h"
+#include "battery/battery_rest.h"
+#include "battery/coulomb_counter.h"
+#include "battery/battery_filter.h"
+#include "battery/battery_health.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -352,6 +357,30 @@ extern "C"
 
     typedef struct
     {
+        battery_filter_t filter;
+
+        battery_rest_t rest;
+
+        coulomb_counter_t cc;
+
+        battery_health_t health;
+
+        battery_storage_data_t storage;
+
+        float voltage;
+
+        float current;
+
+        float temperature;
+
+        float soc;
+
+        float soh;
+
+    } battery_system_t;
+
+    typedef struct
+    {
         bool enabled;
         char ssid[32];
         char password[64];
@@ -459,9 +488,9 @@ extern "C"
         bool precharge_complete;
         bool sound_enabled; // Global buzzer mute -- gated in update_buzzer()
         bool quiet_hours_enabled;
-        uint8_t quiet_hours_start; // 0-23, local hour
-        uint8_t quiet_hours_end;   // 0-23, local hour (can be < start -- wraps overnight)
-        int8_t utc_offset_hours;  // -12 to +14, applied to NTP-synced UTC time
+        uint8_t quiet_hours_start;  // 0-23, local hour
+        uint8_t quiet_hours_end;    // 0-23, local hour (can be < start -- wraps overnight)
+        int8_t utc_offset_hours;    // -12 to +14, applied to NTP-synced UTC time
         uint8_t manual_time_hour;   // last hour the user manually entered via Set Time
         uint8_t manual_time_minute; // last minute the user manually entered via Set Time
         bool time_manually_set;     // distinguishes "user set 00:00 on purpose" from "never touched this menu"

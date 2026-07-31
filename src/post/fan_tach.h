@@ -32,9 +32,23 @@ extern "C"
 #define FAN_TACH_HISTORY_SIZE 8U
 #endif
 
+/* Standard PC/server 4-wire fan PWM frequency (Intel spec). */
+#ifndef FAN_PWM_FREQ_HZ
+#define FAN_PWM_FREQ_HZ 25000U
+#endif
+
 /* Stall timeout */
 #ifndef FAN_TACH_TIMEOUT_US
 #define FAN_TACH_TIMEOUT_US 500000UL
+#endif
+
+/* RPM threshold for fan POST / stall detection. This used to be a
+ * voltage threshold (2.0f) for an analog fan-speed sensor -- this
+ * hardware has a real tachometer now, so it's RPM. Tune to comfortably
+ * below your fan's rated idle/PWM-floor speed; 800 RPM is a reasonable
+ * default for a fan rated around 2000-3000 RPM. */
+#ifndef FAN_SPEED_THRESHOLD_RPM
+#define FAN_SPEED_THRESHOLD_RPM 800.0f
 #endif
 
     /*----------------------------------------------------------
@@ -121,7 +135,7 @@ extern "C"
     /**
      * @brief Reset timestamp history.
      */
-    void fan_tach_reset(void);
+    esp_err_t fan_tach_reset(void);
 
     /**
      * @brief Returns true when enough samples

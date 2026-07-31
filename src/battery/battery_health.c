@@ -66,69 +66,6 @@ void battery_health_init(
     health->end_of_life = false;
 }
 
-/******************************************************************************
- * @brief Update Equivalent Full Cycle (EFC) count.
- *
- * One EFC is accumulated whenever the combined charge and discharge
- * throughput reaches:
- *
- *      2 × Rated Capacity (Ah)
- *
- * This implementation preserves the remaining throughput instead of
- * redistributing it.
- ******************************************************************************/
-static void battery_health_update_efc(
-    battery_health_t *health)
-{
-    if (health == NULL)
-    {
-        return;
-    }
-
-    const float efc_capacity =
-        health->rated_capacity_ah * 2.0f;
-
-    while ((health->accumulated_charge_ah +
-            health->accumulated_discharge_ah) >=
-           efc_capacity)
-    {
-        health->equivalent_full_cycles++;
-
-        float remaining = efc_capacity;
-
-        /*
-         * Consume discharge throughput first.
-         */
-
-        if (health->accumulated_discharge_ah >= remaining)
-        {
-            health->accumulated_discharge_ah -= remaining;
-            remaining = 0.0f;
-        }
-        else
-        {
-            remaining -= health->accumulated_discharge_ah;
-            health->accumulated_discharge_ah = 0.0f;
-        }
-
-        /*
-         * Consume the remaining throughput from charge.
-         */
-
-        if (remaining > 0.0f)
-        {
-            if (health->accumulated_charge_ah >= remaining)
-            {
-                health->accumulated_charge_ah -= remaining;
-            }
-            else
-            {
-                health->accumulated_charge_ah = 0.0f;
-            }
-        }
-    }
-}
-
 /*============================================================================*/
 
 void battery_health_reset(

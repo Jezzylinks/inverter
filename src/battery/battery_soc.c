@@ -190,7 +190,7 @@ uint8_t battery_soc_from_voltage(float voltage_v,
     return 0; /* should never reach here */
 }
 
-const soc_table_t *battery_soc_get_table(uint8_t chemistry)
+const soc_table_t *battery_soc_get_table(battery_chemistry_t chemistry)
 {
     if (chemistry >= TABLE_COUNT)
         return &s_tables[0]; /* default to lead-acid */

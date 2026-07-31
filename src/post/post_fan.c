@@ -1,15 +1,12 @@
 #include "post_fan.h"
-
 #include <string.h>
-
 #include "fan_controller.h"
 #include "fan_tach.h"
-
 #include "esp_check.h"
 #include "esp_log.h"
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "hardware_config.h"
 
 /*----------------------------------------------------------
  * Private Definitions
@@ -25,7 +22,7 @@ static post_fan_status_t s_status;
 
 static const fan_tach_config_t s_tach_cfg =
     {
-        .tach_gpio = FAN_TACH_GPIO,
+        .tach_gpio = GPIO_FAN_TACH,
 
         .interrupt_type = GPIO_INTR_NEGEDGE,
 

@@ -1,5 +1,11 @@
 #include "battery_estimator.h"
+#include "coulomb_counter.h"
 #include "stdlib.h"
+#include "system_state.h"
+
+static float save_timer_seconds = 0.0f;
+extern battery_system_t battery;
+extern system_state_t sys_state;
 
 void battery_estimator_init(
     battery_estimator_t *est,
@@ -98,6 +104,35 @@ void battery_estimator_update(
     est->soh =
         battery_health_get_soh(
             &est->health);
+
+    save_timer_seconds += dt_seconds;
+
+    if (save_timer_seconds >= 60.0f)
+    {
+        save_timer_seconds = 0.0f;
+
+        battery.storage.version = BATTERY_STORAGE_VERSION;
+
+        battery.storage.soc =
+            coulomb_counter_get_soc(&battery.cc);
+
+        battery.storage.soh =
+            battery_health_get_soh(&battery.health);
+
+        battery.storage.equivalent_full_cycles =
+            battery_health_get_cycle_count(&battery.health);
+
+        battery.storage.measured_capacity_ah =
+            battery_health_get_capacity(&battery.health);
+
+        battery.storage.rated_capacity_ah =
+            sys_state.battery_profile.capacity_ah;
+
+        battery.storage.chemistry =
+            sys_state.battery_profile.chemistry;
+
+        battery_storage_save(&battery.storage);
+    }
 }
 
 float battery_estimator_get_soc(

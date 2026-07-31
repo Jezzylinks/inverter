@@ -284,3 +284,10 @@ bool coulomb_counter_is_empty(
 {
     return (cc != NULL) ? cc->battery_empty : false;
 }
+
+void coulomb_counter_sync(
+    coulomb_counter_t *cc,
+    float soc)
+{
+    coulomb_counter_set_soc(cc, soc);
+}

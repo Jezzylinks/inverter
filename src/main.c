@@ -13,6 +13,9 @@
 #include <string.h>
 #include <esp_log.h>
 #include <math.h>
+// System state
+#include "system_state.h"
+
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_continuous.h>
 #include <esp_adc/adc_cali_scheme.h>
@@ -38,6 +41,8 @@
 #include "utils.h" // Added MIN & MAX
 #include <stdbool.h>
 #include "button_controller.h"
+#include "post/post_fan.h"
+#include "post/fan_tach.h"
 
 // Battery Management
 #include "battery/battery_estimator.h"
@@ -46,6 +51,7 @@
 #include "battery/battery_rest.h"
 #include "battery/battery_soc.h"
 #include "battery/coulomb_counter.h"
+#include "battery/battery_storage.h"
 
 /* ── NEW: lcd_state / lcd_writer headers ──────────────────────────────── */
 #include "lcd_state.h"
@@ -59,8 +65,6 @@
 // SECURITY
 #include "security/change_pin_flow.h"
 #include "security/protection.h"
-// System state
-#include "system_state.h"
 // Events
 #include "events/event_dispatcher.h"
 #include "events/system_events.h"
@@ -71,7 +75,6 @@
 #include "utility/led.h"
 #include "utility/buzzer.h"
 #include "post/post_manager.h"
-#include "fan/fan_driver.h"
 #include "utility/quiet_hours.h"
 
 /* ── All original #defines─────────────────────────────── */
@@ -340,8 +343,8 @@ TaskHandle_t lcd_task_handle = NULL;
 active_flash_t s_active_flash = {0};
 bool g_system_initialized = false;
 static battery_filter_t battery_voltage_filter;
-static battery_rest_t battery_rest;
-static battery_estimator_t battery;
+static battery_estimator_t bat_estimate;
+battery_system_t battery;
 
 const uint64_t wakeup_pin_mask =
     (1ULL << WAKEUP_BUTTON_1) | (1ULL << WAKEUP_BUTTON_2);
@@ -1159,8 +1162,6 @@ void enter_detail_view(menu_state_t parent_menu, int parent_selection);
 void exit_detail_view(void);
 static void push_menu_history(menu_state_t state, uint8_t selection);
 
-// LCD display functions
-void lcd_update_value_edit_screen(void);
 void update_lcd_activity_state(void);
 
 void process_battery_voltage(void);
@@ -1608,36 +1609,12 @@ void init_hardware(void)
 #endif
 
     // ==========================================================
-    // Configure Standard Output GPIOs (Non-PWM)
-    // ==========================================================
-    static const gpio_num_t output_pins[] =
-        {
-            GPIO_POWER_RELAY,
-            GPIO_FAN_TEST,
-        };
-
-    gpio_config_t gpio_conf =
-        {
-            .mode = GPIO_MODE_OUTPUT,
-            .pull_up_en = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_DISABLE,
-            .intr_type = GPIO_INTR_DISABLE,
-        };
-
-    for (size_t i = 0; i < sizeof(output_pins) / sizeof(output_pins[0]); i++)
-    {
-        gpio_conf.pin_bit_mask = (1ULL << output_pins[i]);
-        ESP_ERROR_CHECK(gpio_config(&gpio_conf));
-        gpio_set_level(output_pins[i], 0);
-    }
-
-    // ==========================================================
     // Initialize LED Driver
     // ==========================================================
 #if CONFIG_USE_LED_PWM
     led_init();
-    fan_driver_init();
     quiet_hours_sntp_init();
+    post_fan_init();
 #endif
 
     // ==========================================================
@@ -1648,7 +1625,26 @@ void init_hardware(void)
     float capacity_ah = sys_state.battery_profile.capacity_ah;
 
     // Battery Management Initialization
-    battery_estimator_init(&battery, bat_chemistry, nominal_voltage, capacity_ah);
+    battery_estimator_init(&bat_estimate, bat_chemistry, nominal_voltage, capacity_ah);
+
+    if (battery_storage_load(&battery.storage))
+    {
+        coulomb_counter_set_soc(
+            &battery.cc,
+            battery.storage.soc);
+
+        battery_health_restore(
+            &battery.health,
+            battery.storage.soh,
+            battery.storage.measured_capacity_ah,
+            battery.storage.equivalent_full_cycles);
+
+        battery.health.rated_capacity_ah =
+            battery.storage.rated_capacity_ah;
+
+        bat_chemistry =
+            (battery_chemistry_t)battery.storage.chemistry;
+    }
 
     buzzer_init();
 
@@ -1694,7 +1690,7 @@ static nvs_setting_t g_settings[] = {
     {"bat_cap_ah", &sys_state.battery_profile.capacity_ah, sizeof(int32_t), 0, true, "Battery Capacity"},
     {"bat_charge_cur", &sys_state.battery_profile.max_charge_current_per_100ah, sizeof(int32_t), 0, true, "Max Charge Cur"},
     {"bat_disc_cur", &sys_state.battery_profile.max_discharge_current_per_100ah, sizeof(int32_t), 0, true, "Max Discharge Cur"},
-    {"bat_full_volt", &sys_state.battery_profile.high_battery_voltage_12v, sizeof(int32_t), 0, true, "Battery Full Volt"},
+    {"bat_full_volt", &sys_state.battery_profile.high_battery_voltage_12v, sizeof(int32_t), 0, true, "Bat Full Volt"},
     {"bat_cutoff_volt", &sys_state.battery_profile.cutoff_voltage_12v, sizeof(int32_t), 10.5f, true, "Battery Cutoff"},
     {"bat_rech_volt", &sys_state.battery_profile.recharge_voltage_12v, sizeof(int32_t), 14.8f, true, "Recharge Volt"},
     {"brightness", &sys_state.display.brightness, sizeof(int32_t), 100, false, "LCD Brightness"},
@@ -2603,9 +2599,6 @@ void adc_task(void *arg)
             process_adc_reading(&adc_configs[i],
                                 &adc1_context.channel_states[i],
                                 adc1_context.handle);
-            if (adc_configs[i].channel == ADC_BATTERY_VOLTAGE)
-            {
-            }
         }
 
         if (sample_count < SAMPLES_BEFORE_ERROR_CHECK)
@@ -3227,7 +3220,7 @@ void check_protections(void)
         sys_state.inverter.battery.voltage,
         now_ms);
 
-    uint32_t fan_rpm = fan_get_rpm();
+    uint32_t fan_rpm = post_fan_get_rpm();
     sys_state.fan.speed = (float)fan_rpm;
     sys_state.fan.connected = (fan_rpm >= (uint32_t)FAN_SPEED_THRESHOLD_RPM);
 
@@ -6151,7 +6144,7 @@ void lcd_draw_settings_view_screen(uint8_t index)
 
     char counter[8];
     snprintf(counter, sizeof(counter), "%u/%u", (unsigned)(index + 1), (unsigned)NVS_SETTINGS_COUNT);
-    snprintf(row0, 17, "%-11.11s%5s", s->label ? s->label : "(unnamed)", counter);
+    snprintf(row0, 17, "%-11.11s%5.5s", s->label ? s->label : "(unnamed)", counter);
 
     if (s->is_scaled_float)
     {
@@ -6172,7 +6165,7 @@ void lcd_draw_settings_view_screen(uint8_t index)
         }
         else
         {
-            snprintf(row1, 17, "%u               ", val);
+            snprintf(row1, 17, "%u        ", val);
         }
     }
     else
@@ -9429,10 +9422,10 @@ void app_main(void)
      * post_fan_test()'s wait, so fan-speed feedback stays live instead
      * of freezing at a stale value. */
     EventBits_t adc_bits = xEventGroupWaitBits(sys_event_group,
-                                               EVT_ADC_WARMED_UP,
+                                               EVT_ADC_READY,
                                                pdFALSE, pdTRUE,
                                                pdMS_TO_TICKS(10000));
-    if (adc_bits & EVT_ADC_WARMED_UP)
+    if (adc_bits & EVT_ADC_READY)
     {
         post_result_t post_result = post_run_all();
         post_show_result_and_notify(post_result);

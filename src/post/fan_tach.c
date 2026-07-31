@@ -263,7 +263,7 @@ esp_err_t fan_tach_stop(void)
     return ESP_OK;
 }
 
-void fan_tach_reset(void)
+esp_err_t fan_tach_reset(void)
 {
     portENTER_CRITICAL(&s_ctx.lock);
 
@@ -275,6 +275,8 @@ void fan_tach_reset(void)
     s_ctx.sample_count = 0;
 
     portEXIT_CRITICAL(&s_ctx.lock);
+
+    return ESP_OK;
 }
 
 /*----------------------------------------------------------

@@ -205,6 +205,10 @@ extern "C"
     bool coulomb_counter_is_empty(
         const coulomb_counter_t *cc);
 
+    void coulomb_counter_sync(
+        coulomb_counter_t *cc,
+        float soc);
+
 #ifdef __cplusplus
 }
 #endif
