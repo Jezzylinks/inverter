@@ -57,6 +57,13 @@ void battery_estimator_update(
             &est->voltage_filter,
             battery_voltage);
 
+    /* No IR/temperature compensation model exists in this firmware yet
+     * (no current or temperature sensor to compensate with) -- alias to
+     * the filtered voltage rather than leaving this unset (it was never
+     * assigned at all before, so the resting-recalibration branch below
+     * was reading garbage/zero every time). */
+    est->compensated_voltage = est->filtered_voltage;
+
     /* Coulomb counter */
     coulomb_counter_update(
         &est->counter,
@@ -88,7 +95,7 @@ void battery_estimator_update(
                 est->chemistry,
                 est->nominal_voltage);
 
-        coulomb_counter_sync(
+        coulomb_counter_set_soc(
             &est->counter,
             soc);
     }
@@ -105,6 +112,16 @@ void battery_estimator_update(
         battery_health_get_soh(
             &est->health);
 
+    /* Mirror the latest results into the global battery_system_t --
+     * this is what the LCD/display code and NVS save below actually
+     * read, so it needs to reflect THIS estimator's real, just-updated
+     * state, not be read independently from a second, never-updated
+     * copy of the same data. */
+    battery.voltage = est->filtered_voltage;
+    battery.current = battery_current;
+    battery.soc = est->soc;
+    battery.soh = est->soh;
+
     save_timer_seconds += dt_seconds;
 
     if (save_timer_seconds >= 60.0f)
@@ -112,24 +129,14 @@ void battery_estimator_update(
         save_timer_seconds = 0.0f;
 
         battery.storage.version = BATTERY_STORAGE_VERSION;
-
-        battery.storage.soc =
-            coulomb_counter_get_soc(&battery.cc);
-
-        battery.storage.soh =
-            battery_health_get_soh(&battery.health);
-
+        battery.storage.soc = est->soc;
+        battery.storage.soh = est->soh;
         battery.storage.equivalent_full_cycles =
-            battery_health_get_cycle_count(&battery.health);
-
+            battery_health_get_cycle_count(&est->health);
         battery.storage.measured_capacity_ah =
-            battery_health_get_capacity(&battery.health);
-
-        battery.storage.rated_capacity_ah =
-            sys_state.battery_profile.capacity_ah;
-
-        battery.storage.chemistry =
-            sys_state.battery_profile.chemistry;
+            battery_health_get_capacity(&est->health);
+        battery.storage.rated_capacity_ah = est->rated_capacity_ah;
+        battery.storage.chemistry = est->chemistry;
 
         battery_storage_save(&battery.storage);
     }

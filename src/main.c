@@ -1031,14 +1031,16 @@ static const menu_item_t settings_items[] = {
     {"Set Hour", MENU_SETTINGS},
     {"Set Minute", MENU_SETTINGS}};
 
-// MONITORING MENU (6 items)
+// MONITORING MENU (8 items)
 static const menu_item_t monitoring_items[] = {
     {"Voltage", MENU_MONITORING},
     {"Current", MENU_MONITORING},
     {"Frequency", MENU_MONITORING},
     {"Temperature", MENU_MONITORING},
     {"Power Factor", MENU_MONITORING},
-    {"Efficiency", MENU_MONITORING}};
+    {"Efficiency", MENU_MONITORING},
+    {"Battery SOC", MENU_MONITORING},
+    {"Battery Ah", MENU_MONITORING}};
 
 // DIAGNOSTIC MENU (6 items)
 static const menu_item_t diagnostic_items[] = {
@@ -1631,21 +1633,37 @@ void init_hardware(void)
 
     if (battery_storage_load(&battery.storage))
     {
+        /* Restore into bat_estimate -- the estimator actually driven by
+         * battery_estimator_update() every cycle. battery_estimator_init()
+         * above already set bat_estimate.counter.rated_capacity_ah and
+         * bat_estimate.health.rated_capacity_ah correctly, so restoring
+         * measured_capacity_ah here doesn't get clamped to [0,0] the way
+         * it would if rated_capacity_ah were still at its zero-init
+         * default (restoring into the separate, never-initialized
+         * global battery.cc/battery.health here would hit exactly that). */
         coulomb_counter_set_soc(
-            &battery.cc,
+            &bat_estimate.counter,
             battery.storage.soc);
 
         battery_health_restore(
-            &battery.health,
+            &bat_estimate.health,
             battery.storage.soh,
             battery.storage.measured_capacity_ah,
             battery.storage.equivalent_full_cycles);
 
-        battery.health.rated_capacity_ah =
+        bat_estimate.health.rated_capacity_ah =
             battery.storage.rated_capacity_ah;
 
         bat_chemistry =
             (battery_chemistry_t)battery.storage.chemistry;
+        bat_estimate.chemistry = bat_chemistry;
+
+        /* Seed the display mirror immediately, so anything reading
+         * battery.soc/.soh before the first battery_estimator_update()
+         * call sees the restored values instead of the 100%/100%
+         * battery_estimator_init() defaults. */
+        battery.soc = battery.storage.soc;
+        battery.soh = battery.storage.soh;
     }
 
     buzzer_init();
@@ -2624,9 +2642,7 @@ void adc_task(void *arg)
             sys_state.inverter.output_frequency,
             sys_state.inverter.battery.battery_temperature,
             sys_state.inverter.load_percentage,
-            calculate_battery_percentage(sys_state.inverter.battery.voltage,
-                                         sys_state.battery_profile.chemistry,
-                                         (float)sys_state.battery_profile.nominal_voltage),
+            (uint8_t)battery_estimator_get_soc(&bat_estimate),
             sys_state.inverter.inverter_active,
             sys_state.inverter.connected,
             sys_state.battery_charging);
@@ -3221,6 +3237,34 @@ void check_protections(void)
         PROT_QUANTITY_BATTERY_VOLTAGE,
         sys_state.inverter.battery.voltage,
         now_ms);
+
+    /* Advanced battery management: coulomb counting + SOH tracking +
+     * voltage-based recalibration while resting. NOTE: battery_current
+     * is fed from sys_state.inverter.output_current, which -- like
+     * everywhere else in this firmware -- has no real current sensor
+     * behind it yet (always reads 0). Coulomb counting itself won't
+     * reflect real charge/discharge until that sensor exists, but SOC
+     * still gets corrected from real voltage readings whenever the
+     * battery is "resting" (current below the rest threshold, which is
+     * trivially always true right now since current always reads 0),
+     * so the displayed percentage isn't just frozen at its startup
+     * value in the meantime. */
+    static uint32_t last_battery_update_ms = 0;
+    if (last_battery_update_ms == 0)
+    {
+        last_battery_update_ms = now_ms;
+    }
+    float battery_dt_seconds = (now_ms - last_battery_update_ms) / 1000.0f;
+    last_battery_update_ms = now_ms;
+
+    if (battery_dt_seconds > 0.0f)
+    {
+        battery_estimator_update(
+            &bat_estimate,
+            sys_state.inverter.battery.voltage,
+            sys_state.inverter.output_current,
+            battery_dt_seconds);
+    }
 
     uint32_t fan_rpm = post_fan_get_rpm();
     sys_state.fan.speed = (float)fan_rpm;
@@ -4185,10 +4229,7 @@ void handle_power_button_event(button_event_info_t *event_info,
             break;
         case INVERTER_STANDBY:
         {
-            uint8_t pct = calculate_battery_percentage(
-                sys_state.inverter.battery.voltage,
-                sys_state.battery_profile.chemistry,
-                (float)sys_state.battery_profile.nominal_voltage);
+            uint8_t pct = (uint8_t)battery_estimator_get_soc(&bat_estimate);
             lcd_show_standby(sys_state.inverter.battery.voltage, pct,
                              sys_state.inverter.connected);
             break;
@@ -4657,7 +4698,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
 
         case MENU_MONITORING:
 
-            if (sys_state.menu_selection < 6)
+            if (sys_state.menu_selection < 8)
             {
                 enter_detail_view(MENU_MONITORING, sys_state.menu_selection);
                 switch (sys_state.menu_selection)
@@ -4679,6 +4720,12 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                     break;
                 case 5:
                     lcd_show_monitoring_detail("Efficiency", sys_state.efficiency, "%");
+                    break;
+                case 6:
+                    lcd_show_monitoring_detail("Battery SOC", battery_estimator_get_soc(&bat_estimate), "%");
+                    break;
+                case 7:
+                    lcd_show_monitoring_detail("Battery Ah", battery_estimator_get_remaining_ah(&bat_estimate), "Ah");
                     break;
                 }
             }
@@ -4833,7 +4880,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         }
 
         case MENU_MONITORING:
-            if (sys_state.menu_selection < 6)
+            if (sys_state.menu_selection < 8)
             {
                 enter_detail_view(MENU_MONITORING, sys_state.menu_selection);
                 switch (sys_state.menu_selection)
@@ -4855,6 +4902,12 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                     break;
                 case 5:
                     lcd_show_monitoring_detail("Efficiency", sys_state.efficiency, "%");
+                    break;
+                case 6:
+                    lcd_show_monitoring_detail("Battery SOC", battery_estimator_get_soc(&bat_estimate), "%");
+                    break;
+                case 7:
+                    lcd_show_monitoring_detail("Battery Ah", battery_estimator_get_remaining_ah(&bat_estimate), "Ah");
                     break;
                 }
             }

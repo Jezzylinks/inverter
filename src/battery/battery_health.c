@@ -333,3 +333,57 @@ void battery_health_recalculate(
         (health->soh_percent <=
          BATTERY_EOL_THRESHOLD);
 }
+
+/*==============================================================================
+ * Getters
+ *============================================================================*/
+
+float battery_health_get_soh(const battery_health_t *health)
+{
+    return (health != NULL) ? health->soh_percent : 0.0f;
+}
+
+float battery_health_get_capacity(const battery_health_t *health)
+{
+    return (health != NULL) ? health->measured_capacity_ah : 0.0f;
+}
+
+float battery_health_get_remaining_capacity(const battery_health_t *health)
+{
+    return (health != NULL) ? health->remaining_capacity_ah : 0.0f;
+}
+
+uint32_t battery_health_get_cycle_count(const battery_health_t *health)
+{
+    return (health != NULL) ? health->equivalent_full_cycles : 0U;
+}
+
+float battery_health_get_total_charge(const battery_health_t *health)
+{
+    return (health != NULL) ? health->total_charge_ah : 0.0f;
+}
+
+float battery_health_get_total_discharge(const battery_health_t *health)
+{
+    return (health != NULL) ? health->total_discharge_ah : 0.0f;
+}
+
+bool battery_health_is_end_of_life(const battery_health_t *health)
+{
+    return (health != NULL) ? health->end_of_life : false;
+}
+
+float battery_health_get_rul(const battery_health_t *health)
+{
+    return (health != NULL) ? health->rul_percent : 0.0f;
+}
+
+float battery_health_get_coulombic_efficiency(const battery_health_t *health)
+{
+    return (health != NULL) ? health->coulombic_efficiency : 0.0f;
+}
+
+float battery_health_get_charge_efficiency(const battery_health_t *health)
+{
+    return (health != NULL) ? health->charge_efficiency : 0.0f;
+}
