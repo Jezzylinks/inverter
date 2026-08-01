@@ -112,11 +112,6 @@ void battery_estimator_update(
         battery_health_get_soh(
             &est->health);
 
-    /* Mirror the latest results into the global battery_system_t --
-     * this is what the LCD/display code and NVS save below actually
-     * read, so it needs to reflect THIS estimator's real, just-updated
-     * state, not be read independently from a second, never-updated
-     * copy of the same data. */
     battery.voltage = est->filtered_voltage;
     battery.current = battery_current;
     battery.soc = est->soc;

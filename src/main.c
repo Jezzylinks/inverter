@@ -3238,17 +3238,6 @@ void check_protections(void)
         sys_state.inverter.battery.voltage,
         now_ms);
 
-    /* Advanced battery management: coulomb counting + SOH tracking +
-     * voltage-based recalibration while resting. NOTE: battery_current
-     * is fed from sys_state.inverter.output_current, which -- like
-     * everywhere else in this firmware -- has no real current sensor
-     * behind it yet (always reads 0). Coulomb counting itself won't
-     * reflect real charge/discharge until that sensor exists, but SOC
-     * still gets corrected from real voltage readings whenever the
-     * battery is "resting" (current below the rest threshold, which is
-     * trivially always true right now since current always reads 0),
-     * so the displayed percentage isn't just frozen at its startup
-     * value in the meantime. */
     static uint32_t last_battery_update_ms = 0;
     if (last_battery_update_ms == 0)
     {
