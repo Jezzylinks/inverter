@@ -28,6 +28,7 @@ void quiet_hours_sntp_init(void)
      * periodically on its own once network access exists -- no need to
      * manually kick it beyond the one nudge in quiet_hours_request_sync(). */
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    ESP_LOGI("QUIET", "REACHED HERE");
     esp_sntp_setservername(0, "pool.ntp.org");
     sntp_set_time_sync_notification_cb(time_sync_notification_cb);
     esp_sntp_init();
@@ -84,9 +85,9 @@ bool quiet_hours_is_active(void)
 
     struct tm tm_info;
     gmtime_r(&now, &tm_info); /* already manually offset above, so plain
-                                * gmtime_r avoids needing setenv(TZ)/tzset()
-                                * plumbing for a timezone we'd have to ask
-                                * the user for anyway. */
+                               * gmtime_r avoids needing setenv(TZ)/tzset()
+                               * plumbing for a timezone we'd have to ask
+                               * the user for anyway. */
     uint8_t hour = (uint8_t)tm_info.tm_hour;
 
     if (start < end)

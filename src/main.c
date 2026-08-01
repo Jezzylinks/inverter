@@ -76,6 +76,7 @@
 #include "utility/buzzer.h"
 #include "post/post_manager.h"
 #include "utility/quiet_hours.h"
+#include "wifi/wifi_security.h"
 
 /* ── All original #defines─────────────────────────────── */
 #define WIFI_SSID "johnson"
@@ -1614,6 +1615,7 @@ void init_hardware(void)
 #if CONFIG_USE_LED_PWM
     led_init();
     quiet_hours_sntp_init();
+    ESP_LOGI("QUIET_HOURS", "QUIET HOURS SUCCEEDED");
     post_fan_init();
 #endif
 
@@ -9387,6 +9389,8 @@ void app_main(void)
     if (nvs_is_initialized())
         ESP_LOGI("MAIN", "NVS ready");
 
+    // Initialize Wi-Fi security
+    ESP_ERROR_CHECK(wifi_security_init());
     restore_from_deep_sleep();
     log_all_error_flags(sys_state.error.error_flags);
     esp_err_t ret = initialize_button_system();
