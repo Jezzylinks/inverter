@@ -8,54 +8,53 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "freertos/semphr.h"
 
 #include "wifi_storage.h"
 #include "wifi_manager.h"
 #include "wifi_provision.h"
+#include "wifi_scan.h"
 
-static const char *TAG =
-    "WIFI_CONTROLLER";
+static const char *TAG = "WIFI_CONTROLLER";
 
-/*==========================================================
- *
- *              PRIVATE DATA
- *
- *=========================================================*/
-
-static wifi_controller_state_t
-    s_state = WIFI_CONTROLLER_IDLE;
-
+static wifi_controller_state_t s_state = WIFI_CONTROLLER_IDLE;
 static bool s_initialized = false;
+static SemaphoreHandle_t s_mutex = NULL;
 
-/*==========================================================
- *
- *              PROVISION CALLBACK
- *
- *=========================================================*/
+static void wifi_controller_lock(void)
+{
+    if (s_mutex != NULL)
+    {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+    }
+}
+
+static void wifi_controller_unlock(void)
+{
+    if (s_mutex != NULL)
+    {
+        xSemaphoreGive(s_mutex);
+    }
+}
 
 static void wifi_controller_provision_complete(void)
 {
-    ESP_LOGI(TAG,
-             "Provisioning complete");
+    ESP_LOGI(TAG, "Provisioning complete");
 
     /*
-     * New credentials are already
-     * stored in NVS.
-     *
+     * New credentials are already stored in NVS.
      * Start normal STA connection.
+     *
+     * NOTE: This callback runs in the system event task context.
+     * wifi_manager_connect() must remain non-blocking here.
      */
 
-    s_state =
-        WIFI_CONTROLLER_CONNECTING;
+    wifi_controller_lock();
+    s_state = WIFI_CONTROLLER_CONNECTING;
+    wifi_controller_unlock();
 
     wifi_manager_connect();
 }
-
-/*==========================================================
- *
- *              INITIALIZATION
- *
- *=========================================================*/
 
 esp_err_t wifi_controller_init(void)
 {
@@ -66,61 +65,97 @@ esp_err_t wifi_controller_init(void)
 
     esp_err_t err;
 
-    /*
-     * Initialize storage
-     */
-
-    err =
-        wifi_storage_init();
-
-    if (err != ESP_OK)
+    /* Create mutex for thread-safe state access */
+    s_mutex = xSemaphoreCreateMutex();
+    if (s_mutex == NULL)
     {
-        return err;
+        ESP_LOGE(TAG, "Failed to create mutex");
+        return ESP_ERR_NO_MEM;
     }
 
-    /*
-     * Initialize WiFi manager
-     */
-
-    err =
-        wifi_manager_init();
-
+    /* Initialize storage */
+    err = wifi_storage_init();
     if (err != ESP_OK)
     {
-        return err;
+        goto rollback;
     }
 
-    wifi_scan_init();
-
-    /*
-     * Register provisioning completion
-     */
-
-    err =
-        wifi_provision_register_complete_callback(
-            wifi_controller_provision_complete);
-
+    /* Initialize WiFi manager */
+    err = wifi_manager_init();
     if (err != ESP_OK)
     {
-        return err;
+        goto rollback;
     }
 
-    s_state =
-        WIFI_CONTROLLER_IDLE;
+    /* Initialize WiFi scan */
+    err = wifi_scan_init();
+    if (err != ESP_OK)
+    {
+        goto rollback;
+    }
 
+    /* Register provisioning completion callback */
+    err = wifi_provision_register_complete_callback(wifi_controller_provision_complete);
+    if (err != ESP_OK)
+    {
+        goto rollback;
+    }
+
+    wifi_controller_lock();
+    s_state = WIFI_CONTROLLER_IDLE;
     s_initialized = true;
+    wifi_controller_unlock();
 
-    ESP_LOGI(TAG,
-             "WiFi controller initialized");
+    ESP_LOGI(TAG, "WiFi controller initialized");
+
+    return ESP_OK;
+
+rollback:
+    /* Clean up partial initialization */
+    if (s_mutex != NULL)
+    {
+        vSemaphoreDelete(s_mutex);
+        s_mutex = NULL;
+    }
+    return err;
+}
+
+esp_err_t wifi_controller_deinit(void)
+{
+    if (!s_initialized)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t err;
+
+    err = wifi_provision_stop();
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Provision stop failed: %s", esp_err_to_name(err));
+    }
+
+    err = wifi_manager_stop();
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Manager stop failed: %s", esp_err_to_name(err));
+    }
+
+    wifi_controller_lock();
+    s_state = WIFI_CONTROLLER_IDLE;
+    s_initialized = false;
+    wifi_controller_unlock();
+
+    if (s_mutex != NULL)
+    {
+        vSemaphoreDelete(s_mutex);
+        s_mutex = NULL;
+    }
+
+    ESP_LOGI(TAG, "WiFi controller deinitialized");
 
     return ESP_OK;
 }
-
-/*==========================================================
- *
- *              START WIFI
- *
- *=========================================================*/
 
 esp_err_t wifi_controller_start(void)
 {
@@ -129,131 +164,167 @@ esp_err_t wifi_controller_start(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    /*
-     * Check saved credentials
-     */
-
-    if (wifi_storage_has_credentials())
-    {
-        ESP_LOGI(TAG,
-                 "Credentials found");
-
-        s_state =
-            WIFI_CONTROLLER_CONNECTING;
-
-        return wifi_manager_connect();
-    }
-
-    /*
-     * No credentials
-     */
-
-    ESP_LOGW(TAG,
-             "No credentials");
-
-    s_state =
-        WIFI_CONTROLLER_PROVISIONING;
-
-    return wifi_provision_start();
-}
-
-/*==========================================================
- *
- *              STOP WIFI
- *
- *=========================================================*/
-
-esp_err_t wifi_controller_stop(void)
-{
     esp_err_t err;
 
-    err =
-        wifi_provision_stop();
-
-    if (err != ESP_OK)
+    /* Check saved credentials */
+    if (wifi_storage_has_credentials())
     {
+        ESP_LOGI(TAG, "Credentials found");
+
+        err = wifi_manager_connect();
+        if (err == ESP_OK)
+        {
+            wifi_controller_lock();
+            s_state = WIFI_CONTROLLER_CONNECTING;
+            wifi_controller_unlock();
+        }
         return err;
     }
 
-    err =
-        wifi_manager_stop();
+    /* No credentials — enter provisioning mode */
+    ESP_LOGW(TAG, "No credentials");
 
-    s_state =
-        WIFI_CONTROLLER_IDLE;
-
+    err = wifi_provision_start();
+    if (err == ESP_OK)
+    {
+        wifi_controller_lock();
+        s_state = WIFI_CONTROLLER_PROVISIONING;
+        wifi_controller_unlock();
+    }
     return err;
 }
 
-/*==========================================================
- *
- *              RECONNECT
- *
- *=========================================================*/
+esp_err_t wifi_controller_stop(void)
+{
+    if (!s_initialized)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t err;
+
+    err = wifi_provision_stop();
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to stop provisioning: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = wifi_manager_stop();
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to stop manager: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    wifi_controller_lock();
+    s_state = WIFI_CONTROLLER_IDLE;
+    wifi_controller_unlock();
+
+    return ESP_OK;
+}
 
 esp_err_t wifi_controller_reconnect(void)
 {
-    s_state =
-        WIFI_CONTROLLER_CONNECTING;
+    if (!s_initialized)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
 
-    return wifi_manager_reconnect();
+    esp_err_t err = wifi_manager_reconnect();
+    if (err == ESP_OK)
+    {
+        wifi_controller_lock();
+        s_state = WIFI_CONTROLLER_CONNECTING;
+        wifi_controller_unlock();
+    }
+    return err;
 }
-
-/*==========================================================
- *
- *              PROVISIONING CONTROL
- *
- *=========================================================*/
 
 esp_err_t wifi_controller_start_provisioning(void)
 {
-    s_state =
-        WIFI_CONTROLLER_PROVISIONING;
+    if (!s_initialized)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
 
-    return wifi_provision_start();
+    esp_err_t err = wifi_provision_start();
+    if (err == ESP_OK)
+    {
+        wifi_controller_lock();
+        s_state = WIFI_CONTROLLER_PROVISIONING;
+        wifi_controller_unlock();
+    }
+    return err;
 }
 
 esp_err_t wifi_controller_stop_provisioning(void)
 {
+    if (!s_initialized)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
     return wifi_provision_stop();
 }
 
-/*==========================================================
- *
- *              STATUS
- *
- *=========================================================*/
-
-wifi_controller_state_t
-wifi_controller_get_state(void)
+wifi_controller_state_t wifi_controller_get_state(void)
 {
-    return s_state;
+    wifi_controller_state_t state;
+
+    wifi_controller_lock();
+    state = s_state;
+    wifi_controller_unlock();
+
+    return state;
 }
 
 bool wifi_controller_is_connected(void)
 {
+    if (!s_initialized)
+    {
+        return false;
+    }
+
     return wifi_manager_is_connected();
 }
 
-const wifi_status_t *
-wifi_controller_get_status(void)
+const wifi_status_t *wifi_controller_get_status(void)
 {
+    if (!s_initialized)
+    {
+        return NULL;
+    }
+
     return wifi_manager_get_status();
 }
 
-/*==========================================================
- *
- *              CONFIGURATION
- *
- *=========================================================*/
-
-esp_err_t wifi_controller_set_config(
-    const wifi_manager_config_t *config)
+esp_err_t wifi_controller_set_config(const wifi_manager_config_t *config)
 {
+    if (!s_initialized)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (config == NULL)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
     return wifi_manager_set_config(config);
 }
 
-esp_err_t wifi_controller_get_config(
-    wifi_manager_config_t *config)
+esp_err_t wifi_controller_get_config(wifi_manager_config_t *config)
 {
+    if (!s_initialized)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (config == NULL)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
     return wifi_manager_get_config(config);
 }

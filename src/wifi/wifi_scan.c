@@ -116,28 +116,35 @@ esp_err_t wifi_scan_start(
          i++)
     {
 
-        int written =
-            snprintf(output + used,
-                     max_len - used,
+        /* Simple escape: replace ' with \' in a temp buffer */
+        char escaped_ssid[65] = {0};
+        const char *src = (char *)records[i].ssid;
+        size_t dst_idx = 0;
+        for (size_t j = 0; src[j] != '\0' && dst_idx < sizeof(escaped_ssid) - 2; j++)
+        {
+            if (src[j] == '\'')
+            {
+                escaped_ssid[dst_idx++] = '\\';
+            }
+            escaped_ssid[dst_idx++] = src[j];
+        }
+        escaped_ssid[dst_idx] = '\0';
 
-                     "<p>"
-                     "<button onclick=\"choose('%s')\">"
-                     "%s"
-                     "</button>"
-                     "<br>"
-                     "RSSI: %d dBm<br>"
-                     "Channel: %d"
-                     "</p>",
-
-                     i + 1,
-
-                     (char *)records[i].ssid,
-
-                     (char *)records[i].ssid,
-
-                     records[i].rssi,
-
-                     records[i].primary);
+        int written = snprintf(output + used,
+                               max_len - used,
+                               "<p>"
+                               "%d. <button onclick=\"choose('%s')\">"
+                               "%s"
+                               "</button>"
+                               "<br>"
+                               "RSSI: %d dBm<br>"
+                               "Channel: %d"
+                               "</p>",
+                               i + 1,                   /* 1. Numbering */
+                               escaped_ssid,            /* 2. choose() argument */
+                               (char *)records[i].ssid, /* 3. Button text */
+                               records[i].rssi,         /* 4. RSSI */
+                               records[i].primary);     /* 5. Channel */
 
         if (written < 0 ||
             used + written >= max_len)

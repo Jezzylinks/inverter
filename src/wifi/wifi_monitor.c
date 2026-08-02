@@ -56,6 +56,9 @@ static wifi_monitor_callback_t
  *
  *=========================================================*/
 
+static bool wifi_monitor_dns_test(void);
+static bool wifi_monitor_ping_test(void);
+
 static void wifi_monitor_notify(void)
 {
     wifi_monitor_status_t copy;

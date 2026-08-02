@@ -1,3 +1,8 @@
+/**
+ * @file wifi_manager.h
+ * @brief Wi-Fi Manager Public Interface
+ */
+
 #ifndef WIFI_MANAGER_H
 #define WIFI_MANAGER_H
 
@@ -11,53 +16,40 @@ extern "C"
 
 #include "esp_err.h"
 #include "esp_wifi.h"
+#include "esp_netif.h"
 #include "wifi_events.h"
-#include "esp_ping.h"
-
-/*----------------------------------------------------------
- * Configuration
- *---------------------------------------------------------*/
-#define WIFI_MAX_RETRY_COUNT 10
-#define WIFI_CONNECT_TIMEOUT_MS 15000
-#define WIFI_RECONNECT_DELAY_MS 3000
+#include "wifi_config.h"
 
     /*----------------------------------------------------------
      * Wi-Fi Configuration
      *---------------------------------------------------------*/
     typedef struct
     {
-        /*
-         * STA configuration
-         */
+        /* STA configuration */
         char ssid[33];
+        char password[64]; /* Matches ESP-IDF wifi_sta_config_t */
 
-        char password[65];
-
-        /*
-         * Operating mode
-         */
+        /* Operating mode */
         wifi_mode_t mode;
 
-        /*
-         * Network options
-         */
+        /* Network options */
         bool dhcp;
-
         bool auto_reconnect;
+        uint32_t reconnect_interval_ms;
 
-        /*
-         * Authentication
-         */
+        /* Static IP configuration (used when dhcp == false) */
+        esp_netif_ip_info_t ip_info;
+        esp_ip4_addr_t dns;
+
+        /* Authentication */
         wifi_auth_mode_t authmode;
 
-        /*
-         * AP provisioning settings
-         */
+        /* AP provisioning settings */
         char ap_ssid[33];
-
-        char ap_password[65];
-
+        char ap_password[64]; /* Matches ESP-IDF */
         uint8_t ap_channel;
+        uint8_t ap_max_connection; /* 1–10, default 4 */
+        wifi_auth_mode_t ap_authmode;
 
     } wifi_manager_config_t;
 
@@ -84,11 +76,9 @@ extern "C"
     /*----------------------------------------------------------
      * Configuration
      *---------------------------------------------------------*/
-    esp_err_t wifi_manager_set_config(
-        const wifi_manager_config_t *config);
+    esp_err_t wifi_manager_set_config(const wifi_manager_config_t *config);
 
-    esp_err_t wifi_manager_get_config(
-        wifi_manager_config_t *config);
+    esp_err_t wifi_manager_get_config(wifi_manager_config_t *config);
 
     /*----------------------------------------------------------
      * Status
@@ -108,8 +98,7 @@ extern "C"
 
     esp_err_t wifi_manager_get_ip(esp_netif_ip_info_t *ip);
 
-    esp_err_t wifi_manager_get_ap_info(
-        wifi_ap_record_t *ap);
+    esp_err_t wifi_manager_get_ap_info(wifi_ap_record_t *ap);
 
     /*----------------------------------------------------------
      * Retry Control

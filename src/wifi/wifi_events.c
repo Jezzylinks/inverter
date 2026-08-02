@@ -516,25 +516,3 @@ esp_err_t wifi_events_unregister_callback(
 
     return ESP_ERR_NOT_FOUND;
 }
-
-esp_err_t wifi_events_register_callback(
-    wifi_event_callback_t callback)
-{
-    if (callback == NULL)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    s_callback = callback;
-
-    return ESP_OK;
-}
-
-static void wifi_events_notify(
-    wifi_connection_state_t state)
-{
-    if (s_callback)
-    {
-        s_callback(state);
-    }
-}
