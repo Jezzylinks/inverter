@@ -4,8 +4,8 @@
  */
 
 #include "wifi_manager.h"
-
 #include <string.h>
+#include <stdlib.h>
 
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -33,6 +33,7 @@ static bool s_initialized = false;
 static uint8_t s_retry_limit = WIFI_MAXIMUM_RETRY;
 static bool s_auto_reconnect = true;
 static wifi_credentials_t s_credentials;
+static SemaphoreHandle_t s_manager_mutex = NULL;
 
 /*----------------------------------------------------------
  * Forward Declarations
@@ -244,6 +245,13 @@ esp_err_t wifi_manager_init(void)
         return ESP_OK;
     }
 
+    s_manager_mutex = xSemaphoreCreateMutex();
+    if (s_manager_mutex == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create mutex");
+        return ESP_ERR_NO_MEM;
+    }
+
     esp_err_t err;
 
     memset(&s_config, 0, sizeof(s_config));
@@ -256,11 +264,10 @@ esp_err_t wifi_manager_init(void)
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "Failed to register provision callback: %s", esp_err_to_name(err));
-        return err;
+        goto rollback_mutex;
     }
 
-    err = wifi_storage_has_credentials();
-    if (err == ESP_OK)
+    if (wifi_storage_has_credentials())
     {
         err = wifi_storage_load_credentials(&s_credentials);
         if (err == ESP_OK)
@@ -277,28 +284,21 @@ esp_err_t wifi_manager_init(void)
     }
     else
     {
-        if (err != ESP_OK)
-        {
-            ESP_LOGW(TAG, "Failed to check credentials: %s", esp_err_to_name(err));
-        }
-        else
-        {
-            ESP_LOGW(TAG, "No WiFi credentials stored");
-        }
+        ESP_LOGW(TAG, "No WiFi credentials stored");
     }
 
     err = esp_netif_init();
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "Netif init failed: %s", esp_err_to_name(err));
-        return err;
+        goto rollback_mutex;
     }
 
     err = esp_event_loop_create_default();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
     {
         ESP_LOGE(TAG, "Event loop creation failed: %s", esp_err_to_name(err));
-        return err;
+        goto rollback_mutex;
     }
 
     s_sta_netif = esp_netif_create_default_wifi_sta();
@@ -327,6 +327,9 @@ esp_err_t wifi_manager_init(void)
         ESP_LOGE(TAG, "WiFi init failed: %s", esp_err_to_name(err));
         goto rollback_ap;
     }
+
+    /* Apply power save mode from config */
+    esp_wifi_set_ps(WIFI_POWER_SAVE_MODE);
 
     err = wifi_events_init();
     if (err != ESP_OK)
@@ -359,6 +362,13 @@ rollback_sta:
     esp_netif_destroy(s_sta_netif);
     s_sta_netif = NULL;
 rollback_netif:
+    /* Can't undo esp_netif_init or event_loop */
+rollback_mutex:
+    if (s_manager_mutex)
+    {
+        vSemaphoreDelete(s_manager_mutex);
+        s_manager_mutex = NULL;
+    }
     return err;
 }
 
@@ -374,6 +384,8 @@ esp_err_t wifi_manager_deinit(void)
 
     esp_err_t err;
     esp_err_t first_err = ESP_OK;
+
+    wifi_events_unregister_event_callback(wifi_manager_event_update);
 
     err = esp_wifi_stop();
     if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT)
@@ -407,6 +419,15 @@ esp_err_t wifi_manager_deinit(void)
 
     memset(&s_config, 0, sizeof(s_config));
     memset(&s_credentials, 0, sizeof(s_credentials));
+
+    s_retry_limit = WIFI_MAXIMUM_RETRY;
+    s_auto_reconnect = true;
+
+    if (s_manager_mutex)
+    {
+        vSemaphoreDelete(s_manager_mutex);
+        s_manager_mutex = NULL;
+    }
 
     s_initialized = false;
 
@@ -526,11 +547,17 @@ esp_err_t wifi_manager_connect(void)
         return err;
     }
 
-    err = esp_wifi_start();
-    if (err != ESP_OK)
+    /* WiFi is already started by wifi_manager_start() or previous connect */
+    /* Only start if not already running */
+    wifi_mode_t current_mode;
+    if (esp_wifi_get_mode(&current_mode) != ESP_OK || current_mode == WIFI_MODE_NULL)
     {
-        ESP_LOGE(TAG, "WiFi start failed: %s", esp_err_to_name(err));
-        return err;
+        err = esp_wifi_start();
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "WiFi start failed: %s", esp_err_to_name(err));
+            return err;
+        }
     }
 
     err = wifi_manager_set_static_ip();
@@ -622,7 +649,17 @@ esp_err_t wifi_manager_set_config(const wifi_manager_config_t *config)
         return ESP_ERR_INVALID_ARG;
     }
 
+    if (s_manager_mutex)
+    {
+        xSemaphoreTake(s_manager_mutex, portMAX_DELAY);
+    }
+
     memcpy(&s_config, &temp, sizeof(s_config));
+
+    if (s_manager_mutex)
+    {
+        xSemaphoreGive(s_manager_mutex);
+    }
 
     ESP_LOGI(TAG, "WiFi configuration updated");
 
@@ -639,7 +676,17 @@ esp_err_t wifi_manager_get_config(wifi_manager_config_t *config)
         return ESP_ERR_INVALID_ARG;
     }
 
+    if (s_manager_mutex)
+    {
+        xSemaphoreTake(s_manager_mutex, portMAX_DELAY);
+    }
+
     memcpy(config, &s_config, sizeof(wifi_manager_config_t));
+
+    if (s_manager_mutex)
+    {
+        xSemaphoreGive(s_manager_mutex);
+    }
 
     return ESP_OK;
 }
@@ -760,7 +807,16 @@ uint8_t wifi_manager_get_retry_limit(void)
 void wifi_manager_enable_auto_reconnect(bool enable)
 {
     s_auto_reconnect = enable;
+
+    if (s_manager_mutex)
+    {
+        xSemaphoreTake(s_manager_mutex, portMAX_DELAY);
+    }
     s_config.auto_reconnect = enable;
+    if (s_manager_mutex)
+    {
+        xSemaphoreGive(s_manager_mutex);
+    }
 }
 
 bool wifi_manager_auto_reconnect_enabled(void)

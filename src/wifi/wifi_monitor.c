@@ -4,9 +4,9 @@
  */
 
 #include "wifi_monitor.h"
-
 #include <string.h>
-#include <time.h>
+#include <sys/socket.h>
+#include <netdb.h>
 
 #include "esp_log.h"
 #include "esp_wifi.h"
@@ -16,8 +16,6 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
-#include <netdb.h>
-
 #include "lwip/sockets.h"
 #include "ping/ping_sock.h"
 #include "esp_netif.h"
@@ -26,11 +24,11 @@
 
 static const char *TAG = "WIFI_MONITOR";
 
-/*==========================================================
+/*----------------------------------------------------------
  *
- *              PRIVATE DATA
+ * PRIVATE DATA
  *
- *=========================================================*/
+ *---------------------------------------------------------*/
 
 static TaskHandle_t s_monitor_task = NULL;
 
@@ -50,11 +48,11 @@ static wifi_internet_status_t
 static wifi_monitor_callback_t
     s_callbacks[WIFI_MONITOR_MAX_CALLBACKS];
 
-/*==========================================================
+/*----------------------------------------------------------
  *
- *              PRIVATE FUNCTIONS
+ * PRIVATE FUNCTIONS
  *
- *=========================================================*/
+ *---------------------------------------------------------*/
 
 static bool wifi_monitor_dns_test(void);
 static bool wifi_monitor_ping_test(void);
@@ -186,13 +184,22 @@ static bool wifi_monitor_ping_test(void)
 
     config.target_addr =
         target_addr;
+    config.count = 3;         /* Send 3 pings */
+    config.interval_ms = 500; /* 500ms between pings */
+    config.timeout_ms = 1000; /* 1s timeout per ping */
+
+    esp_ping_callbacks_t cbs = {0};
+    uint32_t received = 0;
+    cbs.on_ping_success = NULL;
+    cbs.on_ping_timeout = NULL;
+    cbs.on_ping_end = NULL;
 
     esp_ping_handle_t ping;
 
     esp_err_t err =
         esp_ping_new_session(
             &config,
-            NULL,
+            &cbs,
             &ping);
 
     if (err != ESP_OK)
@@ -202,21 +209,29 @@ static bool wifi_monitor_ping_test(void)
 
     esp_ping_start(ping);
 
+    /* Wait for pings to complete (3 * 500ms + margin) */
     vTaskDelay(
-        pdMS_TO_TICKS(3000));
+        pdMS_TO_TICKS(2500));
+
+    /* Get statistics */
+    uint32_t transmitted = 0;
+    esp_ping_get_profile(ping, ESP_PING_PROF_REQUEST, &transmitted, sizeof(transmitted));
+    esp_ping_get_profile(ping, ESP_PING_PROF_REPLY, &received, sizeof(received));
 
     esp_ping_stop(ping);
 
     esp_ping_delete_session(ping);
 
-    return true;
+    ESP_LOGI(TAG, "Ping: %lu/%lu received", received, transmitted);
+
+    return (received > 0);
 }
 
-/*==========================================================
+/*----------------------------------------------------------
  *
- *              MONITOR TASK
+ * MONITOR TASK
  *
- *=========================================================*/
+ *---------------------------------------------------------*/
 
 static void wifi_monitor_task(void *arg)
 {
@@ -248,6 +263,8 @@ static void wifi_monitor_task(void *arg)
             s_status.rssi =
                 ap_info.rssi;
 
+            s_status.got_ip = true;
+
             wifi_monitor_check_internet();
 
             if (s_mutex)
@@ -269,6 +286,8 @@ static void wifi_monitor_task(void *arg)
 
             s_status.internet =
                 WIFI_INTERNET_UNAVAILABLE;
+
+            s_status.rssi = -127;
 
             if (s_mutex)
             {
@@ -292,11 +311,11 @@ static void wifi_monitor_task(void *arg)
     vTaskDelete(NULL);
 }
 
-/*==========================================================
+/*----------------------------------------------------------
  *
- *              INITIALIZATION
+ * INITIALIZATION
  *
- *=========================================================*/
+ *---------------------------------------------------------*/
 
 esp_err_t wifi_monitor_init(void)
 {
@@ -325,11 +344,11 @@ esp_err_t wifi_monitor_init(void)
     return ESP_OK;
 }
 
-/*==========================================================
+/*----------------------------------------------------------
  *
- *              START / STOP
+ * START / STOP
  *
- *=========================================================*/
+ *---------------------------------------------------------*/
 
 esp_err_t wifi_monitor_start(void)
 {
@@ -392,26 +411,65 @@ esp_err_t wifi_monitor_deinit(void)
     return ESP_OK;
 }
 
-/*==========================================================
+/*----------------------------------------------------------
  *
- *              STATUS API
+ * STATUS API
  *
- *=========================================================*/
+ *---------------------------------------------------------*/
 
 bool wifi_monitor_is_online(void)
 {
-    return s_status.connected;
+    bool connected;
+
+    if (s_mutex)
+    {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        connected = s_status.connected;
+        xSemaphoreGive(s_mutex);
+    }
+    else
+    {
+        connected = s_status.connected;
+    }
+
+    return connected;
 }
 
 int8_t wifi_monitor_get_rssi(void)
 {
-    return s_status.rssi;
+    int8_t rssi;
+
+    if (s_mutex)
+    {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        rssi = s_status.rssi;
+        xSemaphoreGive(s_mutex);
+    }
+    else
+    {
+        rssi = s_status.rssi;
+    }
+
+    return rssi;
 }
 
 wifi_internet_status_t
 wifi_monitor_get_internet_status(void)
 {
-    return s_status.internet;
+    wifi_internet_status_t internet;
+
+    if (s_mutex)
+    {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        internet = s_status.internet;
+        xSemaphoreGive(s_mutex);
+    }
+    else
+    {
+        internet = s_status.internet;
+    }
+
+    return internet;
 }
 
 const wifi_monitor_status_t *
@@ -420,11 +478,11 @@ wifi_monitor_get_status(void)
     return &s_status;
 }
 
-/*==========================================================
+/*----------------------------------------------------------
  *
- *              CALLBACK API
+ * CALLBACK API
  *
- *=========================================================*/
+ *---------------------------------------------------------*/
 
 esp_err_t wifi_monitor_register_callback(
     wifi_monitor_callback_t callback)

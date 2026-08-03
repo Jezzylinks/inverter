@@ -4,7 +4,6 @@
  */
 
 #include "wifi_controller.h"
-
 #include <string.h>
 
 #include "esp_log.h"
@@ -14,6 +13,7 @@
 #include "wifi_manager.h"
 #include "wifi_provision.h"
 #include "wifi_scan.h"
+#include "wifi_monitor.h"
 
 static const char *TAG = "WIFI_CONTROLLER";
 
@@ -84,21 +84,28 @@ esp_err_t wifi_controller_init(void)
     err = wifi_manager_init();
     if (err != ESP_OK)
     {
-        goto rollback;
+        goto rollback_storage;
     }
 
     /* Initialize WiFi scan */
     err = wifi_scan_init();
     if (err != ESP_OK)
     {
-        goto rollback;
+        goto rollback_manager;
+    }
+
+    /* Initialize WiFi monitor */
+    err = wifi_monitor_init();
+    if (err != ESP_OK)
+    {
+        goto rollback_scan;
     }
 
     /* Register provisioning completion callback */
     err = wifi_provision_register_complete_callback(wifi_controller_provision_complete);
     if (err != ESP_OK)
     {
-        goto rollback;
+        goto rollback_monitor;
     }
 
     wifi_controller_lock();
@@ -110,6 +117,14 @@ esp_err_t wifi_controller_init(void)
 
     return ESP_OK;
 
+rollback_monitor:
+    wifi_monitor_deinit();
+rollback_scan:
+    /* No wifi_scan_deinit available */
+rollback_manager:
+    wifi_manager_deinit();
+rollback_storage:
+    /* No wifi_storage_deinit available */
 rollback:
     /* Clean up partial initialization */
     if (s_mutex != NULL)
@@ -141,6 +156,14 @@ esp_err_t wifi_controller_deinit(void)
         ESP_LOGW(TAG, "Manager stop failed: %s", esp_err_to_name(err));
     }
 
+    err = wifi_manager_deinit();
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Manager deinit failed: %s", esp_err_to_name(err));
+    }
+
+    wifi_monitor_deinit();
+
     wifi_controller_lock();
     s_state = WIFI_CONTROLLER_IDLE;
     s_initialized = false;
@@ -171,6 +194,13 @@ esp_err_t wifi_controller_start(void)
     {
         ESP_LOGI(TAG, "Credentials found");
 
+        err = wifi_manager_start();
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Failed to start WiFi manager: %s", esp_err_to_name(err));
+            return err;
+        }
+
         err = wifi_manager_connect();
         if (err == ESP_OK)
         {
@@ -178,6 +208,10 @@ esp_err_t wifi_controller_start(void)
             s_state = WIFI_CONTROLLER_CONNECTING;
             wifi_controller_unlock();
         }
+
+        /* Start monitoring */
+        wifi_monitor_start();
+
         return err;
     }
 
@@ -203,18 +237,18 @@ esp_err_t wifi_controller_stop(void)
 
     esp_err_t err;
 
+    wifi_monitor_stop();
+
     err = wifi_provision_stop();
     if (err != ESP_OK)
     {
         ESP_LOGW(TAG, "Failed to stop provisioning: %s", esp_err_to_name(err));
-        return err;
     }
 
     err = wifi_manager_stop();
     if (err != ESP_OK)
     {
         ESP_LOGW(TAG, "Failed to stop manager: %s", esp_err_to_name(err));
-        return err;
     }
 
     wifi_controller_lock();
@@ -265,7 +299,25 @@ esp_err_t wifi_controller_stop_provisioning(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    return wifi_provision_stop();
+    esp_err_t err = wifi_provision_stop();
+    if (err == ESP_OK)
+    {
+        /* After stopping provisioning, try STA connection */
+        if (wifi_storage_has_credentials())
+        {
+            wifi_manager_connect();
+            wifi_controller_lock();
+            s_state = WIFI_CONTROLLER_CONNECTING;
+            wifi_controller_unlock();
+        }
+        else
+        {
+            wifi_controller_lock();
+            s_state = WIFI_CONTROLLER_IDLE;
+            wifi_controller_unlock();
+        }
+    }
+    return err;
 }
 
 wifi_controller_state_t wifi_controller_get_state(void)
@@ -275,6 +327,30 @@ wifi_controller_state_t wifi_controller_get_state(void)
     wifi_controller_lock();
     state = s_state;
     wifi_controller_unlock();
+
+    /* Update state based on actual WiFi status */
+    if (s_initialized)
+    {
+        wifi_connection_state_t wifi_state = wifi_manager_get_state();
+        switch (wifi_state)
+        {
+        case WIFI_STATE_CONNECTED:
+            state = WIFI_CONTROLLER_CONNECTED;
+            break;
+        case WIFI_STATE_CONNECTING:
+        case WIFI_STATE_RECONNECTING:
+            state = WIFI_CONTROLLER_CONNECTING;
+            break;
+        case WIFI_STATE_FAILED:
+            state = WIFI_CONTROLLER_ERROR;
+            break;
+        case WIFI_STATE_PROVISIONING:
+            state = WIFI_CONTROLLER_PROVISIONING;
+            break;
+        default:
+            break;
+        }
+    }
 
     return state;
 }

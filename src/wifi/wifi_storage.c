@@ -10,33 +10,27 @@
 #include "nvs_flash.h"
 #include "wifi_config.h"
 
+/* Use consistent keys from wifi_config.h */
 #define WIFI_KEY_MODE "mode"
-
 #define WIFI_KEY_AUTORECONNECT "autorec"
-
 #define WIFI_KEY_RECONNECT_TIME "rectime"
-
 #define WIFI_KEY_DHCP "dhcp"
-
 #define WIFI_KEY_AP_SSID "apssid"
-
 #define WIFI_KEY_AP_PASS "appass"
-
 #define WIFI_KEY_AP_CHANNEL "apchan"
-
 #define WIFI_KEY_DNS "dns"
-
 #define WIFI_KEY_IP_INFO "ip_info"
+#define WIFI_KEY_HOSTNAME "hostname"
 
-#define WIFI_USE_STATIC_IP false
-
-#define WIFI_KEY_HOSTNAME "INV-1500W"
+/* STA credentials keys - MUST match wifi_config.h */
+#define WIFI_KEY_SSID WIFI_NVS_KEY_SSID
+#define WIFI_KEY_PASSWORD WIFI_NVS_KEY_PASSWORD
 
 static const char *TAG = "WIFI_STORAGE";
 
 /*==========================================================
  *
- *              PRIVATE HELPERS
+ * PRIVATE HELPERS
  *
  *=========================================================*/
 
@@ -53,15 +47,13 @@ static esp_err_t wifi_storage_open(nvs_handle_t *handle, nvs_open_mode_t mode)
 static esp_err_t wifi_storage_commit_close(nvs_handle_t handle)
 {
     esp_err_t err = nvs_commit(handle);
-
     nvs_close(handle);
-
     return err;
 }
 
 /*==========================================================
  *
- *              INITIALIZATION
+ * INITIALIZATION
  *
  *=========================================================*/
 
@@ -75,7 +67,6 @@ esp_err_t wifi_storage_init(void)
         err == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {
         ESP_ERROR_CHECK(nvs_flash_erase());
-
         err = nvs_flash_init();
     }
 
@@ -90,9 +81,16 @@ esp_err_t wifi_storage_init(void)
     return ESP_OK;
 }
 
+esp_err_t wifi_storage_deinit(void)
+{
+    /* NVS flash deinit is global; only call if no other users */
+    /* nvs_flash_deinit(); */
+    return ESP_OK;
+}
+
 /*==========================================================
  *
- *              SAVE CREDENTIALS
+ * SAVE CREDENTIALS
  *
  *=========================================================*/
 
@@ -121,7 +119,7 @@ esp_err_t wifi_storage_save_credentials(
 
     err = nvs_set_str(
         handle,
-        WIFI_NVS_KEY_SSID,
+        WIFI_KEY_SSID,
         credentials->ssid);
 
     if (err != ESP_OK)
@@ -132,7 +130,7 @@ esp_err_t wifi_storage_save_credentials(
 
     err = nvs_set_str(
         handle,
-        WIFI_NVS_KEY_PASSWORD,
+        WIFI_KEY_PASSWORD,
         credentials->password);
 
     if (err != ESP_OK)
@@ -153,7 +151,7 @@ esp_err_t wifi_storage_save_credentials(
 
 /*==========================================================
  *
- *              LOAD CREDENTIALS
+ * LOAD CREDENTIALS
  *
  *=========================================================*/
 
@@ -181,7 +179,7 @@ esp_err_t wifi_storage_load_credentials(
 
     err = nvs_get_str(
         handle,
-        WIFI_KEY_AP_SSID,
+        WIFI_KEY_SSID,
         credentials->ssid,
         &ssid_len);
 
@@ -195,7 +193,7 @@ esp_err_t wifi_storage_load_credentials(
 
     err = nvs_get_str(
         handle,
-        WIFI_KEY_AP_PASS,
+        WIFI_KEY_PASSWORD,
         credentials->password,
         &password_len);
 
@@ -204,7 +202,7 @@ esp_err_t wifi_storage_load_credentials(
     if (err == ESP_ERR_NVS_NOT_FOUND)
     {
         credentials->password[0] = '\0';
-        return ESP_OK;
+        err = ESP_OK;
     }
 
     if (err != ESP_OK)
@@ -219,7 +217,7 @@ esp_err_t wifi_storage_load_credentials(
 
 /*==========================================================
  *
- *          CHECK IF CREDENTIALS EXIST
+ * CHECK IF CREDENTIALS EXIST
  *
  *=========================================================*/
 
@@ -240,7 +238,7 @@ bool wifi_storage_has_credentials(void)
 
 /*==========================================================
  *
- *              SAVE HOSTNAME
+ * SAVE HOSTNAME
  *
  *=========================================================*/
 
@@ -276,7 +274,7 @@ esp_err_t wifi_storage_save_hostname(const char *hostname)
 
 /*==========================================================
  *
- *              LOAD HOSTNAME
+ * LOAD HOSTNAME
  *
  *=========================================================*/
 
@@ -323,7 +321,7 @@ esp_err_t wifi_storage_load_hostname(char *hostname,
 
 /*==========================================================
  *
- *              ERASE CREDENTIALS
+ * ERASE CREDENTIALS
  *
  *=========================================================*/
 
@@ -339,7 +337,7 @@ esp_err_t wifi_storage_erase_credentials(void)
         return err;
     }
 
-    err = nvs_erase_key(handle, WIFI_KEY_AP_SSID);
+    err = nvs_erase_key(handle, WIFI_KEY_SSID);
 
     if (err != ESP_OK &&
         err != ESP_ERR_NVS_NOT_FOUND)
@@ -348,7 +346,7 @@ esp_err_t wifi_storage_erase_credentials(void)
         return err;
     }
 
-    err = nvs_erase_key(handle, WIFI_KEY_AP_PASS);
+    err = nvs_erase_key(handle, WIFI_KEY_PASSWORD);
 
     if (err != ESP_OK &&
         err != ESP_ERR_NVS_NOT_FOUND)
@@ -369,7 +367,7 @@ esp_err_t wifi_storage_erase_credentials(void)
 
 /*==========================================================
  *
- *              FACTORY RESET
+ * FACTORY RESET
  *
  *=========================================================*/
 
@@ -405,7 +403,7 @@ esp_err_t wifi_storage_factory_reset(void)
 
 /*==========================================================
  *
- *      SAVE NETWORK CONFIGURATION
+ * SAVE NETWORK CONFIGURATION
  *
  *=========================================================*/
 
@@ -430,64 +428,123 @@ esp_err_t wifi_storage_save_network_config(
         return err;
     }
 
-    nvs_set_u8(
+    err = nvs_set_u8(
         handle,
         WIFI_KEY_MODE,
         config->mode);
-
-    nvs_set_u8(
-        handle,
-        WIFI_KEY_AUTORECONNECT,
-        config->auto_reconnect);
-
-    nvs_set_u32(
-        handle,
-        WIFI_KEY_RECONNECT_TIME,
-        config->reconnect_interval_ms);
-
-    nvs_set_u8(
-        handle,
-        WIFI_KEY_DHCP,
-        config->dhcp);
-
-    err = nvs_set_blob(
-        handle,
-        WIFI_KEY_IP_INFO,
-        &config->ip_info,
-        sizeof(esp_netif_ip_info_t));
-
-    err = nvs_set_blob(handle,
-                       WIFI_KEY_DNS,
-                       &config->dns,
-                       sizeof(config->dns));
-
     if (err != ESP_OK)
     {
         nvs_close(handle);
         return err;
     }
 
-    nvs_set_str(
+    err = nvs_set_u8(
+        handle,
+        WIFI_KEY_AUTORECONNECT,
+        config->auto_reconnect);
+    if (err != ESP_OK)
+    {
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_set_u32(
+        handle,
+        WIFI_KEY_RECONNECT_TIME,
+        config->reconnect_interval_ms);
+    if (err != ESP_OK)
+    {
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_set_u8(
+        handle,
+        WIFI_KEY_DHCP,
+        config->dhcp);
+    if (err != ESP_OK)
+    {
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_set_blob(
+        handle,
+        WIFI_KEY_IP_INFO,
+        &config->ip_info,
+        sizeof(esp_netif_ip_info_t));
+    if (err != ESP_OK)
+    {
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_set_blob(handle,
+                       WIFI_KEY_DNS,
+                       &config->dns,
+                       sizeof(config->dns));
+    if (err != ESP_OK)
+    {
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_set_str(
         handle,
         WIFI_KEY_AP_SSID,
         config->ap_ssid);
+    if (err != ESP_OK)
+    {
+        nvs_close(handle);
+        return err;
+    }
 
-    nvs_set_str(
+    err = nvs_set_str(
         handle,
         WIFI_KEY_AP_PASS,
         config->ap_password);
+    if (err != ESP_OK)
+    {
+        nvs_close(handle);
+        return err;
+    }
 
-    nvs_set_u8(
+    err = nvs_set_u8(
         handle,
         WIFI_KEY_AP_CHANNEL,
         config->ap_channel);
+    if (err != ESP_OK)
+    {
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_set_u8(
+        handle,
+        "ap_maxconn",
+        config->ap_max_connection);
+    if (err != ESP_OK)
+    {
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_set_u8(
+        handle,
+        "ap_auth",
+        config->ap_authmode);
+    if (err != ESP_OK)
+    {
+        nvs_close(handle);
+        return err;
+    }
 
     return wifi_storage_commit_close(handle);
 }
 
 /*==========================================================
  *
- *      LOAD NETWORK CONFIGURATION
+ * LOAD NETWORK CONFIGURATION
  *
  *=========================================================*/
 
@@ -566,11 +623,16 @@ esp_err_t wifi_storage_load_network_config(
         return err;
     }
 
-    size_t size =
-        sizeof(config->ip_info);
+    /* Load DNS configuration */
+    size_t dns_size = sizeof(config->dns);
+    err = nvs_get_blob(handle, WIFI_KEY_DNS, &config->dns, &dns_size);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
+    {
+        nvs_close(handle);
+        return err;
+    }
 
-    size =
-        sizeof(config->ap_ssid);
+    size_t size = sizeof(config->ap_ssid);
 
     nvs_get_str(
         handle,
@@ -578,8 +640,7 @@ esp_err_t wifi_storage_load_network_config(
         config->ap_ssid,
         &size);
 
-    size =
-        sizeof(config->ap_password);
+    size = sizeof(config->ap_password);
 
     nvs_get_str(
         handle,
@@ -587,10 +648,20 @@ esp_err_t wifi_storage_load_network_config(
         config->ap_password,
         &size);
 
-    nvs_get_u8(
-        handle,
-        WIFI_KEY_AP_CHANNEL,
-        &config->ap_channel);
+    if (nvs_get_u8(handle, WIFI_KEY_AP_CHANNEL, &value) == ESP_OK)
+    {
+        config->ap_channel = value;
+    }
+
+    if (nvs_get_u8(handle, "ap_maxconn", &value) == ESP_OK)
+    {
+        config->ap_max_connection = value;
+    }
+
+    if (nvs_get_u8(handle, "ap_auth", &value) == ESP_OK)
+    {
+        config->ap_authmode = value;
+    }
 
     nvs_close(handle);
 
@@ -599,7 +670,7 @@ esp_err_t wifi_storage_load_network_config(
 
 /*==========================================================
  *
- *      RESET NETWORK CONFIGURATION
+ * RESET NETWORK CONFIGURATION
  *
  *=========================================================*/
 
@@ -615,6 +686,7 @@ static void erase_key_if_exists(nvs_handle_t handle, const char *key)
                  esp_err_to_name(err));
     }
 }
+
 esp_err_t wifi_storage_reset_network_config(void)
 {
     nvs_handle_t handle;
@@ -627,7 +699,7 @@ esp_err_t wifi_storage_reset_network_config(void)
         return err;
     }
 
-    /*------------------------------------------------------
+    /*-----------------------------------------------------
      * Remove network configuration keys
      *-----------------------------------------------------*/
 
@@ -647,10 +719,6 @@ esp_err_t wifi_storage_reset_network_config(void)
         handle,
         WIFI_KEY_DHCP);
 
-    /*
-     * Static IP configuration
-     */
-
     erase_key_if_exists(
         handle,
         WIFI_KEY_IP_INFO);
@@ -658,10 +726,6 @@ esp_err_t wifi_storage_reset_network_config(void)
     erase_key_if_exists(
         handle,
         WIFI_KEY_DNS);
-
-    /*
-     * Access Point configuration
-     */
 
     erase_key_if_exists(
         handle,
@@ -674,6 +738,9 @@ esp_err_t wifi_storage_reset_network_config(void)
     erase_key_if_exists(
         handle,
         WIFI_KEY_AP_CHANNEL);
+
+    erase_key_if_exists(handle, "ap_maxconn");
+    erase_key_if_exists(handle, "ap_auth");
 
     err =
         wifi_storage_commit_close(handle);
@@ -691,4 +758,15 @@ esp_err_t wifi_storage_reset_network_config(void)
     }
 
     return err;
+}
+
+/*==========================================================
+ *
+ * ERASE NETWORK CONFIG
+ *
+ *=========================================================*/
+
+esp_err_t wifi_storage_erase_network_config(void)
+{
+    return wifi_storage_reset_network_config();
 }

@@ -4,39 +4,45 @@
  */
 
 #include "wifi_scan.h"
-
-#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "wifi_config.h"
 
-static const char *TAG =
-    "WIFI_SCAN";
+static const char *TAG = "WIFI_SCAN";
 
 static bool s_initialized = false;
 
-/*==========================================================
+/*----------------------------------------------------------
  *
- *              INIT
+ * INIT
  *
- *=========================================================*/
+ *---------------------------------------------------------*/
 
 esp_err_t wifi_scan_init(void)
 {
     s_initialized = true;
 
-    ESP_LOGI(TAG,
-             "WiFi scanner initialized");
+    ESP_LOGI(TAG, "WiFi scanner initialized");
 
     return ESP_OK;
 }
 
-/*==========================================================
+/*----------------------------------------------------------
  *
- *              SCAN
+ * SCAN
  *
- *=========================================================*/
+ *---------------------------------------------------------*/
+
+/* Compare function for sorting APs by RSSI (descending) */
+static int compare_ap_by_rssi(const void *a, const void *b)
+{
+    const wifi_ap_record_t *ap_a = (const wifi_ap_record_t *)a;
+    const wifi_ap_record_t *ap_b = (const wifi_ap_record_t *)b;
+    return ap_b->rssi - ap_a->rssi; /* Descending order */
+}
 
 esp_err_t wifi_scan_start(
     char *output,
@@ -63,7 +69,7 @@ esp_err_t wifi_scan_start(
             .ssid = NULL,
             .bssid = NULL,
             .channel = 0,
-            .show_hidden = false};
+            .show_hidden = WIFI_SCAN_SHOW_HIDDEN};
 
     ESP_LOGI(TAG,
              "Starting WiFi scan");
@@ -91,9 +97,15 @@ esp_err_t wifi_scan_start(
     {
         snprintf(output,
                  max_len,
-                 "No networks found");
+                 "<p>No networks found</p>");
 
         return ESP_OK;
+    }
+
+    /* Limit to max results */
+    if (ap_count > WIFI_MAX_SCAN_RESULTS)
+    {
+        ap_count = WIFI_MAX_SCAN_RESULTS;
     }
 
     wifi_ap_record_t *records =
@@ -109,6 +121,9 @@ esp_err_t wifi_scan_start(
         &ap_count,
         records);
 
+    /* Sort by RSSI (strongest first) */
+    qsort(records, ap_count, sizeof(wifi_ap_record_t), compare_ap_by_rssi);
+
     size_t used = 0;
 
     for (int i = 0;
@@ -116,7 +131,7 @@ esp_err_t wifi_scan_start(
          i++)
     {
 
-        /* Simple escape: replace ' with \' in a temp buffer */
+        /* Simple escape: replace ' with \\' in a temp buffer */
         char escaped_ssid[65] = {0};
         const char *src = (char *)records[i].ssid;
         size_t dst_idx = 0;
@@ -130,21 +145,33 @@ esp_err_t wifi_scan_start(
         }
         escaped_ssid[dst_idx] = '\0';
 
+        /* Determine signal quality */
+        const char *quality;
+        if (records[i].rssi >= WIFI_RSSI_EXCELLENT)
+            quality = "Excellent";
+        else if (records[i].rssi >= WIFI_RSSI_GOOD)
+            quality = "Good";
+        else if (records[i].rssi >= WIFI_RSSI_FAIR)
+            quality = "Fair";
+        else if (records[i].rssi >= WIFI_RSSI_WEAK)
+            quality = "Weak";
+        else
+            quality = "Very Weak";
+
         int written = snprintf(output + used,
                                max_len - used,
-                               "<p>"
-                               "%d. <button onclick=\"choose('%s')\">"
-                               "%s"
-                               "</button>"
-                               "<br>"
-                               "RSSI: %d dBm<br>"
-                               "Channel: %d"
-                               "</p>",
-                               i + 1,                   /* 1. Numbering */
-                               escaped_ssid,            /* 2. choose() argument */
-                               (char *)records[i].ssid, /* 3. Button text */
-                               records[i].rssi,         /* 4. RSSI */
-                               records[i].primary);     /* 5. Channel */
+                               "<div class=\"network\">"
+                               "<div class=\"net-info\">"
+                               "<span class=\"net-name\">%s</span>"
+                               "<span class=\"net-quality %s\">%s (%d dBm)</span>"
+                               "</div>"
+                               "<a class=\"btn-select\" href=\"/select?ssid=%s\">Select</a>"
+                               "</div>",
+                               escaped_ssid,
+                               (records[i].rssi >= WIFI_RSSI_FAIR) ? "good" : "weak",
+                               quality,
+                               records[i].rssi,
+                               escaped_ssid);
 
         if (written < 0 ||
             used + written >= max_len)

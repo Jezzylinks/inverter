@@ -4,7 +4,6 @@
  */
 
 #include "wifi_dns_server.h"
-
 #include <string.h>
 #include <errno.h>
 
@@ -21,7 +20,7 @@
 #define DNS_SERVER_PORT 53
 #define DNS_MAX_PACKET_SIZE 512
 #define DNS_TASK_STACK_SIZE 4096
-#define DNS_TASK_PRIORITY 5
+#define DNS_TASK_PRIORITY 4
 
 /*
  * Captive portal IP
@@ -39,7 +38,8 @@ static size_t dns_skip_name(const uint8_t *packet,
                             size_t length);
 
 static esp_err_t dns_build_response(uint8_t *packet,
-                                    size_t *length);
+                                    size_t *length,
+                                    size_t max_length);
 
 /*----------------------------------------------------------
  * Static Variables
@@ -127,6 +127,12 @@ static esp_err_t dns_socket_create(void)
         return ESP_FAIL;
     }
 
+    /* Set socket timeout to allow periodic s_running checks */
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(s_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
     if (bind(s_socket,
              (struct sockaddr *)&server_addr,
              sizeof(server_addr)) < 0)
@@ -201,15 +207,34 @@ static void dns_server_task(void *arg)
                      (struct sockaddr *)&client_addr,
                      &client_len);
 
-        if (len <= 0)
+        if (len < 0)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                /* Timeout - check s_running and continue */
+                continue;
+            }
+            ESP_LOGW(TAG, "recvfrom error: %d", errno);
+            continue;
+        }
+
+        if (len == 0)
         {
             continue;
         }
 
-        size_t packet_len = len;
+        /* Validate minimum DNS header size */
+        if ((size_t)len < sizeof(dns_header_t))
+        {
+            ESP_LOGW(TAG, "DNS packet too small: %d bytes", len);
+            continue;
+        }
+
+        size_t packet_len = (size_t)len;
 
         if (dns_build_response(buffer,
-                               &packet_len) == ESP_OK)
+                               &packet_len,
+                               sizeof(buffer)) == ESP_OK)
         {
             sendto(s_socket,
                    buffer,
@@ -224,6 +249,8 @@ static void dns_server_task(void *arg)
 
     ESP_LOGI(TAG,
              "DNS server stopped");
+
+    s_dns_task = NULL;
 
     vTaskDelete(NULL);
 }
@@ -244,6 +271,11 @@ esp_err_t wifi_dns_server_init(void)
              "DNS server initialized");
 
     return ESP_OK;
+}
+
+esp_err_t wifi_dns_server_deinit(void)
+{
+    return wifi_dns_server_stop();
 }
 
 /*----------------------------------------------------------
@@ -290,6 +322,30 @@ esp_err_t wifi_dns_server_stop(void)
     }
 
     s_running = false;
+
+    /* Wait for task to exit */
+    if (s_dns_task != NULL)
+    {
+        /* Send a dummy packet to wake up recvfrom */
+        int wake_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (wake_socket >= 0)
+        {
+            struct sockaddr_in addr;
+            memset(&addr, 0, sizeof(addr));
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(DNS_SERVER_PORT);
+            addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            sendto(wake_socket, "\0", 1, 0, (struct sockaddr *)&addr, sizeof(addr));
+            close(wake_socket);
+        }
+
+        /* Wait up to 2 seconds for task to exit */
+        int wait_count = 20;
+        while (s_dns_task != NULL && wait_count-- > 0)
+        {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
 
     dns_socket_destroy();
 
@@ -348,7 +404,8 @@ static size_t dns_skip_name(const uint8_t *packet,
  *---------------------------------------------------------*/
 
 static esp_err_t dns_build_response(uint8_t *packet,
-                                    size_t *length)
+                                    size_t *length,
+                                    size_t max_length)
 {
     dns_header_t *hdr =
         (dns_header_t *)packet;
@@ -379,6 +436,13 @@ static esp_err_t dns_build_response(uint8_t *packet,
      * Skip QTYPE + QCLASS
      */
     offset += 4;
+
+    /* Validate we have room for the answer */
+    if (offset + 16 > max_length)
+    {
+        ESP_LOGW(TAG, "DNS response too large for buffer");
+        return ESP_FAIL;
+    }
 
     /*
      * Answer Name

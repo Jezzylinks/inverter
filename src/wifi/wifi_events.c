@@ -1,11 +1,16 @@
-#include "wifi_events.h"
+/**
+ * @file wifi_events.c
+ * @brief Wi-Fi Event Handler Implementation
+ */
 
+#include "wifi_events.h"
 #include <string.h>
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "wifi_manager.h"
+#include "esp_mac.h"
 
 #define WIFI_MAX_CALLBACKS 8
 
@@ -24,19 +29,19 @@ static SemaphoreHandle_t s_mutex = NULL;
 /*----------------------------------------------------------
  * Callback list
  *---------------------------------------------------------*/
-static wifi_status_callback_t s_callbacks[WIFI_MAX_CALLBACKS];
+static wifi_status_callback_t s_status_callbacks[WIFI_MAX_CALLBACKS];
+static wifi_event_callback_t s_event_callbacks[WIFI_MAX_CALLBACKS];
 
 /*----------------------------------------------------------
  * Event instances
  *---------------------------------------------------------*/
 static esp_event_handler_instance_t s_wifi_instance;
 static esp_event_handler_instance_t s_ip_instance;
-static wifi_event_callback_t s_callback = NULL;
 
 /*----------------------------------------------------------
  * Helpers
  *---------------------------------------------------------*/
-static void wifi_notify_callbacks(void)
+static void wifi_notify_status_callbacks(void)
 {
     wifi_status_t copy;
 
@@ -53,9 +58,20 @@ static void wifi_notify_callbacks(void)
 
     for (int i = 0; i < WIFI_MAX_CALLBACKS; i++)
     {
-        if (s_callbacks[i] != NULL)
+        if (s_status_callbacks[i] != NULL)
         {
-            s_callbacks[i](&copy);
+            s_status_callbacks[i](&copy);
+        }
+    }
+}
+
+static void wifi_notify_event_callbacks(wifi_connection_state_t state)
+{
+    for (int i = 0; i < WIFI_MAX_CALLBACKS; i++)
+    {
+        if (s_event_callbacks[i] != NULL)
+        {
+            s_event_callbacks[i](state);
         }
     }
 }
@@ -73,7 +89,8 @@ static void wifi_set_state(wifi_connection_state_t state)
         s_status.state = state;
     }
 
-    wifi_notify_callbacks();
+    wifi_notify_status_callbacks();
+    wifi_notify_event_callbacks(state);
 }
 
 /*----------------------------------------------------------
@@ -82,7 +99,8 @@ static void wifi_set_state(wifi_connection_state_t state)
 esp_err_t wifi_events_init(void)
 {
     memset(&s_status, 0, sizeof(s_status));
-    memset(s_callbacks, 0, sizeof(s_callbacks));
+    memset(s_status_callbacks, 0, sizeof(s_status_callbacks));
+    memset(s_event_callbacks, 0, sizeof(s_event_callbacks));
 
     s_status.state = WIFI_STATE_IDLE;
 
@@ -94,21 +112,37 @@ esp_err_t wifi_events_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_ERROR_CHECK(
+    esp_err_t err =
         esp_event_handler_instance_register(
             WIFI_EVENT,
             ESP_EVENT_ANY_ID,
             &wifi_event_handler,
             NULL,
-            &s_wifi_instance));
+            &s_wifi_instance);
 
-    ESP_ERROR_CHECK(
-        esp_event_handler_instance_register(
-            IP_EVENT,
-            IP_EVENT_STA_GOT_IP,
-            &wifi_event_handler,
-            NULL,
-            &s_ip_instance));
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to register WiFi event handler: %s", esp_err_to_name(err));
+        vSemaphoreDelete(s_mutex);
+        s_mutex = NULL;
+        return err;
+    }
+
+    err = esp_event_handler_instance_register(
+        IP_EVENT,
+        IP_EVENT_STA_GOT_IP,
+        &wifi_event_handler,
+        NULL,
+        &s_ip_instance);
+
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to register IP event handler: %s", esp_err_to_name(err));
+        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_wifi_instance);
+        vSemaphoreDelete(s_mutex);
+        s_mutex = NULL;
+        return err;
+    }
 
     ESP_LOGI(TAG, "WiFi event system initialized");
 
@@ -137,7 +171,8 @@ esp_err_t wifi_events_deinit(void)
     }
 
     memset(&s_status, 0, sizeof(s_status));
-    memset(s_callbacks, 0, sizeof(s_callbacks));
+    memset(s_status_callbacks, 0, sizeof(s_status_callbacks));
+    memset(s_event_callbacks, 0, sizeof(s_event_callbacks));
 
     return ESP_OK;
 }
@@ -186,31 +221,35 @@ void wifi_event_handler(void *arg,
 
             esp_wifi_connect();
 
-            wifi_notify_callbacks();
+            wifi_notify_status_callbacks();
 
             break;
         }
 
         case WIFI_EVENT_STA_CONNECTED:
         {
+            wifi_event_sta_connected_t *conn =
+                (wifi_event_sta_connected_t *)event_data;
+
             xSemaphoreTake(
                 s_mutex,
                 portMAX_DELAY);
 
-            /*
-             * Connected to AP,
-             * waiting for DHCP/IP
-             */
-
             s_status.state =
                 WIFI_STATE_CONNECTING;
+
+            s_status.connected = true;
+
+            s_status.retry_count = 0;
 
             xSemaphoreGive(s_mutex);
 
             ESP_LOGI(TAG,
-                     "Associated with AP");
+                     "Associated with AP (channel %d, authmode %d)",
+                     conn->channel,
+                     conn->authmode);
 
-            wifi_notify_callbacks();
+            wifi_notify_status_callbacks();
 
             break;
         }
@@ -283,8 +322,52 @@ void wifi_event_handler(void *arg,
                          "WiFi connection failed");
             }
 
-            wifi_notify_callbacks();
+            wifi_notify_status_callbacks();
 
+            break;
+        }
+
+        case WIFI_EVENT_STA_STOP:
+        {
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
+            s_status.state = WIFI_STATE_IDLE;
+            s_status.connected = false;
+            s_status.got_ip = false;
+            s_status.internet_available = false;
+            xSemaphoreGive(s_mutex);
+
+            ESP_LOGI(TAG, "WiFi STA stopped");
+            wifi_notify_status_callbacks();
+            break;
+        }
+
+        case WIFI_EVENT_AP_START:
+        {
+            ESP_LOGI(TAG, "AP started");
+            break;
+        }
+
+        case WIFI_EVENT_AP_STOP:
+        {
+            ESP_LOGI(TAG, "AP stopped");
+            break;
+        }
+
+        case WIFI_EVENT_AP_STACONNECTED:
+        {
+            wifi_event_ap_staconnected_t *evt =
+                (wifi_event_ap_staconnected_t *)event_data;
+            ESP_LOGI(TAG, "Station " MACSTR " joined, AID=%d",
+                     MAC2STR(evt->mac), evt->aid);
+            break;
+        }
+
+        case WIFI_EVENT_AP_STADISCONNECTED:
+        {
+            wifi_event_ap_stadisconnected_t *evt =
+                (wifi_event_ap_stadisconnected_t *)event_data;
+            ESP_LOGI(TAG, "Station " MACSTR " left, AID=%d",
+                     MAC2STR(evt->mac), evt->aid);
             break;
         }
 
@@ -318,10 +401,6 @@ void wifi_event_handler(void *arg,
 
             s_status.got_ip = true;
 
-            /*
-             * Internet test module
-             * can update this later
-             */
             s_status.internet_available =
                 true;
 
@@ -343,7 +422,7 @@ void wifi_event_handler(void *arg,
                      IP2STR(
                          &event->ip_info.ip));
 
-            wifi_notify_callbacks();
+            wifi_notify_status_callbacks();
 
             break;
         }
@@ -368,7 +447,7 @@ void wifi_event_handler(void *arg,
             ESP_LOGW(TAG,
                      "Lost IP");
 
-            wifi_notify_callbacks();
+            wifi_notify_status_callbacks();
 
             break;
         }
@@ -446,7 +525,7 @@ bool wifi_events_has_ip(void)
  * Callback Registration
  *---------------------------------------------------------*/
 
-esp_err_t wifi_events_register_callback(
+esp_err_t wifi_events_register_status_callback(
     wifi_status_callback_t callback)
 {
     if (callback == NULL)
@@ -464,7 +543,7 @@ esp_err_t wifi_events_register_callback(
     /* Prevent duplicate registration */
     for (int i = 0; i < WIFI_MAX_CALLBACKS; i++)
     {
-        if (s_callbacks[i] == callback)
+        if (s_status_callbacks[i] == callback)
         {
             xSemaphoreGive(s_mutex);
             return ESP_OK;
@@ -474,9 +553,9 @@ esp_err_t wifi_events_register_callback(
     /* Find a free slot */
     for (int i = 0; i < WIFI_MAX_CALLBACKS; i++)
     {
-        if (s_callbacks[i] == NULL)
+        if (s_status_callbacks[i] == NULL)
         {
-            s_callbacks[i] = callback;
+            s_status_callbacks[i] = callback;
             xSemaphoreGive(s_mutex);
             return ESP_OK;
         }
@@ -487,7 +566,7 @@ esp_err_t wifi_events_register_callback(
     return ESP_ERR_NO_MEM;
 }
 
-esp_err_t wifi_events_unregister_callback(
+esp_err_t wifi_events_unregister_status_callback(
     wifi_status_callback_t callback)
 {
     if (callback == NULL)
@@ -504,9 +583,9 @@ esp_err_t wifi_events_unregister_callback(
 
     for (int i = 0; i < WIFI_MAX_CALLBACKS; i++)
     {
-        if (s_callbacks[i] == callback)
+        if (s_status_callbacks[i] == callback)
         {
-            s_callbacks[i] = NULL;
+            s_status_callbacks[i] = NULL;
             xSemaphoreGive(s_mutex);
             return ESP_OK;
         }
@@ -514,5 +593,72 @@ esp_err_t wifi_events_unregister_callback(
 
     xSemaphoreGive(s_mutex);
 
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t wifi_events_register_event_callback(
+    wifi_event_callback_t callback)
+{
+    if (callback == NULL)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_mutex == NULL)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    for (int i = 0; i < WIFI_MAX_CALLBACKS; i++)
+    {
+        if (s_event_callbacks[i] == callback)
+        {
+            xSemaphoreGive(s_mutex);
+            return ESP_OK;
+        }
+    }
+
+    for (int i = 0; i < WIFI_MAX_CALLBACKS; i++)
+    {
+        if (s_event_callbacks[i] == NULL)
+        {
+            s_event_callbacks[i] = callback;
+            xSemaphoreGive(s_mutex);
+            return ESP_OK;
+        }
+    }
+
+    xSemaphoreGive(s_mutex);
+    return ESP_ERR_NO_MEM;
+}
+
+esp_err_t wifi_events_unregister_event_callback(
+    wifi_event_callback_t callback)
+{
+    if (callback == NULL)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_mutex == NULL)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    for (int i = 0; i < WIFI_MAX_CALLBACKS; i++)
+    {
+        if (s_event_callbacks[i] == callback)
+        {
+            s_event_callbacks[i] = NULL;
+            xSemaphoreGive(s_mutex);
+            return ESP_OK;
+        }
+    }
+
+    xSemaphoreGive(s_mutex);
     return ESP_ERR_NOT_FOUND;
 }
