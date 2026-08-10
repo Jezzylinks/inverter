@@ -1,10 +1,10 @@
 /**
- * @file mqtt_client_provision.h
- * @brief MQTT Client Provisioning Interface
+ * @file mqtt_client_manager.h
+ * @brief MQTT Client Manager Interface
  */
 
-#ifndef MQTT_CLIENT_PROVISION_H
-#define MQTT_CLIENT_PROVISION_H
+#ifndef MQTT_CLIENT_MANAGER_H
+#define MQTT_CLIENT_MANAGER_H
 
 #ifdef __cplusplus
 extern "C"
@@ -116,4 +116,4 @@ extern "C"
 }
 #endif
 
-#endif /* MQTT_CLIENT_PROVISION_H */
+#endif /* MQTT_CLIENT_MANAGER_H */

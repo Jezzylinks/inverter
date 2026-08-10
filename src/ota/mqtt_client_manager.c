@@ -1,10 +1,10 @@
 /**
- * @file mqtt_client.c
- * @brief MQTT Client for IoT Cloud Integration
+ * @file mqtt_client_manager.c
+ * @brief MQTT Client Manager for IoT Cloud Integration
  */
 
 #include "mqtt_client.h"
-#include "mqtt_client_provision.h"
+#include "mqtt_client_manager.h"
 #include "esp_event_base.h"
 #include <string.h>
 
