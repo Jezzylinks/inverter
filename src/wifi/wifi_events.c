@@ -102,7 +102,7 @@ esp_err_t wifi_events_init(void)
     memset(s_status_callbacks, 0, sizeof(s_status_callbacks));
     memset(s_event_callbacks, 0, sizeof(s_event_callbacks));
 
-    s_status.state = WIFI_STATE_IDLE;
+    wifi_set_state(WIFI_STATE_IDLE);
 
     s_mutex = xSemaphoreCreateMutex();
 
@@ -207,8 +207,7 @@ void wifi_event_handler(void *arg,
                 s_mutex,
                 portMAX_DELAY);
 
-            s_status.state =
-                WIFI_STATE_CONNECTING;
+            wifi_set_state(WIFI_STATE_CONNECTING);
 
             s_status.connected = false;
 
@@ -235,8 +234,7 @@ void wifi_event_handler(void *arg,
                 s_mutex,
                 portMAX_DELAY);
 
-            s_status.state =
-                WIFI_STATE_CONNECTING;
+            wifi_set_state(WIFI_STATE_CONNECTING);
 
             s_status.connected = true;
 
@@ -263,8 +261,7 @@ void wifi_event_handler(void *arg,
                 s_mutex,
                 portMAX_DELAY);
 
-            s_status.state =
-                WIFI_STATE_DISCONNECTED;
+            wifi_set_state(WIFI_STATE_DISCONNECTED);
 
             s_status.connected = false;
 
@@ -293,8 +290,8 @@ void wifi_event_handler(void *arg,
 
             if (!retry)
             {
-                s_status.state =
-                    WIFI_STATE_FAILED;
+
+                wifi_set_state(WIFI_STATE_FAILED);
             }
 
             xSemaphoreGive(s_mutex);
@@ -330,7 +327,7 @@ void wifi_event_handler(void *arg,
         case WIFI_EVENT_STA_STOP:
         {
             xSemaphoreTake(s_mutex, portMAX_DELAY);
-            s_status.state = WIFI_STATE_IDLE;
+            wifi_set_state(WIFI_STATE_IDLE);
             s_status.connected = false;
             s_status.got_ip = false;
             s_status.internet_available = false;
@@ -394,8 +391,7 @@ void wifi_event_handler(void *arg,
                 s_mutex,
                 portMAX_DELAY);
 
-            s_status.state =
-                WIFI_STATE_CONNECTED;
+            wifi_set_state(WIFI_STATE_CONNECTED);
 
             s_status.connected = true;
 
@@ -439,8 +435,7 @@ void wifi_event_handler(void *arg,
 
             s_status.internet_available = false;
 
-            s_status.state =
-                WIFI_STATE_DISCONNECTED;
+            wifi_set_state(WIFI_STATE_DISCONNECTED);
 
             xSemaphoreGive(s_mutex);
 
