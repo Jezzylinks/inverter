@@ -5,10 +5,9 @@
 
 #include "mdns_service.h"
 #include <string.h>
-
-#include "esp_log.h"
 #include "mdns.h"
-#include "wifi_config.h"
+#include "esp_log.h"
+#include "wifi/wifi_config.h"
 
 static const char *TAG = "MDNS_SERVICE";
 

@@ -11,13 +11,13 @@
 #include "esp_http_server.h"
 #include "cJSON.h"
 
-#include "wifi_manager.h"
-#include "wifi_scan.h"
-#include "wifi_storage.h"
-#include "wifi_events.h"
-#include "wifi_monitor.h"
-#include "wifi_controller.h"
-#include "wifi_config.h"
+#include "wifi/wifi_manager.h"
+#include "wifi/wifi_scan.h"
+#include "wifi/wifi_storage.h"
+#include "wifi/wifi_events.h"
+#include "wifi/wifi_monitor.h"
+#include "wifi/wifi_controller.h"
+#include "wifi/wifi_config.h"
 
 static const char *TAG = "JSON_API";
 

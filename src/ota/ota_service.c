@@ -72,7 +72,16 @@ static void ota_task(void *pvParameter)
 
     s_in_progress = true;
 
+    esp_err_t ret;
     esp_err_t ota_finish_err = ESP_OK;
+    esp_https_ota_handle_t ota_handle = NULL;
+
+    /* Register OTA event handler */
+    ESP_ERROR_CHECK(esp_event_handler_register(
+        ESP_HTTPS_OTA_EVENT,
+        ESP_EVENT_ANY_ID,
+        ota_event_handler,
+        NULL));
 
     esp_http_client_config_t config = {
         .url = url,
@@ -82,35 +91,46 @@ static void ota_task(void *pvParameter)
 
     esp_https_ota_config_t ota_config = {
         .http_config = &config,
-        .event_handler = ota_event_handler,
     };
 
-    esp_err_t ret = esp_https_ota_begin(&ota_config, NULL);
+    ret = esp_https_ota_begin(&ota_config, &ota_handle);
     if (ret != ESP_OK)
     {
-        ESP_LOGE(TAG, "OTA begin failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "OTA begin failed: %s",
+                 esp_err_to_name(ret));
+
         if (s_status_cb)
+        {
             s_status_cb(OTA_STATUS_FAILED, 0);
+        }
+
         goto cleanup;
     }
 
     /* Perform OTA */
     while (1)
     {
-        ret = esp_https_ota_perform(NULL);
+        ret = esp_https_ota_perform(ota_handle);
+
         if (ret != ESP_ERR_HTTPS_OTA_IN_PROGRESS)
         {
             break;
         }
 
-        /* Report progress */
         if (s_progress_cb)
         {
-            int64_t dl = esp_https_ota_get_image_len_read(NULL);
-            int64_t total = esp_https_ota_get_image_size(NULL);
-            if (total > 0)
+            int image_len =
+                esp_https_ota_get_image_len_read(ota_handle);
+
+            int image_size =
+                esp_https_ota_get_image_size(ota_handle);
+
+            if (image_size > 0)
             {
-                s_progress_cb((int)((dl * 100) / total));
+                int progress =
+                    (image_len * 100) / image_size;
+
+                s_progress_cb(progress);
             }
         }
 
@@ -119,33 +139,59 @@ static void ota_task(void *pvParameter)
 
     if (ret != ESP_OK)
     {
-        ESP_LOGE(TAG, "OTA perform failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG,
+                 "OTA perform failed: %s",
+                 esp_err_to_name(ret));
+
         if (s_status_cb)
+        {
             s_status_cb(OTA_STATUS_FAILED, 0);
-        esp_https_ota_abort(NULL);
+        }
+
+        esp_https_ota_abort(ota_handle);
+
         goto cleanup;
     }
 
-    ota_finish_err = esp_https_ota_finish(NULL);
+    ota_finish_err = esp_https_ota_finish(ota_handle);
+
     if (ota_finish_err != ESP_OK)
     {
-        ESP_LOGE(TAG, "OTA finish failed: %s", esp_err_to_name(ota_finish_err));
+        ESP_LOGE(TAG,
+                 "OTA finish failed: %s",
+                 esp_err_to_name(ota_finish_err));
+
         if (s_status_cb)
+        {
             s_status_cb(OTA_STATUS_FAILED, 0);
+        }
+
         goto cleanup;
     }
 
-    ESP_LOGI(TAG, "OTA successful, restarting...");
+    ESP_LOGI(TAG, "OTA successful");
+
     if (s_status_cb)
+    {
         s_status_cb(OTA_STATUS_SUCCESS, 100);
+    }
 
     vTaskDelay(pdMS_TO_TICKS(1000));
+
     esp_restart();
 
 cleanup:
+
+    ESP_ERROR_CHECK(esp_event_handler_unregister(
+        ESP_HTTPS_OTA_EVENT,
+        ESP_EVENT_ANY_ID,
+        ota_event_handler));
+
     s_in_progress = false;
     s_ota_task = NULL;
+
     free((void *)url);
+
     vTaskDelete(NULL);
 }
 

@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include "stdint.h"
 
 #define TAG "LCD"
 
@@ -66,11 +67,11 @@ static const uint8_t cgram_bar[6][8] = {
     {0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F},
 };
 
-static const uint8_t cgram_bat_l[8] = {
+static uint8_t cgram_bat_l[8] = {
     /* left cap:  ┌─┐ style top, open body */
     0x07, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x07};
 
-static const uint8_t cgram_bat_r[8] = {
+static uint8_t cgram_bat_r[8] = {
     /* right cap + nub on top */
     0x1C, 0x1C, 0x10, 0x10, 0x10, 0x10, 0x1C, 0x1C};
 

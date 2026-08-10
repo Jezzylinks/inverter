@@ -14,6 +14,9 @@ extern "C"
 #include <time.h>
 #include <sys/time.h>
 #include "esp_err.h"
+#include "nvs_flash.h"
+#include "esp_sntp.h"
+#include "stdbool.h"
 
 #define NTP_DEFAULT_SERVER "pool.ntp.org"
 #define NTP_SYNC_INTERVAL_MS 3600000  /* 1 hour */

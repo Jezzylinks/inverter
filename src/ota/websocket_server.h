@@ -13,7 +13,7 @@ extern "C"
 
 #include "esp_err.h"
 #include "esp_http_server.h"
-#include "wifi_events.h"
+#include "wifi/wifi_events.h"
 
     /**
      * @brief Initialize WebSocket server subsystem

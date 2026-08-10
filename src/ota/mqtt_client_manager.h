@@ -1,10 +1,10 @@
 /**
- * @file mqtt_client.h
- * @brief MQTT Client Interface
+ * @file mqtt_client_provision.h
+ * @brief MQTT Client Provisioning Interface
  */
 
-#ifndef MQTT_CLIENT_H
-#define MQTT_CLIENT_H
+#ifndef MQTT_CLIENT_PROVISION_H
+#define MQTT_CLIENT_PROVISION_H
 
 #ifdef __cplusplus
 extern "C"
@@ -13,6 +13,7 @@ extern "C"
 
 #include <stdbool.h>
 #include "esp_err.h"
+#include "nvs_flash.h"
 
     typedef enum
     {
@@ -115,4 +116,4 @@ extern "C"
 }
 #endif
 
-#endif /* MQTT_CLIENT_H */
+#endif /* MQTT_CLIENT_PROVISION_H */

@@ -12,6 +12,7 @@ extern "C"
 #endif
 
 #include "esp_err.h"
+#include "stdbool.h"
 
 #define OTA_TASK_STACK_SIZE 8192
 #define OTA_TASK_PRIORITY 5

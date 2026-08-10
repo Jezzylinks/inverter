@@ -4,6 +4,8 @@
  */
 
 #include "mqtt_client.h"
+#include "mqtt_client_provision.h"
+#include "esp_event_base.h"
 #include <string.h>
 
 #include "esp_log.h"
@@ -197,7 +199,15 @@ int mqtt_client_subscribe(const char *topic, int qos)
         return -1;
     }
 
-    return esp_mqtt_client_subscribe(s_client, topic, qos);
+    if (mqtt_client_is_connected() == false)
+    {
+        return -1;
+    }
+
+    return esp_mqtt_client_subscribe(
+        s_client,
+        (char *)topic,
+        qos);
 }
 
 /*----------------------------------------------------------

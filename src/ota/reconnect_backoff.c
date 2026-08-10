@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
+#include "esp_random.h"
 
 static const char *TAG = "RECONNECT";
 

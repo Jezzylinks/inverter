@@ -4,15 +4,24 @@
  */
 
 #include "websocket_server.h"
-#include <string.h>
 
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
+#include "esp_err.h"
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "cJSON.h"
 
-#include "wifi_events.h"
-#include "wifi_monitor.h"
-#include "wifi_manager.h"
+#include "wifi/wifi_events.h"
+#include "wifi/wifi_monitor.h"
+#include "wifi/wifi_manager.h"
 
 static const char *TAG = "WS_SERVER";
 
@@ -29,6 +38,7 @@ typedef struct
 
 static ws_client_t s_clients[WS_MAX_CLIENTS];
 static SemaphoreHandle_t s_mutex = NULL;
+static httpd_handle_t s_server = NULL;
 static bool s_initialized = false;
 
 /*----------------------------------------------------------
@@ -46,7 +56,7 @@ static int ws_find_client(int fd)
     return -1;
 }
 
-static int ws_alloc_client(int fd)
+static int ws_alloc_client(httpd_handle_t server, int fd)
 {
     for (int i = 0; i < WS_MAX_CLIENTS; i++)
     {
@@ -57,6 +67,7 @@ static int ws_alloc_client(int fd)
             return i;
         }
     }
+
     return -1;
 }
 
@@ -75,7 +86,7 @@ static void ws_remove_client(int fd)
  *---------------------------------------------------------*/
 void websocket_broadcast_status(const wifi_status_t *status)
 {
-    if (!s_initialized || status == NULL)
+    if (!s_initialized || status == NULL || s_server == NULL)
     {
         return;
     }
@@ -131,7 +142,6 @@ void websocket_broadcast_status(const wifi_status_t *status)
     {
         xSemaphoreTake(s_mutex, portMAX_DELAY);
     }
-
     for (int i = 0; i < WS_MAX_CLIENTS; i++)
     {
         if (s_clients[i].active)
@@ -144,10 +154,18 @@ void websocket_broadcast_status(const wifi_status_t *status)
                 .len = strlen(json_str),
             };
 
-            esp_err_t err = httpd_ws_send_frame_async(s_clients[i].fd, &ws_pkt);
+            esp_err_t err = httpd_ws_send_frame_async(
+                s_server,
+                s_clients[i].fd,
+                &ws_pkt);
+
             if (err != ESP_OK)
             {
-                ESP_LOGW(TAG, "WS send failed for fd %d: %s", s_clients[i].fd, esp_err_to_name(err));
+                ESP_LOGW(TAG,
+                         "WS send failed for fd %d: %s",
+                         s_clients[i].fd,
+                         esp_err_to_name(err));
+
                 s_clients[i].active = false;
             }
         }
@@ -233,7 +251,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
                         }
                         if (ws_find_client(fd) < 0)
                         {
-                            ws_alloc_client(fd);
+                            ws_alloc_client(req->handle, fd);
                             ESP_LOGI(TAG, "Client fd %d subscribed", fd);
                         }
                         if (s_mutex)
@@ -339,7 +357,13 @@ esp_err_t websocket_server_register(httpd_handle_t server)
         return ESP_ERR_INVALID_ARG;
     }
 
-    return httpd_register_uri_handler(server, &ws_uri);
+    esp_err_t ret = httpd_register_uri_handler(server, &ws_uri);
+    if (ret == ESP_OK)
+    {
+        s_server = server;
+    }
+
+    return ret;
 }
 
 esp_err_t websocket_server_unregister(httpd_handle_t server)
@@ -349,5 +373,15 @@ esp_err_t websocket_server_unregister(httpd_handle_t server)
         return ESP_OK;
     }
 
-    return httpd_unregister_uri_handler(server, "/ws", HTTP_GET);
+    esp_err_t ret = httpd_unregister_uri_handler(
+        server,
+        "/ws",
+        HTTP_GET);
+
+    if (ret == ESP_OK && s_server == server)
+    {
+        s_server = NULL;
+    }
+
+    return ret;
 }

@@ -16,6 +16,8 @@
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
+#include "wifi/wifi_config.h"
+#include "wifi/wifi_storage.h"
 
 static const char *TAG = "BLE_PROVISION";
 
@@ -284,7 +286,8 @@ static void ble_host_task(void *param)
  *---------------------------------------------------------*/
 esp_err_t ble_provision_init(void)
 {
-    esp_err_t err = esp_nvs_flash_init();
+    esp_err_t err = nvs_flash_init();
+
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -307,7 +310,7 @@ esp_err_t ble_provision_init(void)
 
     /* Set device name */
     ble_svc_gap_device_name_set(BLE_PROV_DEVICE_NAME);
-    ble_svc_gapAppearanceSet(BLE_PROV_APPEARANCE);
+    ble_svc_gap_device_appearance_set(BLE_PROV_APPEARANCE);
 
     /* Add GATT services */
     int rc = ble_gatts_count_cfg(gatt_svr_svcs);

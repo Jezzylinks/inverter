@@ -4,9 +4,15 @@
  */
 
 #include "signal_history.h"
+#include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "esp_log.h"
+#include "esp_err.h"
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/semphr.h"
 
 static const char *TAG = "SIGNAL_HISTORY";
