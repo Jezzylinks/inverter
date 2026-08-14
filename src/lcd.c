@@ -15,6 +15,32 @@
 // --------------------------------------------------
 static uint8_t lcd_address;
 static lcd_state_t lcd;
+static lcd_geometry_t s_geometry = LCD_MODE_16X2;
+
+void lcd_geometry_set(lcd_geometry_t geometry)
+{
+    s_geometry = geometry < LCD_MODE_COUNT ? geometry : LCD_MODE_16X2;
+}
+
+lcd_geometry_t lcd_geometry_get(void)
+{
+    return s_geometry;
+}
+
+uint8_t lcd_geometry_rows(void)
+{
+    return s_geometry == LCD_MODE_20X4 ? 4U : 2U;
+}
+
+uint8_t lcd_geometry_cols(void)
+{
+    return s_geometry == LCD_MODE_20X4 ? 20U : 16U;
+}
+
+bool lcd_geometry_is_20x4(void)
+{
+    return s_geometry == LCD_MODE_20X4;
+}
 
 // Commands
 #define LCD_CMD_CLEAR 0x01
@@ -67,17 +93,15 @@ static const uint8_t cgram_bar[6][8] = {
     {0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F},
 };
 
-#if !LCD_GEOMETRY_20X4
-static uint8_t cgram_bat_l[8] = {
+static const uint8_t cgram_bat_l[8] = {
     /* left cap:  ┌─┐ style top, open body */
     0x07, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x07};
 
-static uint8_t cgram_bat_r[8] = {
+static const uint8_t cgram_bat_r[8] = {
     /* right cap + nub on top */
     0x1C, 0x1C, 0x10, 0x10, 0x10, 0x10, 0x1C, 0x1C};
-#endif
 
-#if LCD_GEOMETRY_20X4
+
 static const uint8_t cgram_wifi_tx[8] = {
     0x00, 0x04, 0x06, 0x1F, 0x06, 0x04, 0x00, 0x00};
 static const uint8_t cgram_wifi_rx[8] = {
@@ -88,7 +112,6 @@ static const uint8_t cgram_wifi_lock[8] = {
     0x0E, 0x11, 0x1F, 0x1B, 0x1F, 0x11, 0x0E, 0x00};
 static const uint8_t cgram_wifi_alert[8] = {
     0x04, 0x0E, 0x0E, 0x04, 0x04, 0x00, 0x04, 0x00};
-#endif
 
 static uint8_t lcd_scan_and_find_address(void);
 // --------------------------------------------------
@@ -151,10 +174,12 @@ void lcd_home(void)
 void lcd_set_cursor(uint8_t col, uint8_t row)
 {
     static const uint8_t row_offsets[] = {0x00, 0x40, 0x14, 0x54};
-    if (row >= LCD_ROWS)
-        row = LCD_ROWS - 1;
-    if (col >= LCD_COLS)
-        col = LCD_COLS - 1;
+    uint8_t rows = lcd_geometry_rows();
+    uint8_t cols = lcd_geometry_cols();
+    if (row >= rows)
+        row = rows - 1U;
+    if (col >= cols)
+        col = cols - 1U;
 
     lcd_send_command(LCD_CMD_SET_DDRAM | (col + row_offsets[row]));
 }
@@ -193,11 +218,11 @@ void lcd_print_float(float v)
 
 void lcd_print_centered(uint8_t row, const char *str)
 {
-    if (row >= LCD_ROWS)
+    if (row >= lcd_geometry_rows())
         return;
 
     int len = strlen(str);
-    int pad = (LCD_COLS - len) / 2;
+    int pad = (lcd_geometry_cols() - len) / 2;
     if (pad < 0)
         pad = 0;
 
@@ -530,21 +555,22 @@ void lcd_test_pattern(void)
  */
 void lcd_init_cgram(void)
 {
-#if LCD_GEOMETRY_20X4
-    lcd_create_custom_char(CHAR_WIFI_TX, (uint8_t *)cgram_wifi_tx);
-    lcd_create_custom_char(CHAR_WIFI_RX, (uint8_t *)cgram_wifi_rx);
-    lcd_create_custom_char(CHAR_WIFI_LINK, (uint8_t *)cgram_wifi_link);
-    lcd_create_custom_char(CHAR_WIFI_LOCK, (uint8_t *)cgram_wifi_lock);
-    lcd_create_custom_char(CHAR_WIFI_ALERT, (uint8_t *)cgram_wifi_alert);
-    lcd_create_custom_char(CHAR_BAR_0, cgram_bar[0]);
-    lcd_create_custom_char(CHAR_BAR_1, cgram_bar[1]);
-    lcd_create_custom_char(CHAR_BAR_2, cgram_bar[2]);
-#else
-    for (uint8_t i = 0; i <= 5; i++)
+    if (lcd_geometry_is_20x4())
     {
-        lcd_create_custom_char(i, cgram_bar[i]);
+        lcd_create_custom_char(CHAR_WIFI_TX, cgram_wifi_tx);
+        lcd_create_custom_char(CHAR_WIFI_RX, cgram_wifi_rx);
+        lcd_create_custom_char(CHAR_WIFI_LINK, cgram_wifi_link);
+        lcd_create_custom_char(CHAR_WIFI_LOCK, cgram_wifi_lock);
+        lcd_create_custom_char(CHAR_WIFI_ALERT, cgram_wifi_alert);
+        lcd_create_custom_char(CHAR_BAR_0, cgram_bar[0]);
+        lcd_create_custom_char(CHAR_BAR_1, cgram_bar[1]);
+        lcd_create_custom_char(CHAR_BAR_2, cgram_bar[2]);
     }
-    lcd_create_custom_char(CHAR_BAT_L, cgram_bat_l);
-    lcd_create_custom_char(CHAR_BAT_R, cgram_bat_r);
-#endif
+    else
+    {
+        for (uint8_t i = 0; i <= 5; i++)
+            lcd_create_custom_char(i, cgram_bar[i]);
+        lcd_create_custom_char(CHAR_BAT_L, cgram_bat_l);
+        lcd_create_custom_char(CHAR_BAT_R, cgram_bat_r);
+    }
 }

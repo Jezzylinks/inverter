@@ -114,7 +114,14 @@ void lcd_show_menu_rows(const char *const rows[], uint8_t row_count)
 void lcd_show_menu(const char *row0, const char *row1)
 {
     const char *rows[] = {row0, row1};
-    lcd_show_menu_rows(rows, LCD_ROWS > 2 ? 2 : LCD_ROWS);
+    lcd_show_menu_rows(rows, 2);
+}
+
+void lcd_request_geometry_reconfigure(void)
+{
+    LCD_LOCK();
+    sys_lcd.geometry_reinit_requested = true;
+    LCD_UNLOCK();
 }
 
 /* ── Value edit ──────────────────────────────────────────────────────────── */

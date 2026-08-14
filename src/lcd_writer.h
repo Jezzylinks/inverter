@@ -41,6 +41,7 @@ void lcd_show_menu(const char *row0, const char *row1);
 
 /* Geometry-aware menu writer. row_count is capped at LCD_ROWS. */
 void lcd_show_menu_rows(const char *const rows[], uint8_t row_count);
+void lcd_request_geometry_reconfigure(void);
 
 /* ── Value editing ───────────────────────────────────────────────────────── */
 void lcd_show_value_edit(const char *label, const char *value_str,

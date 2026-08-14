@@ -70,6 +70,7 @@ extern void edit_scroll_enable(void);
 extern void edit_scroll_speed(void);
 extern void edit_battery_type(void);
 extern void edit_battery_voltage_system(void);
+extern void edit_lcd_geometry(void);
 extern void edit_sound_enable(void);
 extern void edit_quiet_hours_enable(void);
 extern void edit_quiet_hours_start(void);
@@ -693,24 +694,27 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 edit_battery_voltage_system();
                 break;
             case 10:
-                edit_sound_enable();
+                edit_lcd_geometry();
                 break;
             case 11:
-                edit_quiet_hours_enable();
+                edit_sound_enable();
                 break;
             case 12:
-                edit_quiet_hours_start();
+                edit_quiet_hours_enable();
                 break;
             case 13:
-                edit_quiet_hours_end();
+                edit_quiet_hours_start();
                 break;
             case 14:
-                edit_utc_offset();
+                edit_quiet_hours_end();
                 break;
             case 15:
-                edit_set_time_hour();
+                edit_utc_offset();
                 break;
             case 16:
+                edit_set_time_hour();
+                break;
+            case 17:
                 edit_set_time_minute();
                 break;
             }
@@ -1073,8 +1077,11 @@ void handle_up_button_event(button_event_info_t *event_info,
                 break;
             case VALUE_EDIT_SELECT:
                 if (config->max_selection > 0)
+                {
                     config->selection_index =
                         (config->selection_index + 1) % config->max_selection;
+                    config->current_value = (float)config->selection_index;
+                }
                 break;
             case VALUE_EDIT_BOOL:
                 config->current_value = (config->current_value != 0.0f) ? 0.0f : 1.0f;
@@ -1278,10 +1285,13 @@ void handle_down_button_event(button_event_info_t *event_info,
                 break;
             case VALUE_EDIT_SELECT:
                 if (config->max_selection > 0)
+                {
                     config->selection_index =
                         (config->selection_index > 0)
                             ? config->selection_index - 1
                             : config->max_selection - 1;
+                    config->current_value = (float)config->selection_index;
+                }
                 break;
             case VALUE_EDIT_BOOL:
                 config->current_value = (config->current_value != 0.0f) ? 0.0f : 1.0f;
