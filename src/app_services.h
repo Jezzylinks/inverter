@@ -1,0 +1,85 @@
+#ifndef APP_SERVICES_H
+#define APP_SERVICES_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "esp_err.h"
+#include "ota/ota_service.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/*
+ * Application-facing network and OTA coordinator.
+ *
+ * The lower-level Wi-Fi and OTA services retain ownership of transport,
+ * credentials, TLS, and image validation. This layer owns user intent,
+ * persistent configuration, and menu-safe state transitions.
+ */
+#define APP_OTA_MANIFEST_URL_MAX OTA_MAX_URL_LENGTH
+
+typedef enum {
+    APP_OTA_IDLE = 0,
+    APP_OTA_CHECKING,
+    APP_OTA_AVAILABLE,
+    APP_OTA_CONFIRMING,
+    APP_OTA_DOWNLOADING,
+    APP_OTA_COMPLETE,
+    APP_OTA_ERROR,
+} app_ota_state_t;
+
+typedef struct {
+    app_ota_state_t state;
+    char installed_version[OTA_MAX_VERSION_LENGTH];
+    char available_version[OTA_MAX_VERSION_LENGTH];
+    int progress_percent;
+    bool auto_check_enabled;
+    bool update_available;
+    bool confirmation_pending;
+} app_ota_status_t;
+
+/** Initialize Wi-Fi and OTA application coordination after system settings load. */
+esp_err_t app_services_init(void);
+
+/** Apply and persist user Wi-Fi intent, starting or stopping the controller immediately. */
+esp_err_t app_services_set_wifi_enabled(bool enabled);
+bool app_services_wifi_enabled(void);
+
+/** Menu-safe Wi-Fi operations. */
+esp_err_t app_services_wifi_scan(void);
+esp_err_t app_services_wifi_connect_saved(void);
+esp_err_t app_services_wifi_disconnect(void);
+esp_err_t app_services_wifi_start_provisioning(void);
+void app_services_show_wifi_status(void);
+
+/**
+ * Persist the HTTPS CSV manifest URL used for update availability checks.
+ * Passing an empty string disables automatic checks but keeps manual menu
+ * feedback deterministic.
+ */
+esp_err_t app_services_set_ota_manifest_url(const char *url);
+esp_err_t app_services_get_ota_manifest_url(char *buffer, size_t buffer_len);
+
+/** Check the configured CSV manifest without downloading an image. */
+esp_err_t app_services_check_for_update(bool user_initiated);
+
+/** Move an available update into a user-confirmation prompt. */
+esp_err_t app_services_request_update_confirmation(void);
+
+/** Start the CSV-based update only after the explicit confirmation action. */
+esp_err_t app_services_confirm_update(void);
+
+/** Cancel a confirmation prompt or an in-progress OTA transaction. */
+esp_err_t app_services_cancel_update(void);
+
+/** Copy menu-visible update state. */
+void app_services_get_ota_status(app_ota_status_t *status);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* APP_SERVICES_H */

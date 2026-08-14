@@ -50,6 +50,7 @@ extern "C"
         MENU_FACTORY_RESET,
         WIFI_ACTIVATION,
         MENU_SECURITY,
+        MENU_OTA,
         MENU_COUNT
     } menu_state_t;
 

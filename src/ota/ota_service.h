@@ -60,6 +60,16 @@ esp_err_t ota_manifest_parse_csv(const char *csv, size_t csv_len,
 esp_err_t ota_service_init(void);
 esp_err_t ota_service_start(const char *url);
 esp_err_t ota_service_start_from_csv(const char *csv_url);
+
+/**
+ * Fetch and parse an HTTPS CSV manifest without scheduling an OTA download.
+ * update_available is true only when the manifest version is newer than the
+ * currently running application version.
+ */
+esp_err_t ota_service_check_csv_manifest(const char *csv_url,
+                                         ota_manifest_entry_t *entry,
+                                         bool *update_available);
+
 esp_err_t ota_service_cancel(void);
 esp_err_t ota_service_check_version(const char *version_url,
                                     char *new_version,

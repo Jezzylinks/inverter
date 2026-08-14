@@ -447,6 +447,77 @@ esp_err_t ota_service_start_from_csv(const char *csv_url)
     return start_job(entry.url, entry.version);
 }
 
+static int compare_release_versions(const char *candidate, const char *installed)
+{
+    if (!candidate || !installed) {
+        return 0;
+    }
+    while (*candidate == 'v' || *candidate == 'V') {
+        ++candidate;
+    }
+    while (*installed == 'v' || *installed == 'V') {
+        ++installed;
+    }
+
+    for (unsigned component = 0U; component < 4U; ++component) {
+        unsigned long candidate_value = 0U;
+        unsigned long installed_value = 0U;
+        bool candidate_digit = false;
+        bool installed_digit = false;
+        while (*candidate >= '0' && *candidate <= '9') {
+            candidate_digit = true;
+            candidate_value = candidate_value * 10U + (unsigned long)(*candidate - '0');
+            ++candidate;
+        }
+        while (*installed >= '0' && *installed <= '9') {
+            installed_digit = true;
+            installed_value = installed_value * 10U + (unsigned long)(*installed - '0');
+            ++installed;
+        }
+        if (candidate_value != installed_value) {
+            return candidate_value > installed_value ? 1 : -1;
+        }
+        if ((!candidate_digit && *candidate != '.') || (!installed_digit && *installed != '.')) {
+            break;
+        }
+        if (*candidate == '.') {
+            ++candidate;
+        }
+        if (*installed == '.') {
+            ++installed;
+        }
+    }
+    return 0;
+}
+
+esp_err_t ota_service_check_csv_manifest(const char *csv_url,
+                                         ota_manifest_entry_t *entry,
+                                         bool *update_available)
+{
+    if (!entry || !update_available) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *update_available = false;
+    char manifest[OTA_MAX_MANIFEST_BYTES + 1U] = {0};
+    size_t manifest_len = 0U;
+    esp_err_t err = http_read_bounded(csv_url, manifest, sizeof(manifest), &manifest_len);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = ota_manifest_parse_csv(manifest, manifest_len, entry);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    char current_version[OTA_MAX_VERSION_LENGTH] = {0};
+    err = ota_service_get_current_version(current_version, sizeof(current_version));
+    if (err != ESP_OK) {
+        return err;
+    }
+    *update_available = compare_release_versions(entry->version, current_version) > 0;
+    return ESP_OK;
+}
+
 esp_err_t ota_service_cancel(void)
 {
     if (!s_ota_mutex) {
