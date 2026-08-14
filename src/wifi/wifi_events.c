@@ -45,7 +45,7 @@ static void events_unlock(void)
 
 static void wifi_publish_state(wifi_connection_state_t state)
 {
-    wifi_status_t status;
+    wifi_status_t status = {0};
     wifi_status_callback_t status_callbacks[WIFI_MAX_CALLBACKS];
     wifi_event_callback_t event_callbacks[WIFI_MAX_CALLBACKS];
 
