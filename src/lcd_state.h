@@ -200,12 +200,17 @@ extern "C"
         lcd_screen_id_t return_to; /* screen to restore when timer expires */
     } lcd_flash_data_t;
 
+#define LCD_STANDBY_PAGE_STATUS 0U
+#define LCD_STANDBY_PAGE_BATTERY 1U
+#define LCD_STANDBY_PAGE_COUNT 2U
+
     typedef struct
     {
         float battery_voltage;
         float low_voltage_threshold;
         uint8_t battery_pct;
         bool ac_connected;
+        uint8_t page;
     } lcd_standby_data_t;
 
     /* ── Master render-state ─────────────────────────────────────────────────── */

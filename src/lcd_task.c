@@ -449,30 +449,63 @@ else
 
 static void draw_standby(const lcd_standby_data_t *d)
 {
-if (lcd_geometry_is_20x4())
-{
-    char rows[4][LCD_LINE_SIZE];
-    uint8_t bat_v = 0, bat_t = 0;
-    display_voltage_parts(d->battery_voltage, &bat_v, &bat_t);
-    snprintf(rows[0], LCD_LINE_SIZE, "STANDBY AC:%s", d->ac_connected ? "ON" : "OFF");
-            snprintf(rows[1], LCD_LINE_SIZE, "BAT %2u.%uV %3u%%",
+    uint8_t page = d->page < LCD_STANDBY_PAGE_COUNT
+                       ? d->page
+                       : LCD_STANDBY_PAGE_STATUS;
 
-             (unsigned)bat_v, (unsigned)bat_t, (unsigned)d->battery_pct);
-    snprintf(rows[2], LCD_LINE_SIZE, "%s",
-             d->battery_voltage < d->low_voltage_threshold ? "LOW BATTERY WARNING" : "BATTERY MONITOR OK");
-    snprintf(rows[3], LCD_LINE_SIZE, "PRESS POWER TO START");
-    const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
-    draw_commit_rows(row_ptrs);
-}
-else
-{
-    char r1[LCD_LINE_SIZE];
-    if (d->battery_voltage < d->low_voltage_threshold)
-        snprintf(r1, LCD_LINE_SIZE, "LOW BAT:%4.1fV   ", d->battery_voltage);
+    if (lcd_geometry_is_20x4())
+    {
+        char rows[4][LCD_LINE_SIZE];
+        uint8_t bat_v = 0, bat_t = 0;
+        display_voltage_parts(d->battery_voltage, &bat_v, &bat_t);
+
+        if (page == LCD_STANDBY_PAGE_BATTERY)
+        {
+            snprintf(rows[0], LCD_LINE_SIZE, "BATTERY DETAILS");
+            snprintf(rows[1], LCD_LINE_SIZE, "VOLTAGE %2u.%uV", bat_v, bat_t);
+            snprintf(rows[2], LCD_LINE_SIZE, "SOC     %3u%% %s",
+                     d->battery_pct,
+                     d->battery_voltage < d->low_voltage_threshold ? "LOW" : "OK");
+            snprintf(rows[3], LCD_LINE_SIZE, "ENTER:NEXT PWR:START");
+        }
+        else
+        {
+            snprintf(rows[0], LCD_LINE_SIZE, "STANDBY AC:%s",
+                     d->ac_connected ? "ON" : "OFF");
+            snprintf(rows[1], LCD_LINE_SIZE, "BAT %2u.%uV %3u%%",
+                     (unsigned)bat_v, (unsigned)bat_t,
+                     (unsigned)d->battery_pct);
+            snprintf(rows[2], LCD_LINE_SIZE, "%s",
+                     d->battery_voltage < d->low_voltage_threshold
+                         ? "LOW BATTERY WARNING"
+                         : "BATTERY MONITOR OK");
+            snprintf(rows[3], LCD_LINE_SIZE, "ENTER:NEXT PWR:START");
+        }
+        const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
+        draw_commit_rows(row_ptrs);
+    }
     else
-        snprintf(r1, LCD_LINE_SIZE, "STD_BY BAT:%3d%% ", d->battery_pct);
-    draw_commit("Vonix Inverter  ", r1);
-}
+    {
+        char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
+        if (page == LCD_STANDBY_PAGE_BATTERY)
+        {
+            snprintf(r0, LCD_LINE_SIZE, "BATTERY %3u%%", d->battery_pct);
+            snprintf(r1, LCD_LINE_SIZE, "ENTER>NEXT PWR");
+        }
+        else if (d->battery_voltage < d->low_voltage_threshold)
+        {
+            snprintf(r0, LCD_LINE_SIZE, "STANDBY AC:%s",
+                     d->ac_connected ? "ON" : "OFF");
+            snprintf(r1, LCD_LINE_SIZE, "LOW BAT:%4.1fV", d->battery_voltage);
+        }
+        else
+        {
+            snprintf(r0, LCD_LINE_SIZE, "STANDBY AC:%s",
+                     d->ac_connected ? "ON" : "OFF");
+            snprintf(r1, LCD_LINE_SIZE, "BATTERY %3u%%", d->battery_pct);
+        }
+        draw_commit(r0, r1);
+    }
 }
 
 static uint8_t loading_progress(uint32_t elapsed, uint32_t duration)
@@ -1144,7 +1177,9 @@ void lcd_task(void *arg)
             snap.screen = LCD_SCREEN_FLASH_MSG;
 
         /* ====== STEP 5: SUB-PAGE CYCLING ====== */
-        if (snap.screen == LCD_SCREEN_MAIN && !lcd_flash_is_active())
+        if (snap.screen == LCD_SCREEN_MAIN &&
+            sys_state.inverter.inverter_state != INVERTER_STANDBY &&
+            !lcd_flash_is_active())
         {
             uint32_t now = _lcd_get_time_ms();
             if (main_page_last_change_ms == 0)
@@ -1157,10 +1192,13 @@ void lcd_task(void *arg)
                 snap.main.sub_page = (snap.main.sub_page + 1) % MAIN_SUB_COUNT;
                 sys_lcd.main.sub_page = snap.main.sub_page;
                 xSemaphoreGive(sys_state_mutex);
-                main_page_last_change_ms = now;
+                                main_page_last_change_ms = now;
             }
         }
-
+        else if (snap.screen != LCD_SCREEN_MAIN)
+        {
+            main_page_last_change_ms = 0;
+        }
         /* ====== STEP 6: SCREEN CHANGE DETECTION ====== */
         if (snap.screen != last_screen)
         {

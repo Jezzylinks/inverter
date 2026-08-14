@@ -87,3 +87,4 @@ void lcd_flash_cancelled(void);
 
 /* ── Standby ─────────────────────────────────────────────────────────────── */
 void lcd_show_standby(float bat_v, uint8_t bat_pct, bool ac_connected);
+void lcd_standby_next_page(void);

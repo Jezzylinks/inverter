@@ -541,6 +541,16 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         }
     }
 
+    /* Standby is intentionally idle. Enter is the only control that changes
+     * its information page; Up/Down and timer-driven rotation do nothing. */
+    if (event_info->event == BUTTON_EVENT_CLICK &&
+        sys_state.menu_state == MENU_NONE &&
+        sys_state.inverter.inverter_state == INVERTER_STANDBY)
+    {
+        lcd_standby_next_page();
+        return;
+    }
+
     switch (event_info->event)
     {
 
