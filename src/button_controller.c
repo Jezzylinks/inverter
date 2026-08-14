@@ -287,6 +287,18 @@ static void button_task(void *arg)
                 continue;
             }
 
+            /*
+             * Reconcile the GPIO level even if an edge interrupt was lost while
+             * the ISR queue was full or briefly unavailable. Without this,
+             * is_pressed can remain true after a physical release and continue
+             * emitting hold-repeat events indefinitely.
+             */
+            const int sampled_level = gpio_get_level(button->config.gpio_pin);
+            if (sampled_level != button->last_raw_level) {
+                button->last_raw_level = sampled_level;
+                button->last_edge_us = now_us;
+            }
+
             if (button->last_raw_level != button->stable_level &&
                 elapsed_ms(now_us, button->last_edge_us) >= button->config.debounce_ms) {
                 process_stable_level(button, button->last_raw_level, now_us);

@@ -1181,6 +1181,9 @@ void handle_up_button_event(button_event_info_t *event_info,
         break;
 
     case BUTTON_EVENT_REPEAT:
+        /* Hold-repeat is reserved for accelerated value editing. A menu move
+         * requires a discrete click, preventing a retained press from
+         * continuously scrolling the menu. */
         if (sys_state.value_edit_mode)
         {
             if (sys_state.hold_start_time == 0)
@@ -1194,19 +1197,6 @@ void handle_up_button_event(button_event_info_t *event_info,
             sys_state.fast_increment_active = fast;
             increase_value(fast, big);
             lcd_show_value_edit_screen();
-        }
-        else if (!sys_state.in_detail_view &&
-                 sys_state.menu_state != MENU_NONE)
-        {
-            int n = 0;
-            const menu_item_t *items = get_menu_items(sys_state.menu_state, &n);
-            if (items && n > 0)
-            {
-                sys_state.menu_selection =
-                    (sys_state.menu_selection == 0) ? n - 1
-                                                    : sys_state.menu_selection - 1;
-                show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
-            }
         }
         break;
 
@@ -1417,6 +1407,9 @@ void handle_down_button_event(button_event_info_t *event_info,
         break;
 
     case BUTTON_EVENT_REPEAT:
+        /* Hold-repeat is reserved for accelerated value editing. A menu move
+         * requires a discrete click, preventing a retained press from
+         * continuously scrolling the menu. */
         if (sys_state.value_edit_mode)
         {
             if (sys_state.hold_start_time == 0)
@@ -1430,17 +1423,6 @@ void handle_down_button_event(button_event_info_t *event_info,
             sys_state.fast_increment_active = fast;
             decrease_value(fast, big);
             lcd_show_value_edit_screen();
-        }
-        else if (!sys_state.in_detail_view &&
-                 sys_state.menu_state != MENU_NONE)
-        {
-            int n = 0;
-            const menu_item_t *items = get_menu_items(sys_state.menu_state, &n);
-            if (items && n > 0)
-            {
-                sys_state.menu_selection = (sys_state.menu_selection + 1) % n;
-                show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
-            }
         }
         break;
 

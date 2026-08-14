@@ -54,7 +54,11 @@ esp_err_t app_buttons_init(void)
         config.debounce_ms = APP_BUTTON_DEBOUNCE_MS;
         config.long_press_ms = APP_BUTTON_LONG_PRESS_MS;
         config.double_click_ms = APP_BUTTON_DOUBLE_CLICK_MS;
-        config.hold_repeat_ms = APP_BUTTON_REPEAT_MS;
+        /* Only value-navigation keys need hold-repeat; action keys remain one-shot. */
+        config.hold_repeat_ms = (binding->gpio == GPIO_BUTTON_UP ||
+                                 binding->gpio == GPIO_BUTTON_DOWN)
+                                    ? APP_BUTTON_REPEAT_MS
+                                    : 0U;
         config.active_low = true;
         config.enable_pullup = true;
         config.enable_multi_click = binding->multi_click;
