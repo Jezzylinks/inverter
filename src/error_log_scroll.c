@@ -54,11 +54,11 @@ void error_log_scroll_prev(void)
 
 void error_log_scroll_update_display(void)
 {
-    char row0[17], row1[17];
+    char row0[LCD_LINE_SIZE], row1[LCD_LINE_SIZE];
 
     if (error_log_count == 0) {
-        snprintf(row0, 17, "%-16s", "Error Log       ");
-        snprintf(row1, 17, "%-16s", "No logs         ");
+        snprintf(row0, LCD_LINE_SIZE, "%-16s", "Error Log       ");
+        snprintf(row1, LCD_LINE_SIZE, "%-16s", "No logs         ");
     } else {
         uint8_t idx = cursor_to_ring_index(s_cursor);
         const error_log_entry_t *entry = &error_log_ring[idx];
@@ -68,7 +68,7 @@ void error_log_scroll_update_display(void)
         snprintf(indicator, sizeof(indicator), "[%d/%d]",
                  s_cursor + 1, error_log_count);
         int ind_len   = (int)strlen(indicator);
-        int label_w   = 16 - ind_len;
+        int label_w   = LCD_COLS - ind_len;
         if (label_w < 0)
             label_w = 0;
         snprintf(row0, sizeof(row0), "%-6.*s%s", label_w,
@@ -83,16 +83,16 @@ void error_log_scroll_update_display(void)
         else
             snprintf(ts, sizeof(ts), ">100ks");
 
-        int desc_w = 16 - (int)strlen(ts) - 1;   /* -1 for space separator */
+        int desc_w = LCD_COLS - (int)strlen(ts) - 1;   /* -1 for space separator */
         if (desc_w < 1) desc_w = 1;
-        snprintf(row1, 17, "%-*.*s %s",
+        snprintf(row1, LCD_LINE_SIZE, "%-*.*s %s",
                  desc_w, desc_w,
                  entry->description[0] ? entry->description : "?",
                  ts);
     }
 
-    row0[16] = '\0';
-    row1[16] = '\0';
+    row0[LCD_COLS] = '\0';
+    row1[LCD_COLS] = '\0';
     lcd_show_diagnostic_detail(row0, row1);
 }
 

@@ -9,6 +9,7 @@
 
 #include "events/event_dispatcher.h"
 #include "lcd_flash_queue.h"
+#include "lcd_config.h"
 
 #define LCD_EVENT_RECEIVER_STACK_SIZE 3072
 #define LCD_EVENT_RECEIVER_PRIORITY 3
@@ -53,10 +54,12 @@ static void display_event_notice(const system_event_t *event)
         detail = protection_quantity_name(event->quantity);
     }
 
-    char row0[17];
-    char row1[17];
-    snprintf(row0, sizeof(row0), "%-16.16s", category ? category : "EVENT");
-    snprintf(row1, sizeof(row1), "%-16.16s", detail ? detail : "NOTICE");
+    char row0[LCD_LINE_SIZE];
+    char row1[LCD_LINE_SIZE];
+    snprintf(row0, sizeof(row0), "%-*.*s", LCD_COLS, LCD_COLS,
+             category ? category : "EVENT");
+    snprintf(row1, sizeof(row1), "%-*.*s", LCD_COLS, LCD_COLS,
+             detail ? detail : "NOTICE");
 
     lcd_flash_enqueue_to(row0,
                          row1,

@@ -48,7 +48,7 @@ static void handle_pin_entry_button(factory_reset_ctx_t *ctx,
     }
 
     pin_entry_result_t result = pin_entry_handle_button(&ctx->pin_ctx, btn);
-    char pin_line[17];
+    char pin_line[LCD_LINE_SIZE];
     pin_entry_render_line(&ctx->pin_ctx, pin_line, sizeof(pin_line));
 
     switch (result)

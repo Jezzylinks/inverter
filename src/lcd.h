@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "lcd_config.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -13,17 +14,21 @@ extern "C"
 // --------------------------------------------------
 // LCD CONFIGURATION
 // --------------------------------------------------
-#define LCD_ROWS 2
-#define LCD_COLS 16
-
-#define CHAR_BAR_0 0 /* empty                */
+#define CHAR_BAR_0 0 /* empty / legacy bar  */
 #define CHAR_BAR_1 1
 #define CHAR_BAR_2 2
 #define CHAR_BAR_3 3
 #define CHAR_BAR_4 4
-#define CHAR_BAR_5 5 /* full                 */
+#define CHAR_BAR_5 5 /* full / legacy bar   */
 #define CHAR_BAT_L 6 /* battery left bracket */
 #define CHAR_BAT_R 7 /* battery + nub        */
+
+/* 20×4 activity glyphs. The renderer may use these in place of text arrows. */
+#define CHAR_WIFI_TX 3
+#define CHAR_WIFI_RX 4
+#define CHAR_WIFI_LINK 5
+#define CHAR_WIFI_LOCK 6
+#define CHAR_WIFI_ALERT 7
 
     // --------------------------------------------------
     // LCD STATE STRUCTURE
@@ -79,8 +84,8 @@ extern "C"
 
     /**
      * @brief Set cursor position
-     * @param row Row number (0-1 for 16x2)
-     * @param col Column number (0-15 for 16x2)
+     * @param row Row number (0..LCD_ROWS-1)
+     * @param col Column number (0..LCD_COLS-1)
      */
     void lcd_set_cursor(uint8_t row, uint8_t col);
 
@@ -147,7 +152,8 @@ extern "C"
      * @param location Character location (0-7)
      * @param charmap 8-byte array defining character pattern
      */
-    void lcd_create_custom_char(uint8_t location, uint8_t charmap[]);
+    void lcd_create_custom_char(uint8_t location, const uint8_t charmap[]);
+    void lcd_init_cgram(void);
 
     /**
      * @brief Show a two-line message

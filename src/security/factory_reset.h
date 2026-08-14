@@ -5,7 +5,9 @@
 #include <stdbool.h>
 #include "stdatomic.h"
 #include "esp_err.h"
-#include "pin_entry.h" // pin_entry_ctx_t
+#include "pin_entry.h"
+#include "lcd_config.h"
+ // pin_entry_ctx_t
 #include "security.h"  // SECURITY_PIN_LEN
 
 #ifdef __cplusplus
@@ -56,7 +58,7 @@ extern "C"
     _Atomic factory_reset_phase_t phase;
     _Atomic uint8_t progress_pct;
     _Atomic factory_reset_action_t action;
-    char pin_line[17];
+    char pin_line[LCD_LINE_SIZE];
     pin_entry_ctx_t pin_ctx;
 
   } factory_reset_ctx_t;

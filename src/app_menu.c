@@ -168,15 +168,15 @@ void show_menu_screen(menu_state_t menu_st, int selection)
         return;
     }
 
-    char r0[17], r1[17];
+    char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
 
     int item_count = 0;
     const menu_item_t *items = get_menu_items(menu_st, &item_count);
 
     if (!items || item_count == 0)
     {
-        snprintf(r0, 17, "%-16s", "(empty menu)");
-        snprintf(r1, 17, "%-16s", "");
+        snprintf(r0, LCD_LINE_SIZE, "%-*s", LCD_COLS, "(empty menu)");
+        snprintf(r1, LCD_LINE_SIZE, "%-*s", LCD_COLS, "");
         return;
     }
 
@@ -186,7 +186,8 @@ void show_menu_screen(menu_state_t menu_st, int selection)
         selection = item_count - 1;
 
     /* Row 0: selected item, without a battery overlay. */
-    snprintf(r0, 17, "%c%-15.15s", APP_MENU_ARROW, items[selection].label);
+    snprintf(r0, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_ARROW,
+             LCD_COLS - 1, LCD_COLS - 1, items[selection].label);
 
     /* Row 1: next item and position indicator. */
     int next = (selection + 1) % item_count;
@@ -198,13 +199,14 @@ void show_menu_screen(menu_state_t menu_st, int selection)
         int label_w = LCD_COLS - 1 - ind_len;
         if (label_w < 1)
             label_w = 1;
-        snprintf(r1, 17, "%c%-*.*s%s",
+        snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s%s",
                  APP_MENU_INDENT, label_w, label_w,
                  items[next].label, ind);
     }
     else
     {
-        snprintf(r1, 17, "%c%-15.15s", APP_MENU_INDENT, items[next].label);
+        snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_INDENT,
+                 LCD_COLS - 1, LCD_COLS - 1, items[next].label);
     }
     lcd_show_menu(r0, r1);
 }

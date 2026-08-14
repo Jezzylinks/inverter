@@ -67,6 +67,7 @@ static const uint8_t cgram_bar[6][8] = {
     {0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F},
 };
 
+#if !LCD_GEOMETRY_20X4
 static uint8_t cgram_bat_l[8] = {
     /* left cap:  ┌─┐ style top, open body */
     0x07, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x07};
@@ -74,6 +75,20 @@ static uint8_t cgram_bat_l[8] = {
 static uint8_t cgram_bat_r[8] = {
     /* right cap + nub on top */
     0x1C, 0x1C, 0x10, 0x10, 0x10, 0x10, 0x1C, 0x1C};
+#endif
+
+#if LCD_GEOMETRY_20X4
+static const uint8_t cgram_wifi_tx[8] = {
+    0x00, 0x04, 0x06, 0x1F, 0x06, 0x04, 0x00, 0x00};
+static const uint8_t cgram_wifi_rx[8] = {
+    0x00, 0x04, 0x0C, 0x1F, 0x0C, 0x04, 0x00, 0x00};
+static const uint8_t cgram_wifi_link[8] = {
+    0x00, 0x00, 0x04, 0x0A, 0x15, 0x04, 0x00, 0x00};
+static const uint8_t cgram_wifi_lock[8] = {
+    0x0E, 0x11, 0x1F, 0x1B, 0x1F, 0x11, 0x0E, 0x00};
+static const uint8_t cgram_wifi_alert[8] = {
+    0x04, 0x0E, 0x0E, 0x04, 0x04, 0x00, 0x04, 0x00};
+#endif
 
 static uint8_t lcd_scan_and_find_address(void);
 // --------------------------------------------------
@@ -135,7 +150,7 @@ void lcd_home(void)
 
 void lcd_set_cursor(uint8_t col, uint8_t row)
 {
-    static const uint8_t row_offsets[] = {0x00, 0x40};
+    static const uint8_t row_offsets[] = {0x00, 0x40, 0x14, 0x54};
     if (row >= LCD_ROWS)
         row = LCD_ROWS - 1;
     if (col >= LCD_COLS)
@@ -209,7 +224,7 @@ void lcd_backlight(bool on)
     lcd_write_byte(0); // refresh
 }
 
-void lcd_create_custom_char(uint8_t location, uint8_t charmap[])
+void lcd_create_custom_char(uint8_t location, const uint8_t charmap[])
 {
     location &= 0x7;
     lcd_send_command(0x40 | (location << 3));
@@ -515,10 +530,21 @@ void lcd_test_pattern(void)
  */
 void lcd_init_cgram(void)
 {
+#if LCD_GEOMETRY_20X4
+    lcd_create_custom_char(CHAR_WIFI_TX, (uint8_t *)cgram_wifi_tx);
+    lcd_create_custom_char(CHAR_WIFI_RX, (uint8_t *)cgram_wifi_rx);
+    lcd_create_custom_char(CHAR_WIFI_LINK, (uint8_t *)cgram_wifi_link);
+    lcd_create_custom_char(CHAR_WIFI_LOCK, (uint8_t *)cgram_wifi_lock);
+    lcd_create_custom_char(CHAR_WIFI_ALERT, (uint8_t *)cgram_wifi_alert);
+    lcd_create_custom_char(CHAR_BAR_0, cgram_bar[0]);
+    lcd_create_custom_char(CHAR_BAR_1, cgram_bar[1]);
+    lcd_create_custom_char(CHAR_BAR_2, cgram_bar[2]);
+#else
     for (uint8_t i = 0; i <= 5; i++)
     {
         lcd_create_custom_char(i, cgram_bar[i]);
     }
     lcd_create_custom_char(CHAR_BAT_L, cgram_bat_l);
     lcd_create_custom_char(CHAR_BAT_R, cgram_bat_r);
+#endif
 }

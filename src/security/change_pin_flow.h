@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include "pin_entry.h"
+#include "lcd_config.h"
 #include "security.h"
 
 #ifdef __cplusplus
@@ -61,7 +62,9 @@ extern "C"
     bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn);
 
     /** Render the two LCD lines for the current phase. */
-    void change_pin_render(const change_pin_ctx_t *ctx, char line1[17], char line2[17]);
+    void change_pin_render(const change_pin_ctx_t *ctx,
+                           char line1[LCD_LINE_SIZE],
+                           char line2[LCD_LINE_SIZE]);
 
 #ifdef __cplusplus
 }

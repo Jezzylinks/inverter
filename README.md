@@ -61,6 +61,62 @@ The Wi-Fi implementation is organized around a controller-owned lifecycle. The m
 
 > The provisioning portal is intentionally local to the installer AP and does not expose the PIN-protected remote-control API. It should still be used only during commissioning, with the generated AP password handled as an installation secret.
 
+## Dual 16×2 and 20×4 LCD support
+
+The firmware supports two HD44780-compatible I2C LCD geometries selected at build time. The default `esp32dev` environment builds the compact 16×2 interface, while `esp32dev_20x4` enables the advanced 20-column, 4-row interface through `LCD_GEOMETRY_20X4=1`. The geometry is centralized in `src/lcd_config.h`, so row buffers, dirty-row caching, CGRAM initialization, menu formatting, event notices, security screens, and diagnostic output all use the selected line width instead of assuming 16 characters.
+
+| Target | LCD geometry | Build command | Intended presentation |
+|---|---:|---|---|
+| `esp32dev` | 16×2 | `pio run` | Compact two-line status and menu view for constrained panels. |
+| `esp32dev_20x4` | 20×4 | `pio run -e esp32dev_20x4` | Detailed telemetry, navigation guidance, Wi-Fi activity, boot/shutdown progress, and expanded diagnostics. |
+
+The two environments share the same ESP32 board, partition table, I2C LCD driver, and application behavior. Only the display geometry and geometry-specific rendering are changed. The 20×4 environment uses `sdkconfig.esp32dev_20x4`, which preserves the project’s NimBLE provisioning headers and settings. Build the desired environment before flashing; do not enable both geometry values in the same binary.
+
+### 20×4 screen layout
+
+The 20×4 interface is designed to expose more context without removing the compact 16×2 fallback. The main screen uses sub-pages for output, battery, and system telemetry. Output pages show inverter/AC state, load, battery voltage and SOC, while system pages show operating mode and page navigation. Standby shows AC state, battery voltage, SOC, health context, and the power-button instruction. Menus retain the selected item and next item on rows 1–2, then use rows 3–4 for browse/select/back guidance. Detail and value-edit screens similarly reserve the lower rows for units, range context, and button hints.
+
+Boot and shutdown are expanded into four-row progress views. POST, factory reset, fault, loading, event notification, error-log, settings-detail, and diagnostic screens use the extra rows when those states are active. Wi-Fi scanning can show four networks at once, and Wi-Fi connection progress uses a dedicated activity screen rather than overwriting the main telemetry view.
+
+### Custom characters
+
+The HD44780 CGRAM set is initialized after every LCD initialization or reinitialization. The compact 16×2 build reserves its custom-character slots for the battery bracket and bar-graph glyphs. The 20×4 build uses the five Wi-Fi activity glyphs below together with a compact bar graph, leaving the battery display in plain text so that the larger screen can devote CGRAM capacity to connection feedback.
+
+| Slot | 20×4 glyph | Meaning and use |
+|---:|---|---|
+| 0–2 | Bar levels | Battery/load or signal-strength bar graph levels. |
+| 3 | TX arrow | Data is being sent during Wi-Fi connection or provisioning activity. |
+| 4 | RX arrow | Data is being received during Wi-Fi connection or provisioning activity. |
+| 5 | Link glyph | Link negotiation or connection state. |
+| 6 | Lock glyph | Protected provisioning/security state. |
+| 7 | Alert glyph | Wi-Fi error, timeout, or attention state. |
+
+The connection screen animates the TX/RX/LINK indicators and the trailing dots in `CONNECTING...`. These glyphs are presentation-only; Wi-Fi state remains owned by the controller and is reported to the LCD through the existing render-state path.
+
+### Hardware configuration
+
+Use an HD44780-compatible LCD with the project’s existing I2C backpack and wiring. The display geometry is a physical-module choice: install a 16×2 module for the default target or a 20×4 module for the advanced target. Keep the I2C address, SDA/SCL assignments, power, ground, and contrast adjustment identical to the validated installation. A 20×4 module must be configured as `esp32dev_20x4`; compiling the default target against a 20×4 panel will leave the controller using the wrong row map, and compiling the 20×4 target for a 16×2 panel will address rows that do not exist.
+
+The 20×4 driver uses the standard HD44780 four-row DDRAM offsets `{0x00, 0x40, 0x14, 0x54}`. Verify the backpack’s I2C address and logic-level compatibility on the bench before connecting the display to an installed inverter. The display is not a substitute for the inverter’s protection system: confirm battery chemistry, selected 12/24/48 V system, ADC calibration, relay polarity, and fault thresholds before enabling output.
+
+### Switching builds
+
+To build the compact display, use:
+
+```bash
+pio run -e esp32dev
+pio run -e esp32dev --target upload
+```
+
+To build the advanced display, use:
+
+```bash
+pio run -e esp32dev_20x4
+pio run -e esp32dev_20x4 --target upload
+```
+
+The build-time selector can also be used with a custom environment by defining `LCD_GEOMETRY_20X4=1`. Leave the flag undefined or set it to `0` for 16×2. Do not edit the shared LCD source to change geometry manually; select the PlatformIO environment so the matching row map, buffers, custom-character set, and startup/reinitialization path are compiled together.
+
 ## Security notes
 
 Panel security is enabled by default for new installations. The initial default PIN is provisioned only as a salted hash and is marked as requiring a change. Product commissioning should change that PIN before enabling remote access. Remote API clients must provide the PIN as six decimal digits in the `X-Inverter-PIN` header. Failed attempts are locked out temporarily, and disabling panel security is an explicit configuration choice rather than a startup side effect.

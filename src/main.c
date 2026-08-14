@@ -92,8 +92,6 @@
 #define WEATHER_CHECK_INTERNAL_MS 60000
 #define FIRMWARE_VERSION "v1.0.3"
 #define LCD_ADDR 0x27
-#define LCD_COLS 16
-#define LCD_ROWS 2
 #define SCROLL_DELAY_MS 300
 #define ANIM_DELAY_MS 80
 #define SDA_PIN 21
@@ -876,9 +874,9 @@ void select_battery_type(button_id_t btn)
 
     if (updated)
     {
-        char r0[17], r1[17];
-        snprintf(r0, 17, "%-16s", "Select Battery:");
-        snprintf(r1, 17, "> %-14.14s", battery_type_names[selected]);
+        char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
+        snprintf(r0, LCD_LINE_SIZE, "%-16s", "Select Battery:");
+        snprintf(r1, LCD_LINE_SIZE, "> %-14.14s", battery_type_names[selected]);
         lcd_show_menu(r0, r1);
         updated = false;
     }
@@ -1004,7 +1002,7 @@ int64_t lcd_get_current_time_ms(void)
     return esp_timer_get_time() / 1000;
 }
 
-void lcd_create_custom_char(uint8_t location, uint8_t charmap[]);
+void lcd_create_custom_char(uint8_t location, const uint8_t charmap[]);
 
 adc_cali_handle_t handle = NULL;
 
@@ -2549,9 +2547,9 @@ void adc_task(void *arg)
         if (sys_state.error.error_flags && sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
         {
             const char *err = get_error_string(sys_state.error.error_flags);
-            char l0[17], l1[17];
-            snprintf(l0, 17, "%-16.16s", err);
-            snprintf(l1, 17, "%-16s", "Check system    ");
+            char l0[LCD_LINE_SIZE], l1[LCD_LINE_SIZE];
+            snprintf(l0, LCD_LINE_SIZE, "%-16.16s", err);
+            snprintf(l1, LCD_LINE_SIZE, "%-16s", "Check system    ");
             lcd_show_fault(l0, l1);
         }
         else if (sys_lcd.screen == LCD_SCREEN_FAULT)
@@ -3280,9 +3278,9 @@ void update_lcd_activity_state(void)
 void lcd_show_monitoring_detail(const char *label, float value,
                                 const char *unit)
 {
-    char l[17], v[17];
-    snprintf(l, 17, "%-16.16s", label);
-    snprintf(v, 17, "%.2f %-6.6s", value, unit ? unit : "");
+    char l[LCD_LINE_SIZE], v[LCD_LINE_SIZE];
+    snprintf(l, LCD_LINE_SIZE, "%-16.16s", label);
+    snprintf(v, LCD_LINE_SIZE, "%.2f %-6.6s", value, unit ? unit : "");
     lcd_show_monitor_detail(l, v);
 }
 
@@ -3554,21 +3552,21 @@ void lcd_show_value_edit_screen(void)
         return;
     }
 
-    char v[17];
+    char v[LCD_LINE_SIZE];
     switch (config->edit_type)
     {
     case VALUE_EDIT_NUMERIC:
-        snprintf(v, 17, "%.*f %-11.11s", config->decimal_places,
+        snprintf(v, LCD_LINE_SIZE, "%.*f %-11.11s", config->decimal_places,
                  config->current_value, config->unit ? config->unit : "");
         break;
     case VALUE_EDIT_BOOL:
-        snprintf(v, 17, "%-16s", config->current_value != 0.0f ? "ON" : "OFF");
+        snprintf(v, LCD_LINE_SIZE, "%-16s", config->current_value != 0.0f ? "ON" : "OFF");
         break;
     case VALUE_EDIT_SELECT:
-        snprintf(v, 17, "%-16.16s", config->options[config->selection_index]);
+        snprintf(v, LCD_LINE_SIZE, "%-16.16s", config->options[config->selection_index]);
         break;
     default:
-        snprintf(v, 17, "%-16s", "");
+        snprintf(v, LCD_LINE_SIZE, "%-16s", "");
         break;
     }
     lcd_show_value_edit(config->label ? config->label : "Param",
@@ -3578,8 +3576,8 @@ void lcd_show_value_edit_screen(void)
 /* ── lcd_show_bt_connecting_screen() ───────────────────────────────────── */
 void lcd_show_bt_connecting_screen(const char *device_name)
 {
-    char r1[17];
-    snprintf(r1, 17, "%-16.16s", device_name ? device_name : "");
+    char r1[LCD_LINE_SIZE];
+    snprintf(r1, LCD_LINE_SIZE, "%-16.16s", device_name ? device_name : "");
     lcd_show_wifi_connecting(device_name ? device_name : "");
     /* reuse wifi_connecting screen — same layout */
 }
@@ -3634,15 +3632,15 @@ void lcd_show_factory_reset_screen(void)
 /* ── lcd_show_bt_edit_screen() ──────────────────────────────────────────── */
 void lcd_show_bt_edit_screen(const char *label, const char *value)
 {
-    char l[17], v[17];
-    snprintf(l, 17, "%s:", label ? label : "");
+    char l[LCD_LINE_SIZE], v[LCD_LINE_SIZE];
+    snprintf(l, LCD_LINE_SIZE, "%s:", label ? label : "");
     if (value && strlen(value) > LCD_COLS)
     {
-        snprintf(v, 17, "%-15.15s>", value);
+        snprintf(v, LCD_LINE_SIZE, "%-15.15s>", value);
     }
     else
     {
-        snprintf(v, 17, "%-16.16s", value ? value : "");
+        snprintf(v, LCD_LINE_SIZE, "%-16.16s", value ? value : "");
     }
     lcd_show_value_edit(l, v, false);
 }
@@ -3652,9 +3650,9 @@ void lcd_show_value_saved_screen(void)
 {
     value_edit_context_t *config = get_current_value_config();
     float *current_value = get_current_value_pointer();
-    char v[17] = "                ";
+    char v[LCD_LINE_SIZE] = "                ";
     if (config && current_value)
-        snprintf(v, 17, "%.2f %-11.11s", *current_value,
+        snprintf(v, LCD_LINE_SIZE, "%.2f %-11.11s", *current_value,
                  config->unit ? config->unit : "");
     lcd_flash_saved("Value Saved!    ", v);
 }
@@ -3779,7 +3777,7 @@ static void post_show_result_and_notify(post_result_t result)
         return;
     }
 
-    char summary[17] = {0};
+    char summary[LCD_LINE_SIZE] = {0};
     int pos = 0;
     if (!result.lcd_ok)
         pos += snprintf(summary + pos, sizeof(summary) - pos, "LCD ");
@@ -3788,7 +3786,7 @@ static void post_show_result_and_notify(post_result_t result)
     if (!result.fan_ok)
         pos += snprintf(summary + pos, sizeof(summary) - pos, "FAN ");
 
-    char line1[17];
+    char line1[LCD_LINE_SIZE];
     snprintf(line1, sizeof(line1), "%-16.16s", summary);
 
     if (result.lcd_ok)
@@ -4120,8 +4118,8 @@ void lcd_draw_diagnostics_screen(uint8_t index)
     }
 
     const char *label = items[index].label ? items[index].label : "(no label)";
-    char row0[17], row1[17];
-    snprintf(row0, 17, "%-16.16s", label);
+    char row0[LCD_LINE_SIZE], row1[LCD_LINE_SIZE];
+    snprintf(row0, LCD_LINE_SIZE, "%-16.16s", label);
 
     switch (index)
     {
@@ -4139,7 +4137,7 @@ void lcd_draw_diagnostics_screen(uint8_t index)
 
         bool lcd_alive = (age_ms < LCD_HEARTBEAT_TIMEOUT_MS);
 
-        snprintf(row1, 17, "%s HB:%-6lu%s",
+        snprintf(row1, LCD_LINE_SIZE, "%s HB:%-6lu%s",
                  (diag_data.system_ok && lcd_alive) ? "OK " : "FLT",
                  (unsigned long)(hb % 999999),
                  lcd_alive ? " " : "!");
@@ -4150,18 +4148,18 @@ void lcd_draw_diagnostics_screen(uint8_t index)
     {
         const error_log_entry_t *latest = error_log_get_latest();
         if (!latest)
-            snprintf(row1, 17, "%-16s", "No errors logged");
+            snprintf(row1, LCD_LINE_SIZE, "%-16s", "No errors logged");
         else
-            snprintf(row1, 17, "%-16.16s", latest->description);
+            snprintf(row1, LCD_LINE_SIZE, "%-16.16s", latest->description);
         break;
     }
 
     case 2: /* CPU Load */
-        snprintf(row1, 17, "Load:%6.1f%%    ", diag_data.cpu_load);
+        snprintf(row1, LCD_LINE_SIZE, "Load:%6.1f%%    ", diag_data.cpu_load);
         break;
 
     case 3: /* Firmware Version */
-        snprintf(row1, 17, "%-16.16s", "C-01 Rev A");
+        snprintf(row1, LCD_LINE_SIZE, "%-16.16s", "C-01 Rev A");
         break;
 
     case 4: /* Uptime */
@@ -4173,18 +4171,18 @@ void lcd_draw_diagnostics_screen(uint8_t index)
         unsigned long sec = s % 60UL;
 
         if (d > 0)
-            snprintf(row1, 17, "%lud %02lu:%02lu:%02lu ", d, h, m, sec);
+            snprintf(row1, LCD_LINE_SIZE, "%lud %02lu:%02lu:%02lu ", d, h, m, sec);
         else
-            snprintf(row1, 17, "   %02lu:%02lu:%02lu    ", h, m, sec);
+            snprintf(row1, LCD_LINE_SIZE, "   %02lu:%02lu:%02lu    ", h, m, sec);
         break;
     }
 
     case 5: /* RAM usage */
-        snprintf(row1, 17, "RAM:%6.1f%%     ", diag_data.ram_usage);
+        snprintf(row1, LCD_LINE_SIZE, "RAM:%6.1f%%     ", diag_data.ram_usage);
         break;
 
     default:
-        snprintf(row1, 17, "%-16s", "Unknown item");
+        snprintf(row1, LCD_LINE_SIZE, "%-16s", "Unknown item");
         break;
     }
 
@@ -4226,16 +4224,16 @@ void lcd_draw_settings_view_screen(uint8_t index)
     }
 
     const nvs_setting_t *s = &g_settings[index];
-    char row0[17], row1[17];
+    char row0[LCD_LINE_SIZE], row1[LCD_LINE_SIZE];
 
     char counter[8];
     snprintf(counter, sizeof(counter), "%u/%u", (unsigned)(index + 1), (unsigned)NVS_SETTINGS_COUNT);
-    snprintf(row0, 17, "%-11.11s%5.5s", s->label ? s->label : "(unnamed)", counter);
+    snprintf(row0, LCD_LINE_SIZE, "%-11.11s%5.5s", s->label ? s->label : "(unnamed)", counter);
 
     if (s->is_scaled_float)
     {
         float val = *(float *)s->field;
-        snprintf(row1, 17, "%.2f%-3s        ", val, settings_view_unit_for(s->label));
+        snprintf(row1, LCD_LINE_SIZE, "%.2f%-3s        ", val, settings_view_unit_for(s->label));
     }
     else if (s->size == sizeof(uint8_t))
     {
@@ -4243,21 +4241,21 @@ void lcd_draw_settings_view_screen(uint8_t index)
 
         if (strcmp(s->key, "bat_type") == 0 && val < BATTERY_TYPE_COUNT)
         {
-            snprintf(row1, 17, "%-16.16s", battery_type_names[val]);
+            snprintf(row1, LCD_LINE_SIZE, "%-16.16s", battery_type_names[val]);
         }
         else if (val == 0 || val == 1)
         {
-            snprintf(row1, 17, "%u (%-3s)        ", val, val ? "ON" : "OFF");
+            snprintf(row1, LCD_LINE_SIZE, "%u (%-3s)        ", val, val ? "ON" : "OFF");
         }
         else
         {
-            snprintf(row1, 17, "%u        ", val);
+            snprintf(row1, LCD_LINE_SIZE, "%u        ", val);
         }
     }
     else
     {
         int32_t val = *(int32_t *)s->field;
-        snprintf(row1, 17, "%ld%-3s           ", (long)val, settings_view_unit_for(s->label));
+        snprintf(row1, LCD_LINE_SIZE, "%ld%-3s           ", (long)val, settings_view_unit_for(s->label));
     }
 
     row0[16] = '\0';
@@ -5615,9 +5613,9 @@ void menu_exit(void)
 /* ── show_profile_on_lcd() ──────────────────────────────────────────────── */
 void show_profile_on_lcd(battery_profile_t *profile)
 {
-    char l[17], v[17];
-    snprintf(l, 17, "Battery:%4.1fV  ", (float)profile->nominal_voltage * 10);
-    snprintf(v, 17, "Cutoff:%5.1fV   ", profile->cutoff_voltage_12v * 10);
+    char l[LCD_LINE_SIZE], v[LCD_LINE_SIZE];
+    snprintf(l, LCD_LINE_SIZE, "Battery:%4.1fV  ", (float)profile->nominal_voltage * 10);
+    snprintf(v, LCD_LINE_SIZE, "Cutoff:%5.1fV   ", profile->cutoff_voltage_12v * 10);
     lcd_show_monitor_detail(l, v);
 }
 
@@ -5691,8 +5689,8 @@ void enter_deep_sleep(uint32_t sleep_seconds)
     rtc_mem.ac_was_connected = sys_state.inverter.connected;
     rtc_mem.last_error = (uint32_t)sys_state.error.error_flags;
 
-    char v[17];
-    snprintf(v, 17, "Wake in: %lus   ", sleep_seconds);
+    char v[LCD_LINE_SIZE];
+    snprintf(v, LCD_LINE_SIZE, "Wake in: %lus   ", sleep_seconds);
     lcd_flash_info("Entering Sleep  ", v, 2000);
 
     save_settings();
@@ -5771,16 +5769,16 @@ void handle_wakeup(void)
         break;
     }
 
-    char r1[17] = "                ";
+    char r1[LCD_LINE_SIZE] = "                ";
     if (rtc_mem.last_sleep_time > 0)
     {
         uint32_t dur =
             (xTaskGetTickCount() - rtc_mem.last_sleep_time) / 1000;
-        snprintf(r1, 17, "Slept %lds", (long)dur);
+        snprintf(r1, LCD_LINE_SIZE, "Slept %lds", (long)dur);
     }
     if (rtc_mem.last_error)
     {
-        snprintf(r1, 17, "Recovered err   ");
+        snprintf(r1, LCD_LINE_SIZE, "Recovered err   ");
         sys_state.error.error_flags |= rtc_mem.last_error;
     }
 
@@ -6094,29 +6092,29 @@ void handle_critical_error(void)
     post_buzzer_event(false);
     blink_led(LED_ERROR, 200, 200, 5);
 
-    char l0[17], l1[17];
+    char l0[LCD_LINE_SIZE], l1[LCD_LINE_SIZE];
     if (sys_state.error.error_flags & ERR_OVER_TEMP)
     {
-        snprintf(l0, 17, "%-16s", "Error: Over Temp");
-        snprintf(l1, 17, "%.1fC Max:%.1fC  ",
+        snprintf(l0, LCD_LINE_SIZE, "%-16s", "Error: Over Temp");
+        snprintf(l1, LCD_LINE_SIZE, "%.1fC Max:%.1fC  ",
                  sys_state.inverter.temperature, MAX_TEMPERATURE);
     }
     else if (sys_state.error.error_flags & ERR_OVERLOAD)
     {
-        snprintf(l0, 17, "%-16s", "Error: Overload ");
-        snprintf(l1, 17, "%.1fA Max:%.1fA  ",
+        snprintf(l0, LCD_LINE_SIZE, "%-16s", "Error: Overload ");
+        snprintf(l1, LCD_LINE_SIZE, "%.1fA Max:%.1fA  ",
                  sys_state.inverter.output_current, MAX_CURRENT);
     }
     else if (sys_state.error.error_flags & ERR_UNDER_VOLTAGE)
     {
-        snprintf(l0, 17, "%-16s", "Critical Error  ");
-        snprintf(l1, 17, "Code: 0x%02X      ",
+        snprintf(l0, LCD_LINE_SIZE, "%-16s", "Critical Error  ");
+        snprintf(l1, LCD_LINE_SIZE, "Code: 0x%02X      ",
                  sys_state.error.error_flags);
     }
     else
     {
-        snprintf(l0, 17, "%-16s", "Unknown Error   ");
-        snprintf(l1, 17, "Code: 0x%02X      ",
+        snprintf(l0, LCD_LINE_SIZE, "%-16s", "Unknown Error   ");
+        snprintf(l1, LCD_LINE_SIZE, "Code: 0x%02X      ",
                  sys_state.error.error_flags);
     }
     lcd_show_fault(l0, l1);
@@ -6129,9 +6127,9 @@ void handle_critical_error(void)
 /* ── display_battery_settings() ─────────────────────────────────────────── */
 void display_battery_settings(void)
 {
-    char l[17], v[17];
-    snprintf(l, 17, "%-16s", "Battery Settings");
-    snprintf(v, 17, "Cutoff: %5.2fV  ",
+    char l[LCD_LINE_SIZE], v[LCD_LINE_SIZE];
+    snprintf(l, LCD_LINE_SIZE, "%-16s", "Battery Settings");
+    snprintf(v, LCD_LINE_SIZE, "Cutoff: %5.2fV  ",
              menu_edit.edit_step ? menu_edit.temp_value
                                  : sys_state.battery_profile.cutoff_voltage_12v);
     lcd_show_menu(l, v);
@@ -6195,9 +6193,9 @@ void perform_system_restart(bool factory_reset)
 /* ── show_system_info() ──────────────────────────────────────────────────── */
 void show_system_info(void)
 {
-    char l[17], v[17];
-    snprintf(l, 17, "Firmware:%-7s", FIRMWARE_VERSION);
-    snprintf(v, 17, "%s %dV  ",
+    char l[LCD_LINE_SIZE], v[LCD_LINE_SIZE];
+    snprintf(l, LCD_LINE_SIZE, "Firmware:%-7s", FIRMWARE_VERSION);
+    snprintf(v, LCD_LINE_SIZE, "%s %dV  ",
              sys_state.battery_profile.name_prefix,
              (int)sys_state.battery_profile.nominal_voltage);
     lcd_show_monitor_detail(l, v);

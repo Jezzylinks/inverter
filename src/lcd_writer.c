@@ -28,10 +28,11 @@ static uint32_t _lcd_get_time_ms(void)
     return (uint32_t)(ticks * portTICK_PERIOD_MS);
 }
 
-/* Safely copy a string into a 16-char LCD field */
-static void set16(char *dst, const char *src)
+/* Safely copy a string into the active LCD row width. */
+static void set_line(char *dst, const char *src)
 {
-    snprintf(dst, 17, "%-16.16s", src ? src : "");
+    snprintf(dst, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS,
+             src ? src : "");
 }
 
 /*----------------------------------------------------------------------------*/
@@ -101,8 +102,8 @@ void lcd_show_menu(const char *row0, const char *row1)
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_MENU;
-    set16(sys_lcd.menu.row0, row0);
-    set16(sys_lcd.menu.row1, row1);
+    set_line(sys_lcd.menu.row0, row0);
+    set_line(sys_lcd.menu.row1, row1);
     LCD_UNLOCK();
 }
 
@@ -112,8 +113,8 @@ void lcd_show_value_edit(const char *label, const char *value_str,
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_VALUE_EDIT;
-    set16(sys_lcd.value_edit.label, label);
-    set16(sys_lcd.value_edit.value_str, value_str);
+    set_line(sys_lcd.value_edit.label, label);
+    set_line(sys_lcd.value_edit.value_str, value_str);
     sys_lcd.value_edit.pending_confirm = pending_confirm;
     LCD_UNLOCK();
 }
@@ -123,8 +124,8 @@ void lcd_show_monitor_detail(const char *label, const char *value_str)
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_MONITORING_DETAIL;
-    set16(sys_lcd.monitor_detail.label, label);
-    set16(sys_lcd.monitor_detail.value_str, value_str);
+    set_line(sys_lcd.monitor_detail.label, label);
+    set_line(sys_lcd.monitor_detail.value_str, value_str);
     LCD_UNLOCK();
 }
 
@@ -132,8 +133,8 @@ void lcd_show_diagnostic_detail(const char *label, const char *value_str)
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_DIAGNOSTIC;
-    set16(sys_lcd.diagnostic.label, label);
-    set16(sys_lcd.diagnostic.value_str, value_str);
+    set_line(sys_lcd.diagnostic.label, label);
+    set_line(sys_lcd.diagnostic.value_str, value_str);
     LCD_UNLOCK();
 }
 
@@ -141,8 +142,8 @@ void lcd_show_settings_view_detail(const char *label, const char *value_str)
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_SETTINGS_VIEW;
-    set16(sys_lcd.settings_view.label, label);
-    set16(sys_lcd.settings_view.value_str, value_str);
+    set_line(sys_lcd.settings_view.label, label);
+    set_line(sys_lcd.settings_view.value_str, value_str);
     LCD_UNLOCK();
 }
 
@@ -170,8 +171,8 @@ void lcd_show_fault(const char *line0, const char *line1)
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_FAULT;
-    set16(sys_lcd.fault.line0, line0);
-    set16(sys_lcd.fault.line1, line1);
+    set_line(sys_lcd.fault.line0, line0);
+    set_line(sys_lcd.fault.line1, line1);
     sys_lcd.fault.blink = true;
     LCD_UNLOCK();
 }
@@ -269,8 +270,8 @@ void lcd_show_confirm(const char *line0, const char *line1)
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_CONFIRMATION;
-    set16(sys_lcd.confirm.row0, line0);
-    set16(sys_lcd.confirm.row1, line1);
+    set_line(sys_lcd.confirm.row0, line0);
+    set_line(sys_lcd.confirm.row1, line1);
     LCD_UNLOCK();
 }
 
@@ -285,8 +286,8 @@ void lcd_flash_message(const char *line0, const char *line1,
 void lcd_flash_saved(const char *label, const char *value_str)
 {
     /* Show "Value Saved! / <label>: <value>" for 800ms */
-    char line1[17];
-    snprintf(line1, sizeof(line1), "%-16.16s", value_str ? value_str : "");
+    char line1[LCD_LINE_SIZE];
+    snprintf(line1, sizeof(line1), "%-*.*s", LCD_COLS, LCD_COLS, value_str ? value_str : "");
     lcd_flash_message("Value Saved!    ", line1, 800);
 }
 

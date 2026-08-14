@@ -38,8 +38,8 @@ typedef enum
 typedef struct
 {
   bool active;
-  char line0[17];
-  char line1[17];
+  char line0[LCD_LINE_SIZE];
+  char line1[LCD_LINE_SIZE];
   uint32_t expire_ms;
   flash_priority_t priority;
   lcd_screen_id_t return_to;
@@ -48,8 +48,8 @@ typedef struct
 /* ── Single queue entry ──────────────────────────────────────────────── */
 typedef struct
 {
-  char line0[17];
-  char line1[17];
+  char line0[LCD_LINE_SIZE];
+  char line1[LCD_LINE_SIZE];
   uint32_t duration_ms;
   flash_priority_t priority;
   lcd_screen_id_t return_to; /* screen to restore when timer expires   */

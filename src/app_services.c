@@ -430,7 +430,7 @@ esp_err_t app_services_check_for_update(bool user_initiated)
             lcd_flash_message("OTA Check Failed", "Try again", 1500U);
         }
     } else if (update_available) {
-        char line[17];
+        char line[LCD_LINE_SIZE];
         snprintf(line, sizeof(line), "Version %.8s", entry.version);
         lcd_flash_message("Update Available", line, 1800U);
     } else if (user_initiated) {

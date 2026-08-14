@@ -248,9 +248,9 @@ void handle_power_button_event(button_event_info_t *event_info,
         }
         case INVERTER_FAULT:
         {
-            char r0[17], r1[17];
-            snprintf(r0, 17, "%-16s", "** FAULT ACTIVE ");
-            snprintf(r1, 17, "%-16.16s",
+            char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
+            snprintf(r0, LCD_LINE_SIZE, "%-*s", LCD_COLS, "** FAULT ACTIVE ");
+            snprintf(r1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS,
                      get_error_string(sys_state.error.error_flags));
             lcd_show_fault(r0, r1);
             vTaskDelay(pdMS_TO_TICKS(2000));

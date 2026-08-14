@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "stdatomic.h"
 #include "security/factory_reset.h"
+#include "lcd_config.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -51,7 +52,6 @@ extern "C"
     } lcd_screen_id_t;
 
 #define LCD_FLASH_RETURN_AUTO ((lcd_screen_id_t) - 1)
-#define LCD_COLS 16
 
     /* ── Per-screen data payloads ────────────────────────────────────────────── */
 
@@ -91,7 +91,7 @@ extern "C"
 
     typedef struct
     {
-        char title[17];
+        char title[LCD_LINE_SIZE];
 
         uint32_t start_ms;
         uint32_t duration_ms;
@@ -104,14 +104,14 @@ extern "C"
 
     typedef struct
     {
-        char row0[17];
-        char row1[17];
+        char row0[LCD_LINE_SIZE];
+        char row1[LCD_LINE_SIZE];
     } lcd_two_line_t; /* reused for menu, confirm, saved, etc. */
 
     typedef struct
     {
-        char label[17];
-        char value_str[17];
+        char label[LCD_LINE_SIZE];
+        char value_str[LCD_LINE_SIZE];
         float min_value;
         float max_value;
         float value;
@@ -122,8 +122,8 @@ extern "C"
 
     typedef struct
     {
-        char label[17];
-        char value_str[17];
+        char label[LCD_LINE_SIZE];
+        char value_str[LCD_LINE_SIZE];
     } lcd_detail_data_t; /* monitoring detail, diagnostic detail, AND settings view */
 
     typedef struct
@@ -140,8 +140,8 @@ extern "C"
 
     typedef struct
     {
-        char line0[17];
-        char line1[17];
+        char line0[LCD_LINE_SIZE];
+        char line1[LCD_LINE_SIZE];
         bool blink;
     } lcd_fault_data_t;
 
@@ -188,8 +188,8 @@ extern "C"
     /* timed flash message (SAVED / CANCELLED / any short notice) */
     typedef struct
     {
-        char line0[17];
-        char line1[17];
+        char line0[LCD_LINE_SIZE];
+        char line1[LCD_LINE_SIZE];
         uint32_t duration_ms;
         lcd_screen_id_t return_to; /* screen to restore when timer expires */
     } lcd_flash_data_t;

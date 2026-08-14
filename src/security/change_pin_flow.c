@@ -198,7 +198,9 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
     }
 }
 
-void change_pin_render(const change_pin_ctx_t *ctx, char line1[17], char line2[17])
+void change_pin_render(const change_pin_ctx_t *ctx,
+                       char line1[LCD_LINE_SIZE],
+                       char line2[LCD_LINE_SIZE])
 {
     switch (ctx->phase)
     {
@@ -207,24 +209,24 @@ void change_pin_render(const change_pin_ctx_t *ctx, char line1[17], char line2[1
         if (security_is_locked_out())
         {
             uint32_t remaining_s = security_lockout_remaining_ms() / 1000;
-            snprintf(line1, 17, "Locked out");
-            snprintf(line2, 17, "Retry in %lus", remaining_s);
+            snprintf(line1, LCD_LINE_SIZE, "Locked out");
+            snprintf(line2, LCD_LINE_SIZE, "Retry in %lus", remaining_s);
         }
         else
         {
-            snprintf(line1, 17, "Old PIN:");
-            pin_entry_render_line(&ctx->pin_ctx, line2, 17);
+            snprintf(line1, LCD_LINE_SIZE, "Old PIN:");
+            pin_entry_render_line(&ctx->pin_ctx, line2, LCD_LINE_SIZE);
         }
         break;
 
     case CHANGE_PIN_ENTER_NEW:
-        snprintf(line1, 17, "New PIN:");
-        pin_entry_render_line(&ctx->pin_ctx, line2, 17);
+        snprintf(line1, LCD_LINE_SIZE, "New PIN:");
+        pin_entry_render_line(&ctx->pin_ctx, line2, LCD_LINE_SIZE);
         break;
 
     case CHANGE_PIN_CONFIRM_NEW:
-        snprintf(line1, 17, "Confirm PIN:");
-        pin_entry_render_line(&ctx->pin_ctx, line2, 17);
+        snprintf(line1, LCD_LINE_SIZE, "Confirm PIN:");
+        pin_entry_render_line(&ctx->pin_ctx, line2, LCD_LINE_SIZE);
         break;
 
     default:
