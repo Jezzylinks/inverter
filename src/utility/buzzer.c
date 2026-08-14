@@ -11,6 +11,8 @@
 
 extern system_state_t sys_state;
 
+static volatile bool s_critical_preempt_pending = false;
+
 #define BUZZER_LEDC_MODE LEDC_LOW_SPEED_MODE
 #define BUZZER_LEDC_TIMER LEDC_TIMER_0
 #define BUZZER_LEDC_CHANNEL LEDC_CHANNEL_0
@@ -50,6 +52,11 @@ static void buzzer_stop(void)
 
 void buzzer_beep(uint32_t frequency, uint8_t duty_percent, uint32_t duration_ms)
 {
+    if (s_critical_preempt_pending) {
+        buzzer_stop();
+        return;
+    }
+
     if (!sys_state.sound_enabled || quiet_hours_is_active())
     {
         /* Still wait out the duration -- callers chain several beeps
@@ -81,8 +88,19 @@ void buzzer_beep(uint32_t frequency, uint8_t duty_percent, uint32_t duration_ms)
         BUZZER_LEDC_MODE,
         BUZZER_LEDC_CHANNEL));
 
-    vTaskDelay(pdMS_TO_TICKS(duration_ms));
+    uint32_t remaining_ms = duration_ms;
+    while (remaining_ms > 0U && !s_critical_preempt_pending) {
+        const uint32_t slice_ms = remaining_ms > 25U ? 25U : remaining_ms;
+        vTaskDelay(pdMS_TO_TICKS(slice_ms));
+        remaining_ms -= slice_ms;
+    }
 
+    buzzer_stop();
+}
+
+void buzzer_request_critical_preemption(void)
+{
+    s_critical_preempt_pending = true;
     buzzer_stop();
 }
 
@@ -187,6 +205,17 @@ static void beep_error(void)
     buzzer_beep(600, 90, 150);
 }
 
+static void beep_critical(void)
+{
+    /* Fast, unmistakable alarm sequence for critical protection events. */
+    for (int i = 0; i < 3; ++i) {
+        buzzer_beep(900, 95, 120);
+        if (i < 2) {
+            vTaskDelay(pdMS_TO_TICKS(40));
+        }
+    }
+}
+
 /* Very short, quiet -- keypress feedback. Kept brief so rapid presses
  * never feel like they're waiting on the buzzer. */
 static void beep_click(void) { buzzer_beep(2500, 25, 15); }
@@ -210,6 +239,7 @@ void post_buzzer_event(bool success)
 void buzzer_event_task(void *pv)
 {
     system_event_t evt;
+    bool critical_active = false;
 
     while (1)
     {
@@ -217,6 +247,20 @@ void buzzer_event_task(void *pv)
                                       &evt,
                                       portMAX_DELAY))
         {
+            continue;
+        }
+
+        if (evt.action == EVENT_ACTION_RECOVERED) {
+            critical_active = false;
+        } else if (evt.priority == EVENT_PRIORITY_CRITICAL) {
+            s_critical_preempt_pending = false;
+            critical_active = true;
+            buzzer_off();
+            beep_critical();
+            continue;
+        } else if (critical_active) {
+            /* Critical alarm state suppresses lower-priority tones until the
+             * corresponding recovery event arrives. */
             continue;
         }
 

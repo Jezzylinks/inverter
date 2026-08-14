@@ -25,6 +25,7 @@ extern "C"
     void buzzer_beep(uint32_t frequency, uint8_t duty_percent, uint32_t duration_ms);
     void update_buzzer(uint16_t freq_hz, uint8_t volume_percent);
     void buzzer_off(void);
+    void buzzer_request_critical_preemption(void);
     void buzzer_alert(void);
     void buzzer_error(void);
     void buzzer_success(void);

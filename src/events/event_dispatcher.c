@@ -347,7 +347,23 @@ bool event_dispatcher_send(event_subscriber_t subscriber,
     if (g_event_subscriber_queue[subscriber] == NULL)
         return false;
 
-    const BaseType_t sent = xQueueSend(g_event_subscriber_queue[subscriber], event, 0);
+    BaseType_t sent;
+    if ((subscriber == EVENT_SUB_LED || subscriber == EVENT_SUB_BUZZER) &&
+        event->priority == EVENT_PRIORITY_CRITICAL) {
+        /* Critical alarm output supersedes queued lower-priority indications. */
+        if (subscriber == EVENT_SUB_BUZZER) {
+            buzzer_request_critical_preemption();
+        }
+        system_event_t discarded;
+        while (xQueueReceive(g_event_subscriber_queue[subscriber],
+                             &discarded,
+                             0) == pdPASS) {
+        }
+        sent = xQueueSendToFront(g_event_subscriber_queue[subscriber], event, 0);
+    } else {
+        sent = xQueueSend(g_event_subscriber_queue[subscriber], event, 0);
+    }
+
     if (sent != pdPASS) {
         ESP_LOGW(TAG, "Subscriber queue %d is full; event dropped", subscriber);
         return false;

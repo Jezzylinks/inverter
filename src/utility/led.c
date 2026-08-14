@@ -202,6 +202,95 @@ void led_execute_pattern(const led_pattern_t *pattern)
     }
 }
 
+static bool led_wait_for_critical(uint32_t duration_ms,
+                                   system_event_t *critical_event)
+{
+    const TickType_t start = xTaskGetTickCount();
+    const TickType_t duration = pdMS_TO_TICKS(duration_ms);
+
+    while ((xTaskGetTickCount() - start) < duration) {
+        system_event_t pending = {0};
+        TickType_t elapsed = xTaskGetTickCount() - start;
+        TickType_t remaining = duration - elapsed;
+        TickType_t wait = remaining > pdMS_TO_TICKS(25)
+                              ? pdMS_TO_TICKS(25)
+                              : remaining;
+        if (wait == 0) {
+            wait = 1;
+        }
+
+        if (event_dispatcher_receive(EVENT_SUB_LED, &pending, wait)) {
+            if (pending.priority == EVENT_PRIORITY_CRITICAL ||
+                pending.action == EVENT_ACTION_RECOVERED) {
+                if (critical_event != NULL) {
+                    *critical_event = pending;
+                }
+                return true;
+            }
+            /* Lower-priority pattern requests are intentionally consumed while
+             * an active pattern is running; critical events preempt them. */
+        }
+    }
+    return false;
+}
+
+static bool led_execute_pattern_interruptible(const led_pattern_t *pattern,
+                                              system_event_t *critical_event)
+{
+    if (pattern == NULL) {
+        return false;
+    }
+
+    const uint32_t repeats = pattern->repeat;
+    switch (pattern->type) {
+    case LED_PATTERN_OFF:
+        led_off(pattern->led);
+        return false;
+    case LED_PATTERN_ON:
+        set_led_brightness(pattern->led, pattern->brightness);
+        return false;
+    case LED_PATTERN_FADE:
+        fade_led(pattern->led, pattern->brightness, pattern->period_ms);
+        if (led_wait_for_critical(pattern->period_ms, critical_event)) {
+            all_leds_off();
+            return true;
+        }
+        return false;
+    case LED_PATTERN_BLINK:
+        for (uint32_t i = 0; i < repeats; ++i) {
+            led_on(pattern->led);
+            if (led_wait_for_critical(pattern->on_time_ms, critical_event)) {
+                all_leds_off();
+                return true;
+            }
+            led_off(pattern->led);
+            if (i + 1U < repeats &&
+                led_wait_for_critical(pattern->off_time_ms, critical_event)) {
+                all_leds_off();
+                return true;
+            }
+        }
+        return false;
+    case LED_PATTERN_PULSE:
+        for (uint32_t i = 0; i < repeats; ++i) {
+            fade_led(pattern->led, 100, pattern->period_ms / 2U);
+            if (led_wait_for_critical(pattern->period_ms / 2U, critical_event)) {
+                all_leds_off();
+                return true;
+            }
+            fade_led(pattern->led, 0, pattern->period_ms / 2U);
+            if (i + 1U < repeats &&
+                led_wait_for_critical(pattern->period_ms / 2U, critical_event)) {
+                all_leds_off();
+                return true;
+            }
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
 void post_led_event(bool success)
 {
     system_event_t evt = {0};
@@ -225,6 +314,7 @@ void led_event_task(void *pv)
             continue;
         }
 
+        for (;;) {
         led_pattern_t pattern = {0};
         bool have_pattern = false;
         bool direct = false;
@@ -410,6 +500,17 @@ void led_event_task(void *pv)
             break;
         }
 
+        /* Critical priority always overrides ordinary direct indications. */
+        if (evt.priority == EVENT_PRIORITY_CRITICAL) {
+            direct = false;
+            have_pattern = true;
+            pattern.led = LED_ERROR;
+            pattern.type = LED_PATTERN_BLINK;
+            pattern.on_time_ms = 50;
+            pattern.off_time_ms = 50;
+            pattern.repeat = LED_REPEAT_FOREVER;
+        }
+
         /* --------------------------------------------------------------
          *  Single execution point
          * -------------------------------------------------------------- */
@@ -422,7 +523,13 @@ void led_event_task(void *pv)
         }
         else if (have_pattern)
         {
-            led_execute_pattern(&pattern);
+            system_event_t critical_event = {0};
+            if (led_execute_pattern_interruptible(&pattern, &critical_event)) {
+                evt = critical_event;
+                continue;
+            }
+        }
+        break;
         }
     }
 }
