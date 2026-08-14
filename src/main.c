@@ -1121,11 +1121,6 @@ void lcd_show_monitoring_detail(const char *label, float value, const char *unit
 void lcd_draw_diagnostics_screen(uint8_t index);
 void lcd_draw_settings_view_screen(uint8_t index);
 
-static void wifi_init_sta(void);
-void start_wifi_scan(void);
-void lcd_show_wifi_scan_screen(void);
-void start_wifi_connection(void);
-void stop_wifi_connection(void);
 void clear_settings(void);
 void reload_default_settings(void);
 // Function to save the frequency setting to NVS
@@ -3351,175 +3346,6 @@ void diagnostic_update_task(void *pv)
     }
 }
 
-#define MAX_AP_NUM 10
-static const char *WIFI_TAG = "WiFiScan";
-
-static wifi_ap_record_t ap_records[MAX_AP_NUM];
-static uint16_t ap_count = 0;
-
-/**
- * @brief Initialize WiFi stack (STA mode)
- */
-static void wifi_init_sta(void)
-{
-    /* The Wi-Fi controller owns netif, event loop, and esp_wifi lifecycle. */
-    if (wifi_controller_get_state() == WIFI_CONTROLLER_IDLE) {
-        ESP_LOGW(WIFI_TAG, "Wi-Fi controller is idle; scan may be unavailable");
-    }
-}
-
-/**
- * @brief Start WiFi scan and store results globally
- */
-void start_wifi_scan(void)
-{
-    ESP_LOGI(WIFI_TAG, "Starting WiFi Scan...");
-
-    wifi_init_sta();
-    ap_count = MAX_AP_NUM;
-    const esp_err_t scan_err = wifi_scan_start_records(ap_records, &ap_count);
-    if (scan_err != ESP_OK) {
-        ap_count = 0;
-        ESP_LOGE(WIFI_TAG, "Wi-Fi scan unavailable: %s", esp_err_to_name(scan_err));
-        lcd_flash_info("WiFi Scan Error ", "Try again later ", 1200);
-        return;
-    }
-
-    ESP_LOGI(WIFI_TAG, "Found %d access points", ap_count);
-    for (int i = 0; i < ap_count; i++)
-    {
-        ESP_LOGI(WIFI_TAG, "SSID: %-32s RSSI: %d dBm", ap_records[i].ssid, ap_records[i].rssi);
-    }
-}
-
-/**
- * @brief Display WiFi scan results on LCD
- */
-
-#define WIFI_SCAN_TIMEOUT_MS 30000 // 30s inactivity timeout
-
-/**
- * @brief Display WiFi scan results on 16x2 LCD with scrolling and signal bars
- */
-/* ── lcd_show_wifi_scan_screen() ─────────────────────────────────────────── */
-void lcd_show_wifi_scan_screen(void)
-{
-    if (ap_count == 0)
-    {
-        lcd_flash_info("No Networks     ", "Found           ", 2000);
-        return;
-    }
-
-    /* Build ssid array for lcd_writer */
-    char ssids[LCD_WIFI_MAX_AP][9];
-    int8_t rssi_arr[LCD_WIFI_MAX_AP];
-    uint8_t count = (ap_count < LCD_WIFI_MAX_AP) ? ap_count : LCD_WIFI_MAX_AP;
-    for (uint8_t i = 0; i < count; i++)
-    {
-        strncpy(ssids[i], (char *)ap_records[i].ssid, 8);
-        ssids[i][8] = '\0';
-        rssi_arr[i] = ap_records[i].rssi;
-    }
-
-    int index = 0, top = 0;
-    int64_t last_activity = esp_timer_get_time() / 1000;
-    lcd_show_wifi_scan(count, (const char (*)[9])ssids, rssi_arr, 0, 0);
-
-    while (1)
-    {
-        if ((esp_timer_get_time() / 1000) - last_activity > WIFI_SCAN_TIMEOUT_MS)
-        {
-            lcd_flash_info("Scan Timeout    ", "                ", 1200);
-            break;
-        }
-
-        button_event_info_t ev;
-        if (xQueueReceive(button_event_queue, &ev, pdMS_TO_TICKS(800)))
-        {
-            last_activity = esp_timer_get_time() / 1000;
-            switch (ev.button_id)
-            {
-            case BTN_UP:
-                if (index > 0)
-                    index--;
-                if (index < top)
-                {
-                    top -= 2;
-                    if (top < 0)
-                        top = 0;
-                }
-                lcd_update_wifi_selection(index, top);
-                break;
-            case BTN_DOWN:
-                if (index < count - 1)
-                    index++;
-                if (index >= top + 2)
-                    top += 2;
-                if (top >= count)
-                    top = count - 1;
-                lcd_update_wifi_selection(index, top);
-                break;
-            case BTN_ENTER:
-                strncpy((char *)sys_state.wifi.ssid,
-                        (char *)ap_records[index].ssid,
-                        sizeof(sys_state.wifi.ssid) - 1);
-                lcd_show_wifi_connecting(sys_state.wifi.ssid);
-                start_wifi_connection();
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                return;
-            case BTN_BACK:
-                lcd_flash_info("Exiting Scan    ", "                ", 1000);
-                return;
-            default:
-                break;
-            }
-        }
-    }
-}
-
-/* ── start_wifi_connection() ─────────────────────────────────────────────── */
-void start_wifi_connection(void)
-{
-    if (!sys_state.wifi.enabled) {
-        lcd_show_wifi_result(false, true, false, "Wi-Fi Disabled  ");
-        return;
-    }
-
-    if (sys_state.wifi.ssid[0] != '\0') {
-        wifi_credentials_t credentials = {0};
-        strncpy(credentials.ssid, sys_state.wifi.ssid, sizeof(credentials.ssid) - 1U);
-        strncpy(credentials.password, sys_state.wifi.password, sizeof(credentials.password) - 1U);
-        if (credentials.password[0] != '\0') {
-            const esp_err_t save_err = wifi_storage_save_credentials(&credentials);
-            if (save_err != ESP_OK) {
-                ESP_LOGW(WIFI_TAG, "Could not save selected Wi-Fi credentials: %s",
-                         esp_err_to_name(save_err));
-            }
-        }
-    }
-
-    lcd_show_wifi_connecting(sys_state.wifi.ssid[0] ? sys_state.wifi.ssid : "Connecting...");
-    esp_err_t err = wifi_controller_start();
-    if (err == ESP_ERR_INVALID_STATE || err == ESP_ERR_WIFI_STATE) {
-        err = wifi_controller_reconnect();
-    }
-    if (err != ESP_OK) {
-        lcd_show_wifi_result(false, true, false, "Connection Failed");
-        ESP_LOGW(WIFI_TAG, "Wi-Fi connection request failed: %s", esp_err_to_name(err));
-    } else {
-        lcd_show_wifi_result(false, false, true, "Connecting...   ");
-    }
-}
-
-/* ── stop_wifi_connection() ──────────────────────────────────────────────── */
-void stop_wifi_connection(void)
-{
-    const esp_err_t err = wifi_controller_stop();
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGW(WIFI_TAG, "Wi-Fi stop failed: %s", esp_err_to_name(err));
-    }
-    lcd_show_wifi_result(false, false, false, "Disconnected    ");
-}
 
 void reload_default_settings(void)
 {
@@ -4091,7 +3917,7 @@ static void apply_wifi(float v)
 {
     const esp_err_t err = app_services_set_wifi_enabled(v != 0.0f);
     if (err != ESP_OK) {
-        ESP_LOGW(WIFI_TAG, "Wi-Fi preference applied with error: %s", esp_err_to_name(err));
+        ESP_LOGW(APP_TAG, "Wi-Fi preference applied with error: %s", esp_err_to_name(err));
     }
 }
 static void apply_bluetooth(float v) { sys_state.bluetooth.enabled = (bool)v; } /* adjust to your actual field */

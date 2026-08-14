@@ -21,7 +21,6 @@
 
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_monitor.h"
-#include "wifi/wifi_manager.h"
 
 static const char *TAG = "WS_SERVER";
 
@@ -236,10 +235,10 @@ static esp_err_t ws_handler(httpd_req_t *req)
                     if (strcmp(cmd_str, "get_status") == 0)
                     {
                         /* Send current status immediately */
-                        const wifi_status_t *status = wifi_manager_get_status();
-                        if (status)
+                        wifi_status_t status;
+                        if (wifi_events_get_status_copy(&status) == ESP_OK)
                         {
-                            websocket_broadcast_status(status);
+                            websocket_broadcast_status(&status);
                         }
                     }
                     else if (strcmp(cmd_str, "subscribe") == 0)
@@ -260,10 +259,10 @@ static esp_err_t ws_handler(httpd_req_t *req)
                         }
 
                         /* Send immediate status */
-                        const wifi_status_t *status = wifi_manager_get_status();
-                        if (status)
+                        wifi_status_t status;
+                        if (wifi_events_get_status_copy(&status) == ESP_OK)
                         {
-                            websocket_broadcast_status(status);
+                            websocket_broadcast_status(&status);
                         }
                     }
                 }

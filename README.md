@@ -48,6 +48,19 @@ The **WiFi Control** menu is the user-facing control plane. **WiFi On / Off** im
 
 When no station credentials are present, the Wi-Fi controller enters provisioning mode. The AP SSID defaults to `INVERTER_SETUP`; its WPA2 password is generated from the device’s hardware random-number source when no explicit product password is configured. This avoids shipping a shared factory password. The generated password is persisted with the network configuration and should be communicated to the installer through the device commissioning process.
 
+## Wi-Fi runtime hardening
+
+The Wi-Fi implementation is organized around a controller-owned lifecycle. The manager creates and owns the ESP-IDF network interfaces; scanning, monitoring, station mode, provisioning, captive DNS, and the provisioning HTTP server are started only through coordinated controller transitions. Partial startup failures roll back already-created components, while disabling Wi-Fi stops monitor, portal, scan, and manager activity in dependency order. This keeps the persistent menu preference separate from transient connection status and prevents an incomplete portal or scan from surviving a failed operation.
+
+| Area | Safeguard |
+|---|---|
+| Provisioning portal | Credential submission is accepted only through a bounded `POST` form. Request parsing limits encoded body size and field lengths, HTML output is escaped, responses add browser security headers, and credential-save callbacks run asynchronously outside the HTTP request context. DNS and HTTP startup is transactional; either service is rolled back if the companion service cannot start. |
+| Credentials and configuration | Station and AP configuration is validated before it is written to NVS and again after it is loaded. Malformed persisted data is replaced with safe defaults rather than passed to the Wi-Fi driver. The manager restarts DHCP after applying a valid configuration and applies the requested authentication mode rather than assuming an open or WPA mode. |
+| Scanning and event delivery | Network scans are serialized by a mutex, have an idempotent lifecycle, and release driver state on all paths. Connection status is exposed as synchronized snapshots; retry policy is explicit, reconnect work is deferred from event callbacks, and user callbacks run after locks are released. JSON and WebSocket status endpoints use those snapshots instead of mutable manager-owned pointers. |
+| Captive DNS and monitoring | DNS packets must contain exactly one complete question before a captive response is built; name and question offsets are bounds-checked. Stopping the DNS service closes its socket before waiting for its task. The RSSI and internet monitor publishes callbacks outside locks and exits cooperatively when signaled, so its resources are not deleted while it is still executing. |
+
+> The provisioning portal is intentionally local to the installer AP and does not expose the PIN-protected remote-control API. It should still be used only during commissioning, with the generated AP password handled as an installation secret.
+
 ## Security notes
 
 Panel security is enabled by default for new installations. The initial default PIN is provisioned only as a salted hash and is marked as requiring a change. Product commissioning should change that PIN before enabling remote access. Remote API clients must provide the PIN as six decimal digits in the `X-Inverter-PIN` header. Failed attempts are locked out temporarily, and disabling panel security is an explicit configuration choice rather than a startup side effect.

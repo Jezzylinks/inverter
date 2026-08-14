@@ -187,8 +187,9 @@ static void dns_server_task(void *arg)
 
     if (dns_socket_create() != ESP_OK)
     {
+        s_running = false;
+        s_dns_task = NULL;
         vTaskDelete(NULL);
-
         return;
     }
 
@@ -322,24 +323,11 @@ esp_err_t wifi_dns_server_stop(void)
     }
 
     s_running = false;
+    dns_socket_destroy();
 
-    /* Wait for task to exit */
+    /* Wait up to 2 seconds for task to exit. Closing the socket unblocks recvfrom. */
     if (s_dns_task != NULL)
     {
-        /* Send a dummy packet to wake up recvfrom */
-        int wake_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (wake_socket >= 0)
-        {
-            struct sockaddr_in addr;
-            memset(&addr, 0, sizeof(addr));
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(DNS_SERVER_PORT);
-            addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-            sendto(wake_socket, "\0", 1, 0, (struct sockaddr *)&addr, sizeof(addr));
-            close(wake_socket);
-        }
-
-        /* Wait up to 2 seconds for task to exit */
         int wait_count = 20;
         while (s_dns_task != NULL && wait_count-- > 0)
         {
@@ -427,18 +415,17 @@ static esp_err_t dns_build_response(uint8_t *packet,
     size_t offset =
         sizeof(dns_header_t);
 
-    offset =
-        dns_skip_name(packet,
-                      offset,
-                      *length);
+    offset = dns_skip_name(packet, offset, *length);
 
-    /*
-     * Skip QTYPE + QCLASS
-     */
-    offset += 4;
+    /* A single, uncompressed or compressed question must include QTYPE/QCLASS. */
+    if (*length < sizeof(dns_header_t) || ntohs(hdr->questions) != 1U ||
+        offset > *length || offset + 4U > *length) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    offset += 4U;
 
-    /* Validate we have room for the answer */
-    if (offset + 16 > max_length)
+    /* Validate we have room for the answer. */
+    if (offset + 16U > max_length)
     {
         ESP_LOGW(TAG, "DNS response too large for buffer");
         return ESP_FAIL;

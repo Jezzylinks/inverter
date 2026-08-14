@@ -15,6 +15,7 @@ extern "C" {
 #include "esp_wifi_types.h"
 
 esp_err_t wifi_scan_init(void);
+esp_err_t wifi_scan_deinit(void);
 esp_err_t wifi_scan_start_records(wifi_ap_record_t *records, uint16_t *count);
 esp_err_t wifi_scan_start(char *output, size_t max_len);
 

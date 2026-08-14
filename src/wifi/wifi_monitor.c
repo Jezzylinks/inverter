@@ -21,6 +21,7 @@
 #include "esp_netif.h"
 
 #define WIFI_MONITOR_MAX_CALLBACKS 8
+#define WIFI_MONITOR_STOP_TIMEOUT_MS 5000
 
 static const char *TAG = "WIFI_MONITOR";
 
@@ -34,7 +35,7 @@ static TaskHandle_t s_monitor_task = NULL;
 
 static SemaphoreHandle_t s_mutex = NULL;
 
-static bool s_running = false;
+static volatile bool s_running = false;
 
 static wifi_monitor_status_t s_status;
 
@@ -59,32 +60,22 @@ static bool wifi_monitor_ping_test(void);
 
 static void wifi_monitor_notify(void)
 {
-    wifi_monitor_status_t copy;
+    wifi_monitor_status_t status_copy;
+    wifi_monitor_callback_t callbacks[WIFI_MONITOR_MAX_CALLBACKS];
 
-    if (s_mutex)
-    {
+    if (s_mutex != NULL) {
         xSemaphoreTake(s_mutex, portMAX_DELAY);
-
-        memcpy(&copy,
-               &s_status,
-               sizeof(copy));
-
+        memcpy(&status_copy, &s_status, sizeof(status_copy));
+        memcpy(callbacks, s_callbacks, sizeof(callbacks));
         xSemaphoreGive(s_mutex);
-    }
-    else
-    {
-        memcpy(&copy,
-               &s_status,
-               sizeof(copy));
+    } else {
+        memcpy(&status_copy, &s_status, sizeof(status_copy));
+        memcpy(callbacks, s_callbacks, sizeof(callbacks));
     }
 
-    for (int i = 0;
-         i < WIFI_MONITOR_MAX_CALLBACKS;
-         i++)
-    {
-        if (s_callbacks[i])
-        {
-            s_callbacks[i](&copy);
+    for (size_t i = 0; i < WIFI_MONITOR_MAX_CALLBACKS; ++i) {
+        if (callbacks[i] != NULL) {
+            callbacks[i](&status_copy);
         }
     }
 }
@@ -96,47 +87,12 @@ static void wifi_monitor_notify(void)
  * More advanced versions can use DNS/ping.
  *---------------------------------------------------------*/
 
-static void wifi_monitor_check_internet(void)
+static wifi_internet_status_t wifi_monitor_check_internet(void)
 {
-    wifi_internet_status_t new_state;
-
-    if (!wifi_monitor_dns_test())
-    {
-        new_state =
-            WIFI_INTERNET_UNAVAILABLE;
+    if (!wifi_monitor_dns_test() || !wifi_monitor_ping_test()) {
+        return WIFI_INTERNET_UNAVAILABLE;
     }
-    else if (!wifi_monitor_ping_test())
-    {
-        new_state =
-            WIFI_INTERNET_UNAVAILABLE;
-    }
-    else
-    {
-        new_state =
-            WIFI_INTERNET_AVAILABLE;
-    }
-
-    s_status.internet =
-        new_state;
-
-    /*
-     * Detect transition
-     */
-
-    if (new_state != s_last_internet_state)
-    {
-        ESP_LOGI(TAG,
-                 "Internet state changed: %d",
-                 new_state);
-
-        if (s_internet_callback)
-        {
-            s_internet_callback(new_state);
-        }
-
-        s_last_internet_state =
-            new_state;
-    }
+    return WIFI_INTERNET_AVAILABLE;
 }
 
 static bool wifi_monitor_dns_test(void)
@@ -237,77 +193,41 @@ static void wifi_monitor_task(void *arg)
 {
     (void)arg;
 
-    while (s_running)
-    {
-        wifi_ap_record_t ap_info;
+    while (s_running) {
+        wifi_ap_record_t ap_info = {0};
+        const bool connected = esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK;
+        const wifi_internet_status_t internet = connected
+            ? wifi_monitor_check_internet()
+            : WIFI_INTERNET_UNAVAILABLE;
+        bool internet_changed = false;
+        wifi_internet_callback_t internet_callback = NULL;
 
-        memset(&ap_info,
-               0,
-               sizeof(ap_info));
-
-        esp_err_t err =
-            esp_wifi_sta_get_ap_info(
-                &ap_info);
-
-        if (err == ESP_OK)
-        {
-            if (s_mutex)
-            {
-                xSemaphoreTake(
-                    s_mutex,
-                    portMAX_DELAY);
+        if (s_mutex != NULL) {
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
+            s_status.connected = connected;
+            s_status.got_ip = connected;
+            s_status.rssi = connected ? ap_info.rssi : -127;
+            s_status.internet = internet;
+            s_status.uptime_seconds = esp_log_timestamp() / 1000U;
+            if (internet != s_last_internet_state) {
+                s_last_internet_state = internet;
+                internet_changed = true;
+                internet_callback = s_internet_callback;
             }
-
-            s_status.connected = true;
-
-            s_status.rssi =
-                ap_info.rssi;
-
-            s_status.got_ip = true;
-
-            wifi_monitor_check_internet();
-
-            if (s_mutex)
-            {
-                xSemaphoreGive(
-                    s_mutex);
-            }
-        }
-        else
-        {
-            if (s_mutex)
-            {
-                xSemaphoreTake(
-                    s_mutex,
-                    portMAX_DELAY);
-            }
-
-            s_status.connected = false;
-
-            s_status.internet =
-                WIFI_INTERNET_UNAVAILABLE;
-
-            s_status.rssi = -127;
-
-            if (s_mutex)
-            {
-                xSemaphoreGive(
-                    s_mutex);
-            }
+            xSemaphoreGive(s_mutex);
         }
 
-        s_status.uptime_seconds =
-            esp_log_timestamp() / 1000;
-
+        if (internet_changed) {
+            ESP_LOGI(TAG, "Internet state changed: %d", internet);
+            if (internet_callback != NULL) {
+                internet_callback(internet);
+            }
+        }
         wifi_monitor_notify();
-
-        vTaskDelay(
-            pdMS_TO_TICKS(
-                WIFI_MONITOR_INTERVAL_MS));
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(WIFI_MONITOR_INTERVAL_MS));
     }
 
     s_monitor_task = NULL;
-
     vTaskDelete(NULL);
 }
 
@@ -319,6 +239,14 @@ static void wifi_monitor_task(void *arg)
 
 esp_err_t wifi_monitor_init(void)
 {
+    if (s_mutex != NULL) {
+        return ESP_OK;
+    }
+
+    s_running = false;
+    s_monitor_task = NULL;
+    s_last_internet_state = WIFI_INTERNET_UNKNOWN;
+    s_internet_callback = NULL;
     memset(&s_status,
            0,
            sizeof(s_status));
@@ -352,8 +280,10 @@ esp_err_t wifi_monitor_init(void)
 
 esp_err_t wifi_monitor_start(void)
 {
-    if (s_running)
-    {
+    if (s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_running || s_monitor_task != NULL) {
         return ESP_OK;
     }
 
@@ -380,34 +310,34 @@ esp_err_t wifi_monitor_start(void)
 
 esp_err_t wifi_monitor_stop(void)
 {
-    if (!s_running)
-    {
+    s_running = false;
+    if (s_monitor_task == NULL) {
         return ESP_OK;
     }
 
-    s_running = false;
-
-    if (s_monitor_task)
-    {
-        vTaskDelete(s_monitor_task);
-
-        s_monitor_task = NULL;
+    xTaskNotifyGive(s_monitor_task);
+    const int max_waits = WIFI_MONITOR_STOP_TIMEOUT_MS / 50;
+    for (int wait = 0; s_monitor_task != NULL && wait < max_waits; ++wait) {
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 
-    return ESP_OK;
+    return (s_monitor_task == NULL) ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t wifi_monitor_deinit(void)
 {
-    wifi_monitor_stop();
-
-    if (s_mutex)
-    {
-        vSemaphoreDelete(s_mutex);
-
-        s_mutex = NULL;
+    const esp_err_t err = wifi_monitor_stop();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Monitor did not stop cleanly: %s", esp_err_to_name(err));
+        return err;
     }
 
+    if (s_mutex != NULL) {
+        vSemaphoreDelete(s_mutex);
+        s_mutex = NULL;
+    }
+    memset(s_callbacks, 0, sizeof(s_callbacks));
+    s_internet_callback = NULL;
     return ESP_OK;
 }
 
@@ -487,58 +417,53 @@ wifi_monitor_get_status(void)
 esp_err_t wifi_monitor_register_callback(
     wifi_monitor_callback_t callback)
 {
-    if (callback == NULL)
-    {
+    if (callback == NULL || s_mutex == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    for (int i = 0;
-         i < WIFI_MONITOR_MAX_CALLBACKS;
-         i++)
-    {
-        if (s_callbacks[i] == NULL)
-        {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    for (size_t i = 0; i < WIFI_MONITOR_MAX_CALLBACKS; ++i) {
+        if (s_callbacks[i] == callback) {
+            xSemaphoreGive(s_mutex);
+            return ESP_OK;
+        }
+        if (s_callbacks[i] == NULL) {
             s_callbacks[i] = callback;
-
+            xSemaphoreGive(s_mutex);
             return ESP_OK;
         }
     }
-
+    xSemaphoreGive(s_mutex);
     return ESP_ERR_NO_MEM;
 }
 
 esp_err_t wifi_monitor_unregister_callback(
     wifi_monitor_callback_t callback)
 {
-    if (callback == NULL)
-    {
+    if (callback == NULL || s_mutex == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    for (int i = 0;
-         i < WIFI_MONITOR_MAX_CALLBACKS;
-         i++)
-    {
-        if (s_callbacks[i] == callback)
-        {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    for (size_t i = 0; i < WIFI_MONITOR_MAX_CALLBACKS; ++i) {
+        if (s_callbacks[i] == callback) {
             s_callbacks[i] = NULL;
-
+            xSemaphoreGive(s_mutex);
             return ESP_OK;
         }
     }
-
+    xSemaphoreGive(s_mutex);
     return ESP_ERR_NOT_FOUND;
 }
 
 esp_err_t wifi_monitor_register_internet_callback(
     wifi_internet_callback_t callback)
 {
-    if (callback == NULL)
-    {
+    if (callback == NULL || s_mutex == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_internet_callback = callback;
-
+    xSemaphoreGive(s_mutex);
     return ESP_OK;
 }

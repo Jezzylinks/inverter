@@ -11,7 +11,9 @@
 #include "nvs.h"
 #include "system_state.h"
 #include "wifi/wifi_controller.h"
+#include "wifi/wifi_scan.h"
 #include "wifi/wifi_security.h"
+#include "wifi/wifi_storage.h"
 
 #define APP_SERVICES_TAG "APP_SERVICES"
 #define APP_SERVICES_NVS_NAMESPACE NVS_NS_SYSTEM
@@ -24,10 +26,6 @@
 
 extern system_state_t sys_state;
 extern SemaphoreHandle_t sys_state_mutex;
-extern void start_wifi_scan(void);
-extern void lcd_show_wifi_scan_screen(void);
-extern void start_wifi_connection(void);
-extern void stop_wifi_connection(void);
 
 static SemaphoreHandle_t s_services_mutex;
 static TaskHandle_t s_ota_check_task;
@@ -277,8 +275,28 @@ esp_err_t app_services_wifi_scan(void)
         lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
         return ESP_ERR_INVALID_STATE;
     }
-    start_wifi_scan();
-    lcd_show_wifi_scan_screen();
+
+    wifi_ap_record_t records[WIFI_MAX_SCAN_RESULTS] = {0};
+    uint16_t count = WIFI_MAX_SCAN_RESULTS;
+    const esp_err_t err = wifi_scan_start_records(records, &count);
+    if (err != ESP_OK) {
+        lcd_flash_message("Scan Unavailable", "Try again", 1400U);
+        return err;
+    }
+    if (count == 0U) {
+        lcd_flash_message("No Networks", "Found", 1200U);
+        return ESP_OK;
+    }
+
+    const uint8_t display_count = count < LCD_WIFI_MAX_AP ? (uint8_t)count : LCD_WIFI_MAX_AP;
+    char ssids[LCD_WIFI_MAX_AP][9] = {{0}};
+    int8_t rssi[LCD_WIFI_MAX_AP] = {0};
+    for (uint8_t i = 0U; i < display_count; ++i) {
+        strncpy(ssids[i], (const char *)records[i].ssid, sizeof(ssids[i]) - 1U);
+        rssi[i] = records[i].rssi;
+    }
+    /* This call only publishes render state; it never waits for button events. */
+    lcd_show_wifi_scan(display_count, (const char (*)[9])ssids, rssi, 0U, 0U);
     return ESP_OK;
 }
 
@@ -288,14 +306,27 @@ esp_err_t app_services_wifi_connect_saved(void)
         lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
         return ESP_ERR_INVALID_STATE;
     }
-    start_wifi_connection();
-    return ESP_OK;
+    if (!wifi_storage_has_credentials()) {
+        lcd_flash_message("No Saved Wi-Fi", "Start Setup AP", 1500U);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    lcd_show_wifi_connecting("Saved network");
+    esp_err_t err = wifi_controller_start();
+    if (err != ESP_OK) {
+        err = wifi_controller_reconnect();
+    }
+    lcd_show_wifi_result(false, err != ESP_OK, false,
+                         err == ESP_OK ? "Connecting..." : "Connect failed");
+    return err;
 }
 
 esp_err_t app_services_wifi_disconnect(void)
 {
-    stop_wifi_connection();
-    return ESP_OK;
+    const esp_err_t err = wifi_controller_disconnect();
+    lcd_show_wifi_result(false, err != ESP_OK, false,
+                         err == ESP_OK ? "Disconnected" : "Disconnect failed");
+    return err;
 }
 
 esp_err_t app_services_wifi_start_provisioning(void)

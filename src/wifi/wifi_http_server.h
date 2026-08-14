@@ -1,54 +1,41 @@
 /**
  * @file wifi_http_server.h
- * @brief Wi-Fi Configuration HTTP Server
+ * @brief Hardened HTTP server for local Wi-Fi provisioning.
  */
-
 #ifndef WIFI_HTTP_SERVER_H
 #define WIFI_HTTP_SERVER_H
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
-#include "esp_err.h"
 #include <stdbool.h>
+#include <stddef.h>
 
-    /*==========================================================
-     *
-     *              CONFIGURATION
-     *
-     *=========================================================*/
+#include "esp_err.h"
 
-#define WIFI_HTTP_SERVER_PORT 80
+#define WIFI_HTTP_SERVER_PORT 80U
+#define WIFI_HTTP_MAX_FORM_BYTES 256U
 
-    /*==========================================================
-     *
-     *              SERVER CONTROL
-     *
-     *=========================================================*/
+/**
+ * Called after credentials have been committed and the HTTP response has been
+ * sent. The callback runs from a dedicated task, never from the HTTP server
+ * task, so it may stop provisioning or change Wi-Fi mode safely.
+ */
+typedef void (*wifi_http_save_callback_t)(void);
 
-    /**
-     * @brief Start HTTP configuration server
-     *
-     * Used during Wi-Fi provisioning mode
-     */
-    esp_err_t wifi_http_server_start(void);
+/** Start the local provisioning server. Idempotent on success. */
+esp_err_t wifi_http_server_start(void);
 
-    /**
-     * @brief Stop HTTP configuration server
-     */
-    esp_err_t wifi_http_server_stop(void);
+/** Stop the local provisioning server and cancel any pending save callback. */
+esp_err_t wifi_http_server_stop(void);
 
-    /**
-     * @brief Check server status
-     */
-    bool wifi_http_server_running(void);
+/** True only while the HTTP server handle is valid. */
+bool wifi_http_server_running(void);
 
-    typedef void (*wifi_http_save_callback_t)(void);
-
-    esp_err_t wifi_http_server_register_save_callback(
-        wifi_http_save_callback_t callback);
+/** Register the single provisioning-complete callback; NULL clears it. */
+esp_err_t wifi_http_server_register_save_callback(
+    wifi_http_save_callback_t callback);
 
 #ifdef __cplusplus
 }

@@ -51,6 +51,7 @@ extern "C"
      * @brief Initialize provisioning module
      */
     esp_err_t wifi_provision_init(void);
+    esp_err_t wifi_provision_deinit(void);
 
     /**
      * @brief Start AP provisioning mode

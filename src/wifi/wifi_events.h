@@ -68,9 +68,13 @@ extern "C"
      * Status Accessors
      *========================================================*/
     const wifi_status_t *wifi_events_get_status(void);
+    esp_err_t wifi_events_get_status_copy(wifi_status_t *status);
     wifi_connection_state_t wifi_events_get_state(void);
     bool wifi_events_is_connected(void);
     bool wifi_events_has_ip(void);
+
+    /** Configure non-blocking station retry behaviour. */
+    void wifi_events_set_retry_policy(bool enabled, uint8_t retry_limit);
 
     /*=========================================================
      * Callback Registration

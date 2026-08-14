@@ -1,105 +1,131 @@
 /**
  * @file wifi_captive_portal.c
- * @brief WiFi Captive Portal
+ * @brief Transactional captive-portal lifecycle.
  */
-
 #include "wifi_captive_portal.h"
+
 #include "esp_log.h"
-#include "wifi_http_server.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include "wifi_dns_server.h"
+#include "wifi_http_server.h"
 
-static const char *TAG = "WIFI_CAPTIVE";
+#define WIFI_CAPTIVE_TAG "WIFI_CAPTIVE"
 
-static bool s_running = false;
+static bool s_initialized;
+static bool s_running;
+static SemaphoreHandle_t s_mutex;
 
-/*----------------------------------------------------------
- * Initialize
- *---------------------------------------------------------*/
+static void captive_lock(void)
+{
+    if (s_mutex != NULL) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+    }
+}
+
+static void captive_unlock(void)
+{
+    if (s_mutex != NULL) {
+        xSemaphoreGive(s_mutex);
+    }
+}
 
 esp_err_t wifi_captive_portal_init(void)
 {
+    if (s_initialized) {
+        return ESP_OK;
+    }
+    s_mutex = xSemaphoreCreateMutex();
+    if (s_mutex == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_err_t err = wifi_dns_server_init();
+    if (err != ESP_OK) {
+        vSemaphoreDelete(s_mutex);
+        s_mutex = NULL;
+        return err;
+    }
     s_running = false;
-
-    ESP_LOGI(TAG,
-             "Captive portal initialized");
-
+    s_initialized = true;
     return ESP_OK;
 }
-
-/*----------------------------------------------------------
- * Deinitialize
- *---------------------------------------------------------*/
 
 esp_err_t wifi_captive_portal_deinit(void)
 {
-    if (s_running)
-    {
-        wifi_captive_portal_stop();
+    if (!s_initialized) {
+        return ESP_OK;
     }
-
-    ESP_LOGI(TAG,
-             "Captive portal deinitialized");
-
-    return ESP_OK;
+    const esp_err_t stop_err = wifi_captive_portal_stop();
+    (void)wifi_dns_server_deinit();
+    s_initialized = false;
+    if (s_mutex != NULL) {
+        vSemaphoreDelete(s_mutex);
+        s_mutex = NULL;
+    }
+    return stop_err;
 }
-
-/*----------------------------------------------------------
- * Start
- *---------------------------------------------------------*/
 
 esp_err_t wifi_captive_portal_start(void)
 {
-    if (s_running)
-    {
-        return ESP_OK;
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
     }
 
-    ESP_LOGI(TAG,
-             "Starting captive portal");
+    captive_lock();
+    if (s_running) {
+        captive_unlock();
+        return ESP_OK;
+    }
+    captive_unlock();
 
-    ESP_ERROR_CHECK(
-        wifi_http_server_start());
+    esp_err_t err = wifi_http_server_start();
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = wifi_dns_server_start();
+    if (err != ESP_OK) {
+        (void)wifi_http_server_stop();
+        return err;
+    }
 
-    ESP_ERROR_CHECK(
-        wifi_dns_server_start());
-
-    /*
-     * DNS server redirection
-     * will be added here.
-     */
-
+    captive_lock();
     s_running = true;
-
+    captive_unlock();
+    ESP_LOGI(WIFI_CAPTIVE_TAG, "Captive portal started");
     return ESP_OK;
 }
-
-/*----------------------------------------------------------
- * Stop
- *---------------------------------------------------------*/
 
 esp_err_t wifi_captive_portal_stop(void)
 {
-    if (!s_running)
-    {
+    if (!s_initialized) {
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG,
-             "Stopping captive portal");
-
-    wifi_http_server_stop();
-    wifi_dns_server_stop();
-
+    captive_lock();
+    const bool was_running = s_running;
     s_running = false;
+    captive_unlock();
+    if (!was_running) {
+        return ESP_OK;
+    }
 
-    return ESP_OK;
+    esp_err_t first_err = wifi_dns_server_stop();
+    const esp_err_t http_err = wifi_http_server_stop();
+    if (first_err == ESP_OK) {
+        first_err = http_err;
+    }
+    if (first_err == ESP_OK) {
+        ESP_LOGI(WIFI_CAPTIVE_TAG, "Captive portal stopped");
+    }
+    return first_err;
 }
-
-/*----------------------------------------------------------
- * Status
- *---------------------------------------------------------*/
 
 bool wifi_captive_portal_is_running(void)
 {
-    return s_running;
+    captive_lock();
+    const bool running = s_running;
+    captive_unlock();
+    return running;
 }

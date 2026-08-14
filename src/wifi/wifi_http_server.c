@@ -1,551 +1,404 @@
 /**
  * @file wifi_http_server.c
- * @brief Wi-Fi Configuration HTTP Server
+ * @brief Hardened local HTTP server for Wi-Fi provisioning.
  */
-
 #include "wifi_http_server.h"
 
-#include <string.h>
+#include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include "esp_log.h"
 #include "esp_http_server.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 
-#include "wifi_storage.h"
-#include "wifi_web_pages.h"
 #include "wifi_manager.h"
 #include "wifi_scan.h"
-#include "wifi_config.h"
-#include "wifi_events.h"
+#include "wifi_storage.h"
+#include "wifi_web_pages.h"
 
-#include "esp_netif.h"
+#define WIFI_HTTP_TAG "WIFI_HTTP"
+#define WIFI_HTTP_SCAN_BYTES 4096U
+#define WIFI_HTTP_CALLBACK_STACK 3072U
+#define WIFI_HTTP_CALLBACK_PRIORITY 4U
 
-static const char *TAG = "WIFI_HTTP";
+static httpd_handle_t s_server;
+static SemaphoreHandle_t s_mutex;
+static wifi_http_save_callback_t s_save_callback;
 
-static httpd_handle_t s_server = NULL;
-static wifi_http_save_callback_t s_save_callback = NULL;
-
-/*----------------------------------------------------------
- * Forward Declarations
- *---------------------------------------------------------*/
 static esp_err_t root_handler(httpd_req_t *req);
 static esp_err_t save_handler(httpd_req_t *req);
 static esp_err_t status_handler(httpd_req_t *req);
 static esp_err_t scan_handler(httpd_req_t *req);
 static esp_err_t reset_handler(httpd_req_t *req);
-static esp_err_t select_handler(httpd_req_t *req);
 static esp_err_t redirect_handler(httpd_req_t *req);
-static esp_err_t generate_204_handler(httpd_req_t *req);
-static esp_err_t gen_204_handler(httpd_req_t *req);
-static esp_err_t hotspot_detect_handler(httpd_req_t *req);
-static esp_err_t success_html_handler(httpd_req_t *req);
-static esp_err_t ncsi_handler(httpd_req_t *req);
-static esp_err_t connecttest_handler(httpd_req_t *req);
-static esp_err_t success_txt_handler(httpd_req_t *req);
+static esp_err_t captive_redirect_handler(httpd_req_t *req);
 
-/*----------------------------------------------------------
- * URI Table
- *---------------------------------------------------------*/
-static const httpd_uri_t root_uri = {
-    .uri = "/",
-    .method = HTTP_GET,
-    .handler = root_handler,
-};
+static const httpd_uri_t s_root_uri = {.uri = "/", .method = HTTP_GET, .handler = root_handler};
+static const httpd_uri_t s_save_uri = {.uri = "/save", .method = HTTP_POST, .handler = save_handler};
+static const httpd_uri_t s_status_uri = {.uri = "/status", .method = HTTP_GET, .handler = status_handler};
+static const httpd_uri_t s_scan_uri = {.uri = "/scan", .method = HTTP_GET, .handler = scan_handler};
+static const httpd_uri_t s_reset_uri = {.uri = "/reset", .method = HTTP_POST, .handler = reset_handler};
+static const httpd_uri_t s_generate_204_uri = {.uri = "/generate_204", .method = HTTP_GET, .handler = captive_redirect_handler};
+static const httpd_uri_t s_gen_204_uri = {.uri = "/gen_204", .method = HTTP_GET, .handler = captive_redirect_handler};
+static const httpd_uri_t s_hotspot_uri = {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = captive_redirect_handler};
+static const httpd_uri_t s_success_html_uri = {.uri = "/library/test/success.html", .method = HTTP_GET, .handler = captive_redirect_handler};
+static const httpd_uri_t s_ncsi_uri = {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = captive_redirect_handler};
+static const httpd_uri_t s_connecttest_uri = {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = captive_redirect_handler};
+static const httpd_uri_t s_success_txt_uri = {.uri = "/success.txt", .method = HTTP_GET, .handler = captive_redirect_handler};
+static const httpd_uri_t s_redirect_uri = {.uri = "/*", .method = HTTP_GET, .handler = redirect_handler};
 
-static const httpd_uri_t save_uri = {
-    .uri = "/save",
-    .method = HTTP_POST, /* SECURITY: POST for credentials, not GET */
-    .handler = save_handler,
-};
+static void wifi_http_lock(void)
+{
+    if (s_mutex != NULL) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+    }
+}
 
-static const httpd_uri_t status_uri = {
-    .uri = "/status",
-    .method = HTTP_GET,
-    .handler = status_handler,
-};
+static void wifi_http_unlock(void)
+{
+    if (s_mutex != NULL) {
+        xSemaphoreGive(s_mutex);
+    }
+}
 
-static const httpd_uri_t scan_uri = {
-    .uri = "/scan",
-    .method = HTTP_GET,
-    .handler = scan_handler,
-};
+static void wifi_http_set_security_headers(httpd_req_t *req)
+{
+    (void)httpd_resp_set_hdr(req, "Cache-Control", "no-store, max-age=0");
+    (void)httpd_resp_set_hdr(req, "Pragma", "no-cache");
+    (void)httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+    (void)httpd_resp_set_hdr(req, "X-Frame-Options", "DENY");
+    (void)httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
+    (void)httpd_resp_set_hdr(req, "Content-Security-Policy",
+                             "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+}
 
-static const httpd_uri_t reset_uri = {
-    .uri = "/reset",
-    .method = HTTP_GET,
-    .handler = reset_handler,
-};
+static esp_err_t wifi_http_send_text(httpd_req_t *req, const char *status,
+                                     const char *content_type, const char *body)
+{
+    wifi_http_set_security_headers(req);
+    if (status != NULL) {
+        (void)httpd_resp_set_status(req, status);
+    }
+    (void)httpd_resp_set_type(req, content_type);
+    return httpd_resp_sendstr(req, body);
+}
 
-static const httpd_uri_t select_uri = {
-    .uri = "/select",
-    .method = HTTP_GET,
-    .handler = select_handler,
-};
+static esp_err_t wifi_http_send_error(httpd_req_t *req, const char *status,
+                                      const char *message)
+{
+    return wifi_http_send_text(req, status, "text/plain; charset=utf-8", message);
+}
 
-static const httpd_uri_t uri_generate_204 = {
-    .uri = "/generate_204",
-    .method = HTTP_GET,
-    .handler = generate_204_handler,
-};
+static esp_err_t wifi_http_redirect_home(httpd_req_t *req)
+{
+    wifi_http_set_security_headers(req);
+    (void)httpd_resp_set_status(req, "302 Found");
+    (void)httpd_resp_set_hdr(req, "Location", "/");
+    return httpd_resp_send(req, NULL, 0);
+}
 
-static const httpd_uri_t uri_gen_204 = {
-    .uri = "/gen_204",
-    .method = HTTP_GET,
-    .handler = gen_204_handler,
-};
+static bool wifi_http_valid_text(const char *text, size_t capacity, bool required)
+{
+    const size_t length = strnlen(text, capacity);
+    if ((required && length == 0U) || length >= capacity) {
+        return false;
+    }
+    for (size_t i = 0U; i < length; ++i) {
+        const unsigned char value = (unsigned char)text[i];
+        if (value < 0x20U || value == 0x7FU) {
+            return false;
+        }
+    }
+    return true;
+}
 
-static const httpd_uri_t uri_hotspot = {
-    .uri = "/hotspot-detect.html",
-    .method = HTTP_GET,
-    .handler = hotspot_detect_handler,
-};
+static esp_err_t wifi_http_receive_form(httpd_req_t *req, char **form)
+{
+    if (req->content_len <= 0 || req->content_len > (int)WIFI_HTTP_MAX_FORM_BYTES) {
+        return ESP_ERR_INVALID_SIZE;
+    }
 
-static const httpd_uri_t uri_success_html = {
-    .uri = "/library/test/success.html",
-    .method = HTTP_GET,
-    .handler = success_html_handler,
-};
+    const size_t length = (size_t)req->content_len;
+    char *buffer = calloc(length + 1U, 1U);
+    if (buffer == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
 
-static const httpd_uri_t uri_ncsi = {
-    .uri = "/ncsi.txt",
-    .method = HTTP_GET,
-    .handler = ncsi_handler,
-};
+    size_t received = 0U;
+    while (received < length) {
+        const int result = httpd_req_recv(req, buffer + received, length - received);
+        if (result == HTTPD_SOCK_ERR_TIMEOUT) {
+            free(buffer);
+            return ESP_ERR_TIMEOUT;
+        }
+        if (result <= 0) {
+            free(buffer);
+            return ESP_FAIL;
+        }
+        received += (size_t)result;
+    }
 
-static const httpd_uri_t uri_connecttest = {
-    .uri = "/connecttest.txt",
-    .method = HTTP_GET,
-    .handler = connecttest_handler,
-};
+    buffer[length] = '\0';
+    *form = buffer;
+    return ESP_OK;
+}
 
-static const httpd_uri_t uri_success_txt = {
-    .uri = "/success.txt",
-    .method = HTTP_GET,
-    .handler = success_txt_handler,
-};
+static void wifi_http_save_callback_task(void *arg)
+{
+    (void)arg;
+    wifi_http_lock();
+    wifi_http_save_callback_t callback = s_save_callback;
+    wifi_http_unlock();
+    if (callback != NULL) {
+        callback();
+    }
+    vTaskDelete(NULL);
+}
 
-/* Catch-all redirect — registered last with wildcard */
-static const httpd_uri_t redirect_uri = {
-    .uri = "/*",
-    .method = HTTP_GET,
-    .handler = redirect_handler,
-};
+static esp_err_t wifi_http_schedule_save_callback(void)
+{
+    wifi_http_save_callback_t callback = NULL;
+    wifi_http_lock();
+    callback = s_save_callback;
+    wifi_http_unlock();
 
-/*----------------------------------------------------------
- * Root Page Handler
- *---------------------------------------------------------*/
+    if (callback == NULL) {
+        return ESP_OK;
+    }
+
+    if (xTaskCreate(wifi_http_save_callback_task, "wifi_saved", WIFI_HTTP_CALLBACK_STACK,
+                    NULL, WIFI_HTTP_CALLBACK_PRIORITY, NULL) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
 static esp_err_t root_handler(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, wifi_web_pages_get_setup(), HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
+    return wifi_http_send_text(req, "200 OK", "text/html; charset=utf-8",
+                               wifi_web_pages_get_setup());
 }
 
-/*----------------------------------------------------------
- * Save Handler — POST only for security
- *---------------------------------------------------------*/
 static esp_err_t save_handler(httpd_req_t *req)
 {
-    /* Reject GET requests at the door */
-    if (req->method != HTTP_POST)
-    {
-        httpd_resp_set_status(req, "405 Method Not Allowed");
-        httpd_resp_sendstr(req, "Use POST for credential submission");
-        return ESP_OK;
+    char *form = NULL;
+    const esp_err_t receive_err = wifi_http_receive_form(req, &form);
+    if (receive_err == ESP_ERR_INVALID_SIZE) {
+        return wifi_http_send_error(req, "413 Payload Too Large", "Invalid form size");
+    }
+    if (receive_err == ESP_ERR_TIMEOUT) {
+        return wifi_http_send_error(req, "408 Request Timeout", "Form receive timed out");
+    }
+    if (receive_err != ESP_OK) {
+        return wifi_http_send_error(req, "400 Bad Request", "Invalid form body");
     }
 
-    char buf[256];
-    int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
-    if (ret <= 0)
-    {
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_sendstr(req, "No data received");
-        return ESP_OK;
+    wifi_credentials_t credentials = {0};
+    const esp_err_t ssid_err = httpd_query_key_value(form, "ssid", credentials.ssid,
+                                                      sizeof(credentials.ssid));
+    (void)httpd_query_key_value(form, "password", credentials.password,
+                                sizeof(credentials.password));
+    free(form);
+
+    if (ssid_err != ESP_OK || !wifi_http_valid_text(credentials.ssid,
+                                                     sizeof(credentials.ssid), true)) {
+        return wifi_http_send_error(req, "400 Bad Request", "Invalid SSID");
     }
-    buf[ret] = '\0';
-
-    char ssid[33] = {0};
-    char password[65] = {0};
-
-    /* Parse application/x-www-form-urlencoded body */
-    if (httpd_query_key_value(buf, "ssid", ssid, sizeof(ssid)) != ESP_OK)
-    {
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_sendstr(req, "Missing SSID");
-        return ESP_OK;
+    if (!wifi_http_valid_text(credentials.password, sizeof(credentials.password), false) ||
+        (credentials.password[0] != '\0' && strlen(credentials.password) < 8U)) {
+        return wifi_http_send_error(req, "400 Bad Request", "Password must be empty or at least 8 characters");
     }
 
-    /* Password is optional for open networks, but warn if empty */
-    httpd_query_key_value(buf, "password", password, sizeof(password));
-
-    /* Validate SSID */
-    if (ssid[0] == '\0' || strlen(ssid) > 32)
-    {
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_sendstr(req, "Invalid SSID");
-        return ESP_OK;
+    const esp_err_t save_err = wifi_storage_save_credentials(&credentials);
+    if (save_err != ESP_OK) {
+        ESP_LOGE(WIFI_HTTP_TAG, "Credential save failed: %s", esp_err_to_name(save_err));
+        return wifi_http_send_error(req, "500 Internal Server Error", "Could not save credentials");
     }
 
-    wifi_credentials_t credentials;
-    memset(&credentials, 0, sizeof(credentials));
-
-    strncpy(credentials.ssid, ssid, sizeof(credentials.ssid) - 1);
-    credentials.ssid[sizeof(credentials.ssid) - 1] = '\0';
-
-    strncpy(credentials.password, password, sizeof(credentials.password) - 1);
-    credentials.password[sizeof(credentials.password) - 1] = '\0';
-
-    esp_err_t err = wifi_storage_save_credentials(&credentials);
-    if (err != ESP_OK)
-    {
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_sendstr(req, "Failed to save credentials");
-        return ESP_OK;
+    const esp_err_t callback_err = wifi_http_schedule_save_callback();
+    if (callback_err != ESP_OK) {
+        ESP_LOGE(WIFI_HTTP_TAG, "Credential callback scheduling failed: %s", esp_err_to_name(callback_err));
+        return wifi_http_send_error(req, "503 Service Unavailable", "Credentials saved; retry connection from the panel");
     }
 
-    /* Save network configuration */
-    wifi_network_config_t cfg;
-    memset(&cfg, 0, sizeof(cfg));
-
-    cfg.mode = WIFI_MODE_APSTA;
-    cfg.auto_reconnect = true;
-    cfg.reconnect_interval_ms = 5000;
-    cfg.dhcp = true;
-
-    /* TODO: Load from build config or device-specific storage */
-    strncpy(cfg.ap_ssid, WIFI_PROVISION_AP_SSID, sizeof(cfg.ap_ssid) - 1);
-    cfg.ap_ssid[sizeof(cfg.ap_ssid) - 1] = '\0';
-
-    strncpy(cfg.ap_password, WIFI_PROVISION_AP_PASSWORD, sizeof(cfg.ap_password) - 1);
-    cfg.ap_password[sizeof(cfg.ap_password) - 1] = '\0';
-
-    cfg.ap_channel = WIFI_PROVISION_CHANNEL;
-
-    err = wifi_storage_save_network_config(&cfg);
-    if (err != ESP_OK)
-    {
-        /* Rollback: erase credentials to keep state consistent */
-        wifi_storage_erase_credentials();
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_sendstr(req, "Failed to save network configuration");
-        return ESP_OK;
-    }
-
-    httpd_resp_sendstr(req, "Saved. Connecting...");
-
-    if (s_save_callback)
-    {
-        s_save_callback();
-    }
-
-    return ESP_OK;
+    return wifi_http_send_text(req, "200 OK", "text/html; charset=utf-8",
+                               wifi_web_pages_get_saved());
 }
 
-/*----------------------------------------------------------
- * Status Handler
- *---------------------------------------------------------*/
+static const char *wifi_http_state_text(wifi_connection_state_t state)
+{
+    switch (state) {
+    case WIFI_STATE_CONNECTED: return "CONNECTED";
+    case WIFI_STATE_CONNECTING:
+    case WIFI_STATE_RECONNECTING: return "CONNECTING";
+    case WIFI_STATE_PROVISIONING: return "PROVISIONING";
+    case WIFI_STATE_FAILED: return "FAILED";
+    case WIFI_STATE_DISCONNECTED: return "DISCONNECTED";
+    default: return "IDLE";
+    }
+}
+
 static esp_err_t status_handler(httpd_req_t *req)
 {
     const wifi_status_t *status = wifi_manager_get_status();
-
-    char status_text[32] = "UNKNOWN";
-    char ip_text[32] = "0.0.0.0";
-
-    if (status != NULL)
-    {
-        switch (status->state)
-        {
-        case WIFI_STATE_CONNECTED:
-            strncpy(status_text, "CONNECTED", sizeof(status_text) - 1);
-            break;
-        case WIFI_STATE_CONNECTING:
-            strncpy(status_text, "CONNECTING", sizeof(status_text) - 1);
-            break;
-        case WIFI_STATE_DISCONNECTED:
-            strncpy(status_text, "DISCONNECTED", sizeof(status_text) - 1);
-            break;
-        case WIFI_STATE_FAILED:
-            strncpy(status_text, "FAILED", sizeof(status_text) - 1);
-            break;
-        default:
-            strncpy(status_text, "IDLE", sizeof(status_text) - 1);
-            break;
-        }
-        status_text[sizeof(status_text) - 1] = '\0';
-
+    char ip_text[16] = "0.0.0.0";
+    const char *state_text = "IDLE";
+    if (status != NULL) {
+        state_text = wifi_http_state_text(status->state);
         snprintf(ip_text, sizeof(ip_text), IPSTR, IP2STR(&status->ip));
     }
-
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req,
-                    wifi_web_pages_get_status(status_text, ip_text),
-                    HTTPD_RESP_USE_STRLEN);
-
-    return ESP_OK;
+    char page[512] = {0};
+    const int rendered = wifi_web_pages_render_status(page, sizeof(page), state_text, ip_text);
+    if (rendered < 0 || (size_t)rendered >= sizeof(page)) {
+        return wifi_http_send_error(req, "500 Internal Server Error", "Status rendering failed");
+    }
+    return wifi_http_send_text(req, "200 OK", "text/html; charset=utf-8", page);
 }
 
-/*----------------------------------------------------------
- * Scan Handler — Per-request buffer, not static
- *---------------------------------------------------------*/
 static esp_err_t scan_handler(httpd_req_t *req)
 {
-    /* Allocate per-request buffer to avoid thread-safety issues */
-    const size_t results_size = 4096;
-    char *results = malloc(results_size);
-    if (results == NULL)
-    {
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_sendstr(req, "Out of memory");
-        return ESP_OK;
+    char *results = calloc(WIFI_HTTP_SCAN_BYTES, 1U);
+    if (results == NULL) {
+        return wifi_http_send_error(req, "503 Service Unavailable", "Out of memory");
     }
 
-    memset(results, 0, results_size);
-
-    esp_err_t err = wifi_scan_start(results, results_size);
-    if (err != ESP_OK)
-    {
-        strncpy(results, "Scan failed", results_size - 1);
-        results[results_size - 1] = '\0';
+    const esp_err_t scan_err = wifi_scan_start(results, WIFI_HTTP_SCAN_BYTES);
+    if (scan_err != ESP_OK) {
+        free(results);
+        ESP_LOGW(WIFI_HTTP_TAG, "Provisioning scan failed: %s", esp_err_to_name(scan_err));
+        return wifi_http_send_error(req, "503 Service Unavailable", "Wi-Fi scan unavailable");
     }
 
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, wifi_web_pages_get_scan(results), HTTPD_RESP_USE_STRLEN);
-
+    char *page = calloc(WIFI_HTTP_SCAN_BYTES + 768U, 1U);
+    if (page == NULL) {
+        free(results);
+        return wifi_http_send_error(req, "503 Service Unavailable", "Out of memory");
+    }
+    const int rendered = wifi_web_pages_render_scan(page, WIFI_HTTP_SCAN_BYTES + 768U, results);
     free(results);
-    return ESP_OK;
+    if (rendered < 0 || rendered >= (int)(WIFI_HTTP_SCAN_BYTES + 768U)) {
+        free(page);
+        return wifi_http_send_error(req, "500 Internal Server Error", "Scan rendering failed");
+    }
+    const esp_err_t response_err = wifi_http_send_text(req, "200 OK", "text/html; charset=utf-8", page);
+    free(page);
+    return response_err;
 }
 
-/*----------------------------------------------------------
- * Reset Handler
- *---------------------------------------------------------*/
 static esp_err_t reset_handler(httpd_req_t *req)
 {
-    esp_err_t err = wifi_storage_erase_credentials();
-    if (err == ESP_OK)
-    {
-        httpd_resp_set_type(req, "text/html");
-        httpd_resp_send(req, wifi_web_pages_get_reset(), HTTPD_RESP_USE_STRLEN);
-        ESP_LOGW(TAG, "WiFi credentials erased");
+    const esp_err_t erase_err = wifi_storage_erase_credentials();
+    if (erase_err != ESP_OK) {
+        ESP_LOGE(WIFI_HTTP_TAG, "Credential erase failed: %s", esp_err_to_name(erase_err));
+        return wifi_http_send_error(req, "500 Internal Server Error", "Could not erase credentials");
     }
-    else
-    {
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_sendstr(req, "Reset failed");
-    }
-    return ESP_OK;
+    return wifi_http_send_text(req, "200 OK", "text/html; charset=utf-8",
+                               wifi_web_pages_get_reset());
 }
 
-/*----------------------------------------------------------
- * Select Handler — URL-encode SSID for JavaScript safety
- *---------------------------------------------------------*/
-static esp_err_t select_handler(httpd_req_t *req)
-{
-    char query[128];
-    char ssid[33] = {0};
-
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK)
-    {
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_sendstr(req, "Missing parameters");
-        return ESP_OK;
-    }
-
-    if (httpd_query_key_value(query, "ssid", ssid, sizeof(ssid)) != ESP_OK)
-    {
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_sendstr(req, "Missing SSID");
-        return ESP_OK;
-    }
-
-    /* Basic XSS prevention: reject SSIDs with dangerous chars */
-    for (size_t i = 0; ssid[i] != '\0'; i++)
-    {
-        if (ssid[i] == '\'' || ssid[i] == '"' || ssid[i] == '<' ||
-            ssid[i] == '>' || ssid[i] == '&' || ssid[i] == '\\')
-        {
-            httpd_resp_set_status(req, "400 Bad Request");
-            httpd_resp_sendstr(req, "Invalid characters in SSID");
-            return ESP_OK;
-        }
-    }
-
-    char redirect[256];
-    int len = snprintf(redirect, sizeof(redirect),
-                       "<script>"
-                       "localStorage.ssid='%s';"
-                       "location.href='/';"
-                       "</script>",
-                       ssid);
-
-    if (len < 0 || (size_t)len >= sizeof(redirect))
-    {
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_sendstr(req, "Response too large");
-        return ESP_OK;
-    }
-
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, redirect, HTTPD_RESP_USE_STRLEN);
-
-    return ESP_OK;
-}
-
-/*----------------------------------------------------------
- * Captive Portal Handlers
- *---------------------------------------------------------*/
-static esp_err_t generate_204_handler(httpd_req_t *req)
-{
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "/");
-    httpd_resp_send(req, NULL, 0);
-    return ESP_OK;
-}
-
-static esp_err_t gen_204_handler(httpd_req_t *req)
-{
-    return generate_204_handler(req);
-}
-
-static esp_err_t hotspot_detect_handler(httpd_req_t *req)
-{
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "/");
-    httpd_resp_send(req, NULL, 0);
-    return ESP_OK;
-}
-
-static esp_err_t success_html_handler(httpd_req_t *req)
-{
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "/");
-    httpd_resp_send(req, NULL, 0);
-    return ESP_OK;
-}
-
-static esp_err_t ncsi_handler(httpd_req_t *req)
-{
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "/");
-    httpd_resp_send(req, NULL, 0);
-    return ESP_OK;
-}
-
-static esp_err_t connecttest_handler(httpd_req_t *req)
-{
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "/");
-    httpd_resp_send(req, NULL, 0);
-    return ESP_OK;
-}
-
-static esp_err_t success_txt_handler(httpd_req_t *req)
-{
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "/");
-    httpd_resp_send(req, NULL, 0);
-    return ESP_OK;
-}
-
-/*----------------------------------------------------------
- * Catch-all Redirect
- *---------------------------------------------------------*/
 static esp_err_t redirect_handler(httpd_req_t *req)
 {
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "/");
-    httpd_resp_send(req, NULL, 0);
-    return ESP_OK;
+    return wifi_http_redirect_home(req);
 }
 
-/*----------------------------------------------------------
- * Start Server
- *---------------------------------------------------------*/
+static esp_err_t captive_redirect_handler(httpd_req_t *req)
+{
+    return wifi_http_redirect_home(req);
+}
+
 esp_err_t wifi_http_server_start(void)
 {
-    if (s_server != NULL)
-    {
+    wifi_http_lock();
+    if (s_server != NULL) {
+        wifi_http_unlock();
         return ESP_OK;
+    }
+    wifi_http_unlock();
+
+    if (s_mutex == NULL) {
+        s_mutex = xSemaphoreCreateMutex();
+        if (s_mutex == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.server_port = WIFI_HTTP_PORT;
-    config.max_uri_handlers = WIFI_HTTP_MAX_URI + 1; /* +1 for catch-all */
+    config.server_port = WIFI_HTTP_SERVER_PORT;
+    config.max_uri_handlers = 13U;
+    config.stack_size = WIFI_HTTP_STACK_SIZE;
+    config.lru_purge_enable = true;
 
-    esp_err_t err = httpd_start(&s_server, &config);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "HTTP server start failed: %s", esp_err_to_name(err));
+    httpd_handle_t server = NULL;
+    esp_err_t err = httpd_start(&server, &config);
+    if (err != ESP_OK) {
+        ESP_LOGE(WIFI_HTTP_TAG, "HTTP start failed: %s", esp_err_to_name(err));
         return err;
     }
 
-    /* Register all URI handlers */
-    const httpd_uri_t *uris[] = {
-        &root_uri, &save_uri, &status_uri, &scan_uri,
-        &reset_uri, &select_uri, &uri_generate_204, &uri_gen_204,
-        &uri_hotspot, &uri_success_html, &uri_ncsi,
-        &uri_connecttest, &uri_success_txt, &redirect_uri,
-        NULL};
-
-    for (const httpd_uri_t **uri = uris; *uri != NULL; uri++)
-    {
-        err = httpd_register_uri_handler(s_server, *uri);
-        if (err != ESP_OK)
-        {
-            ESP_LOGW(TAG, "Failed to register URI %s: %s",
-                     (*uri)->uri, esp_err_to_name(err));
-            /* Continue — non-critical if one handler fails */
+    const httpd_uri_t *const routes[] = {
+        &s_root_uri, &s_save_uri, &s_status_uri, &s_scan_uri, &s_reset_uri,
+        &s_generate_204_uri, &s_gen_204_uri, &s_hotspot_uri, &s_success_html_uri,
+        &s_ncsi_uri, &s_connecttest_uri, &s_success_txt_uri, &s_redirect_uri,
+    };
+    for (size_t i = 0U; i < sizeof(routes) / sizeof(routes[0]); ++i) {
+        err = httpd_register_uri_handler(server, routes[i]);
+        if (err != ESP_OK) {
+            ESP_LOGE(WIFI_HTTP_TAG, "Route registration failed for %s: %s",
+                     routes[i]->uri, esp_err_to_name(err));
+            (void)httpd_stop(server);
+            return err;
         }
     }
 
-    ESP_LOGI(TAG, "HTTP server started on port %d", config.server_port);
-
+    wifi_http_lock();
+    s_server = server;
+    wifi_http_unlock();
+    ESP_LOGI(WIFI_HTTP_TAG, "Provisioning HTTP server started on port %u", WIFI_HTTP_SERVER_PORT);
     return ESP_OK;
 }
 
-/*----------------------------------------------------------
- * Stop Server
- *---------------------------------------------------------*/
 esp_err_t wifi_http_server_stop(void)
 {
-    if (s_server == NULL)
-    {
+    wifi_http_lock();
+    httpd_handle_t server = s_server;
+    s_server = NULL;
+    wifi_http_unlock();
+
+    if (server == NULL) {
         return ESP_OK;
     }
 
-    esp_err_t err = httpd_stop(s_server);
-    if (err != ESP_OK)
-    {
-        ESP_LOGW(TAG, "HTTP server stop failed: %s", esp_err_to_name(err));
-        return err;
+    const esp_err_t err = httpd_stop(server);
+    if (err != ESP_OK) {
+        ESP_LOGW(WIFI_HTTP_TAG, "HTTP stop failed: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(WIFI_HTTP_TAG, "Provisioning HTTP server stopped");
     }
-
-    s_server = NULL;
-
-    ESP_LOGI(TAG, "HTTP server stopped");
-
-    return ESP_OK;
+    return err;
 }
 
-/*----------------------------------------------------------
- * Server State
- *---------------------------------------------------------*/
 bool wifi_http_server_running(void)
 {
-    return (s_server != NULL);
+    wifi_http_lock();
+    const bool running = s_server != NULL;
+    wifi_http_unlock();
+    return running;
 }
 
-/*----------------------------------------------------------
- * Callback Registration
- *---------------------------------------------------------*/
-esp_err_t wifi_http_server_register_save_callback(
-    wifi_http_save_callback_t callback)
+esp_err_t wifi_http_server_register_save_callback(wifi_http_save_callback_t callback)
 {
-    if (callback == NULL)
-    {
-        return ESP_ERR_INVALID_ARG;
+    if (s_mutex == NULL) {
+        s_mutex = xSemaphoreCreateMutex();
+        if (s_mutex == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
     }
-
+    wifi_http_lock();
     s_save_callback = callback;
-
+    wifi_http_unlock();
     return ESP_OK;
 }

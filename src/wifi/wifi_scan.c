@@ -6,41 +6,48 @@
 
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "wifi_config.h"
 
-static const char *TAG = "WIFI_SCAN";
+#define WIFI_SCAN_TAG "WIFI_SCAN"
+
 static bool s_initialized;
+static SemaphoreHandle_t s_scan_mutex;
 
 static int compare_ap_by_rssi(const void *a, const void *b)
 {
-    const wifi_ap_record_t *ap_a = (const wifi_ap_record_t *)a;
-    const wifi_ap_record_t *ap_b = (const wifi_ap_record_t *)b;
+    const wifi_ap_record_t *ap_a = a;
+    const wifi_ap_record_t *ap_b = b;
     return (int)ap_b->rssi - (int)ap_a->rssi;
 }
 
 static void escape_html_text(const char *src, char *dst, size_t dst_len)
 {
-    if (!dst || dst_len == 0U) {
+    if (dst == NULL || dst_len == 0U) {
         return;
     }
     size_t out = 0U;
-    for (size_t i = 0; src && src[i] != '\0' && out + 1U < dst_len; ++i) {
+    for (size_t i = 0U; src != NULL && src[i] != '\0' && out + 1U < dst_len; ++i) {
         const char *replacement = NULL;
         switch (src[i]) {
         case '&': replacement = "&amp;"; break;
         case '<': replacement = "&lt;"; break;
         case '>': replacement = "&gt;"; break;
-        case '\"': replacement = "&quot;"; break;
+        case '"': replacement = "&quot;"; break;
         case '\'': replacement = "&#39;"; break;
         default: break;
         }
-        if (replacement) {
-            const size_t length = strlen(replacement);
-            if (out + length >= dst_len) break;
-            memcpy(dst + out, replacement, length);
-            out += length;
+        if (replacement != NULL) {
+            const size_t replacement_len = strlen(replacement);
+            if (out + replacement_len >= dst_len) {
+                break;
+            }
+            memcpy(dst + out, replacement, replacement_len);
+            out += replacement_len;
         } else {
-            dst[out++] = src[i];
+            const unsigned char value = (unsigned char)src[i];
+            dst[out++] = value >= 0x20U && value != 0x7FU ? src[i] : '?';
         }
     }
     dst[out] = '\0';
@@ -48,57 +55,83 @@ static void escape_html_text(const char *src, char *dst, size_t dst_len)
 
 esp_err_t wifi_scan_init(void)
 {
+    if (s_initialized) {
+        return ESP_OK;
+    }
+    s_scan_mutex = xSemaphoreCreateMutex();
+    if (s_scan_mutex == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
     s_initialized = true;
+    return ESP_OK;
+}
+
+esp_err_t wifi_scan_deinit(void)
+{
+    if (s_scan_mutex != NULL) {
+        vSemaphoreDelete(s_scan_mutex);
+        s_scan_mutex = NULL;
+    }
+    s_initialized = false;
     return ESP_OK;
 }
 
 esp_err_t wifi_scan_start_records(wifi_ap_record_t *records, uint16_t *count)
 {
-    if (!s_initialized || !records || !count || *count == 0U) {
+    if (!s_initialized || records == NULL || count == NULL || *count == 0U) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (s_scan_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
 
-    wifi_scan_config_t scan_config = {
+    xSemaphoreTake(s_scan_mutex, portMAX_DELAY);
+    wifi_scan_config_t config = {
         .ssid = NULL,
         .bssid = NULL,
-        .channel = 0,
+        .channel = 0U,
         .show_hidden = WIFI_SCAN_SHOW_HIDDEN,
         .scan_type = WIFI_SCAN_TYPE_ACTIVE,
     };
-    esp_err_t err = esp_wifi_scan_start(&scan_config, true);
+
+    esp_err_t err = esp_wifi_scan_start(&config, true);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "WiFi scan failed: %s", esp_err_to_name(err));
+        xSemaphoreGive(s_scan_mutex);
+        ESP_LOGW(WIFI_SCAN_TAG, "Scan start failed: %s", esp_err_to_name(err));
         return err;
     }
 
     uint16_t available = 0U;
     err = esp_wifi_scan_get_ap_num(&available);
-    if (err != ESP_OK) {
-        return err;
-    }
-    const uint16_t capacity = *count;
-    if (available > capacity) {
-        available = capacity;
-    }
-    if (available > 0U) {
-        err = esp_wifi_scan_get_ap_records(&available, records);
-        if (err != ESP_OK) {
-            *count = 0U;
-            return err;
+    if (err == ESP_OK) {
+        const uint16_t capacity = *count;
+        if (available > capacity) {
+            available = capacity;
         }
-        qsort(records, available, sizeof(records[0]), compare_ap_by_rssi);
+        if (available > 0U) {
+            err = esp_wifi_scan_get_ap_records(&available, records);
+            if (err == ESP_OK) {
+                qsort(records, available, sizeof(records[0]), compare_ap_by_rssi);
+            }
+        }
+        *count = err == ESP_OK ? available : 0U;
+    } else {
+        *count = 0U;
     }
-    *count = available;
-    ESP_LOGI(TAG, "Found %u networks", (unsigned)available);
-    return ESP_OK;
+    xSemaphoreGive(s_scan_mutex);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(WIFI_SCAN_TAG, "Found %u access points", (unsigned)*count);
+    }
+    return err;
 }
 
 esp_err_t wifi_scan_start(char *output, size_t max_len)
 {
-    if (!output || max_len == 0U) {
+    if (output == NULL || max_len == 0U) {
         return ESP_ERR_INVALID_ARG;
     }
-    memset(output, 0, max_len);
+    output[0] = '\0';
 
     wifi_ap_record_t records[WIFI_MAX_SCAN_RESULTS] = {0};
     uint16_t count = WIFI_MAX_SCAN_RESULTS;
@@ -107,24 +140,21 @@ esp_err_t wifi_scan_start(char *output, size_t max_len)
         return err;
     }
     if (count == 0U) {
-        snprintf(output, max_len, "<p>No networks found</p>");
+        (void)snprintf(output, max_len, "<p>No networks found</p>");
         return ESP_OK;
     }
 
     size_t used = 0U;
-    for (uint16_t i = 0U; i < count && used + 1U < max_len; ++i) {
+    for (uint16_t i = 0U; i < count; ++i) {
         char escaped[128] = {0};
         escape_html_text((const char *)records[i].ssid, escaped, sizeof(escaped));
-        const char *quality = (records[i].rssi >= WIFI_RSSI_EXCELLENT) ? "Excellent" :
-                              (records[i].rssi >= WIFI_RSSI_GOOD) ? "Good" :
-                              (records[i].rssi >= WIFI_RSSI_FAIR) ? "Fair" :
-                              (records[i].rssi >= WIFI_RSSI_WEAK) ? "Weak" : "Very Weak";
+        const char *quality = records[i].rssi >= WIFI_RSSI_EXCELLENT ? "Excellent" :
+                              records[i].rssi >= WIFI_RSSI_GOOD ? "Good" :
+                              records[i].rssi >= WIFI_RSSI_FAIR ? "Fair" :
+                              records[i].rssi >= WIFI_RSSI_WEAK ? "Weak" : "Very Weak";
         const int written = snprintf(output + used, max_len - used,
-                                     "<div class=\"network\"><div class=\"net-info\">"
-                                     "<span class=\"net-name\">%s</span>"
-                                     "<span class=\"net-quality %s\">%s (%d dBm)</span>"
-                                     "</div></div>", escaped,
-                                     (records[i].rssi >= WIFI_RSSI_FAIR) ? "good" : "weak",
+                                     "<p><strong>%s</strong> — %s (%d dBm)</p>",
+                                     escaped[0] != '\0' ? escaped : "<hidden>",
                                      quality, records[i].rssi);
         if (written < 0 || (size_t)written >= max_len - used) {
             break;

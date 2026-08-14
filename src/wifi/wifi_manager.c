@@ -66,7 +66,10 @@ static esp_err_t wifi_manager_set_static_ip(void)
 
     if (cfg.dhcp)
     {
-        ESP_LOGI(TAG, "DHCP enabled");
+        err = esp_netif_dhcpc_start(s_sta_netif);
+        if (err != ESP_OK && err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED) {
+            return err;
+        }
         return ESP_OK;
     }
 
@@ -117,6 +120,7 @@ static void wifi_manager_load_network_config(void)
     }
 
     s_config.mode = net_cfg.mode;
+    s_config.authmode = INVERTER_WIFI_AUTH_MODE;
     s_config.dhcp = net_cfg.dhcp;
     s_config.auto_reconnect = net_cfg.auto_reconnect;
     s_config.reconnect_interval_ms = net_cfg.reconnect_interval_ms;
@@ -148,32 +152,6 @@ static void wifi_manager_load_network_config(void)
     else
     {
         s_config.ap_channel = WIFI_PROVISION_CHANNEL;
-    }
-}
-
-/*----------------------------------------------------------
- * Provision Complete Callback
- *---------------------------------------------------------*/
-static void wifi_manager_provision_complete(void)
-{
-    ESP_LOGI(TAG, "Provisioning completed");
-
-    /* Reload everything from storage */
-    wifi_manager_load_network_config();
-
-    wifi_credentials_t credentials;
-    memset(&credentials, 0, sizeof(credentials));
-
-    if (wifi_storage_load_credentials(&credentials) != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed loading credentials after provisioning");
-        return;
-    }
-
-    esp_err_t err = wifi_manager_connect();
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to start connection after provisioning: %s", esp_err_to_name(err));
     }
 }
 
@@ -264,13 +242,6 @@ esp_err_t wifi_manager_init(void)
     /* Load network config first (sets defaults if none stored) */
     wifi_manager_load_network_config();
 
-    err = wifi_provision_register_complete_callback(wifi_manager_provision_complete);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to register provision callback: %s", esp_err_to_name(err));
-        goto rollback_mutex;
-    }
-
     if (wifi_storage_has_credentials())
     {
         err = wifi_storage_load_credentials(&s_credentials);
@@ -341,6 +312,8 @@ esp_err_t wifi_manager_init(void)
         ESP_LOGE(TAG, "Events init failed: %s", esp_err_to_name(err));
         goto rollback_wifi;
     }
+
+    wifi_events_set_retry_policy(s_config.auto_reconnect, s_retry_limit);
 
     err = wifi_events_register_event_callback(wifi_manager_event_update);
     if (err != ESP_OK)
@@ -659,6 +632,7 @@ esp_err_t wifi_manager_set_config(const wifi_manager_config_t *config)
     }
 
     memcpy(&s_config, &temp, sizeof(s_config));
+    wifi_events_set_retry_policy(s_config.auto_reconnect, s_retry_limit);
 
     if (s_manager_mutex)
     {
@@ -798,6 +772,7 @@ esp_err_t wifi_manager_get_ap_info(wifi_ap_record_t *ap)
 void wifi_manager_set_retry_limit(uint8_t retry)
 {
     s_retry_limit = retry;
+    wifi_events_set_retry_policy(s_auto_reconnect, s_retry_limit);
 }
 
 uint8_t wifi_manager_get_retry_limit(void)
@@ -821,6 +796,7 @@ void wifi_manager_enable_auto_reconnect(bool enable)
     {
         xSemaphoreGive(s_manager_mutex);
     }
+    wifi_events_set_retry_policy(enable, s_retry_limit);
 }
 
 bool wifi_manager_auto_reconnect_enabled(void)

@@ -32,6 +32,22 @@
 
 static const char *TAG = "WIFI_STORAGE";
 
+static bool wifi_storage_network_config_valid(const wifi_network_config_t *config)
+{
+    if (config == NULL || config->mode > WIFI_MODE_APSTA ||
+        config->ap_channel < 1U || config->ap_channel > 13U ||
+        config->ap_max_connection < 1U || config->ap_max_connection > 10U ||
+        config->ap_authmode == WIFI_AUTH_OPEN ||
+        strnlen(config->ap_ssid, sizeof(config->ap_ssid)) == 0U ||
+        strnlen(config->ap_ssid, sizeof(config->ap_ssid)) >= sizeof(config->ap_ssid) ||
+        strnlen(config->ap_password, sizeof(config->ap_password)) < 8U ||
+        strnlen(config->ap_password, sizeof(config->ap_password)) >= sizeof(config->ap_password) ||
+        config->reconnect_interval_ms < 250U || config->reconnect_interval_ms > 60000U) {
+        return false;
+    }
+    return true;
+}
+
 void wifi_storage_set_default_network_config(wifi_network_config_t *config)
 {
     if (!config) {
@@ -454,7 +470,7 @@ esp_err_t wifi_storage_save_network_config(
     const wifi_network_config_t *config)
 {
 
-    if (config == NULL)
+    if (!wifi_storage_network_config_valid(config))
     {
         return ESP_ERR_INVALID_ARG;
     }
@@ -710,6 +726,11 @@ esp_err_t wifi_storage_load_network_config(
     }
 
     nvs_close(handle);
+    if (!wifi_storage_network_config_valid(config)) {
+        ESP_LOGW(TAG, "Invalid network configuration in NVS; restoring safe defaults");
+        wifi_storage_set_default_network_config(config);
+        defaults_used = true;
+    }
     if (defaults_used) {
         const esp_err_t save_err = wifi_storage_save_network_config(config);
         if (save_err != ESP_OK) {

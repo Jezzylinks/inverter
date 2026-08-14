@@ -51,6 +51,7 @@ extern "C"
      * @brief Initialize Wi-Fi controller
      */
     esp_err_t wifi_controller_init(void);
+    esp_err_t wifi_controller_deinit(void);
 
     /**
      * @brief Start Wi-Fi system
@@ -76,6 +77,9 @@ extern "C"
      * @brief Force Wi-Fi reconnect
      */
     esp_err_t wifi_controller_reconnect(void);
+
+    /** Disconnect the station without disabling Wi-Fi or erasing credentials. */
+    esp_err_t wifi_controller_disconnect(void);
 
     /**
      * @brief Start provisioning manually

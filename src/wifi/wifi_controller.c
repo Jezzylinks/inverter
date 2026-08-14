@@ -53,7 +53,13 @@ static void wifi_controller_provision_complete(void)
     s_state = WIFI_CONTROLLER_CONNECTING;
     wifi_controller_unlock();
 
-    wifi_manager_connect();
+    esp_err_t err = wifi_manager_start();
+    if (err == ESP_OK || err == ESP_ERR_WIFI_CONN) {
+        err = wifi_manager_connect();
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Could not connect after provisioning: %s", esp_err_to_name(err));
+    }
 }
 
 esp_err_t wifi_controller_init(void)
@@ -85,6 +91,13 @@ esp_err_t wifi_controller_init(void)
     if (err != ESP_OK)
     {
         goto rollback_storage;
+    }
+
+    /* Provisioning owns only AP services and reuses manager-created netifs. */
+    err = wifi_provision_init();
+    if (err != ESP_OK)
+    {
+        goto rollback_manager;
     }
 
     /* Initialize WiFi scan */
@@ -120,8 +133,9 @@ esp_err_t wifi_controller_init(void)
 rollback_monitor:
     wifi_monitor_deinit();
 rollback_scan:
-    /* No wifi_scan_deinit available */
+    (void)wifi_scan_deinit();
 rollback_manager:
+    (void)wifi_provision_deinit();
     wifi_manager_deinit();
 rollback_storage:
     /* No wifi_storage_deinit available */
@@ -144,6 +158,12 @@ esp_err_t wifi_controller_deinit(void)
 
     esp_err_t err;
 
+    err = wifi_monitor_deinit();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Monitor deinit failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
     err = wifi_provision_stop();
     if (err != ESP_OK)
     {
@@ -156,13 +176,14 @@ esp_err_t wifi_controller_deinit(void)
         ESP_LOGW(TAG, "Manager stop failed: %s", esp_err_to_name(err));
     }
 
+    (void)wifi_scan_deinit();
+    (void)wifi_provision_deinit();
+
     err = wifi_manager_deinit();
     if (err != ESP_OK)
     {
         ESP_LOGW(TAG, "Manager deinit failed: %s", esp_err_to_name(err));
     }
-
-    wifi_monitor_deinit();
 
     wifi_controller_lock();
     s_state = WIFI_CONTROLLER_IDLE;
@@ -194,8 +215,11 @@ esp_err_t wifi_controller_start(void)
     {
         ESP_LOGI(TAG, "Credentials found");
 
+        if (wifi_provision_is_running()) {
+            (void)wifi_provision_stop();
+        }
         err = wifi_manager_start();
-        if (err != ESP_OK)
+        if (err != ESP_OK && err != ESP_ERR_WIFI_CONN)
         {
             ESP_LOGE(TAG, "Failed to start WiFi manager: %s", esp_err_to_name(err));
             return err;
@@ -218,6 +242,8 @@ esp_err_t wifi_controller_start(void)
     /* No credentials — enter provisioning mode */
     ESP_LOGW(TAG, "No credentials");
 
+    /* Provisioning must have exclusive ownership of the active radio mode. */
+    (void)wifi_manager_stop();
     err = wifi_provision_start();
     if (err == ESP_OK)
     {
@@ -235,19 +261,25 @@ esp_err_t wifi_controller_stop(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    esp_err_t err;
+    esp_err_t first_err = ESP_OK;
 
-    wifi_monitor_stop();
+    esp_err_t err = wifi_monitor_stop();
+    if (err != ESP_OK) {
+        first_err = err;
+        ESP_LOGW(TAG, "Failed to stop monitor: %s", esp_err_to_name(err));
+    }
 
     err = wifi_provision_stop();
-    if (err != ESP_OK)
-    {
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        first_err = err;
         ESP_LOGW(TAG, "Failed to stop provisioning: %s", esp_err_to_name(err));
     }
 
     err = wifi_manager_stop();
-    if (err != ESP_OK)
-    {
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT && err != ESP_ERR_WIFI_NOT_STARTED) {
+        if (first_err == ESP_OK) {
+            first_err = err;
+        }
         ESP_LOGW(TAG, "Failed to stop manager: %s", esp_err_to_name(err));
     }
 
@@ -255,7 +287,7 @@ esp_err_t wifi_controller_stop(void)
     s_state = WIFI_CONTROLLER_IDLE;
     wifi_controller_unlock();
 
-    return ESP_OK;
+    return first_err;
 }
 
 esp_err_t wifi_controller_reconnect(void)
@@ -275,6 +307,21 @@ esp_err_t wifi_controller_reconnect(void)
     return err;
 }
 
+esp_err_t wifi_controller_disconnect(void)
+{
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    const esp_err_t err = wifi_manager_disconnect();
+    if (err == ESP_OK || err == ESP_ERR_WIFI_NOT_CONNECT) {
+        wifi_controller_lock();
+        s_state = WIFI_CONTROLLER_IDLE;
+        wifi_controller_unlock();
+        return ESP_OK;
+    }
+    return err;
+}
+
 esp_err_t wifi_controller_start_provisioning(void)
 {
     if (!s_initialized)
@@ -282,6 +329,7 @@ esp_err_t wifi_controller_start_provisioning(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    (void)wifi_manager_stop();
     esp_err_t err = wifi_provision_start();
     if (err == ESP_OK)
     {
@@ -305,7 +353,13 @@ esp_err_t wifi_controller_stop_provisioning(void)
         /* After stopping provisioning, try STA connection */
         if (wifi_storage_has_credentials())
         {
-            wifi_manager_connect();
+            esp_err_t start_err = wifi_manager_start();
+            if (start_err == ESP_OK || start_err == ESP_ERR_WIFI_CONN) {
+                start_err = wifi_manager_connect();
+            }
+            if (start_err != ESP_OK) {
+                return start_err;
+            }
             wifi_controller_lock();
             s_state = WIFI_CONTROLLER_CONNECTING;
             wifi_controller_unlock();

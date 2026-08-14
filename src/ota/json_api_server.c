@@ -103,9 +103,11 @@ static esp_err_t api_status_handler(httpd_req_t *req)
     if (auth_err != ESP_OK) return auth_err;
     cJSON *root = cJSON_CreateObject();
 
-    const wifi_status_t *status = wifi_manager_get_status();
-    if (status)
+    wifi_status_t status_copy = {0};
+    const bool have_status = wifi_events_get_status_copy(&status_copy) == ESP_OK;
+    if (have_status)
     {
+        const wifi_status_t *status = &status_copy;
         const char *state_str = "unknown";
         switch (status->state)
         {
@@ -184,39 +186,41 @@ static esp_err_t api_scan_handler(httpd_req_t *req)
     cJSON *root = cJSON_CreateObject();
     cJSON *networks = cJSON_CreateArray();
 
-    uint16_t ap_count = 0;
-    esp_wifi_scan_get_ap_num(&ap_count);
-
-    if (ap_count > 0)
-    {
-        if (ap_count > WIFI_MAX_SCAN_RESULTS)
-            ap_count = WIFI_MAX_SCAN_RESULTS;
-
-        wifi_ap_record_t *records = calloc(ap_count, sizeof(wifi_ap_record_t));
-        if (records)
-        {
-            esp_wifi_scan_get_ap_records(&ap_count, records);
-
-            for (int i = 0; i < ap_count; i++)
-            {
-                cJSON *ap = cJSON_CreateObject();
-                cJSON_AddStringToObject(ap, "ssid", (char *)records[i].ssid);
-                cJSON_AddNumberToObject(ap, "rssi", records[i].rssi);
-                cJSON_AddNumberToObject(ap, "channel", records[i].primary);
-                cJSON_AddStringToObject(ap, "auth",
-                                        records[i].authmode == WIFI_AUTH_OPEN ? "open" : records[i].authmode == WIFI_AUTH_WPA2_PSK ? "wpa2"
-                                                                                     : records[i].authmode == WIFI_AUTH_WPA3_PSK   ? "wpa3"
-                                                                                                                                   : "other");
-                cJSON_AddItemToArray(networks, ap);
-            }
-
-            free(records);
-        }
+    uint16_t ap_count = WIFI_MAX_SCAN_RESULTS;
+    wifi_ap_record_t *records = calloc(ap_count, sizeof(*records));
+    if (records == NULL) {
+        cJSON_Delete(networks);
+        cJSON_Delete(root);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Out of memory");
+        return send_json(req, error, 503);
     }
+
+    const esp_err_t scan_err = wifi_scan_start_records(records, &ap_count);
+    if (scan_err != ESP_OK) {
+        free(records);
+        cJSON_Delete(networks);
+        cJSON_Delete(root);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", esp_err_to_name(scan_err));
+        return send_json(req, error, 503);
+    }
+
+    for (uint16_t i = 0U; i < ap_count; ++i)
+    {
+        cJSON *ap = cJSON_CreateObject();
+        cJSON_AddStringToObject(ap, "ssid", (char *)records[i].ssid);
+        cJSON_AddNumberToObject(ap, "rssi", records[i].rssi);
+        cJSON_AddNumberToObject(ap, "channel", records[i].primary);
+        cJSON_AddStringToObject(ap, "auth",
+                                records[i].authmode == WIFI_AUTH_OPEN ? "open" : records[i].authmode == WIFI_AUTH_WPA2_PSK ? "wpa2"
+                                                                             : records[i].authmode == WIFI_AUTH_WPA3_PSK ? "wpa3" : "other");
+        cJSON_AddItemToArray(networks, ap);
+    }
+    free(records);
 
     cJSON_AddItemToObject(root, "networks", networks);
     cJSON_AddNumberToObject(root, "count", ap_count);
-
     return send_json(req, root, 200);
 }
 
@@ -326,7 +330,10 @@ static esp_err_t api_connect_handler(httpd_req_t *req)
 
     cJSON_Delete(json);
 
-    err = wifi_manager_connect();
+    err = wifi_controller_start();
+    if (err != ESP_OK) {
+        err = wifi_controller_reconnect();
+    }
 
     cJSON *resp = cJSON_CreateObject();
     cJSON_AddBoolToObject(resp, "success", err == ESP_OK);
@@ -349,7 +356,7 @@ static esp_err_t api_disconnect_handler(httpd_req_t *req)
 
     esp_err_t auth_err = api_require_pin(req);
     if (auth_err != ESP_OK) return auth_err;
-    esp_err_t err = wifi_manager_disconnect();
+    esp_err_t err = wifi_controller_disconnect();
 
     cJSON *resp = cJSON_CreateObject();
     cJSON_AddBoolToObject(resp, "success", err == ESP_OK);
@@ -400,7 +407,7 @@ static esp_err_t api_config_handler(httpd_req_t *req)
     wifi_manager_config_t config;
     memset(&config, 0, sizeof(config));
 
-    esp_err_t err = wifi_manager_get_config(&config);
+    esp_err_t err = wifi_controller_get_config(&config);
     if (err != ESP_OK) {
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", esp_err_to_name(err));
