@@ -1,35 +1,22 @@
 /**
  * @file wifi_scan.h
- * @brief Wi-Fi Network Scanner
+ * @brief Wi-Fi network scanning API.
  */
-
 #ifndef WIFI_SCAN_H
 #define WIFI_SCAN_H
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
 #include <stddef.h>
-
+#include <stdint.h>
 #include "esp_err.h"
+#include "esp_wifi_types.h"
 
-    /**
-     * @brief Initialize WiFi scanner
-     */
-    esp_err_t wifi_scan_init(void);
-
-    /**
-     * @brief Scan available networks
-     *
-     * @param output Buffer to store HTML result
-     * @param max_len Buffer size
-     *
-     */
-    esp_err_t wifi_scan_start(
-        char *output,
-        size_t max_len);
+esp_err_t wifi_scan_init(void);
+esp_err_t wifi_scan_start_records(wifi_ap_record_t *records, uint16_t *count);
+esp_err_t wifi_scan_start(char *output, size_t max_len);
 
 #ifdef __cplusplus
 }

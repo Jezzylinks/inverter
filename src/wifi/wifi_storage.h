@@ -44,6 +44,9 @@ extern "C"
     /*==========================================================
      * Initialization
      *========================================================*/
+    /** Populate a safe default AP/STA network configuration. */
+    void wifi_storage_set_default_network_config(wifi_network_config_t *config);
+
     esp_err_t wifi_storage_init(void);
 
     esp_err_t wifi_storage_deinit(void);

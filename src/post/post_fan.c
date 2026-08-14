@@ -134,7 +134,7 @@ post_fan_result_t post_fan_test(void)
     if (err != ESP_OK)
     {
         s_status.result = POST_FAN_RESULT_DRIVER_ERROR;
-
+        post_fan_stop();
         return s_status.result;
     }
 

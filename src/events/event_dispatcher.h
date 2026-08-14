@@ -55,6 +55,7 @@ extern "C"
 
     void event_route_dispatch(const system_event_t *event);
     bool event_dispatcher_init(void);
+    void event_dispatcher_deinit(void);
 
     void event_dispatcher_task(void *pvParameters);
 

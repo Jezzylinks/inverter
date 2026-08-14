@@ -30,8 +30,8 @@ static esp_netif_t *s_sta_netif = NULL;
 static esp_netif_t *s_ap_netif = NULL;
 static wifi_manager_config_t s_config;
 static bool s_initialized = false;
-static uint8_t s_retry_limit = WIFI_MAXIMUM_RETRY;
-static bool s_auto_reconnect = true;
+uint8_t s_retry_limit = WIFI_MAXIMUM_RETRY;
+bool s_auto_reconnect = true;
 static wifi_credentials_t s_credentials;
 static SemaphoreHandle_t s_manager_mutex = NULL;
 
@@ -112,16 +112,8 @@ static void wifi_manager_load_network_config(void)
 
     if (wifi_storage_load_network_config(&net_cfg) != ESP_OK)
     {
-        ESP_LOGW(TAG, "No network config in storage, using defaults");
-        /* Set defaults from wifi_config.h macros */
-        s_config.mode = WIFI_MODE_APSTA;
-        s_config.dhcp = true;
-        s_config.auto_reconnect = true;
-        s_config.reconnect_interval_ms = WIFI_RECONNECT_DELAY_MS;
-        s_config.authmode = INVERTER_WIFI_AUTH_MODE;
-        s_config.ap_max_connection = WIFI_PROVISION_MAX_CONN;
-        s_config.ap_authmode = INVERTER_WIFI_AUTH_MODE;
-        return;
+        ESP_LOGW(TAG, "No network config in storage, using safe defaults");
+        wifi_storage_set_default_network_config(&net_cfg);
     }
 
     s_config.mode = net_cfg.mode;
@@ -222,16 +214,28 @@ static void wifi_manager_event_update(wifi_connection_state_t state)
  *---------------------------------------------------------*/
 static bool wifi_manager_config_valid(const wifi_manager_config_t *config)
 {
-    if (config == NULL)
-    {
+    if (!config) {
         return false;
     }
-    if (config->ssid[0] == '\0' && config->ap_ssid[0] == '\0')
-    {
+    if (strnlen(config->ssid, sizeof(config->ssid)) >= sizeof(config->ssid) ||
+        strnlen(config->password, sizeof(config->password)) >= sizeof(config->password) ||
+        strnlen(config->ap_ssid, sizeof(config->ap_ssid)) >= sizeof(config->ap_ssid) ||
+        strnlen(config->ap_password, sizeof(config->ap_password)) >= sizeof(config->ap_password)) {
+        ESP_LOGE(TAG, "WiFi configuration is not NUL terminated");
+        return false;
+    }
+    if (config->ssid[0] == '\0' && config->ap_ssid[0] == '\0') {
         ESP_LOGW(TAG, "Both STA and AP SSIDs are empty");
         return false;
     }
-    /* Caller must ensure strings are null-terminated */
+    if (config->ssid[0] != '\0' && strlen(config->password) > 0U && strlen(config->password) < 8U) {
+        ESP_LOGW(TAG, "STA password is shorter than WPA minimum");
+        return false;
+    }
+    if (config->ap_ssid[0] != '\0' && strlen(config->ap_password) < 8U) {
+        ESP_LOGW(TAG, "Provisioning AP password is too short");
+        return false;
+    }
     return true;
 }
 

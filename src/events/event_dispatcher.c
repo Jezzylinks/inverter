@@ -42,6 +42,7 @@ typedef struct
 
 static monitor_statistics_t stats;
 static SemaphoreHandle_t stats_mutex = NULL;
+static bool s_dispatcher_initialized = false;
 
 static const event_route_t routes[] =
     {
@@ -224,23 +225,42 @@ static const uint8_t queue_sizes[EVENT_SUB_COUNT] =
 
 bool event_dispatcher_init(void)
 {
-
-    ESP_LOGI(TAG,
-             "Free heap = %lu",
-             esp_get_free_heap_size());
-    for (int i = 0; i < EVENT_SUB_COUNT; i++)
-    {
-        configASSERT(queue_sizes[i] > 0);
-
-        g_event_subscriber_queue[i] =
-            xQueueCreate(queue_sizes[i], sizeof(system_event_t));
-
-        configASSERT(g_event_subscriber_queue[i] != NULL);
+    if (s_dispatcher_initialized) {
+        return true;
     }
 
-    ESP_LOGI(TAG, "Event dispatcher initialized.");
-
+    memset(g_event_subscriber_queue, 0, sizeof(g_event_subscriber_queue));
+    for (int i = 0; i < EVENT_SUB_COUNT; i++) {
+        if (queue_sizes[i] == 0U) {
+            return false;
+        }
+        g_event_subscriber_queue[i] = xQueueCreate(queue_sizes[i], sizeof(system_event_t));
+        if (!g_event_subscriber_queue[i]) {
+            event_dispatcher_deinit();
+            ESP_LOGE(TAG, "Failed to allocate subscriber queue %d", i);
+            return false;
+        }
+    }
+    s_dispatcher_initialized = true;
+    ESP_LOGI(TAG, "Event dispatcher initialized (free heap=%lu)",
+             (unsigned long)esp_get_free_heap_size());
     return true;
+}
+
+void event_dispatcher_deinit(void)
+{
+    for (int i = 0; i < EVENT_SUB_COUNT; ++i) {
+        if (g_event_subscriber_queue[i]) {
+            vQueueDelete(g_event_subscriber_queue[i]);
+            g_event_subscriber_queue[i] = NULL;
+        }
+    }
+    if (stats_mutex) {
+        vSemaphoreDelete(stats_mutex);
+        stats_mutex = NULL;
+    }
+    memset(&stats, 0, sizeof(stats));
+    s_dispatcher_initialized = false;
 }
 
 /******************************************************************************
@@ -327,9 +347,12 @@ bool event_dispatcher_send(event_subscriber_t subscriber,
     if (g_event_subscriber_queue[subscriber] == NULL)
         return false;
 
-    return xQueueSend(g_event_subscriber_queue[subscriber],
-                      event,
-                      0) == pdPASS;
+    const BaseType_t sent = xQueueSend(g_event_subscriber_queue[subscriber], event, 0);
+    if (sent != pdPASS) {
+        ESP_LOGW(TAG, "Subscriber queue %d is full; event dropped", subscriber);
+        return false;
+    }
+    return true;
 }
 
 /******************************************************************************

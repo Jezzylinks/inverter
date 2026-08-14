@@ -62,16 +62,17 @@ static esp_err_t wifi_provision_start_ap(void)
         return ESP_FAIL;
     }
 
-    wifi_config_t ap_config =
-        {
-            .ap =
-                {
-                    .channel = config.ap_channel,
-
-                    .max_connection = 4,
-
-                    .authmode = WIFI_AUTH_WPA2_PSK,
-                }};
+    const uint8_t max_connections =
+        (config.ap_max_connection >= 1U && config.ap_max_connection <= 10U)
+            ? config.ap_max_connection
+            : WIFI_PROVISION_MAX_CONN;
+    wifi_config_t ap_config = {
+        .ap = {
+            .channel = config.ap_channel,
+            .max_connection = max_connections,
+            .authmode = config.ap_authmode,
+        },
+    };
 
     strncpy(
         (char *)ap_config.ap.ssid,
@@ -83,10 +84,13 @@ static esp_err_t wifi_provision_start_ap(void)
         config.ap_password,
         sizeof(ap_config.ap.password) - 1);
 
-    if (strlen(config.ap_password) == 0)
-    {
-        ap_config.ap.authmode =
-            WIFI_AUTH_OPEN;
+    if (strlen(config.ap_password) == 0U) {
+        ap_config.ap.authmode = WIFI_AUTH_OPEN;
+    } else if (strlen(config.ap_password) < 8U) {
+        ESP_LOGE(TAG, "Refusing to start provisioning AP with a weak password");
+        esp_netif_destroy(s_ap_netif);
+        s_ap_netif = NULL;
+        return ESP_ERR_INVALID_ARG;
     }
 
     ESP_ERROR_CHECK(

@@ -1,37 +1,47 @@
 #include "post_manager.h"
 
-#include "post_lcd.h"
-#include "post_fan.h"
-#include "post_adc.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "post_adc.h"
+#include "post_fan.h"
+#include "post_lcd.h"
 
 static const char *TAG = "POST_MANAGER";
-
-static post_result_t s_last_result = {0};
+static post_result_t s_last_result;
 
 post_result_t post_run_all(void)
 {
     post_result_t result = {0};
+    const int64_t start_us = esp_timer_get_time();
 
     ESP_LOGI(TAG, "=== Running Power-On Self-Test ===");
-
-    /* LCD first -- if this fails, nothing downstream can be shown on
-     * screen, only logged. Still run the rest so a technician gets the
-     * full picture from the serial log even with a dead display. */
     result.lcd_ok = post_lcd_test();
-    ESP_LOGI(TAG, "LCD:  %s", result.lcd_ok ? "PASS" : "FAIL");
+    if (!result.lcd_ok) {
+        result.failure_mask |= POST_FAILURE_LCD;
+    }
+    ESP_LOGI(TAG, "LCD: %s", result.lcd_ok ? "PASS" : "FAIL");
 
     result.adc_ok = post_adc_test();
-    ESP_LOGI(TAG, "ADC:  %s", result.adc_ok ? "PASS" : "FAIL");
+    if (!result.adc_ok) {
+        result.failure_mask |= POST_FAILURE_ADC;
+    }
+    ESP_LOGI(TAG, "ADC: %s", result.adc_ok ? "PASS" : "FAIL");
 
-    result.fan_ok = post_fan_test();
-    ESP_LOGI(TAG, "Fan:  %s", result.fan_ok ? "PASS" : "FAIL");
+    result.fan_ok = (post_fan_test() == POST_FAN_RESULT_PASS);
+    if (!result.fan_ok) {
+        result.failure_mask |= POST_FAILURE_FAN;
+    }
+    ESP_LOGI(TAG, "Fan: %s", result.fan_ok ? "PASS" : "FAIL");
 
-    result.all_passed = result.lcd_ok && result.adc_ok && result.fan_ok;
-
-    ESP_LOGI(TAG, "=== POST %s ===", result.all_passed ? "PASSED" : "FAILED");
-
+    result.all_passed = result.failure_mask == 0U;
+    const int64_t elapsed_us = esp_timer_get_time() - start_us;
+    result.duration_ms = (elapsed_us > 0) ? (uint32_t)(elapsed_us / 1000) : 0U;
     s_last_result = result;
+
+    ESP_LOGI(TAG, "=== POST %s (failures=0x%02lx, %lums) ===",
+             result.all_passed ? "PASSED" : "FAILED",
+             (unsigned long)result.failure_mask,
+             (unsigned long)result.duration_ms);
     return result;
 }
 

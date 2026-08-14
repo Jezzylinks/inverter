@@ -1,14 +1,14 @@
 #include "security.h"
 
 #include <string.h>
+
 #include "esp_log.h"
-#include "esp_timer.h"
-#include "nvs.h"
-#include "nvs_flash.h"
-#include "mbedtls/sha256.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "mbedtls/sha256.h"
+#include "nvs.h"
 #include "system_state.h"
 
 static const char *TAG = "security";
@@ -17,310 +17,325 @@ extern system_state_t sys_state;
 #define NVS_KEY_HASH "sec_pin_hash"
 #define NVS_KEY_SALT "sec_pin_salt"
 #define NVS_KEY_FORCE_CHG "sec_force_chg"
+#define SALT_LEN 16U
+#define HASH_LEN 32U
 
-#define SALT_LEN 16
-#define HASH_LEN 32 // SHA-256 output
-
-// ---- internal state (RAM only, not persisted across reboot by design) ----
-static struct
-{
+typedef struct {
     SemaphoreHandle_t mutex;
     uint8_t attempts;
-    int64_t lockout_until_ms; // 0 = not locked out
+    int64_t lockout_until_ms;
     bool force_change;
     bool initialized;
-} s_sec;
+} security_runtime_t;
+
+static security_runtime_t s_sec;
 
 static int64_t now_ms(void)
 {
     return esp_timer_get_time() / 1000;
 }
 
+static void secure_zero(void *ptr, size_t len)
+{
+    volatile uint8_t *bytes = (volatile uint8_t *)ptr;
+    while (len-- > 0U) {
+        *bytes++ = 0U;
+    }
+}
+
+static bool pin_is_valid(const uint8_t pin[SECURITY_PIN_LEN])
+{
+    if (!pin) {
+        return false;
+    }
+    for (size_t i = 0; i < SECURITY_PIN_LEN; ++i) {
+        if (pin[i] > 9U) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static esp_err_t compute_hash(const uint8_t pin[SECURITY_PIN_LEN],
                               const uint8_t salt[SALT_LEN],
                               uint8_t out_hash[HASH_LEN])
 {
+    if (!pin_is_valid(pin) || !salt || !out_hash) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
-    if (mbedtls_sha256_starts(&ctx, 0) != 0)
-    { // 0 = SHA-256 (not 224)
-        mbedtls_sha256_free(&ctx);
-        return ESP_FAIL;
+    int result = mbedtls_sha256_starts(&ctx, 0);
+    if (result == 0) {
+        result = mbedtls_sha256_update(&ctx, salt, SALT_LEN);
     }
-    mbedtls_sha256_update(&ctx, salt, SALT_LEN);
-    mbedtls_sha256_update(&ctx, pin, SECURITY_PIN_LEN);
-    if (mbedtls_sha256_finish(&ctx, out_hash) != 0)
-    {
-        mbedtls_sha256_free(&ctx);
-        return ESP_FAIL;
+    if (result == 0) {
+        result = mbedtls_sha256_update(&ctx, pin, SECURITY_PIN_LEN);
+    }
+    if (result == 0) {
+        result = mbedtls_sha256_finish(&ctx, out_hash);
     }
     mbedtls_sha256_free(&ctx);
-    return ESP_OK;
+    return (result == 0) ? ESP_OK : ESP_FAIL;
 }
 
-static esp_err_t store_pin(const uint8_t pin[SECURITY_PIN_LEN])
+static bool secure_equal(const uint8_t *a, const uint8_t *b, size_t len)
 {
-    uint8_t salt[SALT_LEN];
-    esp_fill_random(salt, SALT_LEN);
+    uint8_t difference = 0U;
+    for (size_t i = 0; i < len; ++i) {
+        difference |= (uint8_t)(a[i] ^ b[i]);
+    }
+    return difference == 0U;
+}
 
-    uint8_t hash[HASH_LEN];
+static esp_err_t persist_pin(const uint8_t pin[SECURITY_PIN_LEN], bool force_change)
+{
+    if (!pin_is_valid(pin)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    uint8_t salt[SALT_LEN] = {0};
+    uint8_t hash[HASH_LEN] = {0};
+    esp_fill_random(salt, sizeof(salt));
     esp_err_t err = compute_hash(pin, salt, hash);
-    if (err != ESP_OK)
-    {
+    if (err != ESP_OK) {
+        secure_zero(salt, sizeof(salt));
+        secure_zero(hash, sizeof(hash));
         return err;
     }
 
-    nvs_handle_t h;
-    err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &h);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
-        return err;
+    nvs_handle_t handle = 0;
+    err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = nvs_set_blob(handle, NVS_KEY_HASH, hash, sizeof(hash));
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_blob(handle, NVS_KEY_SALT, salt, sizeof(salt));
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, NVS_KEY_FORCE_CHG, force_change ? 1U : 0U);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    if (handle) {
+        nvs_close(handle);
     }
 
-    err = nvs_set_blob(h, NVS_KEY_HASH, hash, HASH_LEN);
-    if (err == ESP_OK)
-    {
-        err = nvs_set_blob(h, NVS_KEY_SALT, salt, SALT_LEN);
-    }
-    if (err == ESP_OK)
-    {
-        err = nvs_commit(h);
-    }
-    nvs_close(h);
-
-    if (err != ESP_OK)
-    {
+    secure_zero(salt, sizeof(salt));
+    secure_zero(hash, sizeof(hash));
+    if (err != ESP_OK) {
         ESP_LOGE(TAG, "failed to persist PIN: %s", esp_err_to_name(err));
     }
     return err;
 }
 
-static esp_err_t set_force_change_flag(bool force)
+static void security_cleanup_failed_init(void)
 {
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &h);
-    if (err != ESP_OK)
-    {
-        return err;
+    if (s_sec.mutex) {
+        vSemaphoreDelete(s_sec.mutex);
     }
-    err = nvs_set_u8(h, NVS_KEY_FORCE_CHG, force ? 1 : 0);
-    if (err == ESP_OK)
-    {
-        err = nvs_commit(h);
-    }
-    nvs_close(h);
-    return err;
+    memset(&s_sec, 0, sizeof(s_sec));
 }
 
 esp_err_t security_init(void)
 {
-    if (s_sec.initialized)
-    {
+    if (s_sec.initialized) {
         return ESP_OK;
     }
 
+    memset(&s_sec, 0, sizeof(s_sec));
     s_sec.mutex = xSemaphoreCreateMutex();
-    if (s_sec.mutex == NULL)
-    {
-        ESP_LOGE(TAG, "failed to create mutex");
+    if (!s_sec.mutex) {
         return ESP_ERR_NO_MEM;
     }
-    s_sec.attempts = 0;
-    s_sec.lockout_until_ms = 0;
 
-    /* security_en is loaded by nvs_load_all() before this function runs.
-     * If security is disabled, mark initialized but skip PIN provisioning. */
-    if (!sys_state.security.enabled)
-    {
-        ESP_LOGI(TAG, "security disabled, skipping PIN init");
+    if (!sys_state.security.enabled) {
         s_sec.initialized = true;
         s_sec.force_change = false;
+        ESP_LOGW(TAG, "panel PIN security is disabled by configuration");
         return ESP_OK;
     }
 
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &h);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        security_cleanup_failed_init();
         return err;
     }
 
-    uint8_t hash[HASH_LEN];
-    size_t hash_len = sizeof(hash);
-    err = nvs_get_blob(h, NVS_KEY_HASH, hash, &hash_len);
-
-    if (err == ESP_ERR_NVS_NOT_FOUND)
-    {
-        // First boot: provision default PIN, force a change.
-        ESP_LOGW(TAG, "no PIN found, provisioning default PIN");
-        nvs_close(h);
-
+    uint8_t stored_hash[HASH_LEN] = {0};
+    uint8_t stored_salt[SALT_LEN] = {0};
+    size_t hash_len = sizeof(stored_hash);
+    size_t salt_len = sizeof(stored_salt);
+    err = nvs_get_blob(handle, NVS_KEY_HASH, stored_hash, &hash_len);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        nvs_close(handle);
         const uint8_t default_pin[SECURITY_PIN_LEN] = SECURITY_DEFAULT_PIN;
-        esp_err_t store_err = store_pin(default_pin);
-        if (store_err != ESP_OK)
-        {
-            return store_err;
+        err = persist_pin(default_pin, true);
+        if (err == ESP_OK) {
+            s_sec.force_change = true;
+            s_sec.initialized = true;
+            ESP_LOGW(TAG, "default PIN provisioned; change it before enabling remote control");
+        } else {
+            security_cleanup_failed_init();
         }
-        esp_err_t flag_err = set_force_change_flag(true);
-        if (flag_err != ESP_OK)
-        {
-            return flag_err;
-        }
-        s_sec.force_change = true;
-        s_sec.initialized = true;
-        return ESP_OK;
-    }
-    else if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "failed to read PIN hash: %s", esp_err_to_name(err));
-        nvs_close(h);
+        secure_zero(stored_hash, sizeof(stored_hash));
+        secure_zero(stored_salt, sizeof(stored_salt));
         return err;
     }
+    if (err == ESP_OK) {
+        err = nvs_get_blob(handle, NVS_KEY_SALT, stored_salt, &salt_len);
+    }
+    uint8_t force_change = 0U;
+    if (err == ESP_OK) {
+        const esp_err_t force_err = nvs_get_u8(handle, NVS_KEY_FORCE_CHG, &force_change);
+        if (force_err != ESP_OK && force_err != ESP_ERR_NVS_NOT_FOUND) {
+            err = force_err;
+        }
+    }
+    nvs_close(handle);
 
-    uint8_t force_chg_u8 = 0;
-    esp_err_t flag_err = nvs_get_u8(h, NVS_KEY_FORCE_CHG, &force_chg_u8);
-    // Missing key just means "not required" (older provisioning); not an error.
-    s_sec.force_change = (flag_err == ESP_OK) && (force_chg_u8 != 0);
+    if (err != ESP_OK || hash_len != HASH_LEN || salt_len != SALT_LEN) {
+        ESP_LOGE(TAG, "invalid persisted PIN material");
+        secure_zero(stored_hash, sizeof(stored_hash));
+        secure_zero(stored_salt, sizeof(stored_salt));
+        security_cleanup_failed_init();
+        return (err == ESP_OK) ? ESP_ERR_INVALID_SIZE : err;
+    }
 
-    nvs_close(h);
+    secure_zero(stored_hash, sizeof(stored_hash));
+    secure_zero(stored_salt, sizeof(stored_salt));
+    s_sec.force_change = force_change != 0U;
     s_sec.initialized = true;
-    ESP_LOGI(TAG, "security module initialized, force_change=%d", s_sec.force_change);
     return ESP_OK;
 }
 
 bool security_verify_pin(const uint8_t pin[SECURITY_PIN_LEN])
 {
-    if (!s_sec.initialized)
-    {
-        ESP_LOGE(TAG, "security_verify_pin called before security_init");
+    if (!s_sec.initialized || !pin_is_valid(pin)) {
         return false;
     }
+    if (!sys_state.security.enabled) {
+        return true;
+    }
 
-    xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
-
-    if (s_sec.lockout_until_ms != 0)
-    {
-        if (now_ms() < s_sec.lockout_until_ms)
-        {
-            xSemaphoreGive(s_sec.mutex);
-            return false; // locked out, do not consume an attempt
-        }
-        // lockout expired
+    if (xSemaphoreTake(s_sec.mutex, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    if (s_sec.lockout_until_ms != 0 && now_ms() < s_sec.lockout_until_ms) {
+        xSemaphoreGive(s_sec.mutex);
+        return false;
+    }
+    if (s_sec.lockout_until_ms != 0) {
         s_sec.lockout_until_ms = 0;
         s_sec.attempts = 0;
-    }
-
-    xSemaphoreGive(s_sec.mutex); // release before NVS I/O + hashing (not touching shared state)
-
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &h);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
-        return false;
-    }
-
-    uint8_t stored_hash[HASH_LEN];
-    uint8_t salt[SALT_LEN];
-    size_t hash_len = sizeof(stored_hash);
-    size_t salt_len = sizeof(salt);
-
-    err = nvs_get_blob(h, NVS_KEY_HASH, stored_hash, &hash_len);
-    if (err == ESP_OK)
-    {
-        err = nvs_get_blob(h, NVS_KEY_SALT, salt, &salt_len);
-    }
-    nvs_close(h);
-
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "failed to load PIN for verification: %s", esp_err_to_name(err));
-        return false;
-    }
-
-    uint8_t candidate_hash[HASH_LEN];
-    if (compute_hash(pin, salt, candidate_hash) != ESP_OK)
-    {
-        return false;
-    }
-
-    bool match = (memcmp(candidate_hash, stored_hash, HASH_LEN) == 0);
-
-    xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
-    if (match)
-    {
-        s_sec.attempts = 0;
-        s_sec.lockout_until_ms = 0;
-    }
-    else
-    {
-        s_sec.attempts++;
-        if (s_sec.attempts >= SECURITY_MAX_ATTEMPTS)
-        {
-            s_sec.lockout_until_ms = now_ms() + SECURITY_LOCKOUT_MS;
-            ESP_LOGW(TAG, "max PIN attempts reached, locking out for %d ms", SECURITY_LOCKOUT_MS);
-        }
     }
     xSemaphoreGive(s_sec.mutex);
 
+    uint8_t stored_hash[HASH_LEN] = {0};
+    uint8_t salt[SALT_LEN] = {0};
+    uint8_t candidate_hash[HASH_LEN] = {0};
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
+    if (err == ESP_OK) {
+        size_t hash_len = sizeof(stored_hash);
+        size_t salt_len = sizeof(salt);
+        err = nvs_get_blob(handle, NVS_KEY_HASH, stored_hash, &hash_len);
+        if (err == ESP_OK) {
+            err = nvs_get_blob(handle, NVS_KEY_SALT, salt, &salt_len);
+        }
+        if (err == ESP_OK && (hash_len != HASH_LEN || salt_len != SALT_LEN)) {
+            err = ESP_ERR_INVALID_SIZE;
+        }
+        nvs_close(handle);
+    }
+    if (err == ESP_OK) {
+        err = compute_hash(pin, salt, candidate_hash);
+    }
+
+    const bool match = (err == ESP_OK) && secure_equal(candidate_hash, stored_hash, HASH_LEN);
+    secure_zero(stored_hash, sizeof(stored_hash));
+    secure_zero(salt, sizeof(salt));
+    secure_zero(candidate_hash, sizeof(candidate_hash));
+
+    if (xSemaphoreTake(s_sec.mutex, portMAX_DELAY) != pdTRUE) {
+        return false;
+    }
+    if (match) {
+        s_sec.attempts = 0;
+        s_sec.lockout_until_ms = 0;
+    } else if (s_sec.attempts < UINT8_MAX) {
+        s_sec.attempts++;
+        if (s_sec.attempts >= SECURITY_MAX_ATTEMPTS) {
+            s_sec.lockout_until_ms = now_ms() + SECURITY_LOCKOUT_MS;
+            ESP_LOGW(TAG, "PIN lockout active for %d ms", SECURITY_LOCKOUT_MS);
+        }
+    }
+    xSemaphoreGive(s_sec.mutex);
     return match;
 }
 
 esp_err_t security_set_pin(const uint8_t new_pin[SECURITY_PIN_LEN])
 {
-    esp_err_t err = store_pin(new_pin);
-    if (err != ESP_OK)
-    {
+    if (!s_sec.initialized || !pin_is_valid(new_pin)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const esp_err_t err = persist_pin(new_pin, false);
+    if (err != ESP_OK) {
         return err;
     }
-    err = set_force_change_flag(false);
-    if (err != ESP_OK)
-    {
-        return err;
+    if (xSemaphoreTake(s_sec.mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
     }
-
-    xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
     s_sec.force_change = false;
     s_sec.attempts = 0;
     s_sec.lockout_until_ms = 0;
     xSemaphoreGive(s_sec.mutex);
-
     return ESP_OK;
 }
 
 bool security_is_locked_out(void)
 {
+    if (!s_sec.initialized || !s_sec.mutex) {
+        return false;
+    }
     xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
-    bool locked = (s_sec.lockout_until_ms != 0) && (now_ms() < s_sec.lockout_until_ms);
+    const bool locked = s_sec.lockout_until_ms != 0 && now_ms() < s_sec.lockout_until_ms;
     xSemaphoreGive(s_sec.mutex);
     return locked;
 }
 
 int64_t security_lockout_remaining_ms(void)
 {
-    xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
-    int64_t remaining = 0;
-    if (s_sec.lockout_until_ms != 0)
-    {
-        int64_t delta = s_sec.lockout_until_ms - now_ms();
-        remaining = (delta > 0) ? delta : 0;
+    if (!s_sec.initialized || !s_sec.mutex) {
+        return 0;
     }
+    xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
+    const int64_t remaining = (s_sec.lockout_until_ms > now_ms())
+                                  ? (s_sec.lockout_until_ms - now_ms())
+                                  : 0;
     xSemaphoreGive(s_sec.mutex);
     return remaining;
 }
 
 bool security_pin_change_required(void)
 {
+    if (!s_sec.initialized || !s_sec.mutex) {
+        return false;
+    }
     xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
-    bool force = s_sec.force_change;
+    const bool required = s_sec.force_change;
     xSemaphoreGive(s_sec.mutex);
-    return force;
+    return required;
 }
 
 void security_reset_attempts(void)
 {
+    if (!s_sec.initialized || !s_sec.mutex) {
+        return;
+    }
     xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
     s_sec.attempts = 0;
     s_sec.lockout_until_ms = 0;

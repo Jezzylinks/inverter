@@ -203,25 +203,16 @@ void wifi_event_handler(void *arg,
 
         case WIFI_EVENT_STA_START:
         {
-            xSemaphoreTake(
-                s_mutex,
-                portMAX_DELAY);
-
-            wifi_set_state(WIFI_STATE_CONNECTING);
-
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
             s_status.connected = false;
-
             s_status.got_ip = false;
-
             xSemaphoreGive(s_mutex);
+            wifi_set_state(WIFI_STATE_CONNECTING);
 
             ESP_LOGI(TAG,
                      "WiFi started, connecting...");
 
             esp_wifi_connect();
-
-            wifi_notify_status_callbacks();
-
             break;
         }
 
@@ -230,25 +221,16 @@ void wifi_event_handler(void *arg,
             wifi_event_sta_connected_t *conn =
                 (wifi_event_sta_connected_t *)event_data;
 
-            xSemaphoreTake(
-                s_mutex,
-                portMAX_DELAY);
-
-            wifi_set_state(WIFI_STATE_CONNECTING);
-
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
             s_status.connected = true;
-
             s_status.retry_count = 0;
-
             xSemaphoreGive(s_mutex);
+            wifi_set_state(WIFI_STATE_CONNECTING);
 
             ESP_LOGI(TAG,
                      "Associated with AP (channel %d, authmode %d)",
                      conn->channel,
                      conn->authmode);
-
-            wifi_notify_status_callbacks();
-
             break;
         }
 
@@ -260,8 +242,6 @@ void wifi_event_handler(void *arg,
             xSemaphoreTake(
                 s_mutex,
                 portMAX_DELAY);
-
-            wifi_set_state(WIFI_STATE_DISCONNECTED);
 
             s_status.connected = false;
 
@@ -288,13 +268,8 @@ void wifi_event_handler(void *arg,
                 (s_status.retry_count <
                  s_retry_limit);
 
-            if (!retry)
-            {
-
-                wifi_set_state(WIFI_STATE_FAILED);
-            }
-
             xSemaphoreGive(s_mutex);
+            wifi_set_state(retry ? WIFI_STATE_DISCONNECTED : WIFI_STATE_FAILED);
 
             ESP_LOGW(TAG,
                      "Disconnected reason=%d retry=%d/%d",
@@ -318,23 +293,19 @@ void wifi_event_handler(void *arg,
                 ESP_LOGE(TAG,
                          "WiFi connection failed");
             }
-
-            wifi_notify_status_callbacks();
-
             break;
         }
 
         case WIFI_EVENT_STA_STOP:
         {
             xSemaphoreTake(s_mutex, portMAX_DELAY);
-            wifi_set_state(WIFI_STATE_IDLE);
             s_status.connected = false;
             s_status.got_ip = false;
             s_status.internet_available = false;
             xSemaphoreGive(s_mutex);
+            wifi_set_state(WIFI_STATE_IDLE);
 
             ESP_LOGI(TAG, "WiFi STA stopped");
-            wifi_notify_status_callbacks();
             break;
         }
 
@@ -391,8 +362,6 @@ void wifi_event_handler(void *arg,
                 s_mutex,
                 portMAX_DELAY);
 
-            wifi_set_state(WIFI_STATE_CONNECTED);
-
             s_status.connected = true;
 
             s_status.got_ip = true;
@@ -412,13 +381,12 @@ void wifi_event_handler(void *arg,
                 event->ip_info.netmask;
 
             xSemaphoreGive(s_mutex);
+            wifi_set_state(WIFI_STATE_CONNECTED);
 
             ESP_LOGI(TAG,
                      "Got IP: " IPSTR,
                      IP2STR(
                          &event->ip_info.ip));
-
-            wifi_notify_status_callbacks();
 
             break;
         }
@@ -435,15 +403,11 @@ void wifi_event_handler(void *arg,
 
             s_status.internet_available = false;
 
-            wifi_set_state(WIFI_STATE_DISCONNECTED);
-
             xSemaphoreGive(s_mutex);
+            wifi_set_state(WIFI_STATE_DISCONNECTED);
 
             ESP_LOGW(TAG,
                      "Lost IP");
-
-            wifi_notify_status_callbacks();
-
             break;
         }
 

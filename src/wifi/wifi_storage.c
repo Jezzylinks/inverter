@@ -4,8 +4,12 @@
  */
 
 #include "wifi_storage.h"
+#include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
+#include "esp_random.h"
+#include "esp_mac.h"
+#include "esp_system.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "wifi_config.h"
@@ -27,6 +31,31 @@
 #define WIFI_KEY_PASSWORD WIFI_NVS_KEY_PASSWORD
 
 static const char *TAG = "WIFI_STORAGE";
+
+void wifi_storage_set_default_network_config(wifi_network_config_t *config)
+{
+    if (!config) {
+        return;
+    }
+    memset(config, 0, sizeof(*config));
+    config->mode = WIFI_MODE_APSTA;
+    config->auto_reconnect = true;
+    config->reconnect_interval_ms = WIFI_RECONNECT_DELAY_MS;
+    config->dhcp = true;
+    config->ap_channel = WIFI_PROVISION_CHANNEL;
+    config->ap_max_connection = WIFI_PROVISION_MAX_CONN;
+    config->ap_authmode = WIFI_AUTH_WPA2_PSK;
+    strncpy(config->ap_ssid, WIFI_PROVISION_AP_SSID, sizeof(config->ap_ssid) - 1U);
+
+    if (WIFI_PROVISION_AP_PASSWORD[0] != '\0') {
+        strncpy(config->ap_password, WIFI_PROVISION_AP_PASSWORD,
+                sizeof(config->ap_password) - 1U);
+    } else {
+        const uint32_t nonce = esp_random();
+        snprintf(config->ap_password, sizeof(config->ap_password),
+                 "INV-%08lX", (unsigned long)nonce);
+    }
+}
 
 /*==========================================================
  *
@@ -102,8 +131,13 @@ esp_err_t wifi_storage_save_credentials(
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (strlen(credentials->ssid) == 0)
-    {
+    if (strnlen(credentials->ssid, sizeof(credentials->ssid)) == 0U ||
+        strnlen(credentials->ssid, sizeof(credentials->ssid)) >= sizeof(credentials->ssid) ||
+        strnlen(credentials->password, sizeof(credentials->password)) >= sizeof(credentials->password)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const size_t password_len = strlen(credentials->password);
+    if (password_len > 0U && password_len < 8U) {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -205,13 +239,22 @@ esp_err_t wifi_storage_load_credentials(
         err = ESP_OK;
     }
 
-    if (err != ESP_OK)
-    {
+    if (err != ESP_OK) {
         return err;
+    }
+    if (strnlen(credentials->ssid, sizeof(credentials->ssid)) == 0U ||
+        strnlen(credentials->ssid, sizeof(credentials->ssid)) >= sizeof(credentials->ssid) ||
+        strnlen(credentials->password, sizeof(credentials->password)) >= sizeof(credentials->password)) {
+        memset(credentials, 0, sizeof(*credentials));
+        return ESP_ERR_INVALID_SIZE;
+    }
+    const size_t loaded_password_len = strlen(credentials->password);
+    if (loaded_password_len > 0U && loaded_password_len < 8U) {
+        memset(credentials, 0, sizeof(*credentials));
+        return ESP_ERR_INVALID_ARG;
     }
 
     ESP_LOGI(TAG, "Credentials loaded");
-
     return ESP_OK;
 }
 
@@ -557,9 +600,7 @@ esp_err_t wifi_storage_load_network_config(
         return ESP_ERR_INVALID_ARG;
     }
 
-    memset(config,
-           0,
-           sizeof(*config));
+    wifi_storage_set_default_network_config(config);
 
     nvs_handle_t handle;
 
@@ -632,21 +673,26 @@ esp_err_t wifi_storage_load_network_config(
         return err;
     }
 
-    size_t size = sizeof(config->ap_ssid);
+    bool defaults_used = false;
+    char stored_ap_ssid[sizeof(config->ap_ssid)] = {0};
+    size_t size = sizeof(stored_ap_ssid);
+    if (nvs_get_str(handle, WIFI_KEY_AP_SSID, stored_ap_ssid, &size) == ESP_OK &&
+        strnlen(stored_ap_ssid, sizeof(stored_ap_ssid)) < sizeof(stored_ap_ssid) &&
+        stored_ap_ssid[0] != '\0') {
+        strncpy(config->ap_ssid, stored_ap_ssid, sizeof(config->ap_ssid) - 1U);
+    } else {
+        defaults_used = true;
+    }
 
-    nvs_get_str(
-        handle,
-        WIFI_KEY_AP_SSID,
-        config->ap_ssid,
-        &size);
-
-    size = sizeof(config->ap_password);
-
-    nvs_get_str(
-        handle,
-        WIFI_KEY_AP_PASS,
-        config->ap_password,
-        &size);
+    char stored_ap_password[sizeof(config->ap_password)] = {0};
+    size = sizeof(stored_ap_password);
+    if (nvs_get_str(handle, WIFI_KEY_AP_PASS, stored_ap_password, &size) == ESP_OK &&
+        strnlen(stored_ap_password, sizeof(stored_ap_password)) < sizeof(stored_ap_password) &&
+        strlen(stored_ap_password) >= 8U) {
+        strncpy(config->ap_password, stored_ap_password, sizeof(config->ap_password) - 1U);
+    } else {
+        defaults_used = true;
+    }
 
     if (nvs_get_u8(handle, WIFI_KEY_AP_CHANNEL, &value) == ESP_OK)
     {
@@ -664,7 +710,13 @@ esp_err_t wifi_storage_load_network_config(
     }
 
     nvs_close(handle);
-
+    if (defaults_used) {
+        const esp_err_t save_err = wifi_storage_save_network_config(config);
+        if (save_err != ESP_OK) {
+            ESP_LOGW(TAG, "Could not persist generated AP defaults: %s",
+                     esp_err_to_name(save_err));
+        }
+    }
     return ESP_OK;
 }
 

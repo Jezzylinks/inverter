@@ -18,19 +18,22 @@
 #include "wifi/wifi_monitor.h"
 #include "wifi/wifi_controller.h"
 #include "wifi/wifi_config.h"
+#include "security/security.h"
+#include "system_state.h"
 
 static const char *TAG = "JSON_API";
 
 static httpd_handle_t s_server = NULL;
+extern system_state_t sys_state;
 
 /*----------------------------------------------------------
  * CORS Headers
  *---------------------------------------------------------*/
 static void add_cors_headers(httpd_req_t *req)
 {
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "http://192.168.4.1");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type, X-Inverter-PIN");
     httpd_resp_set_type(req, "application/json");
 }
 
@@ -56,11 +59,48 @@ static esp_err_t send_json(httpd_req_t *req, cJSON *root, int status_code)
     return ESP_OK;
 }
 
+static esp_err_t api_require_pin(httpd_req_t *req)
+{
+    if (!req || !sys_state.security.enabled || req->method == HTTP_OPTIONS) {
+        return ESP_OK;
+    }
+    const size_t header_len = httpd_req_get_hdr_value_len(req, "X-Inverter-PIN");
+    if (header_len != SECURITY_PIN_LEN) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "PIN required");
+        return send_json(req, error, 401);
+    }
+    char pin_text[SECURITY_PIN_LEN + 1U] = {0};
+    if (httpd_req_get_hdr_value_str(req, "X-Inverter-PIN", pin_text,
+                                    sizeof(pin_text)) != ESP_OK) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Invalid PIN header");
+        return send_json(req, error, 401);
+    }
+    uint8_t pin[SECURITY_PIN_LEN] = {0};
+    for (size_t i = 0; i < SECURITY_PIN_LEN; ++i) {
+        if (pin_text[i] < '0' || pin_text[i] > '9') {
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "Invalid PIN");
+            return send_json(req, error, 401);
+        }
+        pin[i] = (uint8_t)(pin_text[i] - '0');
+    }
+    if (!security_verify_pin(pin)) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Unauthorized");
+        return send_json(req, error, 401);
+    }
+    return ESP_OK;
+}
+
 /*----------------------------------------------------------
  * GET /api/v1/status
  *---------------------------------------------------------*/
 static esp_err_t api_status_handler(httpd_req_t *req)
 {
+    esp_err_t auth_err = api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
     cJSON *root = cJSON_CreateObject();
 
     const wifi_status_t *status = wifi_manager_get_status();
@@ -139,6 +179,8 @@ static esp_err_t api_status_handler(httpd_req_t *req)
  *---------------------------------------------------------*/
 static esp_err_t api_scan_handler(httpd_req_t *req)
 {
+    esp_err_t auth_err = api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
     cJSON *root = cJSON_CreateObject();
     cJSON *networks = cJSON_CreateArray();
 
@@ -190,6 +232,9 @@ static esp_err_t api_connect_handler(httpd_req_t *req)
         httpd_resp_send(req, NULL, 0);
         return ESP_OK;
     }
+
+    esp_err_t auth_err = api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
 
     if (req->method != HTTP_POST)
     {
@@ -302,6 +347,8 @@ static esp_err_t api_disconnect_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
+    esp_err_t auth_err = api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
     esp_err_t err = wifi_manager_disconnect();
 
     cJSON *resp = cJSON_CreateObject();
@@ -323,6 +370,9 @@ static esp_err_t api_reset_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
+    esp_err_t auth_err = api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
+
     if (req->method != HTTP_POST)
     {
         cJSON *err = cJSON_CreateObject();
@@ -330,6 +380,7 @@ static esp_err_t api_reset_handler(httpd_req_t *req)
         return send_json(req, err, 405);
     }
 
+    wifi_controller_stop();
     esp_err_t err = wifi_storage_erase_credentials();
 
     cJSON *resp = cJSON_CreateObject();
@@ -344,10 +395,17 @@ static esp_err_t api_reset_handler(httpd_req_t *req)
  *---------------------------------------------------------*/
 static esp_err_t api_config_handler(httpd_req_t *req)
 {
+    esp_err_t auth_err = api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
     wifi_manager_config_t config;
     memset(&config, 0, sizeof(config));
 
     esp_err_t err = wifi_manager_get_config(&config);
+    if (err != ESP_OK) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", esp_err_to_name(err));
+        return send_json(req, error, 500);
+    }
 
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "dhcp", config.dhcp);

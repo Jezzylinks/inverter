@@ -77,10 +77,12 @@
 #include "post/post_manager.h"
 #include "utility/quiet_hours.h"
 #include "wifi/wifi_security.h"
+#include "wifi/wifi_controller.h"
+#include "wifi/wifi_scan.h"
+#include "wifi/wifi_storage.h"
+#include "ota/ota_service.h"
 
 /* ── All original #defines─────────────────────────────── */
-#define WIFI_SSID "johnson"
-#define WIFI_PASS "internet"
 #define WEATHER_API_KEY "YOUR_OPEN_WEATHER_API_KEY"
 #define CITY_NAME "Lagos"
 #define WEATHER_CHECK_INTERNAL_MS 60000
@@ -169,7 +171,7 @@
 #define NVS_VOLTAGE_KEY_PREFIX "voltage_"
 #define BATTERY_VOLTAGE_SYSTEM_KEY "inv_bat_volt"
 #define BATTERY_CAPACITY_AH "bat_capacity_ah"
-#define DEFAULT_BATTERY_PROFILE BATTERY_CHEMISTRY_LITHIUM_ION
+#define DEFAULT_BATTERY_PROFILE BATTERY_LITHIUM_ION
 #define FREQUENCY_SETTING_KEY "frequency"
 #define R1_DIVIDER 15000.0f
 #define R2_DIVIDER 4700.0f
@@ -744,31 +746,22 @@ bool battery_load_profile(battery_profile_t *profile_out)
 }
 
 void battery_system_init(battery_profile_t *profile)
-
-{ // Initialize battery management system with the provided profile
-    printf("Initializing battery system with profile: %s\n", profile->name_prefix);
-    battery_profile_t current_battery_profile;
-
-    // User selects: LiFePO4, 48V system, 200Ah capacity
-    battery_type_t selected_type = BATTERY_LIFEPO4;
-    voltage_system_t selected_voltage = VOLTAGE_SYSTEM_12V;
-    uint16_t selected_capacity = 200;
-
-    // Save configuration to NVS
-    if (battery_save_configuration(selected_type, selected_voltage, selected_capacity))
-    {
-        printf("Configuration saved to NVS\n");
+{
+    if (!profile) {
+        return;
     }
 
-    // Generate and display the profile
-    if (battery_generate_profile(selected_type, selected_voltage, selected_capacity, &current_battery_profile))
-    {
-        battery_print_profile(&current_battery_profile);
+    /* Never overwrite user configuration during boot. Generate a safe,
+     * documented fallback only when no valid profile has been loaded yet. */
+    if (profile->capacity_ah <= 0.0f || profile->nominal_voltage == 0) {
+        if (!battery_generate_profile(DEFAULT_BATTERY_PROFILE,
+                                       VOLTAGE_SYSTEM_12V,
+                                       200,
+                                       profile)) {
+            memset(profile, 0, sizeof(*profile));
+        }
     }
-    else
-    {
-        printf("Failed to generate battery profile!\n");
-    }
+    ESP_LOGI("BATTERY", "Battery profile ready: %s", profile->name_prefix);
 }
 
 void battery_profile_load_from_nvs(battery_profile_t *profile)
@@ -1145,7 +1138,6 @@ static void post_inverter_fault_event(void);
 static void post_inverter_success_event(void);
 static void post_show_result_and_notify(post_result_t result);
 static void post_factory_reset_event(bool success);
-static void post_wifi_event(bool connected);
 static void post_boot_complete_event(void);
 static void post_button_click_event(void);
 void enter_diagnostic_mode(void);
@@ -1733,7 +1725,7 @@ static nvs_setting_t g_settings[] = {
     {"temp_alarm", &sys_state.settings.temperature_alarm, sizeof(int32_t), 70.0f, true, "Temp Alarm"},
     {"frequency_range", &sys_state.settings.frequency_range, sizeof(int32_t), 50, false, "Freq Range"},
     {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300, false, "Sys Timeout"},
-    {"security_en", &sys_state.security.enabled, sizeof(uint8_t), false, false, "Security Enable"},
+    {"security_en", &sys_state.security.enabled, sizeof(uint8_t), 1, false, "Security Enable"},
 };
 
 #define NVS_SETTINGS_COUNT (sizeof(g_settings) / sizeof(g_settings[0]))
@@ -3577,21 +3569,10 @@ static uint16_t ap_count = 0;
  */
 static void wifi_init_sta(void)
 {
-    static bool initialized = false;
-    if (initialized)
-        return;
-
-    ESP_ERROR_CHECK(nvs_flash_init());
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    initialized = true;
+    /* The Wi-Fi controller owns netif, event loop, and esp_wifi lifecycle. */
+    if (wifi_controller_get_state() == WIFI_CONTROLLER_IDLE) {
+        ESP_LOGW(WIFI_TAG, "Wi-Fi controller is idle; scan may be unavailable");
+    }
 }
 
 /**
@@ -3602,21 +3583,14 @@ void start_wifi_scan(void)
     ESP_LOGI(WIFI_TAG, "Starting WiFi Scan...");
 
     wifi_init_sta();
-
-    wifi_scan_config_t scan_config = {
-        .ssid = NULL,
-        .bssid = NULL,
-        .channel = 0,
-        .show_hidden = true,
-        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
-    };
-
-    ESP_ERROR_CHECK(esp_wifi_scan_start(&scan_config, true)); // Block until complete
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
-    if (ap_count > MAX_AP_NUM)
-        ap_count = MAX_AP_NUM;
-
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&ap_count, ap_records));
+    ap_count = MAX_AP_NUM;
+    const esp_err_t scan_err = wifi_scan_start_records(ap_records, &ap_count);
+    if (scan_err != ESP_OK) {
+        ap_count = 0;
+        ESP_LOGE(WIFI_TAG, "Wi-Fi scan unavailable: %s", esp_err_to_name(scan_err));
+        lcd_flash_info("WiFi Scan Error ", "Try again later ", 1200);
+        return;
+    }
 
     ESP_LOGI(WIFI_TAG, "Found %d access points", ap_count);
     for (int i = 0; i < ap_count; i++)
@@ -3710,58 +3684,48 @@ void lcd_show_wifi_scan_screen(void)
     }
 }
 
-#define WIFI_CONNECTED_BIT BIT0
-#define WIFI_FAIL_BIT BIT1
-
-static EventGroupHandle_t s_wifi_event_group;
-
-#define MAX_RETRY 5
-
 /* ── start_wifi_connection() ─────────────────────────────────────────────── */
 void start_wifi_connection(void)
 {
-    if (!sys_state.wifi.enabled)
-    {
+    if (!sys_state.wifi.enabled) {
         lcd_show_wifi_result(false, true, false, "Wi-Fi Disabled  ");
-        ESP_LOGW(WIFI_TAG, "WiFi disabled");
         return;
     }
 
-    lcd_show_wifi_connecting(sys_state.wifi.ssid);
-
-    /* ... all WiFi init code identical to original ... */
-
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-                                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                           pdFALSE, pdFALSE,
-                                           pdMS_TO_TICKS(15000));
-
-    if (bits & WIFI_CONNECTED_BIT)
-    {
-        lcd_show_wifi_result(true, false, false, sys_state.wifi.ssid);
-        post_wifi_event(true);
-        quiet_hours_request_sync();
-    }
-    else if (bits & WIFI_FAIL_BIT)
-    {
-        lcd_show_wifi_result(false, true, false, sys_state.wifi.ssid);
-        post_wifi_event(false);
-    }
-    else
-    {
-        lcd_show_wifi_result(false, false, true, sys_state.wifi.ssid);
-        post_wifi_event(false);
+    if (sys_state.wifi.ssid[0] != '\0') {
+        wifi_credentials_t credentials = {0};
+        strncpy(credentials.ssid, sys_state.wifi.ssid, sizeof(credentials.ssid) - 1U);
+        strncpy(credentials.password, sys_state.wifi.password, sizeof(credentials.password) - 1U);
+        if (credentials.password[0] != '\0') {
+            const esp_err_t save_err = wifi_storage_save_credentials(&credentials);
+            if (save_err != ESP_OK) {
+                ESP_LOGW(WIFI_TAG, "Could not save selected Wi-Fi credentials: %s",
+                         esp_err_to_name(save_err));
+            }
+        }
     }
 
-    vEventGroupDelete(s_wifi_event_group);
+    lcd_show_wifi_connecting(sys_state.wifi.ssid[0] ? sys_state.wifi.ssid : "Connecting...");
+    esp_err_t err = wifi_controller_start();
+    if (err == ESP_ERR_INVALID_STATE || err == ESP_ERR_WIFI_STATE) {
+        err = wifi_controller_reconnect();
+    }
+    if (err != ESP_OK) {
+        lcd_show_wifi_result(false, true, false, "Connection Failed");
+        ESP_LOGW(WIFI_TAG, "Wi-Fi connection request failed: %s", esp_err_to_name(err));
+    } else {
+        lcd_show_wifi_result(false, false, true, "Connecting...   ");
+    }
 }
 
 /* ── stop_wifi_connection() ──────────────────────────────────────────────── */
 void stop_wifi_connection(void)
 {
-    esp_wifi_stop();
-    lcd_show_wifi_result(false, false, false, "Disconnected");
-    ESP_LOGI(WIFI_TAG, "WiFi stopped");
+    const esp_err_t err = wifi_controller_stop();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(WIFI_TAG, "Wi-Fi stop failed: %s", esp_err_to_name(err));
+    }
+    lcd_show_wifi_result(false, false, false, "Disconnected    ");
 }
 
 void reload_default_settings(void)
@@ -3774,9 +3738,8 @@ void reload_default_settings(void)
     sys_state.system_timeout = 60;
 
     sys_state.wifi.enabled = false;
-
-    snprintf(sys_state.wifi.ssid, sizeof(sys_state.wifi.ssid), "%s", "default_ssid");
-    snprintf(sys_state.wifi.password, sizeof(sys_state.wifi.password), "%s", "password123");
+    sys_state.wifi.ssid[0] = '\0';
+    sys_state.wifi.password[0] = '\0';
 
     ESP_LOGI(TAG, "Default configuration loaded into RAM.");
 }
@@ -5790,17 +5753,6 @@ static void post_factory_reset_event(bool success)
     system_event_post(&evt);
 }
 
-static void post_wifi_event(bool connected)
-{
-    system_event_t evt = {0};
-    evt.category = EVENT_CATEGORY_WIFI;
-    evt.action = connected ? EVENT_ACTION_SUCCESS : EVENT_ACTION_ERROR;
-    evt.source = EVENT_SOURCE_WIFI;
-    evt.priority = EVENT_PRIORITY_NORMAL;
-    evt.timestamp = xTaskGetTickCount();
-    system_event_post(&evt);
-}
-
 static void post_boot_complete_event(void)
 {
     system_event_t evt = {0};
@@ -5917,7 +5869,21 @@ static void apply_frequency(float v) { inverter_set_output_frequency(v); }
 static void apply_current_limit(float v) { inverter_set_current_limit(v); }
 static void apply_temperature_limit(float v) { thermal_protection_set_limit(v); }
 static void apply_battery_cutoff(float v) { battery_monitor_set_cutoff(v); }
-static void apply_wifi(float v) { sys_state.wifi.enabled = (bool)v; }
+static void apply_wifi(float v)
+{
+    sys_state.wifi.enabled = (v != 0.0f);
+    if (sys_state.wifi.enabled) {
+        const esp_err_t err = wifi_controller_start();
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(WIFI_TAG, "Failed to enable Wi-Fi: %s", esp_err_to_name(err));
+        }
+    } else {
+        const esp_err_t err = wifi_controller_stop();
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(WIFI_TAG, "Failed to disable Wi-Fi: %s", esp_err_to_name(err));
+        }
+    }
+}
 static void apply_bluetooth(float v) { sys_state.bluetooth.enabled = (bool)v; } /* adjust to your actual field */
 static void apply_auto_shutdown(float v) { sys_state.display.auto_shutdown_enabled = (uint8_t)v; }
 static void apply_scroll_enable(float v) { sys_state.display.scroll_enabled = (uint8_t)v; }
@@ -7028,8 +6994,6 @@ void handle_value_confirmation(void)
         printf("%s set to: %s\n", ctx->label, state ? "ON" : "OFF");
 
         update_system_parameter(ctx, (float)state);
-        if (strcmp(ctx->label, "WiFi") == 0)
-            start_wifi_scan();
         break;
     }
 
@@ -8346,31 +8310,33 @@ void save_frequency_to_nvs(int frequency)
 // =============== INITIALIZE MENU SYSTEM ===============
 void init_menu_system()
 {
-    // Set the initial menu state to the main menu
+    /* Keep controls inhibited until settings, battery profile, and security
+     * policy have been loaded and validated. */
     sys_state.menu_state = MENU_NONE;
-    sys_state.system_ready = true;
+    sys_state.system_ready = false;
     sys_state.inverter.inverter_state = INVERTER_OFF;
     sys_state.menu_selection = 0;
     sys_state.pending_confirmation = false;
-    sys_state.security.enabled = false;
     // lcd_display_state
     sys_state.lcd_state.blink_state = false;
     sys_state.lcd_boot_state.boot_screen_timestamp_ms = 0;
     sys_state.inverter.battery.battery_last_update_tick = 0;
     // Clear any previous menu editing context
-    memset(&menu_edit, 0, sizeof(menu_edit)); // Zero out edit state
-    sys_state.system_ready = true;
+    memset(&menu_edit, 0, sizeof(menu_edit));
     battery_profile_t *profile = &sys_state.battery_profile;
     battery_system_init(profile);
-    battery_profile_load_from_nvs(profile);
     printf("Loading battery profile from NVS...\n");
-    if (!load_settings())
-    {
-        ESP_LOGW(TAG_SYS, "Failed to load settings from NVS, applying defaults");
-        sys_state.battery_profile = battery_profiles[BATTERY_CHEMISTRY_LITHIUM_ION];
+    if (!load_settings()) {
+        ESP_LOGW(TAG_SYS, "Settings were missing or corrected; retaining validated defaults");
+        if (profile->capacity_ah <= 0.0f || profile->nominal_voltage == 0) {
+            battery_generate_profile(DEFAULT_BATTERY_PROFILE,
+                                      VOLTAGE_SYSTEM_12V,
+                                      200,
+                                      profile);
+        }
     }
     quiet_hours_restore_manual_time();
-    // Program reached here indication
+    sys_state.system_ready = true;
     printf("System initialization complete. Ready for operation.\n");
 }
 
@@ -8897,9 +8863,8 @@ void show_system_info(void)
 {
     char l[17], v[17];
     snprintf(l, 17, "Firmware:%-7s", FIRMWARE_VERSION);
-    battery_profile_t profile = battery_profiles[sys_state.battery_profile.chemistry];
     snprintf(v, 17, "%s %dV  ",
-             profile.name_prefix,
+             sys_state.battery_profile.name_prefix,
              (int)sys_state.battery_profile.nominal_voltage);
     lcd_show_monitor_detail(l, v);
 }
@@ -9418,21 +9383,41 @@ void app_main(void)
         ESP_LOGE(APP_TAG, "Failed to create change_pin_mutex");
     }
 
-    /* ── NEW: initialise render state ─────────────────────────────────── */
+    /* Initialize rendering before any subsystem publishes display state. */
     lcd_writer_init();
 
-    init_hardware();
+    /* NVS and system defaults must be ready before loading profiles or security. */
     nvs_init(false);
-    security_init();
     init_system_state();
     init_menu_system();
+    if (security_init() != ESP_OK) {
+        ESP_LOGE(APP_TAG, "FATAL: security initialization failed; keeping controls disabled");
+        sys_state.system_ready = false;
+        return;
+    }
     fault_log_init();
     nvs_print_stats();
-    if (nvs_is_initialized())
+    if (nvs_is_initialized()) {
         ESP_LOGI("MAIN", "NVS ready");
+    }
 
-    // Initialize Wi-Fi security
-    ESP_ERROR_CHECK(wifi_security_init());
+    if (wifi_security_init() != ESP_OK) {
+        ESP_LOGW(APP_TAG, "Wi-Fi security storage unavailable; remote services remain disabled");
+    }
+    if (wifi_controller_init() != ESP_OK) {
+        ESP_LOGW(APP_TAG, "Wi-Fi controller unavailable; continuing offline");
+    } else if (sys_state.wifi.enabled) {
+        const esp_err_t wifi_ret = wifi_controller_start();
+        if (wifi_ret != ESP_OK) {
+            ESP_LOGW(APP_TAG, "Wi-Fi start failed: %s", esp_err_to_name(wifi_ret));
+        }
+    }
+    if (ota_service_init() != ESP_OK) {
+        ESP_LOGW(APP_TAG, "OTA service unavailable");
+    }
+
+    /* Hardware-dependent battery/LCD peripherals use the validated profile. */
+    init_hardware();
     restore_from_deep_sleep();
     log_all_error_flags(sys_state.error.error_flags);
     esp_err_t ret = initialize_button_system();
