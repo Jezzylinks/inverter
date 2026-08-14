@@ -19,6 +19,7 @@ extern "C"
 
 #include "esp_err.h"
 #include "esp_wifi.h"
+#include "wifi_config.h"
 
 #define WIFI_MAX_SSID_LEN 32
 #define WIFI_MAX_PASSWORD_LEN 64
@@ -27,48 +28,39 @@ extern "C"
 #define WIFI_MAX_MAC_STRING_LEN 18
 
     /**
-     * Wi-Fi operating mode.
+     * Application-level desired operating mode.
+     *
+     * These names deliberately differ from ESP-IDF's WIFI_MODE_* enumerators.
      */
     typedef enum
     {
-        WIFI_MODE_DISABLED = 0,
+        INVERTER_WIFI_MODE_DISABLED = 0,
+        INVERTER_WIFI_MODE_STA,
+        INVERTER_WIFI_MODE_AP,
+        INVERTER_WIFI_MODE_AP_STA
 
-        WIFI_MODE_STA,
-
-        WIFI_MODE_AP,
-
-        WIFI_MODE_AP_STA
-
-    } wifi_operating_mode_t;
+    } inverter_wifi_operating_mode_t;
 
     /**
-     * Internal Wi-Fi state machine.
+     * Diagnostic state model for consumers that do not use wifi_events.h.
+     *
+     * The runtime connection state is wifi_connection_state_t from wifi_events.h.
      */
     typedef enum
     {
-        WIFI_STATE_OFF = 0,
+        INVERTER_WIFI_STATE_OFF = 0,
+        INVERTER_WIFI_STATE_INITIALIZING,
+        INVERTER_WIFI_STATE_READY,
+        INVERTER_WIFI_STATE_CONNECTING,
+        INVERTER_WIFI_STATE_CONNECTED,
+        INVERTER_WIFI_STATE_GOT_IP,
+        INVERTER_WIFI_STATE_DISCONNECTED,
+        INVERTER_WIFI_STATE_RECONNECTING,
+        INVERTER_WIFI_STATE_AP_STARTED,
+        INVERTER_WIFI_STATE_PROVISIONING,
+        INVERTER_WIFI_STATE_ERROR
 
-        WIFI_STATE_INITIALIZING,
-
-        WIFI_STATE_READY,
-
-        WIFI_STATE_CONNECTING,
-
-        WIFI_STATE_CONNECTED,
-
-        WIFI_STATE_GOT_IP,
-
-        WIFI_STATE_DISCONNECTED,
-
-        WIFI_STATE_RECONNECTING,
-
-        WIFI_STATE_AP_STARTED,
-
-        WIFI_STATE_PROVISIONING,
-
-        WIFI_STATE_ERROR
-
-    } wifi_state_t;
+    } inverter_wifi_state_t;
 
     /**
      * Connection security.
@@ -115,18 +107,10 @@ extern "C"
     } wifi_disconnect_reason_t;
 
     /**
-     * Network credentials.
-     */
-    typedef struct
-    {
-        char ssid[WIFI_MAX_SSID_LEN + 1];
-
-        char password[WIFI_MAX_PASSWORD_LEN + 1];
-
-    } wifi_credentials_t;
-
-    /**
-     * Static network configuration.
+     * Static network configuration used by the optional generic settings model.
+     *
+     * Persistent driver-facing settings use wifi_network_config_t from
+     * wifi_storage.h. Credentials are defined once in wifi_config.h.
      */
     typedef struct
     {
@@ -142,18 +126,18 @@ extern "C"
 
         char dns2[WIFI_MAX_IP_STRING_LEN];
 
-    } wifi_network_config_t;
+    } wifi_static_network_config_t;
 
     /**
      * Persistent Wi-Fi settings.
      */
     typedef struct
     {
-        wifi_operating_mode_t mode;
+        inverter_wifi_operating_mode_t mode;
 
         wifi_credentials_t credentials;
 
-        wifi_network_config_t network;
+        wifi_static_network_config_t network;
 
         char hostname[WIFI_MAX_HOSTNAME_LEN + 1];
 
@@ -166,7 +150,7 @@ extern "C"
      */
     typedef struct
     {
-        wifi_state_t state;
+        inverter_wifi_state_t state;
 
         bool initialized;
 
@@ -188,7 +172,7 @@ extern "C"
 
         uint32_t reconnect_count;
 
-    } wifi_status_t;
+    } wifi_diagnostic_status_t;
 
     /**
      * Access point information.
@@ -212,7 +196,7 @@ extern "C"
     {
         esp_err_t result;
 
-        wifi_state_t state;
+        inverter_wifi_state_t state;
 
     } wifi_result_t;
 

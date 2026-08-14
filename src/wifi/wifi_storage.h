@@ -18,6 +18,7 @@ extern "C"
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "wifi_config.h"
+#include "wifi_types.h"
 
 /* Use the same namespace as defined in wifi_config.h */
 #define WIFI_NVS_NAMESPACE "wifi"
