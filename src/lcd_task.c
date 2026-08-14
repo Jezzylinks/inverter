@@ -278,14 +278,15 @@ static void draw_main(lcd_main_data_t *m)
 #endif
 }
 
-static void draw_menu(const lcd_two_line_t *d)
+static void draw_menu(const lcd_menu_data_t *d)
 {
 #if LCD_GEOMETRY_20X4
-    const char *rows[] = {d->row0, d->row1,
-                          "UP/DN  Browse", "OK Select  BACK Exit"};
+    const char *rows[LCD_ROWS];
+    for (uint8_t row = 0; row < LCD_ROWS; ++row)
+        rows[row] = d->rows[row];
     draw_commit_rows(rows);
 #else
-    draw_commit(d->row0, d->row1);
+    draw_commit(d->rows[0], d->rows[1]);
 #endif
 }
 static void draw_detail(const lcd_detail_data_t *d)

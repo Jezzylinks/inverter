@@ -106,7 +106,13 @@ extern "C"
     {
         char row0[LCD_LINE_SIZE];
         char row1[LCD_LINE_SIZE];
-    } lcd_two_line_t; /* reused for menu, confirm, saved, etc. */
+    } lcd_two_line_t; /* reused for confirm, saved, and other two-line screens */
+
+    typedef struct
+    {
+        char rows[LCD_ROWS][LCD_LINE_SIZE];
+        uint8_t row_count;
+    } lcd_menu_data_t;
 
     typedef struct
     {
@@ -208,7 +214,7 @@ extern "C"
         lcd_screen_id_t screen;
         lcd_boot_init_data_t boot_init;
         lcd_main_data_t main;
-        lcd_two_line_t menu;
+        lcd_menu_data_t menu;
         lcd_value_edit_data_t value_edit;
         lcd_detail_data_t monitor_detail;
         lcd_detail_data_t diagnostic;

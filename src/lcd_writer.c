@@ -98,13 +98,23 @@ void lcd_show_main(void)
 }
 
 /* ── Menu ────────────────────────────────────────────────────────────────── */
-void lcd_show_menu(const char *row0, const char *row1)
+void lcd_show_menu_rows(const char *const rows[], uint8_t row_count)
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_MENU;
-    set_line(sys_lcd.menu.row0, row0);
-    set_line(sys_lcd.menu.row1, row1);
+    if (row_count > LCD_ROWS)
+        row_count = LCD_ROWS;
+    sys_lcd.menu.row_count = row_count;
+    for (uint8_t row = 0; row < LCD_ROWS; ++row)
+        set_line(sys_lcd.menu.rows[row],
+                 (rows != NULL && row < row_count) ? rows[row] : "");
     LCD_UNLOCK();
+}
+
+void lcd_show_menu(const char *row0, const char *row1)
+{
+    const char *rows[] = {row0, row1};
+    lcd_show_menu_rows(rows, LCD_ROWS > 2 ? 2 : LCD_ROWS);
 }
 
 /* ── Value edit ──────────────────────────────────────────────────────────── */

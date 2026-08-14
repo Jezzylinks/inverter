@@ -168,15 +168,15 @@ void show_menu_screen(menu_state_t menu_st, int selection)
         return;
     }
 
-    char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
-
     int item_count = 0;
     const menu_item_t *items = get_menu_items(menu_st, &item_count);
 
     if (!items || item_count == 0)
     {
+        char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
         snprintf(r0, LCD_LINE_SIZE, "%-*s", LCD_COLS, "(empty menu)");
         snprintf(r1, LCD_LINE_SIZE, "%-*s", LCD_COLS, "");
+        lcd_show_menu(r0, r1);
         return;
     }
 
@@ -185,11 +185,55 @@ void show_menu_screen(menu_state_t menu_st, int selection)
     if (selection >= item_count)
         selection = item_count - 1;
 
-    /* Row 0: selected item, without a battery overlay. */
+#if LCD_GEOMETRY_20X4
+    char rows[LCD_ROWS][LCD_LINE_SIZE];
+    const char *row_ptrs[LCD_ROWS];
+    const uint8_t visible_rows = LCD_ROWS;
+    int top = selection >= visible_rows ? selection - visible_rows + 1 : 0;
+    char indicator[APP_MENU_INDICATOR_MAX_LEN + 1];
+    int indicator_len = snprintf(indicator, sizeof(indicator), "%d/%d",
+                                 selection + 1, item_count);
+
+    for (uint8_t row = 0; row < visible_rows; ++row)
+    {
+        int item_index = top + row;
+        row_ptrs[row] = rows[row];
+        if (item_index >= item_count)
+        {
+            if (row == visible_rows - 1)
+                snprintf(rows[row], LCD_LINE_SIZE, "%*s%s",
+                         LCD_COLS - indicator_len, "", indicator);
+            else
+                snprintf(rows[row], LCD_LINE_SIZE, "%*s", LCD_COLS, "");
+            continue;
+        }
+
+        char marker = item_index == selection ? APP_MENU_ARROW : APP_MENU_INDENT;
+        int label_width = LCD_COLS - 1;
+        if (row == visible_rows - 1)
+        {
+            label_width -= indicator_len + 1;
+            if (label_width < 1)
+                label_width = 1;
+            snprintf(rows[row], LCD_LINE_SIZE, "%c%-*.*s %s",
+                     marker, label_width, label_width,
+                     items[item_index].label, indicator);
+        }
+        else
+        {
+            snprintf(rows[row], LCD_LINE_SIZE, "%c%-*.*s",
+                     marker, label_width, label_width,
+                     items[item_index].label);
+        }
+    }
+    lcd_show_menu_rows(row_ptrs, visible_rows);
+#else
+    char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
+
+    /* Preserve the established 16×2 menu behavior. */
     snprintf(r0, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_ARROW,
              LCD_COLS - 1, LCD_COLS - 1, items[selection].label);
 
-    /* Row 1: next item and position indicator. */
     int next = (selection + 1) % item_count;
     if (item_count >= APP_MENU_INDICATOR_MIN_ITEMS)
     {
@@ -209,6 +253,7 @@ void show_menu_screen(menu_state_t menu_st, int selection)
                  LCD_COLS - 1, LCD_COLS - 1, items[next].label);
     }
     lcd_show_menu(r0, r1);
+#endif
 }
 
 /*==============================================================================

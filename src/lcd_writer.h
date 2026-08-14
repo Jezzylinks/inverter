@@ -36,8 +36,11 @@ void lcd_update_main_data(float bat_v, float out_v, float out_a,
 void lcd_show_main(void); /* switch to main screen          */
 
 /* ── Menu ────────────────────────────────────────────────────────────────── */
-/* Caller pre-formats both rows (16 chars each, space-padded)                */
+/* Legacy two-line menu writer; retained for 16×2 and existing callers. */
 void lcd_show_menu(const char *row0, const char *row1);
+
+/* Geometry-aware menu writer. row_count is capped at LCD_ROWS. */
+void lcd_show_menu_rows(const char *const rows[], uint8_t row_count);
 
 /* ── Value editing ───────────────────────────────────────────────────────── */
 void lcd_show_value_edit(const char *label, const char *value_str,
