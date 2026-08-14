@@ -61,6 +61,7 @@
 #include "esp_wifi.h"
 #include "lcd_watchdog.h"
 #include "lcd_flash_queue.h"
+#include "lcd_event_receiver.h"
 
 // SECURITY
 #include "security/change_pin_flow.h"
@@ -6704,6 +6705,9 @@ void app_main(void)
     // lcd_show_boot_brand();
     xTaskCreate(adc_task, "adc_task", 4096, NULL, 5, NULL);
     xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
+    if (lcd_event_receiver_start() != ESP_OK) {
+        ESP_LOGE(APP_TAG, "Failed to start LCD event receiver");
+    }
     xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, 1);
     xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, 1);
     xTaskCreatePinnedToCore(led_event_task, "led_evt", 2048, NULL, 7, NULL, 1);
@@ -6741,5 +6745,6 @@ void app_main(void)
     }
 
     ESP_LOGW(APP_TAG, "Main loop ended");
+    (void)lcd_event_receiver_stop();
     app_buttons_deinit();
 }

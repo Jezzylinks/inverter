@@ -60,6 +60,7 @@ typedef struct
 
 /* Call once before any task starts. */
 void lcd_flash_init(TaskHandle_t lcd_task_handle);
+bool lcd_flash_is_initialized(void);
 void lcd_flash_enqueue_to(const char *line0,
                           const char *line1,
                           uint32_t duration_ms,

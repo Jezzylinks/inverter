@@ -60,6 +60,11 @@ void lcd_flash_init(TaskHandle_t lcd_task_handle)
     s_queue_count = 0;
 }
 
+bool lcd_flash_is_initialized(void)
+{
+    return s_flash_mutex != NULL && s_queue_mutex != NULL && s_lcd_task != NULL;
+}
+
 /* ============================================================================
  * ACTIVE FLASH MANAGEMENT
  * ============================================================================ */

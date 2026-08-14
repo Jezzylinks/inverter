@@ -915,32 +915,6 @@ void lcd_task(void *arg)
             break;
 
         case LCD_SCREEN_SYSTEM_EVENT:
-            // if (!event_dispatcher_receive(EVENT_SUB_LCD,
-            //                               &evt,
-            //                               portMAX_DELAY))
-            // {
-            //     continue;
-            // }
-
-            // switch (evt.category)
-            // {
-            // case EVENT_CATEGORY_PROTECTION:
-
-            //     lcd_show_protection(evt.quantity,
-            //                         evt.action,
-            //                         evt.value);
-
-            //     break;
-
-            // case EVENT_CATEGORY_SYSTEM:
-
-            //     lcd_show_system_event(&evt);
-
-            //     break;
-
-            // default:
-            //     break;
-            // }
             break;
 
         case LCD_SCREEN_FACTORY_RESET:
