@@ -61,6 +61,22 @@ The Wi-Fi implementation is organized around a controller-owned lifecycle. The m
 
 > The provisioning portal is intentionally local to the installer AP and does not expose the PIN-protected remote-control API. It should still be used only during commissioning, with the generated AP password handled as an installation secret.
 
+## Wokwi simulation
+
+The repository’s `wokwi.toml` is configured for the advanced 20×4 simulation. Wokwi does not compile the firmware itself; the referenced PlatformIO `.bin` and `.elf` files must exist before starting the simulator. From the repository root, build the exact environment referenced by the configuration:
+
+```bash
+pio run -e esp32dev_20x4
+```
+
+Then start Wokwi from the VS Code Command Palette with **Wokwi: Start Simulator**. The configuration points to `.pio/build/esp32dev_20x4/firmware.bin` and `.pio/build/esp32dev_20x4/firmware.elf`, while `diagram.json` uses the `wokwi-lcd2004` component. If you build only `esp32dev`, those 20×4 files will not be generated and Wokwi will report that it cannot find the firmware or ELF file.
+
+For a 16×2 simulation, change the two paths in `wokwi.toml` to `.pio/build/esp32dev/firmware.bin` and `.pio/build/esp32dev/firmware.elf`, change the diagram component to `wokwi-lcd1602`, and build with:
+
+```bash
+pio run -e esp32dev
+```
+
 ## Dual 16×2 and 20×4 LCD support
 
 The firmware supports two HD44780-compatible I2C LCD geometries selected at build time. The default `esp32dev` environment builds the compact 16×2 interface, while `esp32dev_20x4` enables the advanced 20-column, 4-row interface through `LCD_GEOMETRY_20X4=1`. The geometry is centralized in `src/lcd_config.h`, so row buffers, dirty-row caching, CGRAM initialization, menu formatting, event notices, security screens, and diagnostic output all use the selected line width instead of assuming 16 characters.

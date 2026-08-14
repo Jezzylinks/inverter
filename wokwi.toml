@@ -1,4 +1,6 @@
 [wokwi]
 version = 1
-firmware = ".pio/build/esp32dev/firmware.bin"
-elf = ".pio/build/esp32dev/firmware.elf"
+# Build this environment before starting Wokwi:
+#   pio run -e esp32dev_20x4
+firmware = ".pio/build/esp32dev_20x4/firmware.bin"
+elf = ".pio/build/esp32dev_20x4/firmware.elf"

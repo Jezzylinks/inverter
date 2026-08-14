@@ -11,7 +11,7 @@
       "attrs": { "builder": "esp-idf" }
     },
     {
-      "type": "wokwi-lcd1602",
+      "type": "wokwi-lcd2004",
       "id": "lcd1",
       "top": -204.8,
       "left": -109.6,
