@@ -823,10 +823,6 @@ static const voltage_system_t voltage_system_values[BATTERY_VOLTAGE_SYSTEM_OPTIO
 /* Reverse lookup: nominal_voltage -> select index, for populating the
  * select's current selection_index when entering edit mode. Falls back
  * to index 0 (12V) if the stored value doesn't match any option. */
-static const char *lcd_geometry_names[] = {
-    "16x2",
-    "20x4"};
-
 static int voltage_system_to_index(voltage_system_t v)
 {
     for (int i = 0; i < BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT; i++)
@@ -909,7 +905,6 @@ typedef enum
     VALUE_TYPE_SCROLL_SPEED,
     VALUE_TYPE_BATTERY_TYPE,
     VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM,
-    VALUE_TYPE_LCD_GEOMETRY,
     VALUE_TYPE_SOUND_ENABLE,
     VALUE_TYPE_QUIET_HOURS_ENABLE,
     VALUE_TYPE_QUIET_HOURS_START,
@@ -1080,7 +1075,6 @@ static void apply_scroll_speed(float v);
 static void apply_system_timeout(float v);
 static void apply_battery_type(float v);
 static void apply_battery_voltage_system(float v);
-static void apply_lcd_geometry(float v);
 static void apply_sound_enable(float v);
 static void apply_quiet_hours_enable(float v);
 static void apply_quiet_hours_start(float v);
@@ -1117,7 +1111,6 @@ void edit_scroll_enable(void);
 void edit_scroll_speed(void);
 void edit_battery_type(void);
 void edit_battery_voltage_system(void);
-void edit_lcd_geometry(void);
 void edit_sound_enable(void);
 void edit_quiet_hours_enable(void);
 void edit_quiet_hours_start(void);
@@ -1387,18 +1380,6 @@ static value_edit_context_t value_edit[] = {
         .apply = apply_battery_voltage_system,
     },
 
-    [VALUE_TYPE_LCD_GEOMETRY] = {
-        .edit_type = VALUE_EDIT_SELECT,
-        .selection_index = LCD_MODE_16X2,
-        .max_selection = LCD_MODE_COUNT,
-        .options = lcd_geometry_names,
-        .unit = "",
-        .label = "LCD Geometry",
-        .is_critical = true,
-        .live_update = false,
-        .apply = apply_lcd_geometry,
-    },
-
     [VALUE_TYPE_SOUND_ENABLE] = {
         .edit_type = VALUE_EDIT_BOOL,
         .current_value = 1.0f,
@@ -1509,7 +1490,6 @@ static value_edit_context_t value_edit[] = {
 void init_hardware(void)
 {
 #if CONFIG_USE_LCD
-    lcd_geometry_set((lcd_geometry_t)sys_state.display.lcd_geometry);
     lcd_init(LCD_ADDR, SDA_PIN, SCL_PIN);
 #endif
 
@@ -1607,7 +1587,6 @@ typedef struct
 
 static nvs_setting_t g_settings[] = {
     {"bat_volt_system", &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 12, false, "Bat Volt System"},
-    {"lcd_geometry", &sys_state.display.lcd_geometry, sizeof(uint8_t), LCD_MODE_16X2, false, "LCD Geometry"},
     {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false, "Inverter Active"},
     {"bat_type", &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false, "Battery Type"},
     {"bat_cap_ah", &sys_state.battery_profile.capacity_ah, sizeof(int32_t), 0, true, "Battery Capacity"},
@@ -3958,15 +3937,6 @@ static void apply_wifi(float v)
 static void apply_bluetooth(float v) { sys_state.bluetooth.enabled = (bool)v; } /* adjust to your actual field */
 static void apply_auto_shutdown(float v) { sys_state.display.auto_shutdown_enabled = (uint8_t)v; }
 static void apply_scroll_enable(float v) { sys_state.display.scroll_enabled = (uint8_t)v; }
-static void apply_lcd_geometry(float v)
-{
-    uint8_t mode = (uint8_t)v;
-    if (mode >= LCD_MODE_COUNT)
-        mode = LCD_MODE_16X2;
-    sys_state.display.lcd_geometry = mode;
-    lcd_geometry_set((lcd_geometry_t)mode);
-    lcd_request_geometry_reconfigure();
-}
 
 static void apply_sound_enable(float v)
 {
@@ -5597,15 +5567,6 @@ static bool validate_and_clamp_settings(void)
         corrected = true;
     }
 
-    /* ---- LCD geometry ---- */
-    if (sys_state.display.lcd_geometry >= LCD_MODE_COUNT)
-    {
-        ESP_LOGW(TAG_SYS, "Invalid LCD geometry %u — defaulting to 16x2",
-                 (unsigned)sys_state.display.lcd_geometry);
-        sys_state.display.lcd_geometry = LCD_MODE_16X2;
-        corrected = true;
-    }
-
     /* ---- Scroll speed / enable ---- */
     if (sys_state.display.scroll_speed < 1 || sys_state.display.scroll_speed > 10)
     {
@@ -6669,23 +6630,6 @@ void edit_battery_voltage_system(void)
     lcd_show_value_edit_screen();
 }
 
-void edit_lcd_geometry(void)
-{
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_LCD_GEOMETRY];
-    sys_state.current_value_type->selection_index =
-        sys_state.display.lcd_geometry < LCD_MODE_COUNT
-            ? sys_state.display.lcd_geometry
-            : LCD_MODE_16X2;
-    sys_state.current_value_type->current_value =
-        (float)sys_state.current_value_type->selection_index;
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    lcd_show_value_edit_screen();
-}
 void security_pin(void)
 {
 }

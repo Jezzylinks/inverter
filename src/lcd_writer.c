@@ -117,13 +117,6 @@ void lcd_show_menu(const char *row0, const char *row1)
     lcd_show_menu_rows(rows, 2);
 }
 
-void lcd_request_geometry_reconfigure(void)
-{
-    LCD_LOCK();
-    sys_lcd.geometry_reinit_requested = true;
-    LCD_UNLOCK();
-}
-
 /* ── Value edit ──────────────────────────────────────────────────────────── */
 void lcd_show_value_edit(const char *label, const char *value_str,
                          bool pending_confirm)

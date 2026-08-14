@@ -145,7 +145,6 @@ extern "C"
         menu_state_t current_menu;
         uint8_t menu_position;
         uint8_t selected_index;
-        uint8_t lcd_geometry; /* lcd_geometry_t value; persisted runtime mode */
     } display_status_t;
 
     typedef enum

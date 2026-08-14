@@ -230,7 +230,6 @@ extern "C"
         lcd_flash_data_t flash;
         lcd_standby_data_t standby;
         lcd_loading_data_t loading;
-        bool geometry_reinit_requested;
 
         /* ✅ Activity tracking for sub-page cycling */
         bool should_cycle_subpages;

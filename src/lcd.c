@@ -15,32 +15,6 @@
 // --------------------------------------------------
 static uint8_t lcd_address;
 static lcd_state_t lcd;
-static lcd_geometry_t s_geometry = LCD_MODE_16X2;
-
-void lcd_geometry_set(lcd_geometry_t geometry)
-{
-    s_geometry = geometry < LCD_MODE_COUNT ? geometry : LCD_MODE_16X2;
-}
-
-lcd_geometry_t lcd_geometry_get(void)
-{
-    return s_geometry;
-}
-
-uint8_t lcd_geometry_rows(void)
-{
-    return s_geometry == LCD_MODE_20X4 ? 4U : 2U;
-}
-
-uint8_t lcd_geometry_cols(void)
-{
-    return s_geometry == LCD_MODE_20X4 ? 20U : 16U;
-}
-
-bool lcd_geometry_is_20x4(void)
-{
-    return s_geometry == LCD_MODE_20X4;
-}
 
 // Commands
 #define LCD_CMD_CLEAR 0x01

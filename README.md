@@ -63,36 +63,69 @@ The Wi-Fi implementation is organized around a controller-owned lifecycle. The m
 
 ## Wokwi simulation
 
-The repository contains one unified firmware image. Wokwi does not compile the firmware itself; the referenced PlatformIO `.bin` and `.elf` files must exist before starting the simulator. From the repository root, run:
+The repository contains one shared firmware environment. Wokwi does not compile the firmware itself; the referenced PlatformIO `.bin` and `.elf` files must exist before starting the simulator. From the repository root, run:
 
 ```bash
 pio run
 ```
 
-Then start Wokwi from the VS Code Command Palette with **Wokwi: Start Simulator**. The configuration points to `.pio/build/esp32dev/firmware.bin` and `.pio/build/esp32dev/firmware.elf`. The diagram uses the `wokwi-lcd2004` component so the expanded four-row interface can be tested. After boot, open **Settings → LCD Geometry** and select `20x4` to enable the four-row runtime view.
+Then start Wokwi from the VS Code Command Palette with **Wokwi: Start Simulator**. The configuration points to `.pio/build/esp32dev/firmware.bin` and `.pio/build/esp32dev/firmware.elf`. The checked-in diagram uses the `wokwi-lcd2004` component for the 20×4 configuration. Set `MENU_CONFIG_LCD_20X4` to `1` in `src/menu_config.h` before building when using that diagram.
 
-## Unified 16×2 and 20×4 LCD support
+## Compile-time 16×2 and 20×4 LCD selection
 
-The project now builds one firmware for both physical HD44780-compatible I2C LCD geometries. The default LCD mode is 16×2 and is persisted in the normal settings NVS namespace. Open **Settings → LCD Geometry**, choose `16x2` or `20x4`, and save the setting. The LCD task then reinitializes the row map, CGRAM character set, dirty-row cache, and screen rendering without requiring a different firmware binary. A factory reset returns the stored LCD mode to the default 16×2 setting.
+The project has one shared codebase and one PlatformIO environment. The physical LCD is selected before compilation in:
 
-| Selection | Active hardware behavior |
-|---|---|
-| `16x2` | Uses 16 columns and two physical rows. Menus retain the compact two-row layout, with the selection counter at the end of the second row, such as `3/8`. |
-| `20x4` | Uses 20 columns and four physical rows. Menus display four options, scroll the visible window as Up/Down changes the selection, and keep the counter on row four, such as `5/8`. |
+```text
+src/menu_config.h
+```
 
-The firmware allocates buffers for the larger panel but writes only the active number of rows and columns. The 20×4 row map uses the standard HD44780 DDRAM offsets `{0x00, 0x40, 0x14, 0x54}`. The active mode is a user setting, not a separate build target; therefore the same application, Wi-Fi, OTA, battery, security, button, event, and protection subsystems run in either display mode.
+The controlling line is:
 
-### Menu behavior
+```c
+#define MENU_CONFIG_LCD_20X4 0
+```
 
-In 16×2 mode, the selected item and the next item remain on the two available rows. The arrow follows the selected option, and the position indicator remains at the end of the visible second row. In 20×4 mode, four menu options are rendered at once. Up and Down move the selection through the complete menu; when the selected index moves outside the current four-row window, the window scrolls while the arrow follows the selected item. The final row reserves enough space for the counter, so values such as `3/4`, `5/8`, or `17/17` remain visible.
+Use `0` for a 16×2 LCD and `1` for a 20×4 LCD. After changing the value, build the same environment:
 
-### Runtime screens and custom characters
+```bash
+pio run
+pio run --target upload
+```
 
-The selected mode controls boot, main telemetry, standby, menu, detail, confirmation, value-edit, shutdown, fault, loading, diagnostics, Wi-Fi scanning, Wi-Fi connection, event, and factory-reset screens. The 20×4 mode exposes the additional telemetry and navigation rows, while the 16×2 mode keeps the compact established presentation.
+The value in `menu_config.h` is compiled throughout the entire firmware. It determines `LCD_ROWS`, `LCD_COLS`, `LCD_LINE_SIZE`, HD44780 row addressing, driver bounds, dirty-row caching, screen layouts, menu rendering, selection counters, and the CGRAM custom-character set. There is no runtime LCD Geometry setting, no LCD geometry NVS value, and no separate 20×4 PlatformIO environment.
 
-CGRAM is reloaded whenever the LCD is initialized or the user changes geometry. The 16×2 set uses bar levels and battery bracket glyphs. The 20×4 set uses bar levels and the following Wi-Fi activity glyphs:
+| `MENU_CONFIG_LCD_20X4` | Physical LCD | Result |
+|---:|---|---|
+| `0` | 16×2 | Two physical rows. The existing compact menu remains active, with the selected arrow following the item and the counter at the end of row two, such as `3/8`. |
+| `1` | 20×4 | Four physical rows. Four menu options are visible, the window scrolls as Up/Down changes the selection, the arrow follows the selected item, and the counter remains at the end of row four, such as `5/8`. |
 
-| Slot | Glyph | Meaning and use |
+### Selecting 16×2 before compiling
+
+Open `src/menu_config.h` and leave or set:
+
+```c
+#define MENU_CONFIG_LCD_20X4 0
+```
+
+Then run `pio run` and upload the generated firmware. The firmware uses two rows and 16 columns throughout the complete boot-to-shutdown UI.
+
+### Selecting 20×4 before compiling
+
+Open `src/menu_config.h` and change the value to:
+
+```c
+#define MENU_CONFIG_LCD_20X4 1
+```
+
+Then run `pio run` and upload the generated firmware. The firmware uses four rows and 20 columns throughout the complete UI. In the menu, the visible selection window contains four options. If the selected option moves beyond the current window, the rows scroll and the arrow follows it; the position counter remains on row four.
+
+### Screens and custom characters
+
+The compile-time selection controls boot, main telemetry, standby, menu, detail, confirmation, value-edit, shutdown, fault, loading, diagnostics, Wi-Fi scanning, Wi-Fi connection, event, security, and factory-reset screens. The 20×4 build exposes the additional telemetry and navigation rows, while the 16×2 build retains the compact two-row presentation.
+
+CGRAM is initialized with the set matching the compiled geometry. The 16×2 build uses bar levels and battery bracket glyphs. The 20×4 build uses bar levels and Wi-Fi activity glyphs:
+
+| Slot | 20×4 glyph | Meaning and use |
 |---:|---|---|
 | 0–2 | Bar levels | Battery, load, or signal presentation. |
 | 3 | TX arrow | Data transmission activity. |
@@ -101,18 +134,11 @@ CGRAM is reloaded whenever the LCD is initialized or the user changes geometry. 
 | 6 | Lock glyph | Protected provisioning/security state. |
 | 7 | Alert glyph | Wi-Fi attention or failure state. |
 
-### Hardware and switching workflow
+### Hardware configuration
 
-The display geometry is a physical-module choice, while the firmware selection is a runtime setting. Install the correct 16×2 or 20×4 HD44780-compatible I2C panel, keep the validated I2C address, SDA/SCL pins, power, ground, contrast, and logic levels, then flash the same `esp32dev` firmware. On first boot, the default is 16×2. Navigate to **Settings → LCD Geometry**, select the panel installed on the inverter, and save. The display reinitializes and continues using the selected geometry after reboot because the choice is stored in NVS.
+Install the physical LCD that matches the value compiled in `src/menu_config.h`. Keep the existing validated I2C address, SDA/SCL pins, power, ground, contrast, and logic-level configuration. If the physical panel changes, change `MENU_CONFIG_LCD_20X4`, rebuild, and upload again. Do not select `0` for a 20×4 panel or `1` for a 16×2 panel, because the firmware will use the wrong row count and column width.
 
-Use one build and upload command for both panels:
-
-```bash
-pio run
-pio run --target upload
-```
-
-The only difference is the saved **LCD Geometry** setting. Do not select `20x4` while a 16×2 physical module is installed, because the firmware will address four physical rows. Likewise, select `20x4` when using the 20×4 module so the additional rows and advanced menu layout are enabled.
+The 20×4 driver uses the standard HD44780 DDRAM offsets `{0x00, 0x40, 0x14, 0x54}`. For Wokwi, the diagram component must also match the compiled choice: use `wokwi-lcd1602` for a 16×2 simulation and `wokwi-lcd2004` for a 20×4 simulation. Wokwi project configuration details are documented in the [Wokwi project configuration guide](https://docs.wokwi.com/vscode/project-config) and the [Wokwi 20×4 LCD reference](https://docs.wokwi.com/parts/wokwi-lcd2004).
 
 ## Security notes
 

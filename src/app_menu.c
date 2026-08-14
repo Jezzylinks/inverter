@@ -54,7 +54,6 @@ static const menu_item_t settings_items[] = {
     {"Scroll Speed", MENU_SETTINGS},
     {"Battery Type", MENU_SETTINGS},
     {"Voltage System", MENU_SETTINGS},
-    {"LCD Geometry", MENU_SETTINGS},
     {"Sound", MENU_SETTINGS},
     {"Quiet Hours", MENU_SETTINGS},
     {"Quiet Start", MENU_SETTINGS},

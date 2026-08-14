@@ -1120,18 +1120,6 @@ void lcd_task(void *arg)
         diag_data.uptime_seconds = (uint32_t)(esp_timer_get_time() / 1000000ULL);
         xSemaphoreGive(sys_state_mutex);
 
-        if (snap.geometry_reinit_requested)
-        {
-            lcd_clear();
-            lcd_init_cgram();
-            reset_row_cache();
-            xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
-            sys_lcd.geometry_reinit_requested = false;
-            xSemaphoreGive(sys_state_mutex);
-            need_clear = false;
-            last_screen = LCD_SCREEN_COUNT;
-        }
-
         /* ====== STEP 4: FLASH EXPIRY ====== */
         if (lcd_flash_is_expired())
         {
