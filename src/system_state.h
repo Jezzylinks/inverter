@@ -229,7 +229,7 @@ extern "C"
         bool connected;
         bool low_battery;
         bool overload;
-        int battery_voltage_system; // 12, 24, 48, 96
+        int battery_voltage_system; // 12, 24, 48
         float output_current;
         bool wifi_enabled;
         float battery_voltage_calibration; // Calibration value for battery voltage
@@ -251,8 +251,7 @@ extern "C"
     {
         VOLTAGE_SYSTEM_12V = 12,
         VOLTAGE_SYSTEM_24V = 24,
-        VOLTAGE_SYSTEM_48V = 48,
-        VOLTAGE_SYSTEM_96V = 96
+        VOLTAGE_SYSTEM_48V = 48
     } voltage_system_t;
 
     // Battery type enumeration

@@ -295,7 +295,7 @@
 #define ADC_ATTEN ADC_ATTEN_DB_11
 #define ADC_CHANNEL_USE 2
 #define MAIN_MENU_ITEM_COUNT 3
-#define VOLTAGE_TYPE_COUNT 4
+#define VOLTAGE_TYPE_COUNT 3
 #define MAX_PROFILES 3
 #define MIN_FREQUENCY 50
 #define MAX_FREQUENCY 200
@@ -438,7 +438,7 @@ static const battery_profile_t battery_profiles[BATTERY_TYPE_COUNT] = {
  * @brief Generate a battery profile for a specific voltage system and capacity
  *
  * @param battery_type Type of battery chemistry
- * @param voltage_system System voltage (12V, 24V, 48V, 96V)
+ * @param voltage_system System voltage (12V, 24V, 48V)
  * @param capacity_ah Battery capacity in ampere-hours
  * @param profile_out Pointer to output battery profile structure
  * @return true if profile generated successfully, false otherwise
@@ -448,7 +448,10 @@ bool battery_generate_profile(battery_type_t battery_type,
                               uint16_t capacity_ah,
                               battery_profile_t *profile_out)
 {
-    if (battery_type >= BATTERY_TYPE_COUNT || profile_out == NULL)
+    if (battery_type >= BATTERY_TYPE_COUNT || profile_out == NULL ||
+        (voltage_system != VOLTAGE_SYSTEM_12V &&
+         voltage_system != VOLTAGE_SYSTEM_24V &&
+         voltage_system != VOLTAGE_SYSTEM_48V))
     {
         return false;
     }
@@ -456,12 +459,13 @@ bool battery_generate_profile(battery_type_t battery_type,
     const battery_profile_t *base = &battery_profiles[battery_type];
     float voltage_multiplier = (float)voltage_system / 12.0f;
     float capacity_multiplier = (float)capacity_ah / 100.0f;
-    uint8_t name_prefix_len = snprintf(profile_out->name_prefix, sizeof(profile_out->name_prefix), "%s %dV %uAh", base->name_prefix, voltage_system, capacity_ah);
-    if (name_prefix_len >= sizeof(profile_out->name_prefix))
-    {
-        // Name was truncated
-        profile_out->name_prefix[sizeof(profile_out->name_prefix) - 1] = '\0';
-    }
+    int name_prefix_len = snprintf(profile_out->name_prefix,
+                                    sizeof(profile_out->name_prefix),
+                                    "%.*s %uV",
+                                    3,
+                                    base->name_prefix,
+                                    (unsigned)voltage_system);
+    (void)name_prefix_len;
     // Copy basic info
     profile_out->chemistry = base->chemistry;
     profile_out->nominal_voltage = voltage_system;
@@ -805,20 +809,18 @@ const char *battery_type_names[BATTERY_TYPE_COUNT] = {
 };
 
 /* Voltage system names for the settings-menu select item. voltage_system_t
- * values (12/24/48/96) are not sequential/zero-based, so a select's
+ * values (12/24/48) are not sequential/zero-based, so a select's
  * 0..N-1 index has to be mapped through voltage_system_values[] below
  * rather than cast directly like battery_type_t is. */
-#define BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT 4
+#define BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT 3
 const char *battery_voltage_system_names[BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT] = {
     "12V",
     "24V",
-    "48V",
-    "96V"};
+    "48V"};
 static const voltage_system_t voltage_system_values[BATTERY_VOLTAGE_SYSTEM_OPTION_COUNT] = {
     VOLTAGE_SYSTEM_12V,
     VOLTAGE_SYSTEM_24V,
-    VOLTAGE_SYSTEM_48V,
-    VOLTAGE_SYSTEM_96V};
+    VOLTAGE_SYSTEM_48V};
 
 /* Reverse lookup: nominal_voltage -> select index, for populating the
  * select's current selection_index when entering edit mode. Falls back
@@ -1083,6 +1085,9 @@ static void apply_utc_offset(float v);
 static void apply_set_time_hour(float v);
 static void apply_set_time_minute(float v);
 static void sync_battery_protection_thresholds(void);
+static void sync_battery_estimator_configuration(void);
+static void sync_battery_voltage_state(void);
+static inline float clamp_float(float value, float min, float max);
 
 // Value adjustment functions
 void increase_value(bool fast_mode, bool precision_mode);
@@ -1583,7 +1588,7 @@ typedef struct
 } nvs_setting_t;
 
 static nvs_setting_t g_settings[] = {
-    {"bat_volt_system", &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 0, false, "Bat Volt System"},
+    {"bat_volt_system", &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 12, false, "Bat Volt System"},
     {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false, "Inverter Active"},
     {"bat_type", &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false, "Battery Type"},
     {"bat_cap_ah", &sys_state.battery_profile.capacity_ah, sizeof(int32_t), 0, true, "Battery Capacity"},
@@ -2088,6 +2093,7 @@ bool load_settings()
         ESP_LOGW("BAT_PROFILE", "Failed to load battery profile, using defaults");
         load_error = true;
     }
+    sync_battery_voltage_state();
     sync_battery_protection_thresholds();
 
     /* Cross-field / range validation — catches corrupted or
@@ -2519,6 +2525,8 @@ void adc_task(void *arg)
         }
 
         /* Update main screen data for lcd_task */
+        const uint8_t battery_pct =
+            (uint8_t)clamp_float(battery_estimator_get_soc(&bat_estimate), 0.0f, 100.0f);
         lcd_update_main_data(
             sys_state.inverter.battery.voltage,
             sys_state.inverter.output_voltage,
@@ -2526,10 +2534,16 @@ void adc_task(void *arg)
             sys_state.inverter.output_frequency,
             sys_state.inverter.battery.battery_temperature,
             sys_state.inverter.load_percentage,
-            (uint8_t)battery_estimator_get_soc(&bat_estimate),
+            battery_pct,
             sys_state.inverter.inverter_active,
             sys_state.inverter.connected,
             sys_state.battery_charging);
+
+        if (sys_lcd.screen == LCD_SCREEN_STANDBY) {
+            lcd_show_standby(sys_state.inverter.battery.voltage,
+                             battery_pct,
+                             sys_state.inverter.connected);
+        }
 
         /* Show fault screen immediately if error flags are set */
         if (sys_state.error.error_flags && sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
@@ -3969,13 +3983,21 @@ static void apply_system_timeout(float v) { set_system_timeout((uint32_t)v); }
  * and leave every derived voltage/current field stale. */
 /* Derive protection.c's graduated BATTERY_VOLTAGE thresholds from the
  * active battery profile, which is already scaled for the currently
- * configured chemistry and voltage system (12/24/48/96V). Without this,
+ * configured chemistry and voltage system (12/24/48V). Without this,
  * protection.c's own load_defaults() leaves BATTERY_VOLTAGE pinned at
  * its hardcoded 24V-class numbers (22.5/21.5/20.5V) regardless of what
  * the inverter is actually configured for. Call this any time
  * sys_state.battery_profile changes: after battery_load_profile() at
  * boot, and after apply_battery_type()/apply_battery_voltage_system()
  * regenerate the profile at runtime. */
+static void sync_battery_voltage_state(void)
+{
+    const uint8_t voltage = (uint8_t)sys_state.battery_profile.nominal_voltage;
+    sys_state.inverter.battery_voltage_system = voltage;
+    sys_state.battery_voltage_system = voltage;
+    sys_state.battery_cutoff = sys_state.battery_profile.cutoff_voltage_12v;
+}
+
 static void sync_battery_protection_thresholds(void)
 {
     const battery_profile_t *p = &sys_state.battery_profile;
@@ -4004,6 +4026,11 @@ static void apply_battery_type(float v)
     {
         sys_state.battery_profile = regenerated;
         sys_state.battery_profile.profile_id = new_type;
+        sys_state.inverter.battery_voltage_system =
+            (uint8_t)sys_state.battery_profile.nominal_voltage;
+        sys_state.battery_voltage_system =
+            (uint8_t)sys_state.battery_profile.nominal_voltage;
+        sync_battery_estimator_configuration();
         sync_battery_protection_thresholds();
     }
 }
@@ -4012,6 +4039,15 @@ static void apply_battery_type(float v)
  * configured battery type/capacity, scaled to the new nominal voltage.
  * 'v' is the select's 0..N-1 index, not the raw voltage -- must go
  * through voltage_system_values[] rather than being cast directly. */
+static void sync_battery_estimator_configuration(void)
+{
+    const battery_profile_t *p = &sys_state.battery_profile;
+    battery_estimator_reconfigure(&bat_estimate,
+                                  p->chemistry,
+                                  (float)p->nominal_voltage,
+                                  p->capacity_ah);
+}
+
 static void apply_battery_voltage_system(float v)
 {
     int index = (int)v;
@@ -4027,6 +4063,9 @@ static void apply_battery_voltage_system(float v)
     {
         sys_state.battery_profile = regenerated;
         sys_state.battery_profile.nominal_voltage = new_voltage;
+        sys_state.inverter.battery_voltage_system = (uint8_t)new_voltage;
+        sys_state.battery_voltage_system = (uint8_t)new_voltage;
+        sync_battery_estimator_configuration();
         sync_battery_protection_thresholds();
     }
 }
@@ -5356,8 +5395,7 @@ void navigate_to_menu(menu_state_t menu)
 // battery sub menu voltage setting
 #define MAIN_MENU_ITEM_COUNT 3 // Type, Voltage, Cutoff
 
-#define VOLTAGE_TYPE_COUNT 4
-static int voltage_levels[VOLTAGE_TYPE_COUNT] = {12, 24, 48, 96}; // Supported voltage levels
+static int voltage_levels[VOLTAGE_TYPE_COUNT] = {12, 24, 48}; // Supported voltage levels
 
 int get_voltage_index(int voltage)
 {
@@ -5368,7 +5406,7 @@ int get_voltage_index(int voltage)
         return 0; // default to 12V if out of range
     }
     // Check for code to match each voltage level
-    // Recall that the voltage levels might differ with some values e.g. 12V, 24V, 48V, 96V
+    // Recall that the voltage levels might differ with some values e.g. 12V, 24V, 48V
     for (int i = 0; i < VOLTAGE_TYPE_COUNT; i++)
     {
         if (voltage_levels[i] == voltage)
@@ -5393,6 +5431,24 @@ int get_voltage_index(int voltage)
 static bool validate_and_clamp_settings(void)
 {
     bool corrected = false;
+
+    if (sys_state.battery_profile.nominal_voltage != VOLTAGE_SYSTEM_12V &&
+        sys_state.battery_profile.nominal_voltage != VOLTAGE_SYSTEM_24V &&
+        sys_state.battery_profile.nominal_voltage != VOLTAGE_SYSTEM_48V)
+    {
+        ESP_LOGE(TAG_SYS, "Invalid battery voltage system %d loaded — resetting profile to 12V",
+                 sys_state.battery_profile.nominal_voltage);
+        battery_profile_t regenerated;
+        battery_type_t type = sys_state.battery_profile.profile_id < BATTERY_TYPE_COUNT
+                                   ? (battery_type_t)sys_state.battery_profile.profile_id
+                                   : BATTERY_AGM;
+        uint16_t capacity = sys_state.battery_profile.capacity_ah > 0.0f
+                                ? (uint16_t)sys_state.battery_profile.capacity_ah
+                                : 100U;
+        battery_generate_profile(type, VOLTAGE_SYSTEM_12V, capacity, &regenerated);
+        sys_state.battery_profile = regenerated;
+        corrected = true;
+    }
 
     if (sys_state.battery_profile.profile_id >= BATTERY_TYPE_COUNT)
     {
@@ -5542,6 +5598,8 @@ static bool validate_and_clamp_settings(void)
         corrected = true;
     }
 
+    sync_battery_voltage_state();
+    sync_battery_protection_thresholds();
     return corrected;
 }
 
@@ -5950,7 +6008,8 @@ void init_system_state()
     sys_state.hold_start_time = 0;
 
     /* Battery defaults */
-    sys_state.battery_voltage_system = 12.0f;
+    sys_state.battery_voltage_system = (uint8_t)VOLTAGE_SYSTEM_12V;
+    sys_state.inverter.battery_voltage_system = (uint8_t)VOLTAGE_SYSTEM_12V;
     sys_state.battery_cutoff = 11.05f;
     sys_state.sound_enabled = true;
     sys_state.quiet_hours_enabled = false;

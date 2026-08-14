@@ -17,7 +17,7 @@ bool post_adc_test(void)
     /* Battery voltage plausibility -- bounds derived from the active,
      * chemistry+voltage-system-scaled battery profile (NOT a fixed
      * 12V-class range), so this works correctly whether the inverter is
-     * configured for 12/24/48/96V, lead-acid or lithium. A reading well
+     * configured for 12/24/48V, lead-acid or lithium. A reading well
      * below cutoff or above the hard overvoltage limit means the sensor
      * is disconnected, shorted, or wildly out of calibration -- not a
      * real battery condition. */

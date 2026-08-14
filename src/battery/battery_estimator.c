@@ -42,6 +42,39 @@ void battery_estimator_init(
     est->remaining_ah = battery_capacity_ah;
 }
 
+void battery_estimator_reconfigure(
+    battery_estimator_t *est,
+    battery_chemistry_t chemistry,
+    float nominal_voltage,
+    float battery_capacity_ah)
+{
+    if (est == NULL || nominal_voltage <= 0.0f || battery_capacity_ah <= 0.0f) {
+        return;
+    }
+
+    const float saved_soc = est->soc;
+    const float saved_soh = est->soh;
+    const float saved_voltage = est->filtered_voltage;
+    const float saved_compensated_voltage = est->compensated_voltage;
+    const bool was_initialized = est->rated_capacity_ah > 0.0f;
+
+    battery_estimator_init(est, chemistry, nominal_voltage, battery_capacity_ah);
+
+    if (!was_initialized) {
+        return;
+    }
+
+    est->soc = saved_soc < 0.0f ? 0.0f : (saved_soc > 100.0f ? 100.0f : saved_soc);
+    est->soh = saved_soh < 0.0f ? 0.0f : (saved_soh > 100.0f ? 100.0f : saved_soh);
+    est->filtered_voltage = saved_voltage;
+    est->compensated_voltage = saved_compensated_voltage;
+    coulomb_counter_set_soc(&est->counter, est->soc);
+    est->health.soh_percent = est->soh;
+    est->health.remaining_capacity_ah =
+        est->health.rated_capacity_ah * (est->soh / 100.0f);
+    est->remaining_ah = est->counter.remaining_capacity_ah;
+}
+
 void battery_estimator_update(
     battery_estimator_t *est,
     float battery_voltage,

@@ -47,6 +47,13 @@ extern "C"
         float nominal_voltage,
         float battery_capacity_ah);
 
+    /* Reconfigure a live estimator without discarding learned SOC/SOH. */
+    void battery_estimator_reconfigure(
+        battery_estimator_t *est,
+        battery_chemistry_t chemistry,
+        float nominal_voltage,
+        float battery_capacity_ah);
+
     void battery_estimator_update(
         battery_estimator_t *est,
         float battery_voltage,

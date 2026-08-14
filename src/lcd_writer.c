@@ -83,6 +83,7 @@ void lcd_update_main_data(float bat_v, float out_v, float out_a,
     m->battery_temperature = bat_temp;
     m->load_pct = load_pct;
     m->battery_pct = bat_pct;
+    sys_lcd.battery_pct = bat_pct;
     m->inverter_active = inv_active;
     m->ac_connected = ac_connected;
     m->battery_charging = bat_charging;
@@ -301,6 +302,8 @@ void lcd_show_standby(float bat_v, uint8_t bat_pct, bool ac_connected)
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_STANDBY;
     sys_lcd.standby.battery_voltage = bat_v;
+    sys_lcd.standby.low_voltage_threshold =
+        sys_state.battery_profile.low_voltage_warning_12v;
     sys_lcd.standby.battery_pct = bat_pct;
     sys_lcd.standby.ac_connected = ac_connected;
     LCD_UNLOCK();

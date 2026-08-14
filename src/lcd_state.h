@@ -197,6 +197,7 @@ extern "C"
     typedef struct
     {
         float battery_voltage;
+        float low_voltage_threshold;
         uint8_t battery_pct;
         bool ac_connected;
     } lcd_standby_data_t;
@@ -223,6 +224,7 @@ extern "C"
         lcd_flash_data_t flash;
         lcd_standby_data_t standby;
         lcd_loading_data_t loading;
+        uint8_t battery_pct;
 
         /* ✅ Activity tracking for sub-page cycling */
         bool should_cycle_subpages;
