@@ -83,7 +83,6 @@ void lcd_update_main_data(float bat_v, float out_v, float out_a,
     m->battery_temperature = bat_temp;
     m->load_pct = load_pct;
     m->battery_pct = bat_pct;
-    sys_lcd.battery_pct = bat_pct;
     m->inverter_active = inv_active;
     m->ac_connected = ac_connected;
     m->battery_charging = bat_charging;

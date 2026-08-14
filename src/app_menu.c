@@ -185,22 +185,22 @@ void show_menu_screen(menu_state_t menu_st, int selection)
     if (selection >= item_count)
         selection = item_count - 1;
 
-    /* Battery remaining is refreshed by lcd_update_main_data() on every ADC
-     * cycle, so this menu render remains current in ON and STANDBY states. */
-    snprintf(r0, 17, "%c%-10.10s %3u%%",
-             APP_MENU_ARROW, items[selection].label,
-             (unsigned)sys_lcd.battery_pct);
+    /* Row 0: selected item, without a battery overlay. */
+    snprintf(r0, 17, "%c%-15.15s", APP_MENU_ARROW, items[selection].label);
 
-    /* Row 1: next item and position indicator; battery remains on row 0. */
+    /* Row 1: next item and position indicator. */
     int next = (selection + 1) % item_count;
     if (item_count >= APP_MENU_INDICATOR_MIN_ITEMS)
     {
-        char ind[12];
-        snprintf(ind, sizeof(ind), "%u/%u",
-                 (unsigned)((selection + 1) % 100),
-                 (unsigned)(item_count % 100));
-        snprintf(r1, 17, "%c%-8.8s %5.5s",
-                 APP_MENU_INDENT, items[next].label, ind);
+        char ind[APP_MENU_INDICATOR_MAX_LEN + 1];
+        int ind_len = snprintf(ind, sizeof(ind), "%d/%d",
+                               selection + 1, item_count);
+        int label_w = LCD_COLS - 1 - ind_len;
+        if (label_w < 1)
+            label_w = 1;
+        snprintf(r1, 17, "%c%-*.*s%s",
+                 APP_MENU_INDENT, label_w, label_w,
+                 items[next].label, ind);
     }
     else
     {

@@ -172,12 +172,9 @@ static void draw_main(lcd_main_data_t *m)
     draw_row(1, r1);
 }
 
-static void draw_menu(const lcd_two_line_t *d, uint8_t battery_pct)
+static void draw_menu(const lcd_two_line_t *d)
 {
-    char row0[LCD_COLS + 1];
-    snprintf(row0, sizeof(row0), "%-11.11s %3u%%", d->row0 + 1,
-             (unsigned)battery_pct);
-    draw_commit(row0, d->row1);
+    draw_commit(d->row0, d->row1);
 }
 static void draw_detail(const lcd_detail_data_t *d) { draw_commit(d->label, d->value_str); }
 static void draw_confirm(const lcd_two_line_t *d) { draw_commit(d->row0, d->row1); }
@@ -889,7 +886,7 @@ void lcd_task(void *arg)
             break;
 
         case LCD_SCREEN_MENU:
-            draw_menu(&snap.menu, snap.battery_pct);
+            draw_menu(&snap.menu);
             break;
 
         case LCD_SCREEN_VALUE_EDIT:
