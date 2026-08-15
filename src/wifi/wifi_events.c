@@ -26,6 +26,7 @@ static esp_event_handler_instance_t s_wifi_instance;
 static esp_event_handler_instance_t s_ip_instance;
 static SemaphoreHandle_t s_mutex;
 static TaskHandle_t s_reconnect_task;
+static uint32_t s_reconnect_generation;
 static bool s_initialized;
 static bool s_auto_reconnect = true;
 static uint8_t s_retry_limit = WIFI_MAXIMUM_RETRY;
@@ -72,16 +73,39 @@ static void wifi_publish_state(wifi_connection_state_t state)
 static void wifi_reconnect_task(void *arg)
 {
     task_watchdog_register("wifi_reconnect_task");
-    (void)arg;
-    task_watchdog_feed();
-    vTaskDelay(pdMS_TO_TICKS(WIFI_RECONNECT_DELAY_MS));
-    task_watchdog_feed();
+    const uint32_t generation = (uint32_t)(uintptr_t)arg;
+    uint32_t waited_ms = 0U;
+
+    while (waited_ms < WIFI_RECONNECT_DELAY_MS) {
+        const uint32_t slice = (WIFI_RECONNECT_DELAY_MS - waited_ms) > 250U
+                                   ? 250U
+                                   : (WIFI_RECONNECT_DELAY_MS - waited_ms);
+        task_watchdog_feed();
+        vTaskDelay(pdMS_TO_TICKS(slice));
+        waited_ms += slice;
+
+        events_lock();
+        const bool cancelled = !s_initialized || !s_auto_reconnect ||
+                               generation != s_reconnect_generation;
+        events_unlock();
+        if (cancelled) {
+            events_lock();
+            if (s_reconnect_task == xTaskGetCurrentTaskHandle()) {
+                s_reconnect_task = NULL;
+            }
+            events_unlock();
+            vTaskDelete(NULL);
+        }
+    }
 
     events_lock();
     const bool should_connect = s_initialized && s_auto_reconnect &&
+                                generation == s_reconnect_generation &&
                                 s_status.state == WIFI_STATE_DISCONNECTED &&
                                 s_status.retry_count < s_retry_limit;
-    s_reconnect_task = NULL;
+    if (s_reconnect_task == xTaskGetCurrentTaskHandle()) {
+        s_reconnect_task = NULL;
+    }
     events_unlock();
 
     if (should_connect) {
@@ -101,7 +125,8 @@ static void wifi_schedule_reconnect(void)
                                  s_reconnect_task == NULL;
     if (should_schedule) {
         const BaseType_t result = xTaskCreate(wifi_reconnect_task, "wifi_reconnect",
-                                              WIFI_RECONNECT_TASK_STACK, NULL,
+                                              WIFI_RECONNECT_TASK_STACK,
+                                              (void *)(uintptr_t)s_reconnect_generation,
                                               WIFI_RECONNECT_TASK_PRIORITY, &s_reconnect_task);
         if (result != pdPASS) {
             s_reconnect_task = NULL;
@@ -117,8 +142,15 @@ static void wifi_schedule_reconnect(void)
 void wifi_events_set_retry_policy(bool enabled, uint8_t retry_limit)
 {
     events_lock();
+    const bool was_enabled = s_auto_reconnect;
     s_auto_reconnect = enabled;
     s_retry_limit = retry_limit;
+    if (enabled && !was_enabled) {
+        s_status.retry_count = 0U;
+    }
+    if (!enabled) {
+        ++s_reconnect_generation;
+    }
     events_unlock();
 }
 
@@ -136,6 +168,7 @@ esp_err_t wifi_events_init(void)
     memset(s_status_callbacks, 0, sizeof(s_status_callbacks));
     memset(s_event_callbacks, 0, sizeof(s_event_callbacks));
     s_status.state = WIFI_STATE_IDLE;
+    s_reconnect_generation = 0U;
 
     esp_err_t err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                          &wifi_event_handler, NULL,
@@ -166,6 +199,8 @@ esp_err_t wifi_events_deinit(void)
     (void)esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, s_ip_instance);
 
     events_lock();
+    ++s_reconnect_generation;
+    s_auto_reconnect = false;
     TaskHandle_t reconnect_task = s_reconnect_task;
     s_reconnect_task = NULL;
     s_initialized = false;

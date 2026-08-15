@@ -30,6 +30,7 @@ static esp_netif_t *s_sta_netif = NULL;
 static esp_netif_t *s_ap_netif = NULL;
 static wifi_manager_config_t s_config;
 static bool s_initialized = false;
+static bool s_started = false;
 uint8_t s_retry_limit = WIFI_MAXIMUM_RETRY;
 bool s_auto_reconnect = true;
 static wifi_credentials_t s_credentials;
@@ -399,6 +400,7 @@ esp_err_t wifi_manager_deinit(void)
 
     s_retry_limit = WIFI_MAXIMUM_RETRY;
     s_auto_reconnect = true;
+    s_started = false;
 
     if (s_manager_mutex)
     {
@@ -443,12 +445,14 @@ esp_err_t wifi_manager_start(void)
     }
 
     err = esp_wifi_start();
-    if (err != ESP_OK)
+    if (err != ESP_OK && err != ESP_ERR_WIFI_STATE)
     {
         ESP_LOGE(TAG, "WiFi start failed: %s", esp_err_to_name(err));
         return err;
     }
-    ESP_LOGI(TAG, "WiFi started (mode: %s)",
+    s_started = true;
+    ESP_LOGI(TAG, "WiFi %s (mode: %s)",
+             err == ESP_ERR_WIFI_STATE ? "already started" : "started",
              (s_config.mode == WIFI_MODE_STA) ? "STA" : (s_config.mode == WIFI_MODE_AP)  ? "AP"
                                                     : (s_config.mode == WIFI_MODE_APSTA) ? "AP+STA"
                                                                                          : "UNKNOWN");
@@ -466,16 +470,19 @@ esp_err_t wifi_manager_stop(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    esp_err_t err = esp_wifi_stop();
-    if (err == ESP_OK)
-    {
-        ESP_LOGI(TAG, "WiFi stopped");
-    }
-    else
-    {
-        ESP_LOGW(TAG, "WiFi stop failed: %s", esp_err_to_name(err));
+    if (!s_started) {
+        return ESP_OK;
     }
 
+    esp_err_t err = esp_wifi_stop();
+    if (err == ESP_OK || err == ESP_ERR_WIFI_NOT_STARTED)
+    {
+        s_started = false;
+        ESP_LOGI(TAG, "WiFi stopped");
+        return ESP_OK;
+    }
+
+    ESP_LOGW(TAG, "WiFi stop failed: %s", esp_err_to_name(err));
     return err;
 }
 
@@ -524,15 +531,10 @@ esp_err_t wifi_manager_connect(void)
         return err;
     }
 
-    /* WiFi is already started by wifi_manager_start() or previous connect */
-    /* Only start if not already running */
-    wifi_mode_t current_mode;
-    if (esp_wifi_get_mode(&current_mode) != ESP_OK || current_mode == WIFI_MODE_NULL)
-    {
-        err = esp_wifi_start();
-        if (err != ESP_OK)
-        {
-            ESP_LOGE(TAG, "WiFi start failed: %s", esp_err_to_name(err));
+    /* Connect is also safe when called directly after initialization. */
+    if (!s_started) {
+        err = wifi_manager_start();
+        if (err != ESP_OK) {
             return err;
         }
     }
@@ -596,8 +598,7 @@ esp_err_t wifi_manager_reconnect(void)
         return err;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(WIFI_RECONNECT_DELAY_MS));
-
+    /* esp_wifi_connect() is asynchronous; never block the panel task here. */
     return wifi_manager_connect();
 }
 
