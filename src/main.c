@@ -7004,14 +7004,12 @@ esp_err_t nvs_set_float(const char *key, float value)
 void app_main(void)
 {
     init_watchdog(true, true);
-    task_watchdog_register("app_main");
-    if (!task_watchdog_start_supervisor()) {
-        ESP_LOGE(APP_TAG, "Failed to start watchdog health supervisor");
-    }
 
     system_events_init();
+    task_watchdog_feed();
 
     event_dispatcher_init();
+    task_watchdog_feed();
 
     sys_event_group = xEventGroupCreate();
 
@@ -7038,6 +7036,7 @@ void app_main(void)
     system_diagnostics_init();
     init_system_state();
     init_menu_system();
+    task_watchdog_feed();
     if (security_init() != ESP_OK)
     {
         ESP_LOGE(APP_TAG, "FATAL: security initialization failed; keeping controls disabled");
@@ -7054,6 +7053,7 @@ void app_main(void)
     /* Service coordination restores persisted Wi-Fi intent and starts a
      * bounded CSV-manifest availability checker. It never downloads an
      * update until the user explicitly confirms from the OTA menu. */
+    task_watchdog_feed();
     if (app_services_init() != ESP_OK)
     {
         ESP_LOGW(APP_TAG, "Network/update services unavailable; continuing offline");
@@ -7061,8 +7061,10 @@ void app_main(void)
 
     /* Hardware-dependent battery/LCD peripherals use the validated profile. */
     init_hardware();
+    task_watchdog_feed();
     restore_from_deep_sleep();
     log_all_error_flags(sys_state.error.error_flags);
+    task_watchdog_feed();
     esp_err_t ret = app_buttons_init();
     if (ret != ESP_OK)
     {
@@ -7073,6 +7075,7 @@ void app_main(void)
     }
 
     vTaskDelay(pdMS_TO_TICKS(2000));
+    task_watchdog_feed();
     lcd_power_init();
     LCD_power(true);
     lcd_set_brightness(200);
@@ -7091,6 +7094,9 @@ void app_main(void)
     xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 4096, NULL, 5, NULL, 0);
     xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, 0);
     xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 4096, NULL, 9, NULL, 0);
+    if (!task_watchdog_start_supervisor()) {
+        ESP_LOGE(APP_TAG, "Failed to start watchdog health supervisor");
+    }
 
     /* Power-On Self-Test: wait for adc_task's warmup to finish so
      * sys_state.inverter.battery.voltage/output_voltage/fan.speed are
@@ -7099,10 +7105,16 @@ void app_main(void)
      * running its own loop the whole time, including throughout
      * post_fan_test()'s wait, so fan-speed feedback stays live instead
      * of freezing at a stale value. */
-    EventBits_t adc_bits = xEventGroupWaitBits(sys_event_group,
-                                               EVT_ADC_READY,
-                                               pdFALSE, pdTRUE,
-                                               pdMS_TO_TICKS(10000));
+    EventBits_t adc_bits = 0U;
+    const TickType_t adc_wait_start = xTaskGetTickCount();
+    while ((xTaskGetTickCount() - adc_wait_start) < pdMS_TO_TICKS(10000)) {
+        adc_bits = xEventGroupGetBits(sys_event_group);
+        if (adc_bits & EVT_ADC_READY) {
+            break;
+        }
+        task_watchdog_feed();
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
     if (adc_bits & EVT_ADC_READY)
     {
         post_result_t post_result = post_run_all();
@@ -7118,6 +7130,8 @@ void app_main(void)
      * disabling the underlying protection or event dispatch paths. */
     lcd_startup_release();
     lcd_watchdog_init(lcd_task_handle);
+    task_watchdog_register("app_main");
+    task_watchdog_feed();
     while (sys_state.system_ready)
     {
         task_watchdog_feed();
