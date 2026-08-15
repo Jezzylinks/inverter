@@ -805,7 +805,8 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
                 char rows[4][LCD_LINE_SIZE];
                 snprintf(rows[0], LCD_LINE_SIZE, "FACTORY RESET");
                 snprintf(rows[1], LCD_LINE_SIZE, "PIN LOCKED");
-                format_empty_pin_slots(rows[2], sizeof(rows[2]));
+                // format_empty_pin_slots(rows[2], sizeof(rows[2]));
+                snprintf(rows[2], LCD_LINE_SIZE, "%-16s", pin_line);
                 snprintf(rows[3], LCD_LINE_SIZE, "Retry %2lus  BACK",
                          (unsigned long)remaining_s);
                 const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
