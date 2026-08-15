@@ -727,6 +727,13 @@ static void format_empty_pin_slots(char *line, size_t line_size)
     pin_entry_render_line(&empty_ctx, line, line_size);
 }
 
+static void format_initial_pin_slots(char *line, size_t line_size)
+{
+    /* A reset PIN context starts at digit zero, ready for the first input. */
+    pin_entry_ctx_t initial_ctx = {0};
+    pin_entry_render_line(&initial_ctx, line, line_size);
+}
+
 static void draw_factory_reset(const factory_reset_ctx_t *d)
 {
     factory_reset_action_t action = atomic_load(&d->action);
@@ -783,7 +790,7 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
             char pin_line[LCD_LINE_SIZE];
             char attempt_line[LCD_LINE_SIZE];
             if (pin_reset_pending)
-                format_empty_pin_slots(pin_line, sizeof(pin_line));
+                format_initial_pin_slots(pin_line, sizeof(pin_line));
             else
                 pin_entry_render_line(&d->pin_ctx, pin_line, sizeof(pin_line));
 
@@ -838,7 +845,7 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
         char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
         snprintf(r0, sizeof(r0), "%-16s", "Enter PIN:      ");
         if (pin_reset_pending)
-            format_empty_pin_slots(r1, sizeof(r1));
+            format_initial_pin_slots(r1, sizeof(r1));
         else
             pin_entry_render_line(&d->pin_ctx, r1, sizeof(r1));
         draw_commit(r0, r1);
