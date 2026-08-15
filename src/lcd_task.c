@@ -305,11 +305,16 @@ static void draw_main(lcd_main_data_t *m)
                      m->output_current, m->output_voltage * m->output_current);
             break;
         case MAIN_SUB_BATTERY:
+        {
+            char remaining[12];
+            format_battery_time(remaining, sizeof(remaining),
+                                m->battery_remaining_minutes);
             snprintf(r0, LCD_LINE_SIZE, "BAT:%4.1fV %3d%%  ",
                      m->battery_voltage, m->battery_pct);
-            snprintf(r1, LCD_LINE_SIZE, "TMP:%2.0fC CHG:%s ",
-                     m->battery_temperature, m->battery_charging ? "YES" : "NO ");
+            snprintf(r1, LCD_LINE_SIZE, "REM:%5.5s TMP:%2.0f",
+                     remaining, m->battery_temperature);
             break;
+        }
         case MAIN_SUB_SYSTEM:
         default:
             snprintf(r0, LCD_LINE_SIZE, "INV:%s AC:%s  ",
