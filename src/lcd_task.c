@@ -997,12 +997,28 @@ static bool draw_security_pin_flow(change_pin_phase_t flow_phase,
     {
         const uint32_t remaining_s =
             (uint32_t)((security_lockout_remaining_ms_for_scope(scope) + 999) / 1000);
-        char row[LCD_LINE_SIZE];
-        snprintf(row, sizeof(row), "Retry in %2lus", (unsigned long)remaining_s);
-        draw_commit(security_action == SECURITY_ACTION_OTA_AUTH
-                        ? "OTA LOCKED       "
-                        : "PIN LOCKED      ",
-                    row);
+        const char *lock_title =
+            (security_action == SECURITY_ACTION_OTA_AUTH) ? "OTA LOCKED" : "PIN LOCKED";
+
+        if (lcd_geometry_is_20x4())
+        {
+            char rows[4][LCD_LINE_SIZE];
+            snprintf(rows[0], sizeof(rows[0]), "%-*.*s", LCD_COLS, LCD_COLS,
+                     lock_title);
+            snprintf(rows[1], sizeof(rows[1]), "[ _ ][ _ ][ _ ][ _ ]");
+            snprintf(rows[2], sizeof(rows[2]), "Retry in %2lus",
+                     (unsigned long)remaining_s);
+            snprintf(rows[3], sizeof(rows[3]), "BACK=EXIT");
+            const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
+            draw_commit_rows(row_ptrs);
+        }
+        else
+        {
+            char row0[LCD_LINE_SIZE];
+            snprintf(row0, sizeof(row0), "%s %2lus", lock_title,
+                     (unsigned long)remaining_s);
+            draw_commit(row0, "[ _][ _][ _][ _]");
+        }
         return true;
     }
 
@@ -1017,30 +1033,31 @@ static bool draw_security_pin_flow(change_pin_phase_t flow_phase,
     xSemaphoreGive(change_pin_mutex);
 
     char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
+    const char *label = "Enter PIN:";
 
     if (security_action == SECURITY_ACTION_OTA_AUTH)
     {
-        snprintf(r0, sizeof(r0), "%-16s", "OTA PIN:        ");
+        label = "OTA PIN:";
     }
     else
     {
         switch (flow_phase)
         {
         case CHANGE_PIN_VERIFY_OLD:
-            snprintf(r0, sizeof(r0), "%-16s", "Enter Old PIN:  ");
+            label = "Enter Old PIN:";
             break;
         case CHANGE_PIN_ENTER_NEW:
-            snprintf(r0, sizeof(r0), "%-16s", "Enter New PIN:  ");
+            label = "Enter New PIN:";
             break;
         case CHANGE_PIN_CONFIRM_NEW:
-            snprintf(r0, sizeof(r0), "%-16s", "Confirm PIN:    ");
+            label = "Confirm PIN:";
             break;
         default:
-            snprintf(r0, sizeof(r0), "%-16s", "Enter PIN:      ");
             break;
         }
     }
 
+    snprintf(r0, sizeof(r0), "%-*.*s", LCD_COLS, LCD_COLS, label);
     pin_entry_render_line(&pin_snap.pin_ctx, r1, sizeof(r1));
     draw_commit(r0, r1);
     return true;
