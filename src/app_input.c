@@ -34,6 +34,29 @@ extern change_pin_ctx_t change_pin_ctx;
 
 static uint8_t s_ota_auth_selection = 1U;
 
+static void exit_factory_reset_menu(void)
+{
+    factory_reset_cancel(&sys_lcd.factory_reset);
+
+    menu_state_t previous_menu;
+    int previous_selection;
+    if (pop_menu_history(&previous_menu, &previous_selection)) {
+        sys_state.menu_state = previous_menu;
+        sys_state.menu_selection = previous_selection;
+        sys_state.last_activity_time = esp_timer_get_time() / 1000;
+        if (previous_menu == MENU_NONE) {
+            go_to_main_screen();
+        } else {
+            show_menu_screen(previous_menu, previous_selection);
+        }
+    } else {
+        sys_state.menu_state = MENU_NONE;
+        sys_state.menu_selection = 0;
+        clear_menu_history();
+        go_to_main_screen();
+    }
+}
+
 static void begin_ota_auth(uint8_t selection)
 {
     s_ota_auth_selection = selection;
@@ -193,9 +216,8 @@ void handle_power_button_event(button_event_info_t *event_info,
     if (sys_state.menu_state == MENU_FACTORY_RESET &&
         atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
     {
-        if (event_info->event == BUTTON_EVENT_CLICK)
-        {
-            factory_reset_handle_pin_entry(&sys_lcd.factory_reset, BTN_POWER);
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            exit_factory_reset_menu();
         }
         return;
     }
@@ -1528,21 +1550,13 @@ void handle_back_button_event(button_event_info_t *event_info,
 
     // User is in Security mode
 
-    if (sys_state.menu_state == MENU_FACTORY_RESET)
+    if (sys_state.menu_state == MENU_FACTORY_RESET &&
+        atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
     {
-        factory_reset_phase_t phase =
-            atomic_load(&sys_lcd.factory_reset.phase);
-
-        if (phase == FACTORY_RESET_PIN_ENTRY)
-        {
-            if (event_info->event == BUTTON_EVENT_CLICK)
-            {
-                factory_reset_handle_pin_entry(&sys_lcd.factory_reset, BTN_BACK);
-                show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
-                sys_lcd.screen = LCD_SCREEN_MENU;
-            }
-            return;
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            exit_factory_reset_menu();
         }
+        return;
     }
 
     if (sys_state.menu_state == MENU_SECURITY)
@@ -1613,25 +1627,11 @@ void handle_back_button_event(button_event_info_t *event_info,
                 return;
             }
 
-            if (phase == FACTORY_PHASE_CONFIRM)
+            if (phase == FACTORY_PHASE_CONFIRM || phase == FACTORY_PHASE_IDLE)
             {
-                atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
-                atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
-                sys_state.menu_state = MENU_NONE;
-                sys_state.menu_selection = 0;
-                clear_menu_history();
-                go_to_main_screen();
+                exit_factory_reset_menu();
                 return;
             }
-
-            /* phase == FACTORY_PHASE_IDLE: exit the list back to the main menu */
-            atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
-            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
-            sys_state.last_activity_time = esp_timer_get_time() / 1000;
-            sys_state.menu_selection = 0;
-            sys_state.menu_state = MAIN_MENU;
-            show_menu_screen(MAIN_MENU, sys_state.menu_selection);
-            return;
         }
 
         else if (atomic_load(&sys_lcd.factory_reset.action) == FACTORY_ACTION_NONE && sys_state.menu_state == MAIN_MENU)
