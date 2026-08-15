@@ -787,7 +787,7 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
                 char rows[4][LCD_LINE_SIZE];
                 snprintf(rows[0], LCD_LINE_SIZE, "FACTORY RESET");
                 snprintf(rows[1], LCD_LINE_SIZE, "PIN LOCKED");
-                snprintf(rows[2], LCD_LINE_SIZE, "[ ] [ ] [ ] [ ]");
+                snprintf(rows[2], LCD_LINE_SIZE, "[ _ ][ _ ][ _ ][ _ ]");
                 snprintf(rows[3], LCD_LINE_SIZE, "Retry %2lus  BACK",
                          (unsigned long)remaining_s);
                 const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
@@ -818,7 +818,7 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
             snprintf(r0_buf, sizeof(r0_buf), "LOCKED %2lus",
 
                      (unsigned long)remaining_s);
-            draw_commit(r0_buf, "[ ] [ ] [ ] [ ]");
+            draw_commit(r0_buf, "[ _][ _][ _][ _]");
             return;
         }
 
