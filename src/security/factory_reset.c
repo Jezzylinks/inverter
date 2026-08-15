@@ -21,6 +21,40 @@ static const char *TAG = "FACTORY_RESET";
 extern lcd_render_state_t sys_lcd;
 extern SemaphoreHandle_t sys_state_mutex;
 
+bool factory_reset_is_locked_out(factory_reset_ctx_t *ctx)
+{
+    if (ctx == NULL) {
+        return false;
+    }
+
+    const bool locked =
+        security_is_locked_out_for_scope(SECURITY_LOCKOUT_FACTORY_RESET);
+    const bool was_locked = atomic_exchange(&ctx->lockout_active, locked);
+    if (was_locked && !locked) {
+        /* Defer pin_entry_reset() to the button task, but let the LCD render
+         * empty slots immediately after the countdown reaches zero. */
+        atomic_store(&ctx->pin_reset_pending, true);
+    }
+
+    return locked;
+}
+
+bool factory_reset_pin_reset_pending(const factory_reset_ctx_t *ctx)
+{
+    return ctx != NULL && atomic_load(&ctx->pin_reset_pending);
+}
+
+bool factory_reset_take_pin_reset(factory_reset_ctx_t *ctx)
+{
+    if (ctx == NULL || !atomic_exchange(&ctx->pin_reset_pending, false)) {
+        return false;
+    }
+
+    pin_entry_reset(&ctx->pin_ctx);
+    memset(ctx->pin_line, 0, sizeof(ctx->pin_line));
+    return true;
+}
+
 /*==============================================================================
   Internal helpers
 ==============================================================================*/
@@ -39,7 +73,8 @@ static void handle_pin_entry_button(factory_reset_ctx_t *ctx,
     /* While locked out, only Back is meaningful (lets the user exit).
      * All other buttons are silently consumed so digit state can't
      * be mutated during a lockout window. */
-    if (security_is_locked_out_for_scope(SECURITY_LOCKOUT_FACTORY_RESET))
+    const bool locked = factory_reset_is_locked_out(ctx);
+    if (locked)
     {
         if (btn == BTN_BACK)
         {
@@ -47,6 +82,10 @@ static void handle_pin_entry_button(factory_reset_ctx_t *ctx,
         }
         return;
     }
+
+    /* The first button after expiry consumes the deferred reset, ensuring the
+     * input state matches the empty PIN line already shown by the LCD. */
+    (void)factory_reset_take_pin_reset(ctx);
 
     pin_entry_result_t result = pin_entry_handle_button(&ctx->pin_ctx, btn);
     char pin_line[LCD_LINE_SIZE];
@@ -123,6 +162,8 @@ void factory_reset_cancel(factory_reset_ctx_t *ctx)
     atomic_store(&ctx->action, FACTORY_ACTION_NONE);
     atomic_store(&ctx->phase, FACTORY_PHASE_IDLE);
     atomic_store(&ctx->progress_pct, 0U);
+    atomic_store(&ctx->lockout_active, false);
+    atomic_store(&ctx->pin_reset_pending, false);
 }
 
 void factory_reset_begin(factory_reset_ctx_t *ctx,
@@ -133,6 +174,8 @@ void factory_reset_begin(factory_reset_ctx_t *ctx,
 
     /* Reset digit entry to a clean state before showing the PIN screen. */
     pin_entry_reset(&ctx->pin_ctx);
+    atomic_store(&ctx->lockout_active, false);
+    atomic_store(&ctx->pin_reset_pending, false);
 
     /* Gate entry through PIN verification -- never jump straight to CONFIRM. */
     atomic_store(&sys_lcd.factory_reset.phase, FACTORY_RESET_PIN_ENTRY);

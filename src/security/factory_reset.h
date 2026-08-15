@@ -58,6 +58,8 @@ extern "C"
     _Atomic factory_reset_phase_t phase;
     _Atomic uint8_t progress_pct;
     _Atomic factory_reset_action_t action;
+    _Atomic bool lockout_active;
+    _Atomic bool pin_reset_pending;
     char pin_line[LCD_LINE_SIZE];
     pin_entry_ctx_t pin_ctx;
 
@@ -118,6 +120,18 @@ extern "C"
 
   /** Clear the complete pending factory-reset session and PIN entry state. */
   void factory_reset_cancel(factory_reset_ctx_t *ctx);
+
+  /**
+   * Return the current lockout state and record a lockout-to-unlocked
+   * transition for the PIN display and input handler.
+   */
+  bool factory_reset_is_locked_out(factory_reset_ctx_t *ctx);
+
+  /** True when the PIN context is waiting for lockout-expiry reset. */
+  bool factory_reset_pin_reset_pending(const factory_reset_ctx_t *ctx);
+
+  /** Consume the pending reset and clear the PIN-entry context. */
+  bool factory_reset_take_pin_reset(factory_reset_ctx_t *ctx);
 
   void factory_reset(void);
 

@@ -772,8 +772,9 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
 
     case FACTORY_RESET_PIN_ENTRY:
     {
-        const bool locked =
-            security_is_locked_out_for_scope(SECURITY_LOCKOUT_FACTORY_RESET);
+        const bool locked = factory_reset_is_locked_out(&sys_lcd.factory_reset);
+        const bool pin_reset_pending =
+            factory_reset_pin_reset_pending(&sys_lcd.factory_reset);
         const uint8_t attempts_left =
             security_attempts_remaining_for_scope(SECURITY_LOCKOUT_FACTORY_RESET);
 
@@ -781,7 +782,10 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
         {
             char pin_line[LCD_LINE_SIZE];
             char attempt_line[LCD_LINE_SIZE];
-            pin_entry_render_line(&d->pin_ctx, pin_line, sizeof(pin_line));
+            if (pin_reset_pending)
+                format_empty_pin_slots(pin_line, sizeof(pin_line));
+            else
+                pin_entry_render_line(&d->pin_ctx, pin_line, sizeof(pin_line));
 
             if (locked)
             {
@@ -833,7 +837,10 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
 
         char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
         snprintf(r0, sizeof(r0), "%-16s", "Enter PIN:      ");
-        pin_entry_render_line(&d->pin_ctx, r1, sizeof(r1));
+        if (pin_reset_pending)
+            format_empty_pin_slots(r1, sizeof(r1));
+        else
+            pin_entry_render_line(&d->pin_ctx, r1, sizeof(r1));
         draw_commit(r0, r1);
         break;
     }
