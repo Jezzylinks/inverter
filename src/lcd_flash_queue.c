@@ -21,10 +21,10 @@
 #include <stdint.h>
 #include <esp_log.h>
 #include "system_state.h"
+#include "lcd_config.h"
 
 #define TAG "LCD_FLASH"
 #define LCD_FLASH_QUEUE_DEPTH 16
-#define LCD_LINE_LENGTH 17
 
 static inline uint32_t _lcd_get_time_ms(void)
 {
@@ -226,8 +226,12 @@ void lcd_flash_enqueue_to(const char *line0,
         .return_to = LCD_SCREEN_MAIN /* placeholder, corrected below */
     };
 
-    snprintf(entry.line0, sizeof(entry.line0), "%-16.16s", line0 ? line0 : "");
-    snprintf(entry.line1, sizeof(entry.line1), "%-16.16s", line1 ? line1 : "");
+    /* Format to the selected physical LCD width. LCD_LINE_SIZE includes
+     * the terminating NUL for both 16×2 and 20×4 builds. */
+    snprintf(entry.line0, sizeof(entry.line0), "%-*.*s",
+             LCD_COLS, LCD_COLS, line0 ? line0 : "");
+    snprintf(entry.line1, sizeof(entry.line1), "%-*.*s",
+             LCD_COLS, LCD_COLS, line1 ? line1 : "");
 
     xSemaphoreTake(s_flash_mutex, portMAX_DELAY);
     bool flash_active = s_active_flash.active;
