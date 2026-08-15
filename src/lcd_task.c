@@ -243,27 +243,31 @@ static void draw_main(lcd_main_data_t *m)
     }
     else
     {
+        /* Preserve the established compact 16×2 presentation. The shared
+         * settings, menu selection, persistence, and Enter-only page control
+         * remain identical to the 20×4 build; only the rendering is compact. */
         char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
         switch (m->sub_page)
         {
         case MAIN_SUB_OUTPUT:
-            snprintf(r0, LCD_LINE_SIZE, "INV5.0 %s %.5s", m->inverter_active ? "ON" : "OFF", wifi);
-            snprintf(r1, LCD_LINE_SIZE, "PV%4.2f B%3u%%", m->pv_power_kw,
-                     (unsigned)m->battery_pct);
+            snprintf(r0, LCD_LINE_SIZE, "OUT:%3.0fV %2.0fHz   ",
+                     m->output_voltage, m->output_frequency);
+            snprintf(r1, LCD_LINE_SIZE, "CUR:%4.1fA %4.0fW ",
+                     m->output_current, m->output_voltage * m->output_current);
             break;
         case MAIN_SUB_BATTERY:
-            snprintf(r0, LCD_LINE_SIZE, "LD%4.2f G%4.2f", m->load_power_kw,
-                     m->grid_power_kw);
-            snprintf(r1, LCD_LINE_SIZE, "BAT%4.1fV %2uV", m->battery_voltage,
-                     (unsigned)(m->voltage_system ? m->voltage_system : 12U));
+            snprintf(r0, LCD_LINE_SIZE, "BAT:%4.1fV %3d%%  ",
+                     m->battery_voltage, m->battery_pct);
+            snprintf(r1, LCD_LINE_SIZE, "TMP:%2.0fC CHG:%s ",
+                     m->battery_temperature, m->battery_charging ? "YES" : "NO ");
             break;
         case MAIN_SUB_SYSTEM:
         default:
-            snprintf(r0, LCD_LINE_SIZE, "SOLAR %2uV %.5s",
-                     (unsigned)(m->voltage_system ? m->voltage_system : 12U),
-                     wifi);
-            snprintf(r1, LCD_LINE_SIZE, "ENTER=PAGE %u/3",
-                     (unsigned)m->sub_page + 1U);
+            snprintf(r0, LCD_LINE_SIZE, "INV:%s AC:%s  ",
+                     m->inverter_active ? "ON " : "OFF",
+                     m->ac_connected ? "YES" : "NO ");
+            snprintf(r1, LCD_LINE_SIZE, "LOAD: %3d%% %-.5s",
+                     m->load_pct, wifi);
             break;
         }
         draw_commit(r0, r1);
