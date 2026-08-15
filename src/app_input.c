@@ -34,7 +34,28 @@ extern change_pin_ctx_t change_pin_ctx;
 
 static uint8_t s_ota_auth_selection = 1U;
 
-static void exit_factory_reset_menu(void)
+static void return_factory_reset_to_menu(void)
+{
+    const uint8_t selection = sys_state.menu_selection;
+    factory_reset_cancel(&sys_lcd.factory_reset);
+    sys_state.in_detail_view = false;
+    sys_state.menu_state = MENU_FACTORY_RESET;
+    sys_state.menu_selection = selection;
+    sys_state.last_activity_time = esp_timer_get_time() / 1000;
+    show_menu_screen(MENU_FACTORY_RESET, selection);
+}
+
+static void exit_factory_reset_to_home(void)
+{
+    factory_reset_cancel(&sys_lcd.factory_reset);
+    sys_state.in_detail_view = false;
+    sys_state.menu_state = MENU_NONE;
+    sys_state.menu_selection = 0;
+    clear_menu_history();
+    go_to_main_screen();
+}
+
+static void exit_factory_reset_to_previous_menu(void)
 {
     factory_reset_cancel(&sys_lcd.factory_reset);
 
@@ -50,10 +71,7 @@ static void exit_factory_reset_menu(void)
             show_menu_screen(previous_menu, previous_selection);
         }
     } else {
-        sys_state.menu_state = MENU_NONE;
-        sys_state.menu_selection = 0;
-        clear_menu_history();
-        go_to_main_screen();
+        exit_factory_reset_to_home();
     }
 }
 
@@ -217,7 +235,7 @@ void handle_power_button_event(button_event_info_t *event_info,
         atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
     {
         if (event_info->event == BUTTON_EVENT_CLICK) {
-            exit_factory_reset_menu();
+            exit_factory_reset_to_home();
         }
         return;
     }
@@ -1554,7 +1572,7 @@ void handle_back_button_event(button_event_info_t *event_info,
         atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
     {
         if (event_info->event == BUTTON_EVENT_CLICK) {
-            exit_factory_reset_menu();
+            return_factory_reset_to_menu();
         }
         return;
     }
@@ -1629,7 +1647,7 @@ void handle_back_button_event(button_event_info_t *event_info,
 
             if (phase == FACTORY_PHASE_CONFIRM || phase == FACTORY_PHASE_IDLE)
             {
-                exit_factory_reset_menu();
+                exit_factory_reset_to_previous_menu();
                 return;
             }
         }

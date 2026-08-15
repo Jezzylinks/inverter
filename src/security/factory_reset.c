@@ -159,6 +159,7 @@ void factory_reset_cancel(factory_reset_ctx_t *ctx)
 
     pin_entry_reset(&ctx->pin_ctx);
     memset(ctx->pin_line, 0, sizeof(ctx->pin_line));
+    security_reset_scope_attempts(SECURITY_LOCKOUT_FACTORY_RESET);
     atomic_store(&ctx->action, FACTORY_ACTION_NONE);
     atomic_store(&ctx->phase, FACTORY_PHASE_IDLE);
     atomic_store(&ctx->progress_pct, 0U);

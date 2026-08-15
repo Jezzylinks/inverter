@@ -393,6 +393,18 @@ void security_reset_attempts(void)
     xSemaphoreGive(s_sec.mutex);
 }
 
+void security_reset_scope_attempts(security_lockout_scope_t scope)
+{
+    if (!s_sec.initialized || !s_sec.mutex ||
+        scope >= SECURITY_LOCKOUT_SCOPE_COUNT) {
+        return;
+    }
+    xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
+    s_sec.attempts[scope] = 0U;
+    s_sec.lockout_until_ms[scope] = 0;
+    xSemaphoreGive(s_sec.mutex);
+}
+
 uint8_t security_attempts_remaining_for_scope(security_lockout_scope_t scope)
 {
     if (!s_sec.initialized || !s_sec.mutex ||
