@@ -173,6 +173,12 @@ const char *event_action_name(event_action_t action)
 {
     switch (action)
     {
+    case EVENT_ACTION_INFO:
+        return "Info";
+    case EVENT_ACTION_ERROR:
+        return "Error";
+    case EVENT_ACTION_SUCCESS:
+        return "Success";
     case EVENT_ACTION_WARNING:
         return "Warning";
     case EVENT_ACTION_DERATE:
@@ -201,6 +207,16 @@ const char *event_action_name(event_action_t action)
         return "Changed";
     case EVENT_ACTION_STARTUP:
         return "Startup";
+    case EVENT_ACTION_FAULT:
+        return "Fault";
+    case EVENT_ACTION_CRITICAL:
+        return "Critical";
+    case EVENT_ACTION_USER_INPUT:
+        return "User Input";
+    case EVENT_ACTION_COMMUNICATION:
+        return "Communication";
+    case EVENT_ACTION_CHARGING:
+        return "Charging";
 
     default:
         return "Unknown";

@@ -3832,22 +3832,12 @@ static void post_inverter_success_event(void)
     system_event_post(&evt);
 }
 
-/* Bridges post_manager.c's plain pass/fail result (it stays decoupled
- * from LCD/event specifics on purpose) to actual user feedback: a
- * SUCCESS/ERROR event (buzzer chime + LED via the existing pipeline)
- * plus an LCD message -- unless the LCD itself failed POST, in which
- * case rendering a fault screen on a display that just failed to ACK
- * its own I2C address would be pointless. */
+/* Bridges post_manager.c's plain pass/fail result to the LCD only. Do not
+ * publish a normal system event here: this function runs during boot and a
+ * queued event can arrive after startup filtering is released, producing a
+ * misleading System/Unknown flash. */
 static void post_show_result_and_notify(post_result_t result)
 {
-    system_event_t evt = {0};
-    evt.category = EVENT_CATEGORY_SYSTEM;
-    evt.action = result.all_passed ? EVENT_ACTION_SUCCESS : EVENT_ACTION_ERROR;
-    evt.source = EVENT_SOURCE_SYSTEM;
-    evt.priority = result.all_passed ? EVENT_PRIORITY_NORMAL : EVENT_PRIORITY_CRITICAL;
-    evt.timestamp = xTaskGetTickCount();
-    system_event_post(&evt);
-
     if (result.all_passed)
     {
         lcd_flash_info("Self-Test OK    ", "                ", 1500);
@@ -6884,8 +6874,8 @@ void app_main(void)
     }
 
     /* Boot presentation is complete only after POST has reported. This keeps
-     * ordinary AC/battery protection events out of the branded startup UI
-     * without disabling the underlying protection or event dispatch paths. */
+     * ordinary AC/battery protection events out of the startup UI without
+     * disabling the underlying protection or event dispatch paths. */
     lcd_startup_release();
     lcd_watchdog_init(lcd_task_handle);
     while (sys_state.system_ready)
