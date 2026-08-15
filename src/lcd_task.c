@@ -163,16 +163,20 @@ void lcd_display_startup_screen(uint8_t progress)
     (void)progress;
     if (lcd_geometry_is_20x4())
     {
+        /* Premium boot composition: logo, breathing room, product class,
+         * then breathing room again. Empty rows are intentional. */
         const char *rows[] = {
-            "   C-TECH POWER   ",
-            "  SMART INVERTER  ",
-            " CLEAN ENERGY CTRL",
-            "   INITIALIZING   "};
+            "      C-TECH      ",
+            "",
+            "    INVERTER      ",
+            ""};
         draw_commit_rows(rows);
     }
     else
     {
-        draw_commit(" C-TECH POWER   ", " SMART INVERTER ");
+        /* A single calm brand line is more legible than two competing lines
+         * on the compact panel. */
+        draw_commit("  C-TECH POWER  ", "");
     }
 }
 
@@ -410,13 +414,13 @@ static void draw_startup(const lcd_startup_data_t *d)
     format_progress_line(bar, d->progress_pct);
     if (lcd_geometry_is_20x4())
     {
-        const char *rows[] = {"   C-TECH POWER   ", "OUTPUT STARTING",
-                              bar, startup_stage_label(d->progress_pct)};
+        const char *rows[] = {"      C-TECH      ", "",
+                              bar, ""};
         draw_commit_rows(rows);
     }
     else
     {
-        draw_commit("OUTPUT STARTING", bar);
+        draw_commit(" C-TECH OUTPUT ", bar);
     }
 }
 
@@ -598,16 +602,16 @@ static void draw_loading(const lcd_loading_data_t *d)
 
     if (lcd_geometry_is_20x4())
     {
-        char row3[LCD_LINE_SIZE];
-        snprintf(row3, sizeof(row3), "STARTING OUTPUT %3u%%", pct);
-        const char *rows[] = {"   C-TECH POWER   ", bar,
-                              startup_stage_label(pct), row3};
+        char status[LCD_LINE_SIZE];
+        snprintf(status, sizeof(status), "  %s", startup_stage_label(pct));
+        const char *rows[] = {"      C-TECH      ", bar,
+                              status, ""};
         draw_commit_rows(rows);
     }
     else
     {
         char row0[LCD_LINE_SIZE];
-        snprintf(row0, sizeof(row0), "STARTING %3u%%", pct);
+        snprintf(row0, sizeof(row0), " C-TECH %3u%%", pct);
         draw_commit(row0, bar);
     }
 }
