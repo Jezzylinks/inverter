@@ -392,3 +392,19 @@ void security_reset_attempts(void)
     memset(s_sec.lockout_until_ms, 0, sizeof(s_sec.lockout_until_ms));
     xSemaphoreGive(s_sec.mutex);
 }
+
+uint8_t security_attempts_remaining_for_scope(security_lockout_scope_t scope)
+{
+    if (!s_sec.initialized || !s_sec.mutex ||
+        scope >= SECURITY_LOCKOUT_SCOPE_COUNT) {
+        return 0U;
+    }
+
+    xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
+    const uint8_t attempts = s_sec.attempts[scope];
+    const uint8_t remaining = (attempts >= SECURITY_MAX_ATTEMPTS)
+                                  ? 0U
+                                  : (uint8_t)(SECURITY_MAX_ATTEMPTS - attempts);
+    xSemaphoreGive(s_sec.mutex);
+    return remaining;
+}

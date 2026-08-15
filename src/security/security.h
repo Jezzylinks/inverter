@@ -79,6 +79,9 @@ extern "C"
     void security_reset_attempts(void);
     void security_reset_scope_attempts(security_lockout_scope_t scope);
 
+    /** Number of failed attempts still available before lockout. */
+    uint8_t security_attempts_remaining_for_scope(security_lockout_scope_t scope);
+
 #ifdef __cplusplus
 }
 #endif

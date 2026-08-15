@@ -220,7 +220,7 @@ static void beep_critical(void)
 
 /* Very short, quiet -- keypress feedback. Kept brief so rapid presses
  * never feel like they're waiting on the buzzer. */
-static void beep_click(void) { buzzer_beep(2500, 25, 15); }
+static void beep_click(void) { buzzer_beep(2000, 50, 60); }
 static void beep_limit(void) { buzzer_beep(1100, 55, 70); }
 
 /* ========================================================================
@@ -273,7 +273,7 @@ void buzzer_event_task(void *pv)
         }
         if (!event_dispatcher_receive(EVENT_SUB_BUZZER,
                                       &evt,
-                                      pdMS_TO_TICKS(1000U)))
+                                      pdMS_TO_TICKS(20U)))
         {
             continue;
         }
