@@ -6,6 +6,7 @@
 #include "system_state.h"
 #include "utility/led.h"
 #include "utility/buzzer.h"
+#include "lcd_writer.h"
 #include "esp_log.h"
 
 extern system_state_t sys_state;
@@ -19,6 +20,11 @@ static const char *TAG = "PROT_HANDLER";
 
 static void flash_warning(const char *line1, const char *line2)
 {
+    /* Protection enforcement continues during boot, but voltage warnings do
+     * not take over the startup presentation. */
+    if (lcd_is_startup_active())
+        return;
+
     lcd_flash_info(line1, line2, 1500);
 }
 
