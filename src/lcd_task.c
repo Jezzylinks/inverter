@@ -48,6 +48,7 @@ extern led_pattern_t pattern;
 #define SCL_PIN 22
 #define LCD_BLINK_INTERVAL_MS 500
 #define LCD_FLASH_QUEUE_DEPTH 4
+#define SYSTEM_STARTUP_DISPLAY_DURATION_MS 4000U
 
 static uint8_t loading_progress(uint32_t elapsed, uint32_t duration);
 
@@ -1238,7 +1239,9 @@ void lcd_task(void *arg)
         {
         case LCD_SCREEN_BOOT_BRAND:
             /* No splash logo: move directly into functional startup status. */
-            lcd_show_loading("System Starting", 2000, LCD_SCREEN_MAIN);
+            lcd_show_loading("System Starting",
+                             SYSTEM_STARTUP_DISPLAY_DURATION_MS,
+                             LCD_SCREEN_MAIN);
             break;
 
         case LCD_SCREEN_MAIN:

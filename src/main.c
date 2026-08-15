@@ -272,6 +272,7 @@
 #define SCREEN_SWITCH_INTERVAL_MS 1000
 #define ERROR_DISPLAY_INTERVAL_MS 1000
 #define STARTUP_DELAY_MS 2000
+#define INVERTER_STARTUP_STEP_DELAY_MS 200U
 #define NUM_DISPLAY_SCREENS 3
 #define LCD_SCROLL_DELAY_MS 300
 #define LCD_BLINK_INTERVAL_MS 500
@@ -2612,7 +2613,9 @@ void adc_task(void *arg)
             first_sample = false;
             ESP_LOGI(TAG_ADC, "First valid sample: Battery=%.2fV",
                      sys_state.inverter.battery.voltage);
-            lcd_boot_complete();
+            /* Keep the LCD loading screen visible for its configured
+             * duration. The LCD task owns the transition to the main screen;
+             * ADC warmup must not cut the startup presentation short. */
             post_boot_complete_event();
             if (lcd_task_handle != NULL)
                 xTaskNotifyGive(lcd_task_handle);
@@ -3922,7 +3925,7 @@ void inverter_power_on(void)
     for (int i = 0; i <= 100; i += 10)
     {
         lcd_show_startup_progress((uint8_t)i);
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(INVERTER_STARTUP_STEP_DELAY_MS));
     }
 
     inverter_set_current_limit(sys_state.current_limit);
