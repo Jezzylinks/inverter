@@ -3199,10 +3199,17 @@ void check_protections(void)
         sys_state.inverter.temperature,
         now_ms);
 
-    protection_update(
-        PROT_QUANTITY_BATTERY_VOLTAGE,
-        sys_state.inverter.battery.voltage,
-        now_ms);
+    /* Battery-voltage protection begins after the startup sequence. The
+     * ADC measurement and battery estimator still run during boot, but this
+     * protection producer is not invoked until the LCD startup phase has
+     * been released, preventing a boot-time battery-protection notice. */
+    if (!lcd_is_startup_active())
+    {
+        protection_update(
+            PROT_QUANTITY_BATTERY_VOLTAGE,
+            sys_state.inverter.battery.voltage,
+            now_ms);
+    }
 
     static uint32_t last_battery_update_ms = 0;
     if (last_battery_update_ms == 0)
