@@ -199,6 +199,8 @@ const char *event_action_name(event_action_t action)
         return "Double Press";
     case EVENT_ACTION_CHANGED:
         return "Changed";
+    case EVENT_ACTION_STARTUP:
+        return "Startup";
 
     default:
         return "Unknown";
