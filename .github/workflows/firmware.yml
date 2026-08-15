@@ -1,0 +1,39 @@
+name: Firmware validation
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Run firmware contract tests
+        run: python tools/test_firmware_contracts.py
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build selected 20x4 firmware
+        run: pio run -e esp32dev
+
+      - name: Run static analysis
+        run: pio check -e esp32dev
+
+      - name: Build 16x2 firmware
+        shell: bash
+        run: |
+          cp src/menu_config.h "$RUNNER_TEMP/menu_config.h"
+          trap 'cp "$RUNNER_TEMP/menu_config.h" src/menu_config.h' EXIT
+          sed -i 's/#define MENU_CONFIG_LCD_20X4 1/#define MENU_CONFIG_LCD_20X4 0/' src/menu_config.h
+          pio run -e esp32dev

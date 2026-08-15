@@ -20,6 +20,7 @@
 #include "wifi_scan.h"
 #include "wifi_storage.h"
 #include "wifi_web_pages.h"
+#include "security/security.h"
 
 #define WIFI_HTTP_TAG "WIFI_HTTP"
 #define WIFI_HTTP_SCAN_BYTES 4096U
@@ -117,6 +118,30 @@ static bool wifi_http_valid_text(const char *text, size_t capacity, bool require
     return true;
 }
 
+static bool wifi_http_verify_pin(const char *form)
+{
+    char pin_text[SECURITY_PIN_LEN + 1U] = {0};
+    if (!form || httpd_query_key_value(form, "pin", pin_text,
+                                       sizeof(pin_text)) != ESP_OK ||
+        strlen(pin_text) != SECURITY_PIN_LEN) {
+        return false;
+    }
+
+    uint8_t pin[SECURITY_PIN_LEN] = {0};
+    for (size_t i = 0U; i < SECURITY_PIN_LEN; ++i) {
+        if (pin_text[i] < '0' || pin_text[i] > '9') {
+            memset(pin, 0, sizeof(pin));
+            return false;
+        }
+        pin[i] = (uint8_t)(pin_text[i] - '0');
+    }
+    const bool valid = security_verify_pin_for_scope(
+        pin, SECURITY_LOCKOUT_GENERAL);
+    memset(pin, 0, sizeof(pin));
+    memset(pin_text, 0, sizeof(pin_text));
+    return valid;
+}
+
 static esp_err_t wifi_http_receive_form(httpd_req_t *req, char **form)
 {
     if (req->content_len <= 0 || req->content_len > (int)WIFI_HTTP_MAX_FORM_BYTES) {
@@ -197,6 +222,12 @@ static esp_err_t save_handler(httpd_req_t *req)
     }
     if (receive_err != ESP_OK) {
         return wifi_http_send_error(req, "400 Bad Request", "Invalid form body");
+    }
+
+    if (!wifi_http_verify_pin(form)) {
+        free(form);
+        return wifi_http_send_error(req, "401 Unauthorized",
+                                    "Valid security PIN required");
     }
 
     wifi_credentials_t credentials = {0};
@@ -293,6 +324,19 @@ static esp_err_t scan_handler(httpd_req_t *req)
 
 static esp_err_t reset_handler(httpd_req_t *req)
 {
+    char *form = NULL;
+    const esp_err_t receive_err = wifi_http_receive_form(req, &form);
+    if (receive_err != ESP_OK) {
+        return wifi_http_send_error(req, "400 Bad Request",
+                                    "Security PIN form required");
+    }
+    const bool authorized = wifi_http_verify_pin(form);
+    free(form);
+    if (!authorized) {
+        return wifi_http_send_error(req, "401 Unauthorized",
+                                    "Valid security PIN required");
+    }
+
     const esp_err_t erase_err = wifi_storage_erase_credentials();
     if (erase_err != ESP_OK) {
         ESP_LOGE(WIFI_HTTP_TAG, "Credential erase failed: %s", esp_err_to_name(erase_err));

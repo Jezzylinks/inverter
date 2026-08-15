@@ -11,9 +11,12 @@ const char *wifi_web_pages_get_setup(void)
            "<form action='/save' method='post' autocomplete='off'>"
            "<label>Network name<br><input name='ssid' maxlength='32' required></label><br><br>"
            "<label>Password<br><input name='password' type='password' minlength='8' maxlength='63'></label><br><br>"
+           "<label>Security PIN<br><input name='pin' type='password' inputmode='numeric' pattern='[0-9]{4}' minlength='4' maxlength='4' required></label><br><br>"
            "<button type='submit'>Save and connect</button></form>"
            "<p><a href='/scan'>Scan nearby networks</a> | <a href='/status'>Status</a></p>"
-           "<form action='/reset' method='post'><button type='submit'>Erase saved credentials</button></form>"
+           "<form action='/reset' method='post'>"
+           "<label>Security PIN<br><input name='pin' type='password' inputmode='numeric' pattern='[0-9]{4}' minlength='4' maxlength='4' required></label><br>"
+           "<button type='submit'>Erase saved credentials</button></form>"
            "</body></html>";
 }
 

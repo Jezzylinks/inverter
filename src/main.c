@@ -17,6 +17,7 @@
 // System state
 #include "system_state.h"
 #include "telemetry/telemetry_health.h"
+#include "diagnostics/system_diagnostics.h"
 
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_continuous.h>
@@ -4072,6 +4073,10 @@ void inverter_emergency_disable(const char *reason)
     fault_log_add(FAULT_SEV_CRITICAL, FAULT_SRC_PROTECTION_BATTERY,
                   sys_state.inverter.battery.voltage,
                   reason ? reason : "Emergency output disable");
+    system_diagnostics_record_fault(
+        (uint32_t)sys_state.error.error_flags,
+        sys_state.inverter.battery.voltage,
+        (uint32_t)(esp_timer_get_time() / 1000ULL));
     post_inverter_fault_event();
 }
 
@@ -6993,6 +6998,9 @@ void app_main(void)
 {
     init_watchdog(true, true);
     task_watchdog_register("app_main");
+    if (!task_watchdog_start_supervisor()) {
+        ESP_LOGE(APP_TAG, "Failed to start watchdog health supervisor");
+    }
 
     system_events_init();
 
@@ -7020,6 +7028,7 @@ void app_main(void)
 
     /* NVS and system defaults must be ready before loading profiles or security. */
     nvs_init(false);
+    system_diagnostics_init();
     init_system_state();
     init_menu_system();
     if (security_init() != ESP_OK)

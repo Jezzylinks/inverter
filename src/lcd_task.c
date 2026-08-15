@@ -8,6 +8,7 @@
 ==============================================================================*/
 #include "lcd_state.h"
 #include "lcd_watchdog.h"
+#include "task_watchdog.h"
 #include "lcd_integrity.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -1214,6 +1215,7 @@ extern flash_entry_t s_queue[LCD_FLASH_QUEUE_DEPTH];
 
 void lcd_task(void *arg)
 {
+    task_watchdog_register("lcd_task");
     lcd_render_state_t snap;
     static lcd_screen_id_t last_screen = LCD_SCREEN_COUNT;
     bool need_clear = true;
@@ -1232,6 +1234,7 @@ void lcd_task(void *arg)
     while (1)
     {
         /* ====== STEP 1: WATCHDOG ====== */
+        task_watchdog_feed();
         lcd_watchdog_feed();
 
         /* ====== STEP 2: SNAPSHOT STATE ====== */
