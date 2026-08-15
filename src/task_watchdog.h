@@ -24,6 +24,9 @@ typedef struct {
 /* Register the calling FreeRTOS task with the ESP task watchdog. */
 void task_watchdog_register(const char *task_name);
 
+/* Register only in the health registry; do not subscribe the task to ESP TWDT. */
+void task_watchdog_register_health_only(const char *task_name);
+
 /* Feed the watchdog and update the task-health heartbeat. */
 void task_watchdog_feed(void);
 

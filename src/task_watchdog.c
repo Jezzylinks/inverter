@@ -37,19 +37,10 @@ static int find_record(TaskHandle_t handle)
     return -1;
 }
 
-void task_watchdog_register(const char *task_name)
+static void record_health_registration(const char *task_name)
 {
     const TaskHandle_t current = xTaskGetCurrentTaskHandle();
     const uint32_t timestamp = now_ms();
-    const esp_err_t status = esp_task_wdt_status(NULL);
-    if (status != ESP_OK) {
-        const esp_err_t err = esp_task_wdt_add(NULL);
-        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-            ESP_LOGW(TAG, "Could not register %s: %s",
-                     task_name ? task_name : "task", esp_err_to_name(err));
-        }
-    }
-
     taskENTER_CRITICAL(&s_lock);
     int index = find_record(current);
     if (index < 0) {
@@ -71,10 +62,30 @@ void task_watchdog_register(const char *task_name)
             snapshot->name[sizeof(snapshot->name) - 1U] = '\0';
         }
         snapshot->stack_high_water_words = uxTaskGetStackHighWaterMark(current);
-    } else {
-        ESP_LOGE(TAG, "Task watchdog registry full; task health unavailable");
     }
     taskEXIT_CRITICAL(&s_lock);
+
+    if (index < 0) {
+        ESP_LOGE(TAG, "Task watchdog registry full; task health unavailable");
+    }
+}
+
+void task_watchdog_register(const char *task_name)
+{
+    const esp_err_t status = esp_task_wdt_status(NULL);
+    if (status != ESP_OK) {
+        const esp_err_t err = esp_task_wdt_add(NULL);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "Could not register %s: %s",
+                     task_name ? task_name : "task", esp_err_to_name(err));
+        }
+    }
+    record_health_registration(task_name);
+}
+
+void task_watchdog_register_health_only(const char *task_name)
+{
+    record_health_registration(task_name);
 }
 
 void task_watchdog_feed(void)
@@ -100,7 +111,7 @@ void task_watchdog_feed(void)
 static void task_watchdog_supervisor(void *arg)
 {
     (void)arg;
-    task_watchdog_register("watchdog_supervisor");
+    task_watchdog_register_health_only("watchdog_supervisor");
     while (true) {
         task_watchdog_feed();
         const uint32_t timestamp = now_ms();
