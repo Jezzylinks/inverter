@@ -169,7 +169,9 @@ Panel security is enabled by default for new installations. The initial default 
 
 ## Battery profile and persistence notes
 
-Battery chemistry, system voltage, capacity, and protection thresholds are loaded before battery hardware initialization. Learned estimator state is persisted independently and is rejected if it has an incompatible version or unsafe numeric values. Confirm that the selected chemistry, voltage system, capacity, cutoff, recharge, charge-current, and discharge-current values match the physical battery bank before enabling inverter output.
+Battery chemistry, system voltage, capacity, and protection thresholds are loaded before battery hardware initialization. The battery ADC first converts the sensed divider voltage, then applies the selected-system multiplier (`12/12`, `24/12`, or `48/12`) before publishing pack voltage to SOC, protection, runtime estimation, and the LCD. The battery-monitoring task does not overwrite this value with a fixed 12 V conversion. Learned estimator state is persisted independently and is rejected if it has an incompatible version or unsafe numeric values. Confirm that the selected chemistry, voltage system, capacity, cutoff, recharge, charge-current, and discharge-current values match the physical battery bank before enabling inverter output.
+
+The multiplier is a software scaling step after the physical divider. It does not make a 12 V resistor divider electrically safe for direct 24 V or 48 V input. The divider and any protection components must be designed so the ESP32 ADC pin remains within its safe voltage range for the highest selected battery system.
 
 ## Deployment checklist
 

@@ -2974,6 +2974,18 @@ static float map_adc_to_full_range(float adc_voltage)
 #endif
 }
 
+static float selected_battery_voltage_multiplier(void)
+{
+    float nominal_voltage = sys_state.battery_profile.nominal_voltage;
+    if (nominal_voltage < 11.0f) {
+        nominal_voltage = (float)sys_state.battery_voltage_system;
+    }
+    if (nominal_voltage < 11.0f) {
+        nominal_voltage = 12.0f;
+    }
+    return nominal_voltage / 12.0f;
+}
+
 static void process_adc_reading(const adc_channel_config_t *config,
                                 const adc_channel_state_t *state,
                                 adc_oneshot_unit_handle_t handle)
@@ -3011,29 +3023,36 @@ static void process_adc_reading(const adc_channel_config_t *config,
 
     adc_voltage = map_adc_to_full_range(adc_voltage); // Apply software mapping to correct non-linearity
 
-    // Calculate actual voltage
+    // Convert the ADC pin voltage through the physical divider first.
+    // The battery channel is a 12 V-equivalent analog input; scale that
+    // measured value to the selected 12/24/48 V battery system afterwards.
     float actual_voltage = adc_voltage * config->voltage_divider_ratio;
-    // filter battery value
+    float threshold_low = config->threshold_low;
     if (config->channel_id == CHANNEL_ID_BATTERY_VOLTAGE)
     {
+        const float multiplier = selected_battery_voltage_multiplier();
+        actual_voltage *= multiplier;
+        threshold_low = sys_state.battery_profile.cutoff_voltage_12v;
+        if (threshold_low <= 0.0f) {
+            threshold_low = config->threshold_low * multiplier;
+        }
         battery_filter_update(&battery_voltage_filter, actual_voltage);
     }
-    // IMPORTANT: Write the value to sys_state
+
+    // IMPORTANT: Write the system-scaled value to sys_state.
     *(config->target_value) = actual_voltage;
 
-    // Check thresholds and set error flags
+    // Check thresholds and set error flags using the active voltage system.
     bool error_detected = false;
 
     if (config->has_high_threshold)
     {
-        // Check both low and high thresholds
-        error_detected = (actual_voltage < config->threshold_low ||
+        error_detected = (actual_voltage < threshold_low ||
                           actual_voltage > config->threshold_high);
     }
     else
     {
-        // Only check low threshold
-        error_detected = (actual_voltage < config->threshold_low);
+        error_detected = (actual_voltage < threshold_low);
     }
 
     // Update error flags
@@ -5351,17 +5370,15 @@ void battery_monitoring_task(void *pvParameters)
     {
 
         task_watchdog_feed();
-        // Read battery voltage from ADC
-        uint16_t adc_value = 23; // dummy value//adc1_get_raw(ADC_CHANNEL_6);
+        /* adc_task() owns the battery ADC channel and publishes the
+         * system-scaled pack voltage. This task must not overwrite it with
+         * a fixed dummy count or a 12 V-only divider formula. */
+        const float voltage = sys_state.inverter.battery.voltage;
+        const float cutoff = sys_state.battery_profile.cutoff_voltage_12v;
 
-        // Convert to actual voltage
-        float voltage = (adc_value / 4095.0f) * 3.3f * (110.0f / 10.0f); // Voltage divider ratio
-
-        // Update state
-        sys_state.inverter.battery.voltage = voltage;
-
-        // Check against cutoff threshold
-        if (voltage < sys_state.battery_cutoff && sys_state.inverter.inverter_state == INVERTER_ON)
+        // Check against the active profile's scaled cutoff threshold.
+        if (voltage > 0.0f && voltage < cutoff &&
+            sys_state.inverter.inverter_state == INVERTER_ON)
         {
             // Generate error flag and shutdown
             printf("BATTERY LOW: %.2f V - SHUTTING DOWN\n", voltage);
@@ -5878,10 +5895,16 @@ void adjust_calibration_setting(button_event_info_t btn)
         }
         break;
     case 1:
-        lcd_show_menu("Bat Calibration ", "Connect known12V");
+    {
+        const float known = (sys_state.battery_profile.nominal_voltage >= 11.0f)
+                                ? sys_state.battery_profile.nominal_voltage
+                                : 12.0f;
+        char calibration_prompt[LCD_LINE_SIZE];
+        snprintf(calibration_prompt, sizeof(calibration_prompt),
+                 "Connect known%uV", (unsigned)known);
+        lcd_show_menu("Bat Calibration ", calibration_prompt);
         if (button_id == BTN_ENTER)
         {
-            float known = 12.0f;
             sys_state.inverter.battery_voltage_calibration =
                 known - sys_state.inverter.battery.voltage;
             sys_state.inverter.battery.voltage +=
@@ -5899,6 +5922,7 @@ void adjust_calibration_setting(button_event_info_t btn)
             show_menu_screen(MAIN_MENU, 0);
         }
         break;
+    }
     case 10:
         perform_factory_reset();
         calib_step = 0;
