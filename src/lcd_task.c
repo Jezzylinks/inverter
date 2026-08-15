@@ -165,7 +165,7 @@ void lcd_display_startup_screen(uint8_t progress)
     /* Startup branding is intentionally disabled. The startup screen is
      * reserved for progress/status information, not a splash logo. */
     if (lcd_geometry_is_20x4())
-        draw_commit_rows((const char *[]) {"", "", "", ""});
+        draw_commit_rows((const char *[]){"", "", "", ""});
     else
         draw_commit("", "");
 }
@@ -210,9 +210,10 @@ static void format_home_wifi(char *out, size_t out_len,
 }
 
 static void format_battery_time(char *out, size_t out_len,
-                                 uint16_t remaining_minutes)
+                                uint16_t remaining_minutes)
 {
-    if (remaining_minutes == 0U) {
+    if (remaining_minutes == 0U)
+    {
         /* Runtime is load-dependent. Make the reason visible instead of
          * presenting an apparently missing value while the inverter is idle. */
         snprintf(out, out_len, "IDLE");
@@ -325,59 +326,59 @@ static void draw_main(lcd_main_data_t *m)
 
 static void draw_menu(const lcd_menu_data_t *d)
 {
-if (lcd_geometry_is_20x4())
-{
-    const char *rows[LCD_ROWS];
-    for (uint8_t row = 0; row < LCD_ROWS; ++row)
-        rows[row] = d->rows[row];
-    draw_commit_rows(rows);
-}
-else
-{
-    draw_commit(d->rows[0], d->rows[1]);
-}
+    if (lcd_geometry_is_20x4())
+    {
+        const char *rows[LCD_ROWS];
+        for (uint8_t row = 0; row < LCD_ROWS; ++row)
+            rows[row] = d->rows[row];
+        draw_commit_rows(rows);
+    }
+    else
+    {
+        draw_commit(d->rows[0], d->rows[1]);
+    }
 }
 static void draw_detail(const lcd_detail_data_t *d)
 {
-if (lcd_geometry_is_20x4())
-{
-    const char *rows[] = {d->label, d->value_str,
-                          "UP/DN  More", "BACK    Return"};
-    draw_commit_rows(rows);
-}
-else
-{
-    draw_commit(d->label, d->value_str);
-}
+    if (lcd_geometry_is_20x4())
+    {
+        const char *rows[] = {d->label, d->value_str,
+                              "UP/DN  More", "BACK    Return"};
+        draw_commit_rows(rows);
+    }
+    else
+    {
+        draw_commit(d->label, d->value_str);
+    }
 }
 static void draw_confirm(const lcd_two_line_t *d)
 {
-if (lcd_geometry_is_20x4())
-{
-    const char *rows[] = {d->row0, d->row1,
-                          "ENTER   Confirm", "BACK    Cancel"};
-    draw_commit_rows(rows);
-}
-else
-{
-    draw_commit(d->row0, d->row1);
-}
+    if (lcd_geometry_is_20x4())
+    {
+        const char *rows[] = {d->row0, d->row1,
+                              "ENTER   Confirm", "BACK    Cancel"};
+        draw_commit_rows(rows);
+    }
+    else
+    {
+        draw_commit(d->row0, d->row1);
+    }
 }
 
 static void draw_value_edit(const lcd_value_edit_data_t *d)
 {
     static bool blink_state = false;
     static int64_t last_blink_time_ms = 0;
-if (lcd_geometry_is_20x4())
-{
-    const char *rows[] = {d->label, d->value_str,
-                          "UP/DN   Change", "ENTER   Save  BACK"};
-    draw_commit_rows(rows);
-}
-else
-{
-    draw_commit(d->label, d->value_str);
-}
+    if (lcd_geometry_is_20x4())
+    {
+        const char *rows[] = {d->label, d->value_str,
+                              "UP/DN   Change", "ENTER   Save  BACK"};
+        draw_commit_rows(rows);
+    }
+    else
+    {
+        draw_commit(d->label, d->value_str);
+    }
 
     int64_t now = esp_timer_get_time() / 1000;
     if (now - last_blink_time_ms > LCD_BLINK_INTERVAL_MS)
@@ -414,35 +415,35 @@ static void draw_startup(const lcd_startup_data_t *d)
 
 static void draw_shutdown(const lcd_shutdown_data_t *d)
 {
-if (lcd_geometry_is_20x4())
-{
-    char rows[4][LCD_LINE_SIZE];
-    uint8_t load_a = 0, load_t = 0;
-    display_voltage_parts(d->load_current, &load_a, &load_t);
-    snprintf(rows[0], LCD_LINE_SIZE, "SYSTEM SHUTDOWN");
-    snprintf(rows[1], LCD_LINE_SIZE, "%s", d->load_warning ? "LOAD WARNING" : "RAMPING DOWN");
-    snprintf(rows[2], LCD_LINE_SIZE, "POWER LEVEL %3u%%", (unsigned)d->progress_pct);
-    if (d->load_warning)
-        snprintf(rows[3], LCD_LINE_SIZE, "LOAD %2u.%uA HOLD", (unsigned)load_a, (unsigned)load_t);
-    else
-        snprintf(rows[3], LCD_LINE_SIZE, "SAFE TO POWER OFF");
-    const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
-    draw_commit_rows(row_ptrs);
-}
-else
-{
-    char r1[LCD_LINE_SIZE];
-    if (d->load_warning)
+    if (lcd_geometry_is_20x4())
     {
-        snprintf(r1, LCD_LINE_SIZE, "Load:%-6.1fA    ", d->load_current);
-        draw_commit("** WARNING! **  ", r1);
+        char rows[4][LCD_LINE_SIZE];
+        uint8_t load_a = 0, load_t = 0;
+        display_voltage_parts(d->load_current, &load_a, &load_t);
+        snprintf(rows[0], LCD_LINE_SIZE, "SYSTEM SHUTDOWN");
+        snprintf(rows[1], LCD_LINE_SIZE, "%s", d->load_warning ? "LOAD WARNING" : "RAMPING DOWN");
+        snprintf(rows[2], LCD_LINE_SIZE, "POWER LEVEL %3u%%", (unsigned)d->progress_pct);
+        if (d->load_warning)
+            snprintf(rows[3], LCD_LINE_SIZE, "LOAD %2u.%uA HOLD", (unsigned)load_a, (unsigned)load_t);
+        else
+            snprintf(rows[3], LCD_LINE_SIZE, "SAFE TO POWER OFF");
+        const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
+        draw_commit_rows(row_ptrs);
     }
     else
     {
-        snprintf(r1, LCD_LINE_SIZE, "Power: %3d%%     ", d->progress_pct);
-        draw_commit("RAMP DOWN       ", r1);
+        char r1[LCD_LINE_SIZE];
+        if (d->load_warning)
+        {
+            snprintf(r1, LCD_LINE_SIZE, "Load:%-6.1fA    ", d->load_current);
+            draw_commit("** WARNING! **  ", r1);
+        }
+        else
+        {
+            snprintf(r1, LCD_LINE_SIZE, "Power: %3d%%     ", d->progress_pct);
+            draw_commit("RAMP DOWN       ", r1);
+        }
     }
-}
 }
 
 static void draw_fault(const lcd_fault_data_t *d)
@@ -456,29 +457,29 @@ static void draw_fault(const lcd_fault_data_t *d)
     }
     if (!d->blink || blink)
     {
-if (lcd_geometry_is_20x4())
-{
-        const char *rows[] = {"!!! SYSTEM FAULT !!!", d->line0,
-                              d->line1, "OUTPUT DISABLED"};
-        draw_commit_rows(rows);
-}
-else
-{
-        draw_commit(d->line0, d->line1);
-}
+        if (lcd_geometry_is_20x4())
+        {
+            const char *rows[] = {"!!! SYSTEM FAULT !!!", d->line0,
+                                  d->line1, "OUTPUT DISABLED"};
+            draw_commit_rows(rows);
+        }
+        else
+        {
+            draw_commit(d->line0, d->line1);
+        }
     }
     else
     {
-if (lcd_geometry_is_20x4())
-{
-        const char *rows[] = {"                    ", "                    ",
-                              "                    ", "                    "};
-        draw_commit_rows(rows);
-}
-else
-{
-        draw_commit("                ", "                ");
-}
+        if (lcd_geometry_is_20x4())
+        {
+            const char *rows[] = {"                    ", "                    ",
+                                  "                    ", "                    "};
+            draw_commit_rows(rows);
+        }
+        else
+        {
+            draw_commit("                ", "                ");
+        }
     }
 }
 
@@ -565,7 +566,7 @@ static void format_loading_bar(char *row, size_t row_len, uint8_t pct)
     memset(row, ' ', row_len);
     row[0] = '[';
     for (uint8_t i = 0; i < slots; i++)
-        row[i + 1] = (i < blocks) ? '#': '-';
+        row[i + 1] = (i < blocks) ? '#' : '-';
     row[slots + 1] = ']';
     row[lcd_geometry_cols()] = '\0';
 }
@@ -609,114 +610,114 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
 {
     if (d->count == 0)
     {
-if (lcd_geometry_is_20x4())
-{
-        const char *rows[] = {"WI-FI SCAN", "NO NETWORKS FOUND",
-                              "CHECK ROUTER", "BACK TO RETURN"};
-        draw_commit_rows(rows);
-}
-else
-{
-        draw_commit("No Networks     ", "Found           ");
-}
-        return;
-    }
-if (lcd_geometry_is_20x4())
-{
-    char rows[4][LCD_LINE_SIZE];
-    for (uint8_t line = 0; line < 4; line++)
-    {
-        uint8_t idx = d->top_index + line;
-        if (idx < d->count)
-            snprintf(rows[line], LCD_LINE_SIZE, "%c%-12s %4s",
-                     (idx == d->selected_index) ? '>' : ' ',
-                     d->ssid[idx], rssi_bars(d->rssi[idx]));
+        if (lcd_geometry_is_20x4())
+        {
+            const char *rows[] = {"WI-FI SCAN", "NO NETWORKS FOUND",
+                                  "CHECK ROUTER", "BACK TO RETURN"};
+            draw_commit_rows(rows);
+        }
         else
         {
-            memset(rows[line], ' ', LCD_COLS);
-            rows[line][LCD_COLS] = '\0';
+            draw_commit("No Networks     ", "Found           ");
+        }
+        return;
+    }
+    if (lcd_geometry_is_20x4())
+    {
+        char rows[4][LCD_LINE_SIZE];
+        for (uint8_t line = 0; line < 4; line++)
+        {
+            uint8_t idx = d->top_index + line;
+            if (idx < d->count)
+                snprintf(rows[line], LCD_LINE_SIZE, "%c%-12s %4s",
+                         (idx == d->selected_index) ? '>' : ' ',
+                         d->ssid[idx], rssi_bars(d->rssi[idx]));
+            else
+            {
+                memset(rows[line], ' ', LCD_COLS);
+                rows[line][LCD_COLS] = '\0';
+            }
+        }
+        const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
+        draw_commit_rows(row_ptrs);
+    }
+    else
+    {
+        for (uint8_t line = 0; line < 2; line++)
+        {
+            uint8_t idx = d->top_index + line;
+            if (idx >= d->count)
+                break;
+            char row[LCD_LINE_SIZE];
+            snprintf(row, LCD_LINE_SIZE, "%c%-8s %4s  ",
+                     (idx == d->selected_index) ? '>' : ' ',
+                     d->ssid[idx], rssi_bars(d->rssi[idx]));
+            draw_row(line, row);
         }
     }
-    const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
-    draw_commit_rows(row_ptrs);
-}
-else
-{
-    for (uint8_t line = 0; line < 2; line++)
-    {
-        uint8_t idx = d->top_index + line;
-        if (idx >= d->count)
-            break;
-        char row[LCD_LINE_SIZE];
-        snprintf(row, LCD_LINE_SIZE, "%c%-8s %4s  ",
-                 (idx == d->selected_index) ? '>' : ' ',
-                 d->ssid[idx], rssi_bars(d->rssi[idx]));
-        draw_row(line, row);
-    }
-}
 }
 
 static void draw_wifi_connecting(const lcd_wifi_connect_data_t *d)
 {
-if (lcd_geometry_is_20x4())
-{
-    static uint8_t frame = 0;
-    frame = (uint8_t)((frame + 1) % 4);
-    if (d->connected)
+    if (lcd_geometry_is_20x4())
     {
-        const char *rows[] = {"WI-FI CONNECTED", d->ssid,
-                              "LINK ESTABLISHED", "READY FOR DATA"};
-        draw_commit_rows(rows);
-    }
-    else if (d->failed)
-    {
-        const char *rows[] = {"WI-FI FAILED", d->ssid,
-                              "CHECK CREDENTIALS", "BACK TO RETURN"};
-        draw_commit_rows(rows);
-    }
-    else if (d->timed_out)
-    {
-        const char *rows[] = {"WI-FI TIMEOUT", d->ssid,
-                              "NO RESPONSE", "BACK TO RETURN"};
-        draw_commit_rows(rows);
-    }
-    else
-    {
-        const char *activity[] = {"CONNECTING  ", "CONNECTING .", "CONNECTING ..", "CONNECTING ..."};
-        char rows[4][LCD_LINE_SIZE];
-        snprintf(rows[0], LCD_LINE_SIZE, "%s", activity[frame]);
-        snprintf(rows[1], LCD_LINE_SIZE, "%c %-18.18s", CHAR_WIFI_TX, d->ssid);
-        snprintf(rows[2], LCD_LINE_SIZE, "%c WAITING FOR AP", CHAR_WIFI_RX);
-        snprintf(rows[3], LCD_LINE_SIZE, "%c SIGNAL / AUTH", CHAR_WIFI_LINK);
-        const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
-        draw_commit_rows(row_ptrs);
-    }
-}
-else
-{
-    char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
-    if (d->connected)
-    {
-        snprintf(r0, LCD_LINE_SIZE, "%-16s", "Wi-Fi Connected ");
-        snprintf(r1, LCD_LINE_SIZE, "%-16.16s", d->ssid);
-    }
-    else if (d->failed)
-    {
-        snprintf(r0, LCD_LINE_SIZE, "%-16s", "Wi-Fi Failed    ");
-        snprintf(r1, LCD_LINE_SIZE, "%-16s", "Check SSID/Pass ");
-    }
-    else if (d->timed_out)
-    {
-        snprintf(r0, LCD_LINE_SIZE, "%-16s", "Wi-Fi Timeout   ");
-        snprintf(r1, LCD_LINE_SIZE, "%-16s", "No Connection   ");
+        static uint8_t frame = 0;
+        frame = (uint8_t)((frame + 1) % 4);
+        if (d->connected)
+        {
+            const char *rows[] = {"WI-FI CONNECTED", d->ssid,
+                                  "LINK ESTABLISHED", "READY FOR DATA"};
+            draw_commit_rows(rows);
+        }
+        else if (d->failed)
+        {
+            const char *rows[] = {"WI-FI FAILED", d->ssid,
+                                  "CHECK CREDENTIALS", "BACK TO RETURN"};
+            draw_commit_rows(rows);
+        }
+        else if (d->timed_out)
+        {
+            const char *rows[] = {"WI-FI TIMEOUT", d->ssid,
+                                  "NO RESPONSE", "BACK TO RETURN"};
+            draw_commit_rows(rows);
+        }
+        else
+        {
+            const char *activity[] = {"CONNECTING  ", "CONNECTING .", "CONNECTING ..", "CONNECTING ..."};
+            char rows[4][LCD_LINE_SIZE];
+            snprintf(rows[0], LCD_LINE_SIZE, "%s", activity[frame]);
+            snprintf(rows[1], LCD_LINE_SIZE, "%c %-18.18s", CHAR_WIFI_TX, d->ssid);
+            snprintf(rows[2], LCD_LINE_SIZE, "%c WAITING FOR AP", CHAR_WIFI_RX);
+            snprintf(rows[3], LCD_LINE_SIZE, "%c SIGNAL / AUTH", CHAR_WIFI_LINK);
+            const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
+            draw_commit_rows(row_ptrs);
+        }
     }
     else
     {
-        snprintf(r0, LCD_LINE_SIZE, "%-16s", "Connecting Wi-Fi");
-        snprintf(r1, LCD_LINE_SIZE, "%-16.16s", d->ssid);
+        char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
+        if (d->connected)
+        {
+            snprintf(r0, LCD_LINE_SIZE, "%-16s", "Wi-Fi Connected ");
+            snprintf(r1, LCD_LINE_SIZE, "%-16.16s", d->ssid);
+        }
+        else if (d->failed)
+        {
+            snprintf(r0, LCD_LINE_SIZE, "%-16s", "Wi-Fi Failed    ");
+            snprintf(r1, LCD_LINE_SIZE, "%-16s", "Check SSID/Pass ");
+        }
+        else if (d->timed_out)
+        {
+            snprintf(r0, LCD_LINE_SIZE, "%-16s", "Wi-Fi Timeout   ");
+            snprintf(r1, LCD_LINE_SIZE, "%-16s", "No Connection   ");
+        }
+        else
+        {
+            snprintf(r0, LCD_LINE_SIZE, "%-16s", "Connecting Wi-Fi");
+            snprintf(r1, LCD_LINE_SIZE, "%-16.16s", d->ssid);
+        }
+        draw_commit(r0, r1);
     }
-    draw_commit(r0, r1);
-}
 }
 
 static void draw_factory_reset(const factory_reset_ctx_t *d)
@@ -781,8 +782,8 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
                     security_lockout_remaining_ms_for_scope(
                         SECURITY_LOCKOUT_FACTORY_RESET);
                 const uint32_t remaining_s = (remaining_ms > 0)
-                                                  ? (uint32_t)(remaining_ms / 1000) + 1U
-                                                  : 0U;
+                                                 ? (uint32_t)(remaining_ms / 1000) + 1U
+                                                 : 0U;
                 char rows[4][LCD_LINE_SIZE];
                 snprintf(rows[0], LCD_LINE_SIZE, "FACTORY RESET");
                 snprintf(rows[1], LCD_LINE_SIZE, "PIN LOCKED");
@@ -800,7 +801,7 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
                 "FACTORY RESET PIN",
                 pin_line,
                 attempt_line,
-                "ENTER=SUBMIT BACK=EXIT"};
+                "ENT=SUBMIT BACK=EXIT"};
             draw_commit_rows(rows);
             return;
         }
@@ -811,8 +812,8 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
                 security_lockout_remaining_ms_for_scope(
                     SECURITY_LOCKOUT_FACTORY_RESET);
             const uint32_t remaining_s = (remaining_ms > 0)
-                                              ? (uint32_t)(remaining_ms / 1000) + 1U
-                                              : 0U;
+                                             ? (uint32_t)(remaining_ms / 1000) + 1U
+                                             : 0U;
             char r1_buf[LCD_LINE_SIZE];
             snprintf(r1_buf, sizeof(r1_buf), "Retry in %3lus   ",
                      (unsigned long)remaining_s);
@@ -985,7 +986,7 @@ static void draw_security_status()
   Returns true if a frame was drawn, false if the frame was skipped.
 ------------------------------------------------------------------------------*/
 static bool draw_security_pin_flow(change_pin_phase_t flow_phase,
-                                    security_action_t security_action)
+                                   security_action_t security_action)
 {
     const security_lockout_scope_t scope =
         (security_action == SECURITY_ACTION_OTA_AUTH)
@@ -1016,20 +1017,23 @@ static bool draw_security_pin_flow(change_pin_phase_t flow_phase,
 
     char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
 
-    if (security_action == SECURITY_ACTION_OTA_AUTH) {
+    if (security_action == SECURITY_ACTION_OTA_AUTH)
+    {
         snprintf(r0, sizeof(r0), "%-16s", "OTA PIN:        ");
-    } else {
+    }
+    else
+    {
         switch (flow_phase)
         {
         case CHANGE_PIN_VERIFY_OLD:
             snprintf(r0, sizeof(r0), "%-16s", "Enter Old PIN:  ");
-        break;
-    case CHANGE_PIN_ENTER_NEW:
-        snprintf(r0, sizeof(r0), "%-16s", "Enter New PIN:  ");
-        break;
-    case CHANGE_PIN_CONFIRM_NEW:
-        snprintf(r0, sizeof(r0), "%-16s", "Confirm PIN:    ");
-        break;
+            break;
+        case CHANGE_PIN_ENTER_NEW:
+            snprintf(r0, sizeof(r0), "%-16s", "Enter New PIN:  ");
+            break;
+        case CHANGE_PIN_CONFIRM_NEW:
+            snprintf(r0, sizeof(r0), "%-16s", "Confirm PIN:    ");
+            break;
         default:
             snprintf(r0, sizeof(r0), "%-16s", "Enter PIN:      ");
             break;
@@ -1170,7 +1174,6 @@ void lcd_task(void *arg)
     lcd_render_state_t snap;
     static lcd_screen_id_t last_screen = LCD_SCREEN_COUNT;
     bool need_clear = true;
-
 
     sys_lcd.main.sub_page = MAIN_SUB_OUTPUT;
     sys_lcd.main.sub_page_interval_ms = 5000;
