@@ -11,6 +11,7 @@
 
 extern system_state_t sys_state;
 extern void shutdown_inverter(void);
+extern void inverter_emergency_disable(const char *reason);
 extern void lcd_flash_info(const char *line1, const char *line2, uint32_t duration_ms);
 extern void inverter_set_current_limit(float amps);
 
@@ -43,7 +44,7 @@ static void handle_battery_voltage(const system_event_t *evt)
         break;
 
     case EVENT_ACTION_SHUTDOWN:
-        shutdown_inverter();
+        inverter_emergency_disable("battery protection fault");
         break;
 
     case EVENT_ACTION_RECOVERED:
@@ -64,7 +65,7 @@ static void handle_temperature(const system_event_t *evt)
         break;
 
     case EVENT_ACTION_SHUTDOWN:
-        shutdown_inverter();
+        inverter_emergency_disable("temperature protection fault");
         break;
 
     case EVENT_ACTION_RECOVERED:
@@ -80,7 +81,7 @@ static void handle_output_current(const system_event_t *evt)
 {
     if (evt->action == EVENT_ACTION_SHUTDOWN)
     {
-        shutdown_inverter();
+        inverter_emergency_disable("output current protection fault");
     }
 }
 
@@ -88,7 +89,7 @@ static void handle_ac_voltage(const system_event_t *evt)
 {
     if (evt->action == EVENT_ACTION_SHUTDOWN)
     {
-        shutdown_inverter();
+        inverter_emergency_disable("AC voltage protection fault");
     }
 }
 

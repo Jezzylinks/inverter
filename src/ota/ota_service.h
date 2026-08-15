@@ -46,13 +46,13 @@ typedef struct {
  * CSV format accepted by ota_service_start_from_csv():
  *
  *   version,url,sha256,size
- *   1.2.3,https://updates.example/inverter.bin,<optional hex>,123456
+ *   1.2.3,https://updates.example/inverter.bin,<64-hex SHA-256>,123456
  *
  * The header is optional. Blank lines and lines beginning with '#' are ignored.
  * The first valid data row is selected. CSV values are bounded and must not
- * contain embedded newlines; URL and version are required. The checksum is
- * metadata for release tooling and does not replace ESP-IDF image/signature
- * validation performed by esp_https_ota.
+ * contain embedded newlines. Version, URL, SHA-256, and image size are required.
+ * The downloaded image must match both the declared size and SHA-256 before the
+ * next OTA partition is selected.
  */
 esp_err_t ota_manifest_parse_csv(const char *csv, size_t csv_len,
                                   ota_manifest_entry_t *entry);

@@ -7,11 +7,10 @@
 
 #include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
-#include "esp_event.h"
 #include "esp_http_client.h"
-#include "esp_https_ota.h"
-#include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "esp_log.h"
+#include "mbedtls/sha256.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -37,7 +36,11 @@ static bool s_cancel_requested;
 typedef struct {
     char url[OTA_MAX_URL_LENGTH];
     char expected_version[OTA_MAX_VERSION_LENGTH];
+    char expected_sha256[OTA_MAX_SHA256_LENGTH];
+    uint32_t expected_size;
 } ota_job_t;
+
+static int compare_release_versions(const char *candidate, const char *installed);
 
 static bool is_https_url(const char *url)
 {
@@ -127,10 +130,11 @@ esp_err_t ota_manifest_parse_csv(const char *csv, size_t csv_len,
             line = strtok_r(NULL, "\n", &save_line);
             continue;
         }
-        if (strlen(fields[0]) >= OTA_MAX_VERSION_LENGTH ||
+        if (field_count < 4U ||
+            strlen(fields[0]) >= OTA_MAX_VERSION_LENGTH ||
             strlen(fields[1]) >= OTA_MAX_URL_LENGTH ||
             !is_https_url(fields[1]) ||
-            (field_count >= 3U && !is_sha256(fields[2]))) {
+            !is_sha256(fields[2]) || fields[2][0] == '\0') {
             free(copy);
             return ESP_ERR_INVALID_ARG;
         }
@@ -140,8 +144,9 @@ esp_err_t ota_manifest_parse_csv(const char *csv, size_t csv_len,
         if (field_count >= 3U && fields[2][0] != '\0') {
             strncpy(entry->sha256, fields[2], sizeof(entry->sha256) - 1U);
         }
-        if (field_count >= 4U && fields[3][0] != '\0' &&
-            !parse_u32(fields[3], &entry->image_size)) {
+        if (fields[3][0] == '\0' ||
+            !parse_u32(fields[3], &entry->image_size) ||
+            entry->image_size == 0U) {
             free(copy);
             return ESP_ERR_INVALID_ARG;
         }
@@ -193,34 +198,6 @@ static bool cancel_requested(void)
     return requested;
 }
 
-static void ota_event_handler(void *handler_arg, esp_event_base_t base,
-                              int32_t event_id, void *event_data)
-{
-    (void)handler_arg;
-    (void)base;
-    (void)event_data;
-    switch ((esp_https_ota_event_t)event_id) {
-    case ESP_HTTPS_OTA_START:
-        ESP_LOGI(TAG, "OTA started");
-        notify_status(OTA_STATUS_STARTED, 0);
-        break;
-    case ESP_HTTPS_OTA_CONNECTED:
-        notify_status(OTA_STATUS_DOWNLOADING, 0);
-        break;
-    case ESP_HTTPS_OTA_GET_IMG_DESC:
-        notify_status(OTA_STATUS_VERIFYING, 0);
-        break;
-    case ESP_HTTPS_OTA_FINISH:
-        notify_status(OTA_STATUS_VERIFYING, 100);
-        break;
-    case ESP_HTTPS_OTA_ABORT:
-        ESP_LOGW(TAG, "OTA transport aborted");
-        break;
-    default:
-        break;
-    }
-}
-
 static void set_job_finished(void)
 {
     if (s_ota_mutex && xSemaphoreTake(s_ota_mutex, portMAX_DELAY) == pdTRUE) {
@@ -233,99 +210,161 @@ static void set_job_finished(void)
     }
 }
 
+static bool ota_digest_matches(const unsigned char digest[32],
+                               const char *expected_hex)
+{
+    char actual[OTA_MAX_SHA256_LENGTH] = {0};
+    for (size_t i = 0U; i < 32U; ++i) {
+        snprintf(&actual[i * 2U], 3U, "%02x", digest[i]);
+    }
+    return strcasecmp(actual, expected_hex) == 0;
+}
+
+static esp_err_t ota_download_verified(const ota_job_t *job)
+{
+    if (!job || job->expected_size == 0U ||
+        !is_sha256(job->expected_sha256)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const esp_partition_t *update_partition =
+        esp_ota_get_next_update_partition(NULL);
+    if (!update_partition || job->expected_size > update_partition->size) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    esp_http_client_config_t config = {
+        .url = job->url,
+        .timeout_ms = OTA_HTTP_TIMEOUT_MS,
+        .keep_alive_enable = true,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_ota_handle_t ota_handle = 0;
+    bool ota_started = false;
+    esp_err_t result = esp_http_client_open(client, 0);
+    if (result != ESP_OK) {
+        esp_http_client_cleanup(client);
+        return result;
+    }
+
+    const int64_t content_length = esp_http_client_fetch_headers(client);
+    if (esp_http_client_get_status_code(client) != 200 ||
+        content_length != (int64_t)job->expected_size) {
+        result = ESP_ERR_INVALID_SIZE;
+        goto cleanup;
+    }
+
+    result = esp_ota_begin(update_partition, job->expected_size, &ota_handle);
+    if (result != ESP_OK) {
+        goto cleanup;
+    }
+    ota_started = true;
+
+    mbedtls_sha256_context sha;
+    mbedtls_sha256_init(&sha);
+    if (mbedtls_sha256_starts(&sha, 0) != 0) {
+        result = ESP_FAIL;
+        mbedtls_sha256_free(&sha);
+        goto cleanup;
+    }
+
+    uint8_t buffer[1024];
+    uint32_t received = 0U;
+    notify_status(OTA_STATUS_DOWNLOADING, 0);
+    while (received < job->expected_size) {
+        task_watchdog_feed();
+        if (cancel_requested()) {
+            result = ESP_ERR_INVALID_STATE;
+            notify_status(OTA_STATUS_CANCELLED, 0);
+            mbedtls_sha256_free(&sha);
+            goto cleanup;
+        }
+
+        const int read_len = esp_http_client_read(
+            client, (char *)buffer,
+            (int)((job->expected_size - received) > sizeof(buffer)
+                      ? sizeof(buffer)
+                      : (job->expected_size - received)));
+        if (read_len <= 0) {
+            result = read_len == 0 ? ESP_ERR_INVALID_SIZE : ESP_FAIL;
+            mbedtls_sha256_free(&sha);
+            goto cleanup;
+        }
+        result = esp_ota_write(ota_handle, buffer, (size_t)read_len);
+        if (result != ESP_OK ||
+            mbedtls_sha256_update(&sha, buffer, (size_t)read_len) != 0) {
+            result = result == ESP_OK ? ESP_FAIL : result;
+            mbedtls_sha256_free(&sha);
+            goto cleanup;
+        }
+        received += (uint32_t)read_len;
+        notify_progress((int)((received * 100U) / job->expected_size));
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    unsigned char digest[32] = {0};
+    if (mbedtls_sha256_finish(&sha, digest) != 0 ||
+        !ota_digest_matches(digest, job->expected_sha256)) {
+        ESP_LOGE(TAG, "OTA SHA-256 mismatch");
+        result = ESP_ERR_INVALID_CRC;
+        mbedtls_sha256_free(&sha);
+        goto cleanup;
+    }
+    mbedtls_sha256_free(&sha);
+
+    result = esp_ota_end(ota_handle);
+    ota_started = false;
+    if (result == ESP_OK) {
+        result = esp_ota_set_boot_partition(update_partition);
+    }
+
+cleanup:
+    if (ota_started) {
+        esp_ota_abort(ota_handle);
+    }
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+    return result;
+}
+
 static void ota_task(void *parameter)
 {
     task_watchdog_register("ota_task");
     ota_job_t *job = (ota_job_t *)parameter;
-    esp_https_ota_handle_t ota_handle = NULL;
-    bool event_registered = false;
-    esp_err_t result = ESP_FAIL;
-
     if (!job) {
         set_job_finished();
         vTaskDelete(NULL);
         return;
     }
 
-    result = esp_event_handler_register(ESP_HTTPS_OTA_EVENT, ESP_EVENT_ANY_ID,
-                                        ota_event_handler, NULL);
+    notify_status(OTA_STATUS_STARTED, 0);
+    notify_status(OTA_STATUS_VERIFYING, 0);
+    const esp_err_t result = ota_download_verified(job);
     if (result != ESP_OK) {
-        ESP_LOGE(TAG, "failed to register OTA handler: %s", esp_err_to_name(result));
-        goto cleanup;
-    }
-    event_registered = true;
-
-    esp_http_client_config_t http_config = {
-        .url = job->url,
-        .timeout_ms = OTA_HTTP_TIMEOUT_MS,
-        .keep_alive_enable = true,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-    };
-    esp_https_ota_config_t ota_config = {.http_config = &http_config};
-
-    result = esp_https_ota_begin(&ota_config, &ota_handle);
-    if (result != ESP_OK) {
-        ESP_LOGE(TAG, "OTA begin failed: %s", esp_err_to_name(result));
-        goto cleanup;
-    }
-
-    while ((result = esp_https_ota_perform(ota_handle)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
-
-        task_watchdog_feed();
-        if (cancel_requested()) {
-            ESP_LOGW(TAG, "OTA cancellation requested");
-            esp_https_ota_abort(ota_handle);
-            ota_handle = NULL;
-            notify_status(OTA_STATUS_CANCELLED, 0);
-            result = ESP_ERR_INVALID_STATE;
-            goto cleanup;
+        ESP_LOGE(TAG, "Verified OTA failed: %s", esp_err_to_name(result));
+        if (result != ESP_ERR_INVALID_STATE) {
+            notify_status(OTA_STATUS_FAILED, 0);
         }
-        const int image_size = esp_https_ota_get_image_size(ota_handle);
-        const int image_read = esp_https_ota_get_image_len_read(ota_handle);
-        if (image_size > 0) {
-            notify_progress((image_read * 100) / image_size);
-        }
-        vTaskDelay(pdMS_TO_TICKS(50));
+        secure_zero(job, sizeof(*job));
+        free(job);
+        set_job_finished();
+        vTaskDelete(NULL);
+        return;
     }
 
-    if (result != ESP_OK) {
-        ESP_LOGE(TAG, "OTA transfer failed: %s", esp_err_to_name(result));
-        if (ota_handle) {
-            esp_https_ota_abort(ota_handle);
-            ota_handle = NULL;
-        }
-        notify_status(OTA_STATUS_FAILED, 0);
-        goto cleanup;
-    }
-
-    notify_status(OTA_STATUS_VERIFYING, 100);
-    result = esp_https_ota_finish(ota_handle);
-    ota_handle = NULL;
-    if (result != ESP_OK) {
-        ESP_LOGE(TAG, "OTA verification failed: %s", esp_err_to_name(result));
-        notify_status(OTA_STATUS_FAILED, 0);
-        goto cleanup;
-    }
-
-    ESP_LOGI(TAG, "OTA verified successfully%s%s",
-             job->expected_version[0] ? "; manifest version " : "",
-             job->expected_version[0] ? job->expected_version : "");
+    ESP_LOGI(TAG, "OTA verified successfully; manifest version %s",
+             job->expected_version[0] ? job->expected_version : "unknown");
     notify_status(OTA_STATUS_SUCCESS, 100);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
-
-cleanup:
-    if (ota_handle) {
-        esp_https_ota_abort(ota_handle);
-    }
-    if (event_registered) {
-        esp_event_handler_unregister(ESP_HTTPS_OTA_EVENT, ESP_EVENT_ANY_ID,
-                                     ota_event_handler);
-    }
     secure_zero(job, sizeof(*job));
     free(job);
     set_job_finished();
-    vTaskDelete(NULL);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
 }
 
 esp_err_t ota_service_init(void)
@@ -341,9 +380,14 @@ esp_err_t ota_service_init(void)
     return ESP_OK;
 }
 
-static esp_err_t start_job(const char *url, const char *expected_version)
+static esp_err_t start_job(const char *url,
+                           const char *expected_version,
+                           const char *expected_sha256,
+                           uint32_t expected_size)
 {
-    if (!is_https_url(url)) {
+    if (!is_https_url(url) || !expected_sha256 ||
+        !is_sha256(expected_sha256) || expected_sha256[0] == '\0' ||
+        expected_size == 0U) {
         return ESP_ERR_INVALID_ARG;
     }
     if (!s_ota_mutex) {
@@ -370,6 +414,9 @@ static esp_err_t start_job(const char *url, const char *expected_version)
     if (expected_version) {
         strncpy(job->expected_version, expected_version, sizeof(job->expected_version) - 1U);
     }
+    strncpy(job->expected_sha256, expected_sha256,
+            sizeof(job->expected_sha256) - 1U);
+    job->expected_size = expected_size;
     s_cancel_requested = false;
     s_in_progress = true;
     const BaseType_t created = xTaskCreate(ota_task, "ota_task", OTA_TASK_STACK_SIZE,
@@ -387,7 +434,10 @@ static esp_err_t start_job(const char *url, const char *expected_version)
 
 esp_err_t ota_service_start(const char *url)
 {
-    return start_job(url, NULL);
+    /* Direct URL updates are intentionally disabled: verified manifest
+     * metadata is required for every firmware update. */
+    (void)url;
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
 static esp_err_t http_read_bounded(const char *url, char *buffer, size_t capacity,
@@ -448,7 +498,17 @@ esp_err_t ota_service_start_from_csv(const char *csv_url)
     if (err != ESP_OK) {
         return err;
     }
-    return start_job(entry.url, entry.version);
+
+    char current_version[OTA_MAX_VERSION_LENGTH] = {0};
+    err = ota_service_get_current_version(current_version,
+                                          sizeof(current_version));
+    if (err != ESP_OK ||
+        compare_release_versions(entry.version, current_version) <= 0) {
+        ESP_LOGW(TAG, "Rejecting OTA version %s; current version is %s",
+                 entry.version, current_version);
+        return ESP_ERR_INVALID_VERSION;
+    }
+    return start_job(entry.url, entry.version, entry.sha256, entry.image_size);
 }
 
 static int compare_release_versions(const char *candidate, const char *installed)

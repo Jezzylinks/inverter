@@ -16,6 +16,7 @@
 #include "task_watchdog.h"
 // System state
 #include "system_state.h"
+#include "telemetry/telemetry_health.h"
 
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_continuous.h>
@@ -1031,6 +1032,7 @@ void toggle_display();
 // Function prototypes
 void inverter_power_on(void);
 void shutdown_inverter(void);
+void inverter_emergency_disable(const char *reason);
 static void post_inverter_power_event(bool powered_on);
 static void post_inverter_fault_event(void);
 static void post_inverter_success_event(void);
@@ -1577,6 +1579,10 @@ void init_hardware(void)
 }
 
 #define NVS_FLOAT_SCALE 100.0f
+#define NVS_SETTINGS_TXN_VERSION 1U
+#define NVS_SETTINGS_TXN_VALID_KEY "settings_txn_ok"
+#define NVS_SETTINGS_TXN_GEN_KEY "settings_txn_gen"
+#define NVS_SETTINGS_TXN_CRC_KEY "settings_txn_crc"
 
 typedef struct
 {
@@ -1622,6 +1628,46 @@ static nvs_setting_t g_settings[] = {
 };
 
 #define NVS_SETTINGS_COUNT (sizeof(g_settings) / sizeof(g_settings[0]))
+
+static uint32_t settings_fingerprint(void)
+{
+    uint32_t hash = 2166136261UL;
+    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i) {
+        const nvs_setting_t *setting = &g_settings[i];
+        const uint8_t *bytes = NULL;
+        int32_t scaled = 0;
+        if (setting->is_scaled_float) {
+            scaled = (int32_t)(*(const float *)setting->field * NVS_FLOAT_SCALE);
+            bytes = (const uint8_t *)&scaled;
+        } else {
+            bytes = (const uint8_t *)setting->field;
+        }
+        const size_t length = setting->is_scaled_float
+                                  ? sizeof(scaled)
+                                  : setting->size;
+        for (size_t j = 0U; j < length; ++j) {
+            hash ^= bytes[j];
+            hash *= 16777619UL;
+        }
+        hash ^= (uint32_t)i;
+        hash *= 16777619UL;
+    }
+    return hash ^ NVS_SETTINGS_TXN_VERSION;
+}
+
+static void nvs_apply_defaults(void)
+{
+    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i) {
+        nvs_setting_t *setting = &g_settings[i];
+        if (setting->is_scaled_float) {
+            *(float *)setting->field = setting->default_val;
+        } else if (setting->size == sizeof(uint8_t)) {
+            *(uint8_t *)setting->field = (uint8_t)setting->default_val;
+        } else {
+            *(int32_t *)setting->field = (int32_t)setting->default_val;
+        }
+    }
+}
 
 size_t app_settings_count(void)
 {
@@ -2086,7 +2132,24 @@ bool load_settings()
         return false;
     }
 
-    nvs_load_all(nvs);
+    if (nvs_load_all(nvs) != ESP_OK) {
+        load_error = true;
+    }
+
+    uint8_t txn_marker = 0U;
+    uint32_t stored_crc = 0U;
+    const bool txn_present =
+        nvs_get_u8(nvs, NVS_SETTINGS_TXN_VALID_KEY, &txn_marker) == ESP_OK;
+    const bool crc_present =
+        nvs_get_u32(nvs, NVS_SETTINGS_TXN_CRC_KEY, &stored_crc) == ESP_OK;
+    if (txn_present &&
+        (txn_marker != NVS_SETTINGS_TXN_VERSION || !crc_present ||
+         stored_crc != settings_fingerprint())) {
+        ESP_LOGE(NVS_LOADING_TAG,
+                 "Settings transaction invalid; restoring validated defaults");
+        nvs_apply_defaults();
+        load_error = true;
+    }
 
     /* Load battery profile (type and voltage) */
     if (!battery_load_profile(&sys_state.battery_profile))
@@ -2140,9 +2203,32 @@ bool save_settings()
     if (err != ESP_OK)
     {
         ESP_LOGE(NVS_SAVE_TAG, "One or more settings failed to save: %s", esp_err_to_name(err));
+        nvs_close(nvs);
+        return false;
     }
 
     battery_save_configuration(sys_state.battery_profile.profile_id, sys_state.battery_profile.nominal_voltage, sys_state.battery_profile.capacity_ah);
+
+    uint32_t generation = 0U;
+    (void)nvs_get_u32(nvs, NVS_SETTINGS_TXN_GEN_KEY, &generation);
+    err = nvs_set_u8(nvs, NVS_SETTINGS_TXN_VALID_KEY, 0U);
+    if (err == ESP_OK) {
+        err = nvs_set_u32(nvs, NVS_SETTINGS_TXN_GEN_KEY, generation + 1U);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u32(nvs, NVS_SETTINGS_TXN_CRC_KEY,
+                          settings_fingerprint());
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, NVS_SETTINGS_TXN_VALID_KEY,
+                         NVS_SETTINGS_TXN_VERSION);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(NVS_SAVE_TAG, "Failed to stage transaction metadata: %s",
+                 esp_err_to_name(err));
+        nvs_close(nvs);
+        return false;
+    }
 
     err = nvs_commit(nvs);
     if (err != ESP_OK)
@@ -2150,6 +2236,11 @@ bool save_settings()
         ESP_LOGE(NVS_SAVE_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
     }
     nvs_close(nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(NVS_SAVE_TAG, "Failed to commit settings: %s",
+                 esp_err_to_name(err));
+        return false;
+    }
     ESP_LOGI(NVS_SAVE_TAG, "Settings saved successfully");
     return true;
 }
@@ -2377,7 +2468,7 @@ static const adc_channel_config_t adc_configs[] = {
 
     {.channel = ADC_OVER_UNDER_VOLTAGE, // Replace with actual ADC channel for AC voltage
      .channel_id = CHANNEL_ID_OVER_UNDER_VOLTAGE,
-     .target_value = &sys_state.inverter.output_voltage,
+     .target_value = &sys_state.inverter.over_under_voltage,
      .threshold_low = UNDER_VOLTAGE_THRESHOLD,
      .threshold_high = OVER_VOLTAGE_THRESHOLD,
      .has_high_threshold = true,
@@ -2405,6 +2496,10 @@ static const adc_channel_config_t adc_configs[] = {
      .voltage_divider_ratio = INVERTER_VOLTAGE_DIVIDER_RATIO}};
 
 #define ADC_MULTISAMPLING_COUNT 10 // Number of samples to average
+#define TELEMETRY_STALE_TIMEOUT_MS 1000U
+#define BATTERY_ADC_PHYSICAL_MIN_V 0.5f
+#define AC_ADC_PHYSICAL_MAX_V 350.0f
+#define BATTERY_ADC_PHYSICAL_MARGIN 1.15f
 
 #include "freertos/event_groups.h"
 
@@ -2418,6 +2513,9 @@ EventGroupHandle_t sys_event_group;
 void adc_task(void *arg)
 {
     task_watchdog_register("adc_task");
+    telemetry_health_init();
+    telemetry_health_set_required_mask(
+        1UL << TELEMETRY_CHANNEL_BATTERY_VOLTAGE);
 #if CONFIG_USE_ADC
     ESP_LOGI(TAG_ADC, "ADC Task started");
 
@@ -2501,8 +2599,9 @@ void adc_task(void *arg)
 #endif
 
     bool first_sample = true;
+    bool telemetry_shutdown_latched = false;
     uint8_t sample_count = 0;
-    const uint8_t SAMPLES_BEFORE_ERROR_CHECK = 10; // ← ADD THIS
+    const uint8_t SAMPLES_BEFORE_ERROR_CHECK = 10;
 
     ESP_LOGI(TAG_ADC, "Starting ADC sampling and LCD updates");
 
@@ -2516,15 +2615,36 @@ void adc_task(void *arg)
                                 adc1_context.handle);
         }
 
-        if (sample_count < SAMPLES_BEFORE_ERROR_CHECK)
+        const uint32_t sample_time_ms =
+            (uint32_t)(esp_timer_get_time() / 1000ULL);
+        const bool telemetry_ready = telemetry_health_required_ready(
+            sample_time_ms, TELEMETRY_STALE_TIMEOUT_MS);
+        sys_state.adc_data_valid = telemetry_ready;
+        sys_state.inverter.adc_data_valid = telemetry_ready;
+
+        if (telemetry_ready && sample_count < SAMPLES_BEFORE_ERROR_CHECK)
         {
             sys_state.error.error_flags = 0; // Clear errors during warmup
             sample_count++;
             ESP_LOGI(TAG_ADC, "ADC warmup: %d/%d", sample_count, SAMPLES_BEFORE_ERROR_CHECK);
         }
-        xEventGroupSetBits(sys_event_group, EVT_ADC_READY | EVT_ADC_VALID);
+        xEventGroupSetBits(sys_event_group, EVT_ADC_READY);
+        if (telemetry_ready) {
+            telemetry_shutdown_latched = false;
+            xEventGroupSetBits(sys_event_group, EVT_ADC_VALID);
+        } else {
+            xEventGroupClearBits(sys_event_group, EVT_ADC_VALID);
+            sys_state.error.error_flags |= ERR_BATTERY_VOLTAGE;
+            ESP_LOGW(TAG_ADC, "Required battery telemetry is invalid or stale");
+            if (!telemetry_shutdown_latched &&
+                (sys_state.inverter.inverter_active ||
+                 sys_state.inverter.inverter_state == INVERTER_STARTING)) {
+                telemetry_shutdown_latched = true;
+                inverter_emergency_disable("battery telemetry invalid or stale");
+            }
+        }
 
-        if (sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
+        if (telemetry_ready && sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
         {
             check_protections();
         }
@@ -2595,7 +2715,8 @@ void adc_task(void *arg)
         }
 
         /* Show fault screen immediately if error flags are set */
-        if (sys_state.error.error_flags && sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
+        if (sys_state.error.error_flags && telemetry_ready &&
+            sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
         {
             const char *err = get_error_string(sys_state.error.error_flags);
             char l0[LCD_LINE_SIZE], l1[LCD_LINE_SIZE];
@@ -2609,7 +2730,8 @@ void adc_task(void *arg)
             lcd_clear_fault();
         }
 
-        if (first_sample && sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
+        if (first_sample && telemetry_ready &&
+            sample_count >= SAMPLES_BEFORE_ERROR_CHECK)
         {
             first_sample = false;
             ESP_LOGI(TAG_ADC, "First valid sample: Battery=%.2fV",
@@ -2989,6 +3111,22 @@ static float selected_battery_voltage_multiplier(void)
     return nominal_voltage / 12.0f;
 }
 
+static telemetry_channel_t health_channel_for_adc(adc_channel_id_t channel_id)
+{
+    switch (channel_id) {
+    case CHANNEL_ID_BATTERY_VOLTAGE:
+        return TELEMETRY_CHANNEL_BATTERY_VOLTAGE;
+    case CHANNEL_ID_OVER_UNDER_VOLTAGE:
+        return TELEMETRY_CHANNEL_AC_VOLTAGE;
+    case CHANNEL_ID_INVERTER_OUTPUT_VOLTAGE:
+        return TELEMETRY_CHANNEL_INVERTER_OUTPUT_VOLTAGE;
+    case CHANNEL_ID_LOW_BATTERY:
+    case CHANNEL_ID_FAN:
+    default:
+        return TELEMETRY_CHANNEL_LOW_BATTERY;
+    }
+}
+
 static void process_adc_reading(const adc_channel_config_t *config,
                                 const adc_channel_state_t *state,
                                 adc_oneshot_unit_handle_t handle)
@@ -3013,6 +3151,9 @@ static void process_adc_reading(const adc_channel_config_t *config,
     if (ret != ESP_OK)
     {
         ESP_LOGE(TAG_ADC, "Failed to read %s: %s", config->name, esp_err_to_name(ret));
+        telemetry_health_record_invalid(
+            health_channel_for_adc(config->channel_id),
+            (uint32_t)(esp_timer_get_time() / 1000ULL));
         return;
     }
 
@@ -3041,6 +3182,30 @@ static void process_adc_reading(const adc_channel_config_t *config,
             threshold_low = config->threshold_low * multiplier;
         }
         battery_filter_update(&battery_voltage_filter, actual_voltage);
+    }
+
+    /* Reject physically implausible values before treating them as healthy.
+     * The battery limit is derived from the active chemistry and voltage
+     * system; the other channels remain bounded by their hardware ranges. */
+    float telemetry_min = 0.0f;
+    float telemetry_max = 350.0f;
+    if (config->channel_id == CHANNEL_ID_BATTERY_VOLTAGE) {
+        telemetry_min = sys_state.battery_profile.cutoff_voltage_min_12v * 0.50f;
+        telemetry_max = sys_state.battery_profile.overvoltage_protection_12v *
+                        BATTERY_ADC_PHYSICAL_MARGIN;
+    } else if (config->channel_id == CHANNEL_ID_LOW_BATTERY) {
+        telemetry_max = 6.0f;
+    } else if (config->channel_id == CHANNEL_ID_INVERTER_OUTPUT_VOLTAGE) {
+        telemetry_max = AC_ADC_PHYSICAL_MAX_V;
+    }
+
+    const uint32_t sample_time_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    const bool telemetry_valid = telemetry_health_record(
+        health_channel_for_adc(config->channel_id), actual_voltage,
+        telemetry_min, telemetry_max, sample_time_ms);
+    if (!telemetry_valid) {
+        ESP_LOGW(TAG_ADC, "%s sample outside safe range: %.2fV [%.2f, %.2f]",
+                 config->name, actual_voltage, telemetry_min, telemetry_max);
     }
 
     // IMPORTANT: Write the system-scaled value to sys_state.
@@ -3189,7 +3354,7 @@ void check_protections(void)
     sys_state.error.error_flags &=
         (ERR_EEPROM | ERR_FAN_FAIL);
 
-    if (!lcd_is_startup_active())
+    if (!lcd_is_startup_active() && sys_state.adc_data_valid)
     {
         protection_update(
             PROT_QUANTITY_BATTERY_VOLTAGE,
@@ -3198,7 +3363,7 @@ void check_protections(void)
 
         protection_update(
             PROT_QUANTITY_AC_VOLTAGE,
-            sys_state.inverter.output_voltage,
+            sys_state.inverter.over_under_voltage,
             now_ms);
 
         protection_update(
@@ -3889,6 +4054,27 @@ static void post_factory_reset_event(bool success)
     system_event_post(&evt);
 }
 
+void inverter_emergency_disable(const char *reason)
+{
+    ESP_LOGE(INV_TAG, "Emergency output disable: %s", reason ? reason : "unknown");
+    inverter_set_current_limit(0.0f);
+    inverter_set_output_voltage(0.0f);
+    const esp_err_t relay_err = gpio_set_level(GPIO_POWER_RELAY, 0);
+    if (relay_err != ESP_OK) {
+        ESP_LOGE(INV_TAG, "Emergency relay open failed: %s",
+                 esp_err_to_name(relay_err));
+    }
+    sys_state.output_enabled = false;
+    sys_state.inverter.inverter_active = false;
+    sys_state.inverter.inverter_state = INVERTER_FAULT;
+    sys_state.error.error_flags |= SYSTEM_FAILURE_ERROR | ERR_BATTERY_VOLTAGE;
+    led_set_inverter_active(false);
+    fault_log_add(FAULT_SEV_CRITICAL, FAULT_SRC_PROTECTION_BATTERY,
+                  sys_state.inverter.battery.voltage,
+                  reason ? reason : "Emergency output disable");
+    post_inverter_fault_event();
+}
+
 void inverter_power_on(void)
 {
     if (!check_safety_conditions())
@@ -3902,6 +4088,7 @@ void inverter_power_on(void)
 
     sys_state.inverter.inverter_state = INVERTER_STARTING;
     sys_state.inverter.inverter_active = false;
+    sys_state.output_enabled = false;
 
     inverter_set_output_voltage(220);
     vTaskDelay(pdMS_TO_TICKS(300));
@@ -3934,6 +4121,7 @@ void inverter_power_on(void)
 
     sys_state.inverter.inverter_state = INVERTER_ON;
     sys_state.inverter.inverter_active = true;
+    sys_state.output_enabled = true;
     led_set_inverter_active(true);
     sys_state.menu_state = MENU_NONE;
     go_to_main_screen();
@@ -4370,14 +4558,27 @@ bool check_safety_conditions(void)
     /* A hardware fault caught by POST at boot shouldn't be forgotten by
      * the time someone actually tries to power on. */
     post_result_t post_result = post_get_last_result();
-    if (!post_result.all_passed)
+        if (!post_result.all_passed)
     {
         printf("SAFETY CHECK FAILED: POST did not pass (lcd=%d adc=%d fan=%d)\n",
                post_result.lcd_ok, post_result.adc_ok, post_result.fan_ok);
         return false;
     }
 
+    const uint32_t safety_now_ms =
+        (uint32_t)(esp_timer_get_time() / 1000ULL);
+    if (!sys_state.adc_data_valid ||
+        !telemetry_health_required_ready(safety_now_ms,
+                                         TELEMETRY_STALE_TIMEOUT_MS))
+    {
+        ESP_LOGE(INV_TAG,
+                 "SAFETY CHECK FAILED: required battery telemetry invalid or stale");
+        sys_state.error.error_flags |= ERR_BATTERY_VOLTAGE;
+        return false;
+    }
+
     /* Use the live, already-scaled active profile and a real ADC
+
      * reading -- this used to check hardcoded simulated numbers
      * (12.0V/10.2A/3.0C) against the profile every single time,
      * regardless of the inverter's actual state. */

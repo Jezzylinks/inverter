@@ -1,5 +1,6 @@
 #include "protection.h"
 #include <string.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
@@ -86,8 +87,10 @@ bool protection_init(void)
 {
     protection_event_queue =
         xQueueCreate(10, sizeof(protection_event_msg_t));
-
-    assert(protection_event_queue);
+    if (!protection_event_queue) {
+        ESP_LOGE(TAG, "failed to create protection event queue");
+        return false;
+    }
 
     s_mutex = xSemaphoreCreateMutex();
     if (!s_mutex)
@@ -250,6 +253,23 @@ protection_action_t protection_update(protection_quantity_t q,
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 
+    if (!isfinite(value)) {
+        const protection_stage_t previous = s_state[q].stage;
+        s_state[q].stage = PROT_STAGE_FAULT;
+        s_state[q].last_value = value;
+        s_state[q].stage_entry_time_ms = now_ms;
+        s_state[q].transition_count++;
+        sys_state.error.error_flags |= ERR_SYSTEM_FAILURE;
+        if (previous != PROT_STAGE_FAULT) {
+            system_event_post_protection(q, PROT_ACTION_SHUTDOWN, value);
+        }
+        xSemaphoreGive(s_mutex);
+        ESP_LOGE(TAG, "%s: non-finite telemetry; forcing FAULT",
+                 protection_quantity_name(q));
+        return PROT_ACTION_SHUTDOWN;
+    }
+
+
     protection_thresholds_t t = s_thresholds[q];
     protection_stage_t prev = s_state[q].stage;
     protection_stage_t next = classify(&t, prev, value);
@@ -382,9 +402,11 @@ static void protection_event_post(
     msg.quantity = quantity;
     msg.event = event;
 
-    xQueueSend(protection_event_queue,
-               &msg,
-               0);
+    if (!protection_event_queue ||
+        xQueueSend(protection_event_queue, &msg, 0) != pdPASS) {
+        ESP_LOGW(TAG, "protection event queue full; dropping %s event",
+                 protection_quantity_name(quantity));
+    }
 }
 
 void handle_protection_action(
