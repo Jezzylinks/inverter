@@ -88,10 +88,8 @@ void task_watchdog_register_health_only(const char *task_name)
     record_health_registration(task_name);
 }
 
-void task_watchdog_feed(void)
+static void update_health_heartbeat(TaskHandle_t current)
 {
-    const TaskHandle_t current = xTaskGetCurrentTaskHandle();
-    const esp_err_t err = esp_task_wdt_reset();
     const uint32_t timestamp = now_ms();
     taskENTER_CRITICAL(&s_lock);
     const int index = find_record(current);
@@ -102,10 +100,20 @@ void task_watchdog_feed(void)
             uxTaskGetStackHighWaterMark(current);
     }
     taskEXIT_CRITICAL(&s_lock);
+}
 
+void task_watchdog_feed(void)
+{
+    const esp_err_t err = esp_task_wdt_reset();
+    update_health_heartbeat(xTaskGetCurrentTaskHandle());
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGD(TAG, "Task watchdog feed failed: %s", esp_err_to_name(err));
     }
+}
+
+void task_watchdog_health_feed(void)
+{
+    update_health_heartbeat(xTaskGetCurrentTaskHandle());
 }
 
 static void task_watchdog_supervisor(void *arg)
@@ -113,7 +121,7 @@ static void task_watchdog_supervisor(void *arg)
     (void)arg;
     task_watchdog_register_health_only("watchdog_supervisor");
     while (true) {
-        task_watchdog_feed();
+        task_watchdog_health_feed();
         const uint32_t timestamp = now_ms();
         const TaskHandle_t supervisor = xTaskGetCurrentTaskHandle();
         static task_watchdog_snapshot_t stale[TASK_WATCHDOG_MAX_TASKS];

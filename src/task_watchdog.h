@@ -27,8 +27,11 @@ void task_watchdog_register(const char *task_name);
 /* Register only in the health registry; do not subscribe the task to ESP TWDT. */
 void task_watchdog_register_health_only(const char *task_name);
 
-/* Feed the watchdog and update the task-health heartbeat. */
+/* Feed the real ESP task watchdog and update the task-health heartbeat. */
 void task_watchdog_feed(void);
+
+/* Update only the health registry for tasks intentionally outside ESP TWDT. */
+void task_watchdog_health_feed(void);
 
 /* Start the health supervisor once after the task watchdog is configured. */
 bool task_watchdog_start_supervisor(void);
