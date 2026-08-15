@@ -262,7 +262,6 @@ esp_err_t app_services_init(void)
 
     esp_err_t err = wifi_security_init();
 
-    esp_err_t err = wifi_security_init();
     if (err != ESP_OK)
     {
         ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi security storage unavailable: %s", esp_err_to_name(err));
