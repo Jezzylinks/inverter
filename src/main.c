@@ -3237,7 +3237,6 @@ void check_protections(void)
     {
         // negate system not ready
         sys_state.error.error_flags |= ERR_FAN_FAIL;
-        ESP_LOGW("PROTECTIONS", "Fan not detected or below threshold RPM");
     }
 
     if (sys_state.inverter.temperature > 70.0f &&
