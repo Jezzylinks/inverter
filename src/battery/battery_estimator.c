@@ -117,7 +117,7 @@ void battery_estimator_update(
         battery_rest_update(
             &est->rest_detector,
             battery_current,
-            (uint32_t)dt_seconds);
+            dt_seconds);
 
     /*
      * If battery is resting,

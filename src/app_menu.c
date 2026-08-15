@@ -7,13 +7,18 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "lcd_writer.h"
+#include "lcd.h"
 #include "security/security.h"
 
 #define APP_MENU_TAG "APP_MENU"
 #define APP_MENU_HISTORY_DEPTH 10
 #define APP_MENU_INDICATOR_MIN_ITEMS 3
 #define APP_MENU_INDICATOR_MAX_LEN 6
-#define APP_MENU_ARROW '>'
+#if LCD_GEOMETRY_20X4
+#define APP_MENU_ARROW CHAR_WIFI_TX
+#else
+#define APP_MENU_ARROW CHAR_BAR_5
+#endif
 #define APP_MENU_INDENT ' '
 
 typedef struct {

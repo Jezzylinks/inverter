@@ -3521,6 +3521,10 @@ void update_lcd_activity_state(void)
     sys_lcd.should_cycle_subpages = on_main_screen && inverter_idle && user_idle;
 
     xSemaphoreGive(sys_state_mutex);
+
+    /* Keep the physical status LED aligned with the authoritative inverter
+     * state even after transient event patterns or display updates. */
+    led_set_inverter_active(sys_lcd.inverter_active);
 }
 
 // Special characters for 16x2 LCD

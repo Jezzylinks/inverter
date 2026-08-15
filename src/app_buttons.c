@@ -8,10 +8,11 @@
 #include "hardware_config.h"
 
 #define APP_BUTTONS_TAG "APP_BUTTONS"
-#define APP_BUTTON_DEBOUNCE_MS 50U
-#define APP_BUTTON_LONG_PRESS_MS 1000U
-#define APP_BUTTON_DOUBLE_CLICK_MS 400U
-#define APP_BUTTON_REPEAT_MS 100U
+#define APP_BUTTON_DEBOUNCE_MS 35U
+#define APP_BUTTON_LONG_PRESS_MS 700U
+#define APP_BUTTON_DOUBLE_CLICK_MS 220U
+#define APP_BUTTON_REPEAT_MS 45U
+#define APP_BUTTON_NAV_LONG_PRESS_MS 350U
 
 typedef struct {
     gpio_num_t gpio;
@@ -52,7 +53,10 @@ esp_err_t app_buttons_init(void)
         button_controller_get_default_config(&config);
         config.gpio_pin = binding->gpio;
         config.debounce_ms = APP_BUTTON_DEBOUNCE_MS;
-        config.long_press_ms = APP_BUTTON_LONG_PRESS_MS;
+        config.long_press_ms = (binding->gpio == GPIO_BUTTON_UP ||
+                                binding->gpio == GPIO_BUTTON_DOWN)
+                                   ? APP_BUTTON_NAV_LONG_PRESS_MS
+                                   : APP_BUTTON_LONG_PRESS_MS;
         config.double_click_ms = APP_BUTTON_DOUBLE_CLICK_MS;
         /* Only value-navigation keys need hold-repeat; action keys remain one-shot. */
         config.hold_repeat_ms = (binding->gpio == GPIO_BUTTON_UP ||

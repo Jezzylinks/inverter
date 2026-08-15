@@ -14,6 +14,7 @@ extern system_state_t sys_state;
 
 static volatile bool s_critical_preempt_pending = false;
 static TaskHandle_t s_buzzer_task = NULL;
+static volatile uint32_t s_pending_button_clicks = 0U;
 
 #define BUZZER_LEDC_MODE LEDC_LOW_SPEED_MODE
 #define BUZZER_LEDC_TIMER LEDC_TIMER_0
@@ -231,6 +232,8 @@ void buzzer_button_click(void)
 {
     if (s_buzzer_task != NULL) {
         (void)xTaskNotifyGive(s_buzzer_task);
+    } else if (s_pending_button_clicks < UINT32_MAX) {
+        s_pending_button_clicks++;
     }
 }
 
@@ -261,6 +264,10 @@ void buzzer_event_task(void *pv)
 {
     task_watchdog_register("buzzer_event_task");
     s_buzzer_task = xTaskGetCurrentTaskHandle();
+    if (s_pending_button_clicks > 0U) {
+        s_pending_button_clicks = 0U;
+        (void)xTaskNotifyGive(s_buzzer_task);
+    }
     system_event_t evt;
     bool critical_active = false;
 
