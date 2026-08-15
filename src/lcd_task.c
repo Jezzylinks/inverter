@@ -218,6 +218,18 @@ static void format_home_wifi(char *out, size_t out_len,
         snprintf(out, out_len, "W-");
 }
 
+static void format_battery_time(char *out, size_t out_len,
+                                 uint16_t remaining_minutes)
+{
+    if (remaining_minutes == 0U) {
+        snprintf(out, out_len, "--");
+        return;
+    }
+    const unsigned hours = remaining_minutes / 60U;
+    const unsigned minutes = remaining_minutes % 60U;
+    snprintf(out, out_len, "%02u:%02u", hours > 99U ? 99U : hours, minutes);
+}
+
 static void draw_main(lcd_main_data_t *m)
 {
     char wifi[8];
@@ -228,16 +240,49 @@ static void draw_main(lcd_main_data_t *m)
         char rows[4][LCD_LINE_SIZE];
         const char *mode = home_mode_label(m->operating_mode);
         const uint8_t voltage = m->voltage_system ? m->voltage_system : 12U;
+        const unsigned ac_voltage = (m->ac_voltage < 0.0f)
+                                        ? 0U
+                                        : (m->ac_voltage > 999.0f
+                                               ? 999U
+                                               : (unsigned)m->ac_voltage);
         const char *state = m->inverter_active ? "ON" : "OFF";
 
         /* Stable dashboard: values are updated in place; no timed rotation. */
-        snprintf(rows[0], LCD_LINE_SIZE, "INV 5.0kW %-3s %.5s", state, wifi);
-        snprintf(rows[1], LCD_LINE_SIZE, "PV:%4.2fkW BAT:%3u%%",
-                 m->pv_power_kw, (unsigned)m->battery_pct);
-        snprintf(rows[2], LCD_LINE_SIZE, "LD:%4.2fkW GR:%4.2fkW",
-                 m->load_power_kw, m->grid_power_kw);
-        snprintf(rows[3], LCD_LINE_SIZE, "%-14.14s %2uV",
-                 mode, (unsigned)voltage);
+        if (m->sub_page == MAIN_SUB_BATTERY)
+        {
+            char remaining[12];
+            format_battery_time(remaining, sizeof(remaining),
+                                m->battery_remaining_minutes);
+            snprintf(rows[0], LCD_LINE_SIZE, "BAT:%4.1fV %3u%% %.5s",
+                     m->battery_voltage, (unsigned)m->battery_pct, wifi);
+            snprintf(rows[1], LCD_LINE_SIZE, "TIME REMAINING %.5s", remaining);
+            snprintf(rows[2], LCD_LINE_SIZE, "AC:%3uV SYS:%s",
+                     ac_voltage, state);
+            snprintf(rows[3], LCD_LINE_SIZE, "%-14.14s %2uV",
+                     mode, (unsigned)voltage);
+        }
+        else if (m->sub_page == MAIN_SUB_SYSTEM)
+        {
+            snprintf(rows[0], LCD_LINE_SIZE, "AC%3uV S%s %.5s",
+                     ac_voltage, state, wifi);
+            snprintf(rows[1], LCD_LINE_SIZE, "BAT:%4.1fV %3u%%",
+                     m->battery_voltage, (unsigned)m->battery_pct);
+            snprintf(rows[2], LCD_LINE_SIZE, "TIME REMAINING");
+            char remaining[12];
+            format_battery_time(remaining, sizeof(remaining),
+                                m->battery_remaining_minutes);
+            snprintf(rows[3], LCD_LINE_SIZE, "%-14.14s %.5s", mode, remaining);
+        }
+        else
+        {
+            snprintf(rows[0], LCD_LINE_SIZE, "INV 5.0kW %-3s %.5s", state, wifi);
+            snprintf(rows[1], LCD_LINE_SIZE, "PV:%4.2fkW BAT:%3u%%",
+                     m->pv_power_kw, (unsigned)m->battery_pct);
+            snprintf(rows[2], LCD_LINE_SIZE, "LD:%4.2fkW GR:%4.2fkW",
+                     m->load_power_kw, m->grid_power_kw);
+            snprintf(rows[3], LCD_LINE_SIZE, "AC:%3uV SYS:%s %2uV",
+                     ac_voltage, state, (unsigned)voltage);
+        }
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
         draw_commit_rows(row_ptrs);
     }

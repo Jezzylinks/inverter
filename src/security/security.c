@@ -241,7 +241,10 @@ bool security_verify_pin_for_scope(const uint8_t pin[SECURITY_PIN_LEN],
         scope >= SECURITY_LOCKOUT_SCOPE_COUNT) {
         return false;
     }
-    if (!sys_state.security.enabled) {
+    /* Protected operations must always verify the persisted hash. The
+     * general scope may be bypassed only when panel security is explicitly
+     * disabled; factory reset and OTA never accept an arbitrary PIN. */
+    if (!sys_state.security.enabled && scope == SECURITY_LOCKOUT_GENERAL) {
         return true;
     }
 

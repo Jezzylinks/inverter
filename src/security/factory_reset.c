@@ -14,6 +14,7 @@
 #include "system_state.h" // sys_lcd, sys_state, sys_state_mutex
 #include "lcd_state.h"    // LCD_SCREEN_FACTORY_RESET, factory_reset phase atomics
 #include "lcd_flash_queue.h"
+#include "utility/buzzer.h"
 
 static const char *TAG = "FACTORY_RESET";
 
@@ -78,6 +79,7 @@ static void handle_pin_entry_button(factory_reset_ctx_t *ctx,
         {
             /* This failed attempt triggered the lockout. */
             ESP_LOGW(TAG, "PIN attempts exhausted, locked out");
+            post_buzzer_event(false);
 
             lcd_flash_info("PIN LOCKED      ", "Retry countdown  ", 1200);
             /* Stay in PIN_ENTRY so the LCD renders the live 60..0 countdown.
@@ -88,6 +90,7 @@ static void handle_pin_entry_button(factory_reset_ctx_t *ctx,
         {
             /* Wrong PIN, attempts remaining. */
             ESP_LOGW(TAG, "Wrong PIN entered");
+            post_buzzer_event(false);
             lcd_flash_info("Wrong PIN entered", "Try again       ", 1500);
             pin_entry_reset(&ctx->pin_ctx); /* stay on PIN_ENTRY, reset digits */
         }

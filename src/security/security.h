@@ -12,7 +12,7 @@ extern "C"
 
 #define SECURITY_PIN_LEN 4
 #define SECURITY_MAX_ATTEMPTS 5
-#define SECURITY_LOCKOUT_MS (60 * 1000) // 60-second per-option lockout
+#define SECURITY_LOCKOUT_MS (30 * 1000) // 30-second per-option lockout
 #define SECURITY_DEFAULT_PIN {0, 0, 0, 0}
 
     typedef enum

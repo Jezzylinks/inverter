@@ -88,6 +88,8 @@ extern "C"
         float pv_power_kw;
         float grid_power_kw;
         float load_power_kw;
+        float ac_voltage;
+        uint16_t battery_remaining_minutes;
         uint8_t voltage_system;
         uint8_t operating_mode;
         main_sub_page_t sub_page;

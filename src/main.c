@@ -2553,10 +2553,36 @@ void adc_task(void *arg)
                                   ? (sys_state.inverter.output_voltage *
                                      sys_state.inverter.output_current / 1000.0f)
                                   : 0.0f;
+        /* Estimate runtime only when a meaningful load exists. The estimate
+         * uses remaining Ah from the coulomb estimator and converts load power
+         * through a conservative inverter-efficiency factor. */
+        uint16_t remaining_minutes = 0U;
+        const float remaining_ah = battery_estimator_get_remaining_ah(&bat_estimate);
+        const float battery_voltage = sys_state.inverter.battery.voltage;
+        const float efficiency = (sys_state.efficiency > 0.50f &&
+                                  sys_state.efficiency <= 1.0f)
+                                     ? sys_state.efficiency
+                                     : 0.90f;
+        if (remaining_ah > 0.05f && load_kw > 0.02f && battery_voltage > 5.0f)
+        {
+            const float battery_current_a =
+                (load_kw * 1000.0f) / (battery_voltage * efficiency);
+            if (battery_current_a > 0.05f)
+            {
+                const float minutes = (remaining_ah / battery_current_a) * 60.0f;
+                remaining_minutes = (minutes >= 65535.0f)
+                                        ? UINT16_MAX
+                                        : (uint16_t)minutes;
+            }
+        }
+
         /* There is no dedicated grid-power meter in the current hardware map;
          * keep this honest rather than fabricating a value. */
         lcd_update_main_power(pv_kw, 0.0f, load_kw,
-                              (uint8_t)sys_state.battery_profile.nominal_voltage);
+                              sys_state.inverter.output_voltage,
+                              remaining_minutes,
+                              (uint8_t)sys_state.battery_profile.nominal_voltage,
+                              sys_state.inverter.operating_mode);
         lcd_update_wifi_status(wifi_monitor_is_online(),
                                wifi_monitor_get_rssi());
 
@@ -3749,10 +3775,9 @@ void post_button_click_event(void)
     evt.priority = EVENT_PRIORITY_LOW;
     evt.timestamp = xTaskGetTickCount();
 
-    /* Button feedback is latency-sensitive. Deliver it directly to the
-     * subscriber queues so a busy global event queue cannot suppress the
-     * audible click. */
-    (void)event_dispatcher_send(EVENT_SUB_BUZZER, &evt);
+    /* Button feedback is latency-sensitive. Notify the buzzer task directly
+     * so a busy shared subscriber queue cannot suppress the click tone. */
+    buzzer_button_click();
     (void)event_dispatcher_send(EVENT_SUB_LCD, &evt);
 }
 

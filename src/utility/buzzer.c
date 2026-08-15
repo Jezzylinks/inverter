@@ -13,6 +13,7 @@
 extern system_state_t sys_state;
 
 static volatile bool s_critical_preempt_pending = false;
+static TaskHandle_t s_buzzer_task = NULL;
 
 #define BUZZER_LEDC_MODE LEDC_LOW_SPEED_MODE
 #define BUZZER_LEDC_TIMER LEDC_TIMER_0
@@ -226,6 +227,13 @@ static void beep_limit(void) { buzzer_beep(1100, 55, 70); }
  *  Task
  * ======================================================================== */
 
+void buzzer_button_click(void)
+{
+    if (s_buzzer_task != NULL) {
+        (void)xTaskNotifyGive(s_buzzer_task);
+    }
+}
+
 void post_buzzer_event(bool success)
 {
     system_event_t evt = {0};
@@ -252,13 +260,17 @@ void post_buzzer_limit_event(void)
 void buzzer_event_task(void *pv)
 {
     task_watchdog_register("buzzer_event_task");
+    s_buzzer_task = xTaskGetCurrentTaskHandle();
     system_event_t evt;
     bool critical_active = false;
 
     while (1)
     {
-
         task_watchdog_feed();
+        if (!critical_active && ulTaskNotifyTake(pdTRUE, 0) > 0U) {
+            s_critical_preempt_pending = false;
+            beep_click();
+        }
         if (!event_dispatcher_receive(EVENT_SUB_BUZZER,
                                       &evt,
                                       pdMS_TO_TICKS(1000U)))
