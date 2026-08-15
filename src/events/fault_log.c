@@ -10,6 +10,7 @@
 #include "system_state.h"
 #include "events/event_dispatcher.h"
 
+#include "task_watchdog.h"
 static const char *TAG = "fault_log";
 extern system_state_t sys_state;
 static fault_log_entry_t s_entries[FAULT_LOG_CAPACITY];
@@ -489,13 +490,16 @@ const char *fault_log_source_name(fault_source_t s)
 
 void fault_log_event_task(void *pv)
 {
+    task_watchdog_register("fault_log_event_task");
     system_event_t evt;
 
     while (1)
     {
+
+        task_watchdog_feed();
         if (!event_dispatcher_receive(EVENT_SUB_FAULT_LOG,
                                       &evt,
-                                      portMAX_DELAY))
+                                      pdMS_TO_TICKS(1000U)))
         {
             continue;
         }

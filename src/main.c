@@ -13,6 +13,7 @@
 #include <string.h>
 #include <esp_log.h>
 #include <math.h>
+#include "task_watchdog.h"
 // System state
 #include "system_state.h"
 
@@ -1586,7 +1587,7 @@ typedef struct
 } nvs_setting_t;
 
 static nvs_setting_t g_settings[] = {
-    {"bat_volt_system", &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 12, false, "Bat Volt System"},
+    {BATTERY_VOLTAGE_SYSTEM_KEY, &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 12, false, "Bat Volt System"},
     {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false, "Inverter Active"},
     {"bat_type", &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false, "Battery Type"},
     {"bat_cap_ah", &sys_state.battery_profile.capacity_ah, sizeof(int32_t), 0, true, "Battery Capacity"},
@@ -2101,6 +2102,8 @@ bool load_settings()
         ESP_LOGW(NVS_LOADING_TAG, "One or more loaded settings were out of range and were corrected");
         load_error = true; /* forces save_settings() below to persist the fix */
     }
+    sync_battery_voltage_state();
+    sync_battery_protection_thresholds();
 
     if (load_error)
     {
@@ -2412,6 +2415,7 @@ EventGroupHandle_t sys_event_group;
 
 void adc_task(void *arg)
 {
+    task_watchdog_register("adc_task");
 #if CONFIG_USE_ADC
     ESP_LOGI(TAG_ADC, "ADC Task started");
 
@@ -2502,6 +2506,7 @@ void adc_task(void *arg)
 
     while (1)
     {
+        task_watchdog_feed();
         for (int i = 0; i < config_count; i++)
         {
             process_adc_reading(&adc_configs[i],
@@ -3033,12 +3038,15 @@ static void cleanup_adc_resources(adc_oneshot_unit_handle_t handle,
 
 void power_task(void *arg)
 {
+    task_watchdog_register("power_task");
     static bool last_relay_state = false;
     static TickType_t last_state_change = 0;
     const TickType_t DEBOUNCE_TIME = pdMS_TO_TICKS(2000);
 
     while (1)
     {
+
+        task_watchdog_feed();
         // Update activity tracking
         if (sys_state.inverter.inverter_active || sys_state.inverter.connected)
             sys_state.flags.last_power_event = xTaskGetTickCount();
@@ -3347,8 +3355,10 @@ float esp_cpu_get_usage_percent()
 
 void diagnostic_update_task(void *pv)
 {
+    task_watchdog_register("diagnostic_update_task");
     while (1)
     {
+        task_watchdog_feed();
         diag_data.uptime_seconds++;
         diag_data.cpu_load = esp_cpu_get_usage_percent(); // If you have CPU metrics
         diag_data.temperature = sys_state.inverter.temperature;
@@ -3856,6 +3866,7 @@ void inverter_power_on(void)
         ESP_LOGE(INV_TAG, "Relay set failed: %s", esp_err_to_name(err));
         sys_state.inverter.inverter_state = INVERTER_FAULT;
         sys_state.inverter.inverter_active = false;
+        led_set_inverter_active(false);
         sys_state.error.error_flags |= SYSTEM_FAILURE_ERROR;
         lcd_show_fault("** START FAILED ", "Check relay/HW  ");
         post_inverter_fault_event();
@@ -3866,6 +3877,7 @@ void inverter_power_on(void)
 
     sys_state.inverter.inverter_state = INVERTER_ON;
     sys_state.inverter.inverter_active = true;
+    led_set_inverter_active(true);
     sys_state.menu_state = MENU_NONE;
     go_to_main_screen();
     post_inverter_power_event(true);
@@ -3915,6 +3927,7 @@ void shutdown_inverter(void)
     post_inverter_power_event(false);
     sys_state.inverter.inverter_state = INVERTER_OFF;
     sys_state.inverter.inverter_active = false;
+    led_set_inverter_active(false);
     sys_state.menu_state = MENU_NONE;
     sys_state.error.error_flags &= ~SYSTEM_FAILURE_ERROR;
     go_to_main_screen();
@@ -4671,13 +4684,13 @@ void increase_value(bool fast_mode, bool precision_mode)
 
             ESP_LOGI("NEW_VALUE", "Value increased to: %.3f %s", new_value, ctx->unit);
         }
-        else
+                else
         {
             ESP_LOGI("NEW_VALUE", "Value at maximum limit: %.3f %s", ctx->max_value, ctx->unit);
+            post_buzzer_limit_event();
         }
         break;
     }
-
     case VALUE_EDIT_BOOL:
         ctx->current_value = (ctx->current_value != 0.0f) ? 0.0f : 1.0f;
         sys_state.value_changed = true;
@@ -4771,6 +4784,7 @@ void decrease_value(bool fast_mode, bool precision_mode)
         else
         {
             ESP_LOGI("NEW_VALUE", "Value at minimum limit: %.3f %s", ctx->min_value, ctx->unit);
+            post_buzzer_limit_event();
         }
         break;
     }
@@ -5244,11 +5258,14 @@ bool battery_monitor_set_cutoff(float cutoff_voltage)
  */
 void thermal_monitoring_task(void *pvParameters)
 {
+    task_watchdog_register("thermal_monitoring_task");
     const TickType_t xFrequency = pdMS_TO_TICKS(500); // Check every 500ms
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     while (1)
     {
+
+        task_watchdog_feed();
         // Read temperature from ADC
         // uint16_t adc_value = adc1_get_raw(ADC1_CHANNEL_3);
 
@@ -5278,11 +5295,14 @@ void set_system_timeout(uint32_t timeout_ms)
  */
 void battery_monitoring_task(void *pvParameters)
 {
+    task_watchdog_register("battery_monitoring_task");
     const TickType_t xFrequency = pdMS_TO_TICKS(1000); // Check every 1 second
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     while (1)
     {
+
+        task_watchdog_feed();
         // Read battery voltage from ADC
         uint16_t adc_value = 23; // dummy value//adc1_get_raw(ADC_CHANNEL_6);
 
@@ -5883,8 +5903,10 @@ void update_activity()
 // ================== DISPLAY TIMEOUT TASK ==================
 void display_timeout_task(void *arg)
 {
+    task_watchdog_register("display_timeout_task");
     while (1)
     {
+        task_watchdog_feed();
         // Turn off display after timeout
 
         if (sys_state.display.display_on &&
@@ -6225,7 +6247,7 @@ void init_watchdog(bool enable_task_wdt, bool panic_on_hang)
     if (enable_task_wdt)
     {
         esp_task_wdt_config_t twdt_config = {
-            .timeout_ms = 5000,                              // 5-second timeout
+            .timeout_ms = 15000,                              // 5-second timeout
             .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // Monitor all available cores
             .trigger_panic = panic_on_hang};
 
@@ -6618,7 +6640,6 @@ void edit_battery_type(void)
 
 void edit_battery_voltage_system(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
     sys_state.pending_confirmation = true;
     sys_state.value_changed = false;
     sys_state.repeat_count = 0;
@@ -6627,6 +6648,9 @@ void edit_battery_voltage_system(void)
     sys_state.current_value_type = &value_edit[VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM];
     sys_state.current_value_type->selection_index =
         voltage_system_to_index((voltage_system_t)sys_state.battery_profile.nominal_voltage);
+    sys_state.current_value_type->current_value =
+        (float)sys_state.current_value_type->selection_index;
+    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
     lcd_show_value_edit_screen();
 }
 
@@ -6694,6 +6718,8 @@ esp_err_t nvs_set_float(const char *key, float value)
 ==============================================================================*/
 void app_main(void)
 {
+    init_watchdog(true, true);
+    task_watchdog_register("app_main");
 
     system_events_init();
 
@@ -6797,6 +6823,7 @@ void app_main(void)
     lcd_watchdog_init(lcd_task_handle);
     while (sys_state.system_ready)
     {
+        task_watchdog_feed();
         update_lcd_activity_state();
         handle_menu_timeout();
         vTaskDelay(pdMS_TO_TICKS(100));

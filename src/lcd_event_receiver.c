@@ -11,6 +11,7 @@
 #include "lcd_flash_queue.h"
 #include "lcd_config.h"
 
+#include "task_watchdog.h"
 #define LCD_EVENT_RECEIVER_STACK_SIZE 3072
 #define LCD_EVENT_RECEIVER_PRIORITY 3
 #define LCD_EVENT_RECEIVER_WAIT_MS 250
@@ -70,9 +71,12 @@ static void display_event_notice(const system_event_t *event)
 
 static void lcd_event_receiver_task(void *arg)
 {
+    task_watchdog_register("lcd_event_receiver_task");
     (void)arg;
 
     while (s_running) {
+
+        task_watchdog_feed();
         /* lcd_task creates the flash queue after it obtains its task handle. */
         if (!lcd_flash_is_initialized()) {
             vTaskDelay(pdMS_TO_TICKS(20));

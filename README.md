@@ -19,15 +19,16 @@ The 4 MiB setting is intentional. Verify the physical module before flashing; do
 | Subsystem | Refactor and safety behavior |
 |---|---|
 | Button controller | All five physical buttons are handled by one FreeRTOS task. GPIO ISRs only enqueue edge notifications; debouncing, click classification, long-press detection, repeat generation, statistics, and callback dispatch are centralized. |
-| Security | PINs are stored as salted SHA-256 hashes. New devices provision the documented default PIN and mark it for mandatory change. Invalid PINs are rate-limited with lockout, comparisons are constant-time, and NVS writes are committed atomically. |
-| Wi-Fi | The controller owns the Wi-Fi stack, event loop integration, reconnect state, scan subsystem, provisioning lifecycle, and credential storage. Station credentials are length-checked, weak non-empty WPA passwords are rejected, and no station or AP secret is compiled into the source. |
+| Security | PINs are stored as salted SHA-256 hashes. New devices, including a missing settings namespace, provision default PIN `0000` and mark it for mandatory change. Five incorrect attempts trigger a temporary lockout, comparisons are constant-time, and NVS writes are committed atomically. |
+| Wi-Fi | The controller owns the Wi-Fi stack, event loop integration, reconnect state, scan subsystem, provisioning lifecycle, and credential storage. Station credentials are length-checked, weak non-empty WPA passwords are rejected, and no station or AP secret is compiled into the source. Menu enable/disable actions update the LCD immediately; disabling Wi-Fi also disables automatic reconnect. |
 | HTTP API | JSON API endpoints require the local PIN through the `X-Inverter-PIN` header whenever panel security is enabled. Wildcard CORS is removed; the provisioning AP origin is explicitly allowed. Credential reset stops Wi-Fi before erasing stored credentials. |
 | OTA | OTA accepts HTTPS URLs only, uses the ESP-IDF certificate bundle, runs in a dedicated task, supports cooperative cancellation, reports status/progress, and cleans up event handlers and buffers on every exit path. |
 | OTA CSV | Release metadata can be fetched from a bounded HTTPS CSV document. The first valid row is selected using the format `version,url,sha256,size`; the URL and version are required, and all fields are length-checked. ESP-IDF image verification remains authoritative; the CSV SHA-256 field is release metadata and is not treated as a substitute for signed-image validation. |
 | POST | LCD, ADC, and fan tests all run and report independently. Results include a failure bitmask and elapsed time. A failed fan preparation path explicitly disables the fan before returning. |
 | Events | Subscriber queues are allocated transactionally, initialization is idempotent, teardown is available, and queue overflow is logged instead of silently disappearing. |
-| Battery | Learned SOC/SOH state is accepted only when its version, size, finite-value, and range checks pass. Boot no longer overwrites the user’s battery profile; defaults are generated only when no valid profile exists. |
+| Battery | Learned SOC/SOH state is accepted only when its version, size, finite-value, and range checks pass. Boot no longer overwrites the user’s battery profile; defaults are generated only when no valid profile exists. The selected 12/24/48 V system is stored under the canonical NVS key and resynchronizes protection thresholds and display state after validation. |
 | Application modules | `main.c` now concentrates on boot, hardware, POST, and the top-level supervisory loop. `app_menu.c` owns menu tables, rendering, and history; `app_input.c` owns all Power, Enter/Menu, Up, Down, and Back semantics; `app_buttons.c` binds the five GPIOs to the one shared button task; and `app_services.c` owns menu-facing Wi-Fi and OTA intent. |
+| Runtime hardening | Every firmware-owned long-running task registers with the shared task-watchdog helper and feeds it during work and bounded waits. Button clicks retain their normal buzzer feedback; held Up/Down input emits a limit tone whenever a numeric boundary is reached, including repeated boundary hits. The inverter status LED is restored after higher-priority LED patterns while the inverter remains active. |
 
 ## OTA CSV manifest
 
@@ -60,6 +61,16 @@ The Wi-Fi implementation is organized around a controller-owned lifecycle. The m
 | Captive DNS and monitoring | DNS packets must contain exactly one complete question before a captive response is built; name and question offsets are bounds-checked. Stopping the DNS service closes its socket before waiting for its task. The RSSI and internet monitor publishes callbacks outside locks and exits cooperatively when signaled, so its resources are not deleted while it is still executing. |
 
 > The provisioning portal is intentionally local to the installer AP and does not expose the PIN-protected remote-control API. It should still be used only during commissioning, with the generated AP password handled as an installation secret.
+
+## Hardening behavior
+
+The factory-reset PIN flow accepts `0000` on a new or recovered installation, then requires the user to choose a replacement PIN. The replacement is persisted as a salted hash in NVS and remains effective after reboot. Five incorrect PIN attempts activate the configured temporary lockout; a correct PIN clears the attempt counter.
+
+The voltage-system setting is persisted using the same canonical NVS key used by the battery state. On boot, the value is validated first and then the battery protection thresholds, runtime battery state, and LCD presentation are synchronized again, so selecting 24 V or 48 V is not silently displayed as 12 V after restart.
+
+Wi-Fi menu actions are intentionally asynchronous from the user-interface perspective. The LCD displays `Starting Wi-Fi` or `Wi-Fi Disabled` before the controller begins its transition. Turning Wi-Fi off disables automatic reconnect before stopping the manager, preventing a reconnect worker from undoing the user’s request.
+
+The shared task-watchdog helper uses a 15-second timeout and bounded queue/sleep intervals so all firmware-owned tasks can feed the watchdog even while idle. The optional NimBLE host task remains managed by the NimBLE port because its event loop is third-party-owned; the firmware-owned provisioning and callback paths remain bounded and watchdog-covered.
 
 ## Wokwi simulation
 
@@ -142,7 +153,7 @@ The 20×4 driver uses the standard HD44780 DDRAM offsets `{0x00, 0x40, 0x14, 0x5
 
 ## Security notes
 
-Panel security is enabled by default for new installations. The initial default PIN is provisioned only as a salted hash and is marked as requiring a change. Product commissioning should change that PIN before enabling remote access. Remote API clients must provide the PIN as six decimal digits in the `X-Inverter-PIN` header. Failed attempts are locked out temporarily, and disabling panel security is an explicit configuration choice rather than a startup side effect.
+Panel security is enabled by default for new installations. The initial default PIN is `0000`, provisioned only as a salted hash and marked as requiring a change. If the settings namespace or PIN material is missing or corrupt, the firmware safely reprovisions `0000` and again requires a change. Product commissioning should change that PIN before enabling remote access. Remote API clients must provide the PIN as four decimal digits in the `X-Inverter-PIN` header. Five failed attempts are locked out temporarily, and disabling panel security is an explicit configuration choice rather than a startup side effect.
 
 ## Battery profile and persistence notes
 

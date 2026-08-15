@@ -208,6 +208,11 @@ esp_err_t wifi_controller_start(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    wifi_manager_enable_auto_reconnect(true);
+    wifi_controller_lock();
+    s_state = WIFI_CONTROLLER_STARTING;
+    wifi_controller_unlock();
+
     esp_err_t err;
 
     /* Check saved credentials */
@@ -261,6 +266,8 @@ esp_err_t wifi_controller_stop(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    /* User-requested stop must win over any pending disconnect retry. */
+    wifi_manager_enable_auto_reconnect(false);
     esp_err_t first_err = ESP_OK;
 
     esp_err_t err = wifi_monitor_stop();
@@ -312,6 +319,7 @@ esp_err_t wifi_controller_disconnect(void)
     if (!s_initialized) {
         return ESP_ERR_INVALID_STATE;
     }
+    wifi_manager_enable_auto_reconnect(false);
     const esp_err_t err = wifi_manager_disconnect();
     if (err == ESP_OK || err == ESP_ERR_WIFI_NOT_CONNECT) {
         wifi_controller_lock();

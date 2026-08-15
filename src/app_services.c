@@ -15,6 +15,7 @@
 #include "wifi/wifi_security.h"
 #include "wifi/wifi_storage.h"
 
+#include "task_watchdog.h"
 #define APP_SERVICES_TAG "APP_SERVICES"
 #define APP_SERVICES_NVS_NAMESPACE NVS_NS_SYSTEM
 #define APP_WIFI_ENABLED_KEY "wifi_enabled"
@@ -166,9 +167,18 @@ static void ota_status_callback(ota_status_t status, int percent)
 
 static void ota_auto_check_task(void *parameter)
 {
+    task_watchdog_register("ota_auto_check_task");
     (void)parameter;
-    vTaskDelay(pdMS_TO_TICKS(30000U));
+    uint32_t wait_ms = 30000U;
+    while (wait_ms > 0U) {
+        task_watchdog_feed();
+        const uint32_t slice = wait_ms > 1000U ? 1000U : wait_ms;
+        vTaskDelay(pdMS_TO_TICKS(slice));
+        wait_ms -= slice;
+        task_watchdog_feed();
+    }
     while (true) {
+        task_watchdog_feed();
         app_ota_status_t status;
         app_services_get_ota_status(&status);
         if (status.auto_check_enabled &&
@@ -177,7 +187,13 @@ static void ota_auto_check_task(void *parameter)
             wifi_controller_is_connected()) {
             (void)app_services_check_for_update(false);
         }
-        vTaskDelay(pdMS_TO_TICKS(APP_OTA_CHECK_INTERVAL_MS));
+        wait_ms = APP_OTA_CHECK_INTERVAL_MS;
+        while (wait_ms > 0U) {
+            const uint32_t slice = wait_ms > 1000U ? 1000U : wait_ms;
+            vTaskDelay(pdMS_TO_TICKS(slice));
+            wait_ms -= slice;
+            task_watchdog_feed();
+        }
     }
 }
 
@@ -238,11 +254,13 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
 
     esp_err_t controller_err = ESP_OK;
     if (enabled) {
+        lcd_show_wifi_connecting("Starting Wi-Fi");
         controller_err = wifi_controller_start();
         if (controller_err == ESP_ERR_INVALID_STATE) {
             controller_err = wifi_controller_reconnect();
         }
     } else {
+        lcd_flash_message("Wi-Fi Disabled", "Stopping...", 900U);
         controller_err = wifi_controller_stop();
         if (controller_err == ESP_ERR_INVALID_STATE) {
             controller_err = ESP_OK;
@@ -255,8 +273,9 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
     }
 
     if (controller_err == ESP_OK) {
-        lcd_flash_message(enabled ? "Wi-Fi Enabled" : "Wi-Fi Disabled",
-                          enabled ? "Connecting..." : "Saved to NVS", 1200U);
+        if (!enabled) {
+            lcd_flash_message("Wi-Fi Disabled", "Saved to NVS", 1200U);
+        }
     } else {
         lcd_flash_message(enabled ? "Wi-Fi Start Failed" : "Wi-Fi Stop Failed",
                           "Setting saved", 1500U);
@@ -313,11 +332,12 @@ esp_err_t app_services_wifi_connect_saved(void)
 
     lcd_show_wifi_connecting("Saved network");
     esp_err_t err = wifi_controller_start();
-    if (err != ESP_OK) {
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
         err = wifi_controller_reconnect();
     }
-    lcd_show_wifi_result(false, err != ESP_OK, false,
-                         err == ESP_OK ? "Connecting..." : "Connect failed");
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+        lcd_show_wifi_result(false, true, false, "Connect failed");
+    }
     return err;
 }
 

@@ -161,8 +161,18 @@ esp_err_t security_init(void)
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
     if (err != ESP_OK) {
-        security_cleanup_failed_init();
-        return err;
+        const uint8_t default_pin[SECURITY_PIN_LEN] = SECURITY_DEFAULT_PIN;
+        const esp_err_t provision_err = persist_pin(default_pin, true);
+        if (provision_err != ESP_OK) {
+            security_cleanup_failed_init();
+            return err;
+        }
+        s_sec.force_change = true;
+        s_sec.attempts = 0;
+        s_sec.lockout_until_ms = 0;
+        s_sec.initialized = true;
+        ESP_LOGW(TAG, "settings namespace unavailable; default PIN 0000 provisioned");
+        return ESP_OK;
     }
 
     uint8_t stored_hash[HASH_LEN] = {0};
@@ -198,11 +208,23 @@ esp_err_t security_init(void)
     nvs_close(handle);
 
     if (err != ESP_OK || hash_len != HASH_LEN || salt_len != SALT_LEN) {
-        ESP_LOGE(TAG, "invalid persisted PIN material");
+        ESP_LOGW(TAG, "missing or invalid persisted PIN material; provisioning default 0000");
         secure_zero(stored_hash, sizeof(stored_hash));
         secure_zero(stored_salt, sizeof(stored_salt));
-        security_cleanup_failed_init();
-        return (err == ESP_OK) ? ESP_ERR_INVALID_SIZE : err;
+
+        const uint8_t default_pin[SECURITY_PIN_LEN] = SECURITY_DEFAULT_PIN;
+        const esp_err_t provision_err = persist_pin(default_pin, true);
+        if (provision_err != ESP_OK) {
+            security_cleanup_failed_init();
+            return provision_err;
+        }
+
+        s_sec.force_change = true;
+        s_sec.attempts = 0;
+        s_sec.lockout_until_ms = 0;
+        s_sec.initialized = true;
+        ESP_LOGW(TAG, "default PIN 0000 provisioned; change it before remote access");
+        return ESP_OK;
     }
 
     secure_zero(stored_hash, sizeof(stored_hash));

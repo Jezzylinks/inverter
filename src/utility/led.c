@@ -1,9 +1,12 @@
 #include "led.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/ledc.h"
-#include "esp_err.h"
+#include "utility/led.h"
+#include "hardware_config.h"
 #include "system_state.h"
+
+#include "task_watchdog.h"
+static volatile bool s_inverter_active = false;
 #include "events/event_dispatcher.h"
 #include "events/system_events.h"
 #include "hardware_config.h"
@@ -73,6 +76,15 @@ void update_led(led_channel_t led, uint8_t brightness_percent)
     ledc_update_duty(
         LEDC_LOW_SPEED_MODE,
         led);
+}
+
+void led_set_inverter_active(bool active)
+{
+    s_inverter_active = active;
+    if (active)
+        led_on(LED_STATUS);
+    else
+        led_off(LED_STATUS);
 }
 
 void led_on(led_channel_t led)
@@ -305,11 +317,14 @@ void post_led_event(bool success)
 
 void led_event_task(void *pv)
 {
+    task_watchdog_register("led_event_task");
     system_event_t evt;
 
     while (1)
     {
-        if (!event_dispatcher_receive(EVENT_SUB_LED, &evt, portMAX_DELAY))
+
+        task_watchdog_feed();
+        if (!event_dispatcher_receive(EVENT_SUB_LED, &evt, pdMS_TO_TICKS(1000U)))
         {
             continue;
         }
@@ -529,6 +544,8 @@ void led_event_task(void *pv)
                 continue;
             }
         }
+        if (s_inverter_active)
+            led_on(LED_STATUS);
         break;
         }
     }

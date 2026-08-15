@@ -1,3 +1,4 @@
+#include "task_watchdog.h"
 /**
  * @file button_controller.c
  * @brief Shared-task button controller implementation.
@@ -266,10 +267,12 @@ static void IRAM_ATTR button_gpio_isr_handler(void *arg)
 
 static void button_task(void *arg)
 {
+    task_watchdog_register("button_task");
     (void)arg;
     button_edge_t edge;
 
     for (;;) {
+        task_watchdog_feed();
         if (xQueueReceive(g_edge_queue, &edge, pdMS_TO_TICKS(BUTTON_TASK_POLL_INTERVAL_MS)) == pdPASS) {
             button_handle_t button = find_controller(edge.gpio_pin);
             if (button && atomic_load(&button->is_running)) {

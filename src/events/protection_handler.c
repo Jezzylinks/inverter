@@ -1,3 +1,4 @@
+#include "task_watchdog.h"
 // events/protection_handler.c (or add to event_dispatcher.c)
 
 #include "events/event_dispatcher.h"
@@ -100,11 +101,14 @@ static const quantity_handler_t quantity_handlers[PROT_QUANTITY_COUNT] = {
 
 void protection_event_task(void *pv)
 {
+    task_watchdog_register("protection_event_task");
     system_event_t evt;
 
     while (1)
     {
-        if (!event_dispatcher_receive(EVENT_SUB_ENFORCER, &evt, portMAX_DELAY))
+
+        task_watchdog_feed();
+        if (!event_dispatcher_receive(EVENT_SUB_ENFORCER, &evt, pdMS_TO_TICKS(1000U)))
         {
             continue;
         }

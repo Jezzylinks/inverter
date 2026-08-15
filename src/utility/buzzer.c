@@ -9,6 +9,7 @@
 #include "system_state.h"
 #include "quiet_hours.h"
 
+#include "task_watchdog.h"
 extern system_state_t sys_state;
 
 static volatile bool s_critical_preempt_pending = false;
@@ -219,6 +220,7 @@ static void beep_critical(void)
 /* Very short, quiet -- keypress feedback. Kept brief so rapid presses
  * never feel like they're waiting on the buzzer. */
 static void beep_click(void) { buzzer_beep(2500, 25, 15); }
+static void beep_limit(void) { buzzer_beep(1100, 55, 70); }
 
 /* ========================================================================
  *  Task
@@ -236,16 +238,30 @@ void post_buzzer_event(bool success)
     (void)event_dispatcher_send(EVENT_SUB_BUZZER, &evt);
 }
 
+void post_buzzer_limit_event(void)
+{
+    system_event_t evt = {0};
+    evt.category = EVENT_CATEGORY_BUTTON;
+    evt.action = EVENT_ACTION_ERROR;
+    evt.source = EVENT_SOURCE_BUTTON;
+    evt.priority = EVENT_PRIORITY_NORMAL;
+    evt.timestamp = xTaskGetTickCount();
+    (void)event_dispatcher_send(EVENT_SUB_BUZZER, &evt);
+}
+
 void buzzer_event_task(void *pv)
 {
+    task_watchdog_register("buzzer_event_task");
     system_event_t evt;
     bool critical_active = false;
 
     while (1)
     {
+
+        task_watchdog_feed();
         if (!event_dispatcher_receive(EVENT_SUB_BUZZER,
                                       &evt,
-                                      portMAX_DELAY))
+                                      pdMS_TO_TICKS(1000U)))
         {
             continue;
         }
@@ -317,6 +333,10 @@ void buzzer_event_task(void *pv)
             if (evt.action == EVENT_ACTION_PRESSED)
             {
                 beep_click();
+            }
+            else if (evt.action == EVENT_ACTION_ERROR)
+            {
+                beep_limit();
             }
             break;
 

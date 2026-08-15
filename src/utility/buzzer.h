@@ -18,6 +18,7 @@ extern "C"
     void buzzer_event_task(void *pvParameters);
     void buzzer_init(void);
     void post_buzzer_event(bool success);
+    void post_buzzer_limit_event(void);
 
     /* Lower-level API, still called directly from a few places (e.g. the
      * Sound On/Off settings toggle, ad hoc feedback outside the event

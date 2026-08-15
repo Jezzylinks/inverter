@@ -62,5 +62,6 @@ void all_leds_off(void);
 void led_event_task(void *pv);
 void led_execute_pattern(const led_pattern_t *pattern);
 void post_led_event(bool success);
+void led_set_inverter_active(bool active);
 
 #endif

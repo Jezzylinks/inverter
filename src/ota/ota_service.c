@@ -16,6 +16,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+#include "task_watchdog.h"
 static const char *TAG = "OTA_SERVICE";
 
 static void secure_zero(void *ptr, size_t len)
@@ -234,6 +235,7 @@ static void set_job_finished(void)
 
 static void ota_task(void *parameter)
 {
+    task_watchdog_register("ota_task");
     ota_job_t *job = (ota_job_t *)parameter;
     esp_https_ota_handle_t ota_handle = NULL;
     bool event_registered = false;
@@ -268,6 +270,8 @@ static void ota_task(void *parameter)
     }
 
     while ((result = esp_https_ota_perform(ota_handle)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
+
+        task_watchdog_feed();
         if (cancel_requested()) {
             ESP_LOGW(TAG, "OTA cancellation requested");
             esp_https_ota_abort(ota_handle);

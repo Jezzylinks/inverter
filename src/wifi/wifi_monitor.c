@@ -1,3 +1,4 @@
+#include "task_watchdog.h"
 /**
  * @file wifi_monitor.c
  * @brief Wi-Fi Runtime Monitor
@@ -191,9 +192,12 @@ static bool wifi_monitor_ping_test(void)
 
 static void wifi_monitor_task(void *arg)
 {
+    task_watchdog_register("wifi_monitor_task");
     (void)arg;
 
     while (s_running) {
+
+        task_watchdog_feed();
         wifi_ap_record_t ap_info = {0};
         const bool connected = esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK;
         const wifi_internet_status_t internet = connected

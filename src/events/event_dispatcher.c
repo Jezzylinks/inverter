@@ -11,6 +11,7 @@
 #include "stdbool.h"
 #include "nvs.h"
 
+#include "task_watchdog.h"
 static const char *TAG = "EVENT_DISPATCHER";
 #define MONITOR_STATS_NVS_NAMESPACE "monitor_statistics"
 #define MONITOR_STATS_NVS_KEY "monitor_stats"
@@ -420,12 +421,15 @@ const event_route_t *event_route_find(
 
 void event_dispatcher_task(void *pv)
 {
+    task_watchdog_register("event_dispatcher_task");
     ESP_LOGI(TAG, "Dispatcher task started");
 
     system_event_t evt = {0};
 
     while (1)
     {
+
+        task_watchdog_feed();
 
         bool ok = system_event_receive(&evt, pdMS_TO_TICKS(1000));
 
@@ -576,13 +580,16 @@ void monitor_statistics_update(const system_event_t *evt)
 
 void monitor_event_task(void *pv)
 {
+    task_watchdog_register("monitor_event_task");
     system_event_t evt;
     monitor_statistics_init();
     monitor_statistics_load(); /* no-op if nothing saved yet (first boot) */
 
     while (1)
     {
-        if (!event_dispatcher_receive(EVENT_SUB_MONITOR, &evt, portMAX_DELAY))
+
+        task_watchdog_feed();
+        if (!event_dispatcher_receive(EVENT_SUB_MONITOR, &evt, pdMS_TO_TICKS(1000U)))
         {
             continue;
         }
