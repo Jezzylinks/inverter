@@ -65,9 +65,8 @@ void pin_entry_get_pin(const pin_entry_ctx_t *ctx, uint8_t out_pin[SECURITY_PIN_
 
 void pin_entry_render_line(const pin_entry_ctx_t *ctx, char *buf, size_t buf_len)
 {
-    // Confirmed digits are masked with '*' so a PIN doesn't sit fully visible
-    // on screen; the digit currently being adjusted is shown live so the
-    // installer can see what they're setting it to.
+    // Render each PIN position in a bracketed slot. Confirmed digits are
+    // masked, while the digit currently being adjusted remains visible.
     char tmp[SECURITY_PIN_LEN][2];
     for (int i = 0; i < SECURITY_PIN_LEN; i++)
     {
@@ -86,6 +85,6 @@ void pin_entry_render_line(const pin_entry_ctx_t *ctx, char *buf, size_t buf_len
         tmp[i][1] = '\0';
     }
 
-    snprintf(buf, buf_len, "%s %s %s %s",
+    snprintf(buf, buf_len, "[%s] [%s] [%s] [%s]",
              tmp[0], tmp[1], tmp[2], tmp[3]);
 }

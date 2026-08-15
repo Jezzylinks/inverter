@@ -787,9 +787,9 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
                 char rows[4][LCD_LINE_SIZE];
                 snprintf(rows[0], LCD_LINE_SIZE, "FACTORY RESET");
                 snprintf(rows[1], LCD_LINE_SIZE, "PIN LOCKED");
-                snprintf(rows[2], LCD_LINE_SIZE, "Retry in %2lus",
+                snprintf(rows[2], LCD_LINE_SIZE, "[ ] [ ] [ ] [ ]");
+                snprintf(rows[3], LCD_LINE_SIZE, "Retry %2lus  BACK",
                          (unsigned long)remaining_s);
-                snprintf(rows[3], LCD_LINE_SIZE, "BACK=EXIT");
                 const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
                 draw_commit_rows(row_ptrs);
                 return;
@@ -812,12 +812,13 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
                 security_lockout_remaining_ms_for_scope(
                     SECURITY_LOCKOUT_FACTORY_RESET);
             const uint32_t remaining_s = (remaining_ms > 0)
-                                             ? (uint32_t)(remaining_ms / 1000) + 1U
-                                             : 0U;
-            char r1_buf[LCD_LINE_SIZE];
-            snprintf(r1_buf, sizeof(r1_buf), "Retry in %3lus   ",
+                                               ? (uint32_t)(remaining_ms / 1000) + 1U
+                                               : 0U;
+            char r0_buf[LCD_LINE_SIZE];
+            snprintf(r0_buf, sizeof(r0_buf), "LOCKED %2lus",
+
                      (unsigned long)remaining_s);
-            draw_commit("PIN Locked      ", r1_buf);
+            draw_commit(r0_buf, "[ ] [ ] [ ] [ ]");
             return;
         }
 

@@ -46,9 +46,10 @@ extern "C"
     void pin_entry_get_pin(const pin_entry_ctx_t *ctx, uint8_t out_pin[SECURITY_PIN_LEN]);
 
     /**
-     * Render the second LCD line for display, e.g. "3 * * _" while entering,
-     * masking confirmed digits so a PIN isn't left glowing on screen.
-     * buf_len should be at least 9 (4 digits + 3 separators + null terminator).
+     * Render the PIN slots for display, e.g. "[3] [*] [ ] [ ]" while
+     * entering, masking confirmed digits so a PIN isn't left glowing.
+     * buf_len should be at least 16 (four bracketed slots plus separators
+     * and the null terminator).
      */
     void pin_entry_render_line(const pin_entry_ctx_t *ctx, char *buf, size_t buf_len);
 
