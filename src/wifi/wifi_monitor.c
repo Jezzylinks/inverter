@@ -10,8 +10,7 @@
 #include <netdb.h>
 
 #include "esp_log.h"
-#include "esp_wifi.h"
-#include "esp_netif.h"
+#include "wifi_events.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -19,7 +18,6 @@
 
 #include "lwip/sockets.h"
 #include "ping/ping_sock.h"
-#include "esp_netif.h"
 
 #define WIFI_MONITOR_MAX_CALLBACKS 8
 #define WIFI_MONITOR_STOP_TIMEOUT_MS 5000
@@ -198,9 +196,12 @@ static void wifi_monitor_task(void *arg)
     while (s_running) {
 
         task_watchdog_feed();
-        wifi_ap_record_t ap_info = {0};
-        const bool connected = esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK;
-        const wifi_internet_status_t internet = connected
+        wifi_status_t event_status = {0};
+        const bool have_event_status =
+            wifi_events_get_status_copy(&event_status) == ESP_OK;
+        const bool connected = have_event_status && event_status.connected;
+        const bool got_ip = have_event_status && event_status.got_ip;
+        const wifi_internet_status_t internet = got_ip
             ? wifi_monitor_check_internet()
             : WIFI_INTERNET_UNAVAILABLE;
         bool internet_changed = false;
@@ -209,8 +210,9 @@ static void wifi_monitor_task(void *arg)
         if (s_mutex != NULL) {
             xSemaphoreTake(s_mutex, portMAX_DELAY);
             s_status.connected = connected;
-            s_status.got_ip = connected;
-            s_status.rssi = connected ? ap_info.rssi : -127;
+            s_status.got_ip = got_ip;
+            s_status.rssi = connected ? event_status.rssi : -127;
+            s_status.ip = event_status.ip;
             s_status.internet = internet;
             s_status.uptime_seconds = esp_log_timestamp() / 1000U;
             if (internet != s_last_internet_state) {

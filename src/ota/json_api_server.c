@@ -335,11 +335,16 @@ static esp_err_t api_connect_handler(httpd_req_t *req)
         err = wifi_controller_reconnect();
     }
 
+    const bool accepted = err == ESP_OK || err == ESP_ERR_WIFI_CONN;
     cJSON *resp = cJSON_CreateObject();
-    cJSON_AddBoolToObject(resp, "success", err == ESP_OK);
-    cJSON_AddStringToObject(resp, "message", err == ESP_OK ? "Connecting..." : esp_err_to_name(err));
+    cJSON_AddBoolToObject(resp, "success", accepted);
+    cJSON_AddBoolToObject(resp, "pending", accepted);
+    cJSON_AddStringToObject(resp, "state", accepted ? "connecting" : "failed");
+    cJSON_AddStringToObject(resp, "message",
+                            accepted ? "Connection request accepted; poll /api/v1/status"
+                                     : esp_err_to_name(err));
 
-    return send_json(req, resp, err == ESP_OK ? 200 : 500);
+    return send_json(req, resp, accepted ? 202 : 500);
 }
 
 /*----------------------------------------------------------

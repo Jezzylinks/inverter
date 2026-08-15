@@ -49,6 +49,7 @@ static void wifi_controller_provision_complete(void)
      * wifi_manager_connect() must remain non-blocking here.
      */
 
+    wifi_manager_enable_auto_reconnect(true);
     wifi_controller_lock();
     s_state = WIFI_CONTROLLER_CONNECTING;
     wifi_controller_unlock();
@@ -304,6 +305,7 @@ esp_err_t wifi_controller_reconnect(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    wifi_manager_enable_auto_reconnect(true);
     esp_err_t err = wifi_manager_reconnect();
     if (err == ESP_OK)
     {
@@ -337,6 +339,7 @@ esp_err_t wifi_controller_start_provisioning(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    wifi_manager_enable_auto_reconnect(false);
     (void)wifi_manager_stop();
     esp_err_t err = wifi_provision_start();
     if (err == ESP_OK)
@@ -361,6 +364,7 @@ esp_err_t wifi_controller_stop_provisioning(void)
         /* After stopping provisioning, try STA connection */
         if (wifi_storage_has_credentials())
         {
+            wifi_manager_enable_auto_reconnect(true);
             esp_err_t start_err = wifi_manager_start();
             if (start_err == ESP_OK || start_err == ESP_ERR_WIFI_CONN) {
                 start_err = wifi_manager_connect();

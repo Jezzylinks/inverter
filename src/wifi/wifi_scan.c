@@ -111,6 +111,25 @@ esp_err_t wifi_scan_start_records(wifi_ap_record_t *records, uint16_t *count)
         if (available > 0U) {
             err = esp_wifi_scan_get_ap_records(&available, records);
             if (err == ESP_OK) {
+                uint16_t unique = 0U;
+                for (uint16_t i = 0U; i < available; ++i) {
+                    bool duplicate = false;
+                    for (uint16_t j = 0U; j < unique; ++j) {
+                        if (strncmp((const char *)records[j].ssid,
+                                    (const char *)records[i].ssid,
+                                    sizeof(records[i].ssid)) == 0) {
+                            duplicate = true;
+                            if (records[i].rssi > records[j].rssi) {
+                                records[j] = records[i];
+                            }
+                            break;
+                        }
+                    }
+                    if (!duplicate && unique < capacity) {
+                        records[unique++] = records[i];
+                    }
+                }
+                available = unique;
                 qsort(records, available, sizeof(records[0]), compare_ap_by_rssi);
             }
         }
