@@ -10,6 +10,7 @@
 #include "events/event_dispatcher.h"
 #include "lcd_flash_queue.h"
 #include "lcd_config.h"
+#include "lcd_writer.h"
 
 #include "task_watchdog.h"
 #define LCD_EVENT_RECEIVER_STACK_SIZE 3072
@@ -44,6 +45,16 @@ static flash_priority_t flash_priority_for_event(const system_event_t *event)
 static void display_event_notice(const system_event_t *event)
 {
     if (event == NULL || event->category == EVENT_CATEGORY_BUTTON) {
+        return;
+    }
+
+    /* ADC/protection events are still dispatched to their safety consumers,
+     * but normal boot-time diagnostics must not hijack the branded startup
+     * screen with raw "AC Voltage" or "Battery Voltage" notices. Keep
+     * critical events visible so an emergency is never hidden. */
+    if (lcd_is_startup_active() &&
+        event->category == EVENT_CATEGORY_PROTECTION &&
+        event->priority < EVENT_PRIORITY_CRITICAL) {
         return;
     }
 

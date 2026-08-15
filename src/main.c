@@ -6894,6 +6894,10 @@ void app_main(void)
         ESP_LOGW(APP_TAG, "ADC did not warm up in time; skipping POST");
     }
 
+    /* Boot presentation is complete only after POST has reported. This keeps
+     * ordinary AC/battery protection events out of the branded startup UI
+     * without disabling the underlying protection or event dispatch paths. */
+    lcd_startup_release();
     lcd_watchdog_init(lcd_task_handle);
     while (sys_state.system_ready)
     {

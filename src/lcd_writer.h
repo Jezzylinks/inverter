@@ -25,6 +25,12 @@ void lcd_show_loading(const char *title,
                       uint32_t duration_ms,
                       lcd_screen_id_t next_screen);
 
+/* True while the boot, loading, or inverter startup sequence owns the LCD. */
+bool lcd_is_startup_active(void);
+
+/* Release boot-only event filtering after the power-on self-test completes. */
+void lcd_startup_release(void);
+
 /* ── Normal operating screen ─────────────────────────────────────────────── */
 /* Call from adc_task every cycle — lcd_task reads and decides sub-page      */
 void lcd_update_main_data(float bat_v, float out_v, float out_a,

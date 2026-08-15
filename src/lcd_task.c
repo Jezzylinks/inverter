@@ -160,23 +160,25 @@ static const char *rssi_bars(int8_t rssi)
 
 void lcd_display_startup_screen(uint8_t progress)
 {
-if (lcd_geometry_is_20x4())
-{
-    char row2[LCD_LINE_SIZE];
-    snprintf(row2, sizeof(row2), "BOOT CHECK %3u%%", progress);
-    const char *rows[] = {"C-TECH INVERTER", "ADVANCED POWER",
-                          row2, "12/24/48V READY"};
-    draw_commit_rows(rows);
-}
-else
-{
-    draw_commit("C-TECH INVERTER", "POWER SYSTEM    ");
-}
+    (void)progress;
+    if (lcd_geometry_is_20x4())
+    {
+        const char *rows[] = {
+            "   C-TECH POWER   ",
+            "  SMART INVERTER  ",
+            " CLEAN ENERGY CTRL",
+            "   INITIALIZING   "};
+        draw_commit_rows(rows);
+    }
+    else
+    {
+        draw_commit(" C-TECH POWER   ", " SMART INVERTER ");
+    }
 }
 
 static void draw_boot_brand(void)
 {
-    lcd_display_startup_screen(20);
+    lcd_display_startup_screen(0);
 }
 
 static void format_progress_line(char *out, uint8_t pct)
@@ -400,19 +402,21 @@ else
     }
 }
 
+static const char *startup_stage_label(uint8_t pct);
+
 static void draw_startup(const lcd_startup_data_t *d)
 {
     char bar[LCD_LINE_SIZE];
     format_progress_line(bar, d->progress_pct);
     if (lcd_geometry_is_20x4())
     {
-        const char *rows[] = {"C-TECH INVERTER", "SYSTEM STARTUP",
-                              bar, "CHECKING POWER..."};
+        const char *rows[] = {"   C-TECH POWER   ", "OUTPUT STARTING",
+                              bar, startup_stage_label(d->progress_pct)};
         draw_commit_rows(rows);
     }
     else
     {
-        draw_commit("C-TECH INVERTER", bar);
+        draw_commit("OUTPUT STARTING", bar);
     }
 }
 
@@ -574,6 +578,17 @@ static void format_loading_bar(char *row, size_t row_len, uint8_t pct)
     row[lcd_geometry_cols()] = '\0';
 }
 
+static const char *startup_stage_label(uint8_t pct)
+{
+    if (pct < 30U)
+        return "WAKING SYSTEM";
+    if (pct < 60U)
+        return "CHECKING HARDWARE";
+    if (pct < 85U)
+        return "PREPARING OUTPUT";
+    return "READY TO DELIVER";
+}
+
 static void draw_loading(const lcd_loading_data_t *d)
 {
     uint32_t elapsed = _lcd_get_time_ms() - d->start_ms;
@@ -583,16 +598,16 @@ static void draw_loading(const lcd_loading_data_t *d)
 
     if (lcd_geometry_is_20x4())
     {
-        char row0[LCD_LINE_SIZE], row3[LCD_LINE_SIZE];
-        snprintf(row0, sizeof(row0), "%-20.20s", d->title);
-        snprintf(row3, sizeof(row3), "PLEASE WAIT  %3u%%", pct);
-        const char *rows[] = {row0, bar, "SYSTEM TASK ACTIVE", row3};
+        char row3[LCD_LINE_SIZE];
+        snprintf(row3, sizeof(row3), "STARTING OUTPUT %3u%%", pct);
+        const char *rows[] = {"   C-TECH POWER   ", bar,
+                              startup_stage_label(pct), row3};
         draw_commit_rows(rows);
     }
     else
     {
         char row0[LCD_LINE_SIZE];
-        snprintf(row0, sizeof(row0), "%-16.16s", d->title);
+        snprintf(row0, sizeof(row0), "STARTING %3u%%", pct);
         draw_commit(row0, bar);
     }
 }

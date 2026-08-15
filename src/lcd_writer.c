@@ -18,6 +18,8 @@ extern SemaphoreHandle_t sys_state_mutex;
 extern lcd_render_state_t sys_lcd; /* the single render-state instance */
 extern system_state_t sys_state;   /* the single system-state instance */
 
+static bool s_startup_released = false;
+
 /**
  * Get current time in milliseconds (using FreeRTOS ticks)
  */
@@ -38,6 +40,7 @@ static void set_line(char *dst, const char *src)
 /*----------------------------------------------------------------------------*/
 void lcd_writer_init(void)
 {
+    s_startup_released = false;
     LCD_LOCK();
     memset(&sys_lcd, 0, sizeof(sys_lcd));
     sys_lcd.screen = LCD_SCREEN_BOOT_BRAND;
@@ -388,4 +391,22 @@ void lcd_show_loading(const char *title,
     sys_lcd.screen = LCD_SCREEN_LOADING;
 
     xSemaphoreGive(sys_state_mutex);
+}
+
+bool lcd_is_startup_active(void)
+{
+    bool active;
+    LCD_LOCK();
+    active = !s_startup_released ||
+             sys_lcd.screen == LCD_SCREEN_BOOT_BRAND ||
+             sys_lcd.screen == LCD_SCREEN_BOOT_INIT ||
+             sys_lcd.screen == LCD_SCREEN_LOADING ||
+             sys_lcd.screen == LCD_SCREEN_STARTUP_SEQ;
+    LCD_UNLOCK();
+    return active;
+}
+
+void lcd_startup_release(void)
+{
+    s_startup_released = true;
 }
