@@ -3195,7 +3195,9 @@ static void process_adc_reading(const adc_channel_config_t *config,
         telemetry_max = sys_state.battery_profile.overvoltage_protection_12v *
                         BATTERY_ADC_PHYSICAL_MARGIN;
     } else if (config->channel_id == CHANNEL_ID_LOW_BATTERY) {
-        telemetry_max = 6.0f;
+        telemetry_min = sys_state.battery_profile.cutoff_voltage_min_12v * 0.50f;
+        telemetry_max = sys_state.battery_profile.overvoltage_protection_12v *
+                        BATTERY_ADC_PHYSICAL_MARGIN;
     } else if (config->channel_id == CHANNEL_ID_INVERTER_OUTPUT_VOLTAGE) {
         telemetry_max = AC_ADC_PHYSICAL_MAX_V;
     }
@@ -5420,14 +5422,18 @@ void update_system_parameter(value_edit_context_t *ctx, float value)
 // this is a mock implementation - replace with actual hardware using digit
 bool inverter_set_output_voltage(float voltage_setpoint)
 {
-    if (voltage_setpoint < 100.0f || voltage_setpoint > 240.0f)
+    if (voltage_setpoint != 0.0f &&
+        (voltage_setpoint < 100.0f || voltage_setpoint > 240.0f))
     {
         printf("ERROR: Voltage setpoint out of range: %.1f V\n", voltage_setpoint);
         return false;
     }
     printf("HAL: Setting output voltage to %.1f V\n", voltage_setpoint);
-    // Update the sys_state output voltage
-    sys_state.current_value_type->current_value = voltage_setpoint;
+    // Update the sys_state output voltage. The descriptor may not exist during
+    // an early fault, but the hardware-safe output state must still be recorded.
+    if (sys_state.current_value_type != NULL) {
+        sys_state.current_value_type->current_value = voltage_setpoint;
+    }
     sys_state.inverter.output_voltage = voltage_setpoint;
     return true;
 }
@@ -5459,7 +5465,8 @@ bool inverter_set_output_frequency(float frequency_setpoint)
  */
 bool inverter_set_current_limit(float current_limit_amps)
 {
-    if (current_limit_amps < 1.0f || current_limit_amps > 50.0f)
+    if (current_limit_amps != 0.0f &&
+        (current_limit_amps < 1.0f || current_limit_amps > 50.0f))
     {
         printf("ERROR: Current limit out of range: %.1f A\n", current_limit_amps);
         return false;

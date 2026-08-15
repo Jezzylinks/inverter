@@ -13,7 +13,7 @@
 
 #include "task_watchdog.h"
 static const char *TAG = "EVENT_DISPATCHER";
-#define MONITOR_STATS_NVS_NAMESPACE "monitor_statistics"
+#define MONITOR_STATS_NVS_NAMESPACE "mon_stats"
 #define MONITOR_STATS_NVS_KEY "monitor_stats"
 
 /******************************************************************************

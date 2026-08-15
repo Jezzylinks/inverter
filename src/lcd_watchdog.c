@@ -49,6 +49,10 @@ void lcd_watchdog_init(TaskHandle_t lcd_handle)
         ESP_LOGW(TAG, "Task WDT not initialised — "
                       "only heartbeat monitor active");
     }
+    else if (err == ESP_ERR_INVALID_ARG)
+    {
+        ESP_LOGI(TAG, "lcd_task already registered with task WDT");
+    }
     else
     {
         ESP_LOGE(TAG, "Failed to register with task WDT: %s",

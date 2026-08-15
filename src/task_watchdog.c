@@ -104,27 +104,40 @@ static void task_watchdog_supervisor(void *arg)
     while (true) {
         task_watchdog_feed();
         const uint32_t timestamp = now_ms();
+        const TaskHandle_t supervisor = xTaskGetCurrentTaskHandle();
+        static task_watchdog_snapshot_t stale[TASK_WATCHDOG_MAX_TASKS];
+        static task_watchdog_snapshot_t low_stack[TASK_WATCHDOG_MAX_TASKS];
+        size_t stale_count = 0U;
+        size_t low_stack_count = 0U;
         taskENTER_CRITICAL(&s_lock);
         for (size_t i = 0U; i < TASK_WATCHDOG_MAX_TASKS; ++i) {
             const task_watchdog_snapshot_t *snapshot = &s_records[i].snapshot;
-            if (!snapshot->registered ||
-                s_records[i].handle == xTaskGetCurrentTaskHandle()) {
+            if (!snapshot->registered || s_records[i].handle == supervisor) {
                 continue;
             }
             if ((uint32_t)(timestamp - snapshot->last_feed_ms) >
-                TASK_WATCHDOG_STALE_MS) {
-                ESP_LOGE(TAG, "Task heartbeat stale: %s (%lums, stack=%lu)",
-                         snapshot->name,
-                         (unsigned long)(timestamp - snapshot->last_feed_ms),
-                         (unsigned long)snapshot->stack_high_water_words);
+                    TASK_WATCHDOG_STALE_MS &&
+                stale_count < TASK_WATCHDOG_MAX_TASKS) {
+                stale[stale_count++] = *snapshot;
             }
-            if (snapshot->stack_high_water_words < 128U) {
-                ESP_LOGW(TAG, "Task stack margin low: %s (%lu words)",
-                         snapshot->name,
-                         (unsigned long)snapshot->stack_high_water_words);
+            if (snapshot->stack_high_water_words < 128U &&
+                low_stack_count < TASK_WATCHDOG_MAX_TASKS) {
+                low_stack[low_stack_count++] = *snapshot;
             }
         }
         taskEXIT_CRITICAL(&s_lock);
+
+        for (size_t i = 0U; i < stale_count; ++i) {
+            ESP_LOGE(TAG, "Task heartbeat stale: %s (%lums, stack=%lu)",
+                     stale[i].name,
+                     (unsigned long)(timestamp - stale[i].last_feed_ms),
+                     (unsigned long)stale[i].stack_high_water_words);
+        }
+        for (size_t i = 0U; i < low_stack_count; ++i) {
+            ESP_LOGW(TAG, "Task stack margin low: %s (%lu words)",
+                     low_stack[i].name,
+                     (unsigned long)low_stack[i].stack_high_water_words);
+        }
         vTaskDelay(pdMS_TO_TICKS(TASK_WATCHDOG_SUPERVISOR_PERIOD_MS));
     }
 }
