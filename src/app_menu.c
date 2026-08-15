@@ -9,6 +9,7 @@
 #include "lcd_writer.h"
 #include "lcd.h"
 #include "security/security.h"
+#include "app_services.h"
 
 #define APP_MENU_TAG "APP_MENU"
 #define APP_MENU_HISTORY_DEPTH 10
@@ -191,6 +192,9 @@ void show_menu_screen(menu_state_t menu_st, int selection)
         selection = item_count - 1;
 
     uint8_t cols = lcd_geometry_cols();
+    char wifi_toggle_label[LCD_LINE_SIZE];
+    snprintf(wifi_toggle_label, sizeof(wifi_toggle_label), "WiFi: %s",
+             app_services_wifi_enabled() ? "ON" : "OFF");
 if (lcd_geometry_is_20x4())
 {
     char rows[LCD_ROWS][LCD_LINE_SIZE];
@@ -216,6 +220,8 @@ if (lcd_geometry_is_20x4())
         }
 
         char marker = item_index == selection ? APP_MENU_ARROW : APP_MENU_INDENT;
+        const char *label = (menu_st == MENU_WIFI_CONFIG && item_index == 0)
+                                ? wifi_toggle_label : items[item_index].label;
         int label_width = cols - 1;
         if (row == visible_rows - 1)
         {
@@ -224,13 +230,12 @@ if (lcd_geometry_is_20x4())
                 label_width = 1;
             snprintf(rows[row], LCD_LINE_SIZE, "%c%-*.*s %s",
                      marker, label_width, label_width,
-                     items[item_index].label, indicator);
+                     label, indicator);
         }
         else
         {
             snprintf(rows[row], LCD_LINE_SIZE, "%c%-*.*s",
-                     marker, label_width, label_width,
-                     items[item_index].label);
+                                          marker, label_width, label_width, label);
         }
     }
     lcd_show_menu_rows(row_ptrs, visible_rows);
@@ -240,8 +245,10 @@ else
     char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
 
     /* Preserve the established 16×2 menu behavior. */
+    const char *selected_label = (menu_st == MENU_WIFI_CONFIG && selection == 0)
+                                     ? wifi_toggle_label : items[selection].label;
     snprintf(r0, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_ARROW,
-             cols - 1, cols - 1, items[selection].label);
+             cols - 1, cols - 1, selected_label);
 
     int next = (selection + 1) % item_count;
     if (item_count >= APP_MENU_INDICATOR_MIN_ITEMS)
@@ -252,14 +259,18 @@ else
         int label_w = cols - 1 - ind_len;
         if (label_w < 1)
             label_w = 1;
+        const char *next_label = (menu_st == MENU_WIFI_CONFIG && next == 0)
+                                     ? wifi_toggle_label : items[next].label;
         snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s%s",
                  APP_MENU_INDENT, label_w, label_w,
-                 items[next].label, ind);
+                 next_label, ind);
     }
     else
     {
+        const char *next_label = (menu_st == MENU_WIFI_CONFIG && next == 0)
+                                     ? wifi_toggle_label : items[next].label;
         snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_INDENT,
-                 cols - 1, cols - 1, items[next].label);
+                 cols - 1, cols - 1, next_label);
     }
     lcd_show_menu(r0, r1);
 }

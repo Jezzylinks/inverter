@@ -50,6 +50,8 @@ bool app_services_wifi_enabled(void);
 
 /** Menu-safe Wi-Fi operations. */
 esp_err_t app_services_wifi_scan(void);
+esp_err_t app_services_wifi_connect_network(const char *ssid,
+                                             const char *password);
 esp_err_t app_services_wifi_connect_saved(void);
 esp_err_t app_services_wifi_disconnect(void);
 esp_err_t app_services_wifi_start_provisioning(void);

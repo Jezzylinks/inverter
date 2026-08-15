@@ -77,9 +77,16 @@ void lcd_show_factory_done(void);
 
 /* ── Wi-Fi ───────────────────────────────────────────────────────────────── */
 void lcd_show_wifi_scan(uint8_t count,
-                        const char ssids[][9], const int8_t rssi[],
-                        uint8_t selected, uint8_t top);
+                        const char ssids[][LCD_WIFI_SSID_MAX_LEN + 1U],
+                        const int8_t rssi[], uint8_t selected, uint8_t top);
 void lcd_update_wifi_selection(uint8_t selected, uint8_t top);
+void lcd_show_wifi_password(const char *ssid);
+void lcd_update_wifi_password(char current_char, const char *password,
+                              uint8_t length);
+void lcd_show_wifi_status(const char *state, const char *ssid, const char *ip,
+                          const char *gateway, int8_t rssi, bool connected,
+                          bool got_ip, bool internet_available);
+void lcd_update_wifi_status_page(uint8_t page);
 void lcd_show_wifi_connecting(const char *ssid);
 void lcd_show_wifi_result(bool connected, bool failed, bool timed_out,
                           const char *ssid);

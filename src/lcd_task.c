@@ -636,7 +636,7 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
         {
             uint8_t idx = d->top_index + line;
             if (idx < d->count)
-                snprintf(rows[line], LCD_LINE_SIZE, "%c%-12s %4s",
+                snprintf(rows[line], LCD_LINE_SIZE, "%c%-12.12s %4s",
                          (idx == d->selected_index) ? '>' : ' ',
                          d->ssid[idx], rssi_bars(d->rssi[idx]));
             else
@@ -661,6 +661,85 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
                      d->ssid[idx], rssi_bars(d->rssi[idx]));
             draw_row(line, row);
         }
+    }
+}
+
+static void draw_wifi_password(const lcd_wifi_password_data_t *d)
+{
+    char masked[LCD_WIFI_PASSWORD_MAX_LEN + 1U] = {0};
+    const uint8_t visible = d->length < LCD_WIFI_PASSWORD_MAX_LEN
+                                ? d->length : LCD_WIFI_PASSWORD_MAX_LEN;
+    for (uint8_t i = 0U; i < visible; ++i) {
+        masked[i] = '*';
+    }
+    masked[visible] = '\0';
+
+    if (lcd_geometry_is_20x4()) {
+        char rows[4][LCD_LINE_SIZE];
+        snprintf(rows[0], LCD_LINE_SIZE, "WI-FI PASSWORD");
+        snprintf(rows[1], LCD_LINE_SIZE, "SSID: %-14.14s", d->ssid);
+        snprintf(rows[2], LCD_LINE_SIZE, "Pass:%-10.10s [%c]", masked,
+                 d->current_char ? d->current_char : ' ');
+        snprintf(rows[3], LCD_LINE_SIZE, "UP/DN CHAR ENTER ADD");
+        const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
+        draw_commit_rows(row_ptrs);
+    } else {
+        char row0[LCD_LINE_SIZE];
+        char row1[LCD_LINE_SIZE];
+        snprintf(row0, LCD_LINE_SIZE, "P:%-14.14s", masked);
+        snprintf(row1, LCD_LINE_SIZE, "[%c] %u/63 HOLD=SAVE",
+                 d->current_char ? d->current_char : ' ', d->length);
+        draw_commit(row0, row1);
+    }
+}
+
+static void draw_wifi_status(const lcd_wifi_status_data_t *d)
+{
+    if (lcd_geometry_is_20x4()) {
+        char rows[4][LCD_LINE_SIZE];
+        switch (d->page % 3U) {
+        case 0:
+            snprintf(rows[0], LCD_LINE_SIZE, "WI-FI STATUS");
+            snprintf(rows[1], LCD_LINE_SIZE, "State: %-13.13s", d->state);
+            snprintf(rows[2], LCD_LINE_SIZE, "SSID: %-14.14s", d->ssid);
+            snprintf(rows[3], LCD_LINE_SIZE, "ENTER NEXT BACK EXIT");
+            break;
+        case 1:
+            snprintf(rows[0], LCD_LINE_SIZE, "IP: %-16.16s", d->ip);
+            snprintf(rows[1], LCD_LINE_SIZE, "GW: %-16.16s", d->gateway);
+            snprintf(rows[2], LCD_LINE_SIZE, "IP: %-3s LINK: %-5s",
+                     d->got_ip ? "YES" : "NO", d->connected ? "UP" : "DOWN");
+            snprintf(rows[3], LCD_LINE_SIZE, "ENTER NEXT BACK EXIT");
+            break;
+        default:
+            snprintf(rows[0], LCD_LINE_SIZE, "Signal: %d dBm", d->rssi);
+            snprintf(rows[1], LCD_LINE_SIZE, "Internet: %-8s",
+                     d->internet_available ? "ONLINE" : "OFFLINE");
+            snprintf(rows[2], LCD_LINE_SIZE, "Wi-Fi: %-10.10s", d->state);
+            snprintf(rows[3], LCD_LINE_SIZE, "ENTER NEXT BACK EXIT");
+            break;
+        }
+        const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
+        draw_commit_rows(row_ptrs);
+    } else {
+        char row0[LCD_LINE_SIZE];
+        char row1[LCD_LINE_SIZE];
+        switch (d->page % 3U) {
+        case 0:
+            snprintf(row0, LCD_LINE_SIZE, "%-16.16s", d->state);
+            snprintf(row1, LCD_LINE_SIZE, "SSID:%-11.11s", d->ssid);
+            break;
+        case 1:
+            snprintf(row0, LCD_LINE_SIZE, "IP:%-13.13s", d->ip);
+            snprintf(row1, LCD_LINE_SIZE, "GW:%-13.13s", d->gateway);
+            break;
+        default:
+            snprintf(row0, LCD_LINE_SIZE, "RSSI:%d dBm", d->rssi);
+            snprintf(row1, LCD_LINE_SIZE, "NET:%s",
+                     d->internet_available ? "ONLINE" : "OFFLINE");
+            break;
+        }
+        draw_commit(row0, row1);
     }
 }
 
@@ -1344,10 +1423,42 @@ void lcd_task(void *arg)
 
         case LCD_SCREEN_WIFI_SCAN:
             draw_wifi_scan(&snap.wifi_scan);
+            if (_lcd_get_time_ms() - snap.wifi_scan.entered_ms >= 30000U) {
+                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+                sys_lcd.screen = LCD_SCREEN_MENU;
+                xSemaphoreGive(sys_state_mutex);
+            }
+            break;
+
+        case LCD_SCREEN_WIFI_PASSWORD:
+            draw_wifi_password(&snap.wifi_password);
+            if (_lcd_get_time_ms() - snap.wifi_password.entered_ms >= 60000U) {
+                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+                sys_lcd.screen = LCD_SCREEN_MENU;
+                xSemaphoreGive(sys_state_mutex);
+            }
+            break;
+
+        case LCD_SCREEN_WIFI_STATUS:
+            draw_wifi_status(&snap.wifi_status);
             break;
 
         case LCD_SCREEN_WIFI_CONNECTING:
             draw_wifi_connecting(&snap.wifi_connect);
+            if (!snap.wifi_connect.connected && !snap.wifi_connect.failed &&
+                !snap.wifi_connect.timed_out &&
+                _lcd_get_time_ms() - snap.wifi_connect.entered_ms >= 30000U) {
+                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+                sys_lcd.wifi_connect.timed_out = true;
+                sys_lcd.wifi_connect.entered_ms = _lcd_get_time_ms();
+                xSemaphoreGive(sys_state_mutex);
+            } else if ((snap.wifi_connect.connected || snap.wifi_connect.failed ||
+                        snap.wifi_connect.timed_out) &&
+                       _lcd_get_time_ms() - snap.wifi_connect.entered_ms >= 5000U) {
+                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+                sys_lcd.screen = LCD_SCREEN_MENU;
+                xSemaphoreGive(sys_state_mutex);
+            }
             break;
 
         case LCD_SCREEN_CONFIRMATION:

@@ -35,6 +35,8 @@ extern "C"
         LCD_SCREEN_FAULT,
         LCD_SCREEN_FACTORY_RESET,
         LCD_SCREEN_WIFI_SCAN,
+        LCD_SCREEN_WIFI_PASSWORD,
+        LCD_SCREEN_WIFI_STATUS,
         LCD_SCREEN_WIFI_CONNECTING,
         LCD_SCREEN_CONFIRMATION,
         LCD_SCREEN_FLASH_MSG, /* timed 2-line message then returns */
@@ -183,21 +185,48 @@ extern "C"
     } lcd_security_data_t;
 
 #define LCD_WIFI_MAX_AP 10
+#define LCD_WIFI_SSID_MAX_LEN 32U
+#define LCD_WIFI_PASSWORD_MAX_LEN 63U
     typedef struct
     {
-        char ssid[LCD_WIFI_MAX_AP][9];
+        char ssid[LCD_WIFI_MAX_AP][LCD_WIFI_SSID_MAX_LEN + 1U];
         int8_t rssi[LCD_WIFI_MAX_AP];
         uint8_t count;
         uint8_t selected_index;
         uint8_t top_index;
+        uint32_t entered_ms;
     } lcd_wifi_scan_data_t;
 
     typedef struct
     {
-        char ssid[33];
+        char ssid[LCD_WIFI_SSID_MAX_LEN + 1U];
+        char password[LCD_WIFI_PASSWORD_MAX_LEN + 1U];
+        uint8_t length;
+        char current_char;
+        uint32_t entered_ms;
+    } lcd_wifi_password_data_t;
+
+    typedef struct
+    {
+        char state[LCD_LINE_SIZE];
+        char ssid[LCD_WIFI_SSID_MAX_LEN + 1U];
+        char ip[LCD_LINE_SIZE];
+        char gateway[LCD_LINE_SIZE];
+        int8_t rssi;
+        bool connected;
+        bool got_ip;
+        bool internet_available;
+        uint8_t page;
+        uint32_t entered_ms;
+    } lcd_wifi_status_data_t;
+
+    typedef struct
+    {
+        char ssid[LCD_WIFI_SSID_MAX_LEN + 1U];
         bool connected;
         bool failed;
         bool timed_out;
+        uint32_t entered_ms;
     } lcd_wifi_connect_data_t;
 
     /* timed flash message (SAVED / CANCELLED / any short notice) */
@@ -241,6 +270,8 @@ extern "C"
         factory_reset_ctx_t factory_reset;
         lcd_security_data_t security;
         lcd_wifi_scan_data_t wifi_scan;
+        lcd_wifi_password_data_t wifi_password;
+        lcd_wifi_status_data_t wifi_status;
         lcd_wifi_connect_data_t wifi_connect;
         lcd_two_line_t confirm;
         lcd_flash_data_t flash;
