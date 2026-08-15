@@ -87,11 +87,11 @@ void pin_entry_render_line(const pin_entry_ctx_t *ctx, char *buf, size_t buf_len
     }
 
 #if LCD_GEOMETRY_20X4
-    snprintf(buf, buf_len, "[ %s ] [ %s ] [ %s ] [ %s ]",
+    snprintf(buf, buf_len, "[%s] [%s] [%s] [%s]",
              tmp[0], tmp[1], tmp[2], tmp[3]);
 #else
     /* The compact 16×2 line has no room for spaces between slots. */
-    snprintf(buf, buf_len, "[ %s][ %s][ %s][ %s]",
+    snprintf(buf, buf_len, "[%s][%s][%s][%s]",
              tmp[0], tmp[1], tmp[2], tmp[3]);
 #endif
 }
