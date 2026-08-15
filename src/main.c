@@ -461,11 +461,11 @@ bool battery_generate_profile(battery_type_t battery_type,
     float voltage_multiplier = (float)voltage_system / 12.0f;
     float capacity_multiplier = (float)capacity_ah / 100.0f;
     int name_prefix_len = snprintf(profile_out->name_prefix,
-                                    sizeof(profile_out->name_prefix),
-                                    "%.*s %uV",
-                                    3,
-                                    base->name_prefix,
-                                    (unsigned)voltage_system);
+                                   sizeof(profile_out->name_prefix),
+                                   "%.*s %uV",
+                                   3,
+                                   base->name_prefix,
+                                   (unsigned)voltage_system);
     (void)name_prefix_len;
     // Copy basic info
     profile_out->chemistry = base->chemistry;
@@ -756,17 +756,20 @@ bool battery_load_profile(battery_profile_t *profile_out)
 
 void battery_system_init(battery_profile_t *profile)
 {
-    if (!profile) {
+    if (!profile)
+    {
         return;
     }
 
     /* Never overwrite user configuration during boot. Generate a safe,
      * documented fallback only when no valid profile has been loaded yet. */
-    if (profile->capacity_ah <= 0.0f || profile->nominal_voltage == 0) {
+    if (profile->capacity_ah <= 0.0f || profile->nominal_voltage == 0)
+    {
         if (!battery_generate_profile(DEFAULT_BATTERY_PROFILE,
-                                       VOLTAGE_SYSTEM_12V,
-                                       200,
-                                       profile)) {
+                                      VOLTAGE_SYSTEM_12V,
+                                      200,
+                                      profile))
+        {
             memset(profile, 0, sizeof(*profile));
         }
     }
@@ -973,7 +976,6 @@ typedef enum
     MENU_EDIT_FALSE
 } menu_edit_t;
 
-
 menu_edit_t menu_edit_status = MENU_EDIT_FALSE;
 
 // ================== RTC STRUCT ==================
@@ -986,7 +988,6 @@ typedef struct
     uint16_t last_error;
     uint32_t wake_count;
 } rtc_mem_t;
-
 
 // GLOBAL LED controller
 led_pattern_t pattern =
@@ -2586,7 +2587,8 @@ void adc_task(void *arg)
         lcd_update_wifi_status(wifi_monitor_is_online(),
                                wifi_monitor_get_rssi());
 
-        if (sys_lcd.screen == LCD_SCREEN_STANDBY) {
+        if (sys_lcd.screen == LCD_SCREEN_STANDBY)
+        {
             lcd_show_standby(sys_state.inverter.battery.voltage,
                              battery_pct,
                              sys_state.inverter.connected);
@@ -2976,10 +2978,12 @@ static float map_adc_to_full_range(float adc_voltage)
 static float selected_battery_voltage_multiplier(void)
 {
     float nominal_voltage = sys_state.battery_profile.nominal_voltage;
-    if (nominal_voltage < 11.0f) {
+    if (nominal_voltage < 11.0f)
+    {
         nominal_voltage = (float)sys_state.battery_voltage_system;
     }
-    if (nominal_voltage < 11.0f) {
+    if (nominal_voltage < 11.0f)
+    {
         nominal_voltage = 12.0f;
     }
     return nominal_voltage / 12.0f;
@@ -3032,7 +3036,8 @@ static void process_adc_reading(const adc_channel_config_t *config,
         const float multiplier = selected_battery_voltage_multiplier();
         actual_voltage *= multiplier;
         threshold_low = sys_state.battery_profile.cutoff_voltage_12v;
-        if (threshold_low <= 0.0f) {
+        if (threshold_low <= 0.0f)
+        {
             threshold_low = config->threshold_low * multiplier;
         }
         battery_filter_update(&battery_voltage_filter, actual_voltage);
@@ -3184,30 +3189,26 @@ void check_protections(void)
     sys_state.error.error_flags &=
         (ERR_EEPROM | ERR_FAN_FAIL);
 
-    protection_update(
-        PROT_QUANTITY_AC_VOLTAGE,
-        sys_state.inverter.output_voltage,
-        now_ms);
-
-    protection_update(
-        PROT_QUANTITY_OUTPUT_CURRENT,
-        sys_state.inverter.output_current,
-        now_ms);
-
-    protection_update(
-        PROT_QUANTITY_TEMPERATURE,
-        sys_state.inverter.temperature,
-        now_ms);
-
-    /* Battery-voltage protection begins after the startup sequence. The
-     * ADC measurement and battery estimator still run during boot, but this
-     * protection producer is not invoked until the LCD startup phase has
-     * been released, preventing a boot-time battery-protection notice. */
     if (!lcd_is_startup_active())
     {
         protection_update(
             PROT_QUANTITY_BATTERY_VOLTAGE,
             sys_state.inverter.battery.voltage,
+            now_ms);
+
+        protection_update(
+            PROT_QUANTITY_AC_VOLTAGE,
+            sys_state.inverter.output_voltage,
+            now_ms);
+
+        protection_update(
+            PROT_QUANTITY_OUTPUT_CURRENT,
+            sys_state.inverter.output_current,
+            now_ms);
+
+        protection_update(
+            PROT_QUANTITY_TEMPERATURE,
+            sys_state.inverter.temperature,
             now_ms);
     }
 
@@ -3231,6 +3232,13 @@ void check_protections(void)
     uint32_t fan_rpm = post_fan_get_rpm();
     sys_state.fan.speed = (float)fan_rpm;
     sys_state.fan.connected = (fan_rpm >= (uint32_t)FAN_SPEED_THRESHOLD_RPM);
+
+    if (sys_state.fan.connected == false)
+    {
+        // negate system not ready
+        sys_state.error.error_flags |= ERR_FAN_FAIL;
+        ESP_LOGW("PROTECTIONS", "Fan not detected or below threshold RPM");
+    }
 
     if (sys_state.inverter.temperature > 70.0f &&
         !sys_state.fan.connected)
@@ -3437,7 +3445,6 @@ void diagnostic_update_task(void *pv)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
-
 
 void reload_default_settings(void)
 {
@@ -3786,7 +3793,6 @@ void enter_submenu(menu_state_t new_state)
     show_menu_screen(new_state, 0);
 }
 
-
 // Helper functions for menu history management
 /* ── inverter_power_on() ────────────────────────────────────────────────── */
 static const char *INV_TAG = "INVERTER";
@@ -3883,7 +3889,6 @@ static void post_factory_reset_event(bool success)
     evt.timestamp = xTaskGetTickCount();
     system_event_post(&evt);
 }
-
 
 void inverter_power_on(void)
 {
@@ -3996,7 +4001,8 @@ static void apply_battery_cutoff(float v) { battery_monitor_set_cutoff(v); }
 static void apply_wifi(float v)
 {
     const esp_err_t err = app_services_set_wifi_enabled(v != 0.0f);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGW(APP_TAG, "Wi-Fi preference applied with error: %s", esp_err_to_name(err));
     }
 }
@@ -4737,7 +4743,7 @@ void increase_value(bool fast_mode, bool precision_mode)
 
             ESP_LOGI("NEW_VALUE", "Value increased to: %.3f %s", new_value, ctx->unit);
         }
-                else
+        else
         {
             ESP_LOGI("NEW_VALUE", "Value at maximum limit: %.3f %s", ctx->max_value, ctx->unit);
             post_buzzer_limit_event();
@@ -5387,7 +5393,6 @@ void inverter_emergency_shutdown(void)
     lcd_show_fault("EMERGENCY HALT  ", "All outputs off ");
 }
 
-
 /*
  * =============================================================================
  * STEP 5: MAIN APPLICATION ENTRY POINT
@@ -5403,7 +5408,6 @@ void inverter_emergency_shutdown(void)
  * STEP 6: RUNTIME EXAMPLE AND TESTING FUNCTIONS
  * =============================================================================
  */
-
 
 void log_all_error_flags(uint32_t flags)
 {
@@ -5510,8 +5514,8 @@ static bool validate_and_clamp_settings(void)
                  sys_state.battery_profile.nominal_voltage);
         battery_profile_t regenerated;
         battery_type_t type = sys_state.battery_profile.profile_id < BATTERY_TYPE_COUNT
-                                   ? (battery_type_t)sys_state.battery_profile.profile_id
-                                   : BATTERY_AGM;
+                                  ? (battery_type_t)sys_state.battery_profile.profile_id
+                                  : BATTERY_AGM;
         uint16_t capacity = sys_state.battery_profile.capacity_ah > 0.0f
                                 ? (uint16_t)sys_state.battery_profile.capacity_ah
                                 : 100U;
@@ -5731,13 +5735,15 @@ void init_menu_system()
     battery_profile_t *profile = &sys_state.battery_profile;
     battery_system_init(profile);
     printf("Loading battery profile from NVS...\n");
-    if (!load_settings()) {
+    if (!load_settings())
+    {
         ESP_LOGW(TAG_SYS, "Settings were missing or corrected; retaining validated defaults");
-        if (profile->capacity_ah <= 0.0f || profile->nominal_voltage == 0) {
+        if (profile->capacity_ah <= 0.0f || profile->nominal_voltage == 0)
+        {
             battery_generate_profile(DEFAULT_BATTERY_PROFILE,
-                                      VOLTAGE_SYSTEM_12V,
-                                      200,
-                                      profile);
+                                     VOLTAGE_SYSTEM_12V,
+                                     200,
+                                     profile);
         }
     }
     quiet_hours_restore_manual_time();
@@ -6307,7 +6313,7 @@ void init_watchdog(bool enable_task_wdt, bool panic_on_hang)
     if (enable_task_wdt)
     {
         esp_task_wdt_config_t twdt_config = {
-            .timeout_ms = 15000,                              // 5-second timeout
+            .timeout_ms = 15000,                             // 5-second timeout
             .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // Monitor all available cores
             .trigger_panic = panic_on_hang};
 
@@ -6809,21 +6815,24 @@ void app_main(void)
     nvs_init(false);
     init_system_state();
     init_menu_system();
-    if (security_init() != ESP_OK) {
+    if (security_init() != ESP_OK)
+    {
         ESP_LOGE(APP_TAG, "FATAL: security initialization failed; keeping controls disabled");
         sys_state.system_ready = false;
         return;
     }
     fault_log_init();
     nvs_print_stats();
-    if (nvs_is_initialized()) {
+    if (nvs_is_initialized())
+    {
         ESP_LOGI("MAIN", "NVS ready");
     }
 
     /* Service coordination restores persisted Wi-Fi intent and starts a
      * bounded CSV-manifest availability checker. It never downloads an
      * update until the user explicitly confirms from the OTA menu. */
-    if (app_services_init() != ESP_OK) {
+    if (app_services_init() != ESP_OK)
+    {
         ESP_LOGW(APP_TAG, "Network/update services unavailable; continuing offline");
     }
 
@@ -6849,7 +6858,8 @@ void app_main(void)
     // lcd_show_boot_brand();
     xTaskCreate(adc_task, "adc_task", 4096, NULL, 5, NULL);
     xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
-    if (lcd_event_receiver_start() != ESP_OK) {
+    if (lcd_event_receiver_start() != ESP_OK)
+    {
         ESP_LOGE(APP_TAG, "Failed to start LCD event receiver");
     }
     xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, 1);
