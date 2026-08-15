@@ -170,7 +170,7 @@ if (lcd_geometry_is_20x4())
 }
 else
 {
-    draw_commit(" C-TECH SYSTEMS ", "  Version 1.0   ");
+    draw_commit("C-TECH INVERTER", "POWER SYSTEM    ");
 }
 }
 
@@ -196,95 +196,78 @@ static void format_progress_line(char *out, uint8_t pct)
     out[lcd_geometry_cols()] = '\0';
 }
 
+static const char *home_mode_label(uint8_t mode)
+{
+    switch (mode)
+    {
+    case 0:
+        return "SOLAR PRIORITY";
+    case 1:
+        return "AC PRIORITY";
+    default:
+        return "AUTO PRIORITY";
+    }
+}
+
+static void format_home_wifi(char *out, size_t out_len,
+                             bool connected, int8_t rssi)
+{
+    if (connected)
+        snprintf(out, out_len, "W%s", rssi_bars(rssi));
+    else
+        snprintf(out, out_len, "W-");
+}
+
 static void draw_main(lcd_main_data_t *m)
 {
-    static uint8_t last_sub_page = 0xFF;
-    if (m->sub_page != last_sub_page)
-        last_sub_page = m->sub_page;
+    char wifi[8];
+    format_home_wifi(wifi, sizeof(wifi), m->wifi_connected, m->wifi_rssi);
 
-if (lcd_geometry_is_20x4())
-{
-    char rows[4][LCD_LINE_SIZE];
-    uint8_t bat_v = 0, bat_t = 0;
-    display_voltage_parts(m->battery_voltage, &bat_v, &bat_t);
-    uint8_t out_v = (m->output_voltage < 0.0f) ? 0 :
-                    (m->output_voltage > 255.0f ? 255 : (uint8_t)m->output_voltage);
-    uint8_t out_hz = (m->output_frequency < 0.0f) ? 0 :
-                     (m->output_frequency > 255.0f ? 255 : (uint8_t)m->output_frequency);
-    uint8_t bat_temp = (m->battery_temperature < 0.0f) ? 0 :
-                       (m->battery_temperature > 99.0f ? 99 : (uint8_t)m->battery_temperature);
-    memset(rows, ' ', sizeof(rows));
-    for (uint8_t i = 0; i < 4; i++)
-        rows[i][LCD_COLS] = '\0';
+    if (lcd_geometry_is_20x4())
+    {
+        char rows[4][LCD_LINE_SIZE];
+        const char *mode = home_mode_label(m->operating_mode);
+        const uint8_t voltage = m->voltage_system ? m->voltage_system : 12U;
+        const char *state = m->inverter_active ? "ON" : "OFF";
 
-    switch (m->sub_page)
-    {
-    case MAIN_SUB_OUTPUT:
-        snprintf(rows[0], LCD_LINE_SIZE, "OUTPUT %3uV %2uHz", out_v, out_hz);
-        snprintf(rows[1], LCD_LINE_SIZE, "LOAD %3u%% POWER", (unsigned)m->load_pct);
-        snprintf(rows[2], LCD_LINE_SIZE, "AC:%s ACTIVE",
-                 m->ac_connected ? "ON" : "OFF");
-        snprintf(rows[3], LCD_LINE_SIZE, "INV:%s <UP/DN>",
-                 m->inverter_active ? "RUN" : "IDLE");
-        break;
-    case MAIN_SUB_BATTERY:
-        snprintf(rows[0], LCD_LINE_SIZE, "BAT %2u.%uV %3u%%",
-                 (unsigned)bat_v, (unsigned)bat_t, (unsigned)m->battery_pct);
-        snprintf(rows[1], LCD_LINE_SIZE, "TEMP %2uC %s",
-                 (unsigned)bat_temp, m->battery_charging ? "CHARGE" : "DISCHARGE");
-        snprintf(rows[2], LCD_LINE_SIZE, "HEALTH   %s",
-                 m->battery_critical ? "CRITICAL" : (m->battery_low ? "LOW" : "NORMAL"));
-        snprintf(rows[3], LCD_LINE_SIZE, "<UP/DN> PAGE   MENU");
-        break;
-    case MAIN_SUB_SYSTEM:
-        snprintf(rows[0], LCD_LINE_SIZE, "SYS INV:%s AC:%s",
-                 m->inverter_active ? "ON" : "OFF",
-                 m->ac_connected ? "ON" : "OFF");
-        snprintf(rows[1], LCD_LINE_SIZE, "LOAD %3u%% MODE %3u",
-                 (unsigned)m->load_pct, (unsigned)m->operating_mode);
-        snprintf(rows[2], LCD_LINE_SIZE, "BAT %2u.%uV %3u%%",
-                 (unsigned)bat_v, (unsigned)bat_t, (unsigned)m->battery_pct);
-        snprintf(rows[3], LCD_LINE_SIZE, "<UP/DN> PAGE   MENU");
-        break;
-    default:
-        snprintf(rows[0], LCD_LINE_SIZE, "C-TECH INVERTER");
-        snprintf(rows[1], LCD_LINE_SIZE, "SYSTEM READY");
-        snprintf(rows[2], LCD_LINE_SIZE, "BAT %5.1fV  %3d%%",
-                 m->battery_voltage, m->battery_pct);
-        snprintf(rows[3], LCD_LINE_SIZE, "<UP/DN> STATUS");
-        break;
+        /* Stable dashboard: values are updated in place; no timed rotation. */
+        snprintf(rows[0], LCD_LINE_SIZE, "INV 5.0kW %-3s %.5s", state, wifi);
+        snprintf(rows[1], LCD_LINE_SIZE, "PV:%4.2fkW BAT:%3u%%",
+                 m->pv_power_kw, (unsigned)m->battery_pct);
+        snprintf(rows[2], LCD_LINE_SIZE, "LD:%4.2fkW GR:%4.2fkW",
+                 m->load_power_kw, m->grid_power_kw);
+        snprintf(rows[3], LCD_LINE_SIZE, "%-14.14s %2uV",
+                 mode, (unsigned)voltage);
+        const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
+        draw_commit_rows(row_ptrs);
     }
-    const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
-    draw_commit_rows(row_ptrs);
-}
-else
-{
-    char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
-    switch (m->sub_page)
+    else
     {
-    case MAIN_SUB_OUTPUT:
-        snprintf(r0, LCD_LINE_SIZE, "OUT:%3.0fV %2.0fHz   ", m->output_voltage, m->output_frequency);
-        snprintf(r1, LCD_LINE_SIZE, "CUR:%4.1fA %4.0fW ", m->output_current,
-                 m->output_voltage * m->output_current);
-        break;
-    case MAIN_SUB_BATTERY:
-        snprintf(r0, LCD_LINE_SIZE, "BAT:%4.1fV %3d%%  ", m->battery_voltage, m->battery_pct);
-        snprintf(r1, LCD_LINE_SIZE, "TMP:%2.0fC CHG:%s ",
-                 m->battery_temperature, m->battery_charging ? "YES" : "NO ");
-        break;
-    case MAIN_SUB_SYSTEM:
-        snprintf(r0, LCD_LINE_SIZE, "INV:%s AC:%s  ",
-                 m->inverter_active ? "ON " : "OFF",
-                 m->ac_connected ? "YES" : "NO ");
-        snprintf(r1, LCD_LINE_SIZE, "LOAD: %3d%%      ", m->load_pct);
-        break;
-    default:
-        snprintf(r0, LCD_LINE_SIZE, "%-16s", "Vonix Inverter  ");
-        snprintf(r1, LCD_LINE_SIZE, "%-16s", "                ");
-        break;
+        char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
+        switch (m->sub_page)
+        {
+        case MAIN_SUB_OUTPUT:
+            snprintf(r0, LCD_LINE_SIZE, "INV5.0 %s %.5s", m->inverter_active ? "ON" : "OFF", wifi);
+            snprintf(r1, LCD_LINE_SIZE, "PV%4.2f B%3u%%", m->pv_power_kw,
+                     (unsigned)m->battery_pct);
+            break;
+        case MAIN_SUB_BATTERY:
+            snprintf(r0, LCD_LINE_SIZE, "LD%4.2f G%4.2f", m->load_power_kw,
+                     m->grid_power_kw);
+            snprintf(r1, LCD_LINE_SIZE, "BAT%4.1fV %2uV", m->battery_voltage,
+                     (unsigned)(m->voltage_system ? m->voltage_system : 12U));
+            break;
+        case MAIN_SUB_SYSTEM:
+        default:
+            snprintf(r0, LCD_LINE_SIZE, "SOLAR %2uV %.5s",
+                     (unsigned)(m->voltage_system ? m->voltage_system : 12U),
+                     wifi);
+            snprintf(r1, LCD_LINE_SIZE, "ENTER=PAGE %u/3",
+                     (unsigned)m->sub_page + 1U);
+            break;
+        }
+        draw_commit(r0, r1);
     }
-    draw_commit(r0, r1);
-}
 }
 
 static void draw_menu(const lcd_menu_data_t *d)
@@ -361,20 +344,18 @@ else
 
 static void draw_startup(const lcd_startup_data_t *d)
 {
-if (lcd_geometry_is_20x4())
-{
     char bar[LCD_LINE_SIZE];
-    snprintf(bar, sizeof(bar), "Progress %3u%%", d->progress_pct);
-    const char *rows[] = {"C-TECH INVERTER", "SYSTEM STARTUP",
-                          bar, "PLEASE WAIT..."};
-    draw_commit_rows(rows);
-}
-else
-{
-    char r1[LCD_LINE_SIZE];
-    snprintf(r1, LCD_LINE_SIZE, "Progress: %3d%%  ", d->progress_pct);
-    draw_commit("STARTING...     ", r1);
-}
+    format_progress_line(bar, d->progress_pct);
+    if (lcd_geometry_is_20x4())
+    {
+        const char *rows[] = {"C-TECH INVERTER", "SYSTEM STARTUP",
+                              bar, "CHECKING POWER..."};
+        draw_commit_rows(rows);
+    }
+    else
+    {
+        draw_commit("C-TECH INVERTER", bar);
+    }
 }
 
 static void draw_shutdown(const lcd_shutdown_data_t *d)
@@ -453,6 +434,9 @@ static void draw_standby(const lcd_standby_data_t *d)
                        ? d->page
                        : LCD_STANDBY_PAGE_STATUS;
 
+    char wifi[8];
+    format_home_wifi(wifi, sizeof(wifi), d->wifi_connected, d->wifi_rssi);
+
     if (lcd_geometry_is_20x4())
     {
         char rows[4][LCD_LINE_SIZE];
@@ -461,7 +445,8 @@ static void draw_standby(const lcd_standby_data_t *d)
 
         if (page == LCD_STANDBY_PAGE_BATTERY)
         {
-            snprintf(rows[0], LCD_LINE_SIZE, "BATTERY DETAILS");
+            snprintf(rows[0], LCD_LINE_SIZE, "BATTERY %3u%% %.5s",
+                     (unsigned)d->battery_pct, wifi);
             snprintf(rows[1], LCD_LINE_SIZE, "VOLTAGE %2u.%uV", bat_v, bat_t);
             snprintf(rows[2], LCD_LINE_SIZE, "SOC     %3u%% %s",
                      d->battery_pct,
@@ -470,7 +455,7 @@ static void draw_standby(const lcd_standby_data_t *d)
         }
         else
         {
-            snprintf(rows[0], LCD_LINE_SIZE, "STANDBY AC:%s",
+            snprintf(rows[0], LCD_LINE_SIZE, "STBY %.5s AC:%s", wifi,
                      d->ac_connected ? "ON" : "OFF");
             snprintf(rows[1], LCD_LINE_SIZE, "BAT %2u.%uV %3u%%",
                      (unsigned)bat_v, (unsigned)bat_t,
@@ -489,18 +474,18 @@ static void draw_standby(const lcd_standby_data_t *d)
         char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
         if (page == LCD_STANDBY_PAGE_BATTERY)
         {
-            snprintf(r0, LCD_LINE_SIZE, "BATTERY %3u%%", d->battery_pct);
+            snprintf(r0, LCD_LINE_SIZE, "BAT%3u%% %.5s", d->battery_pct, wifi);
             snprintf(r1, LCD_LINE_SIZE, "ENTER>NEXT PWR");
         }
         else if (d->battery_voltage < d->low_voltage_threshold)
         {
-            snprintf(r0, LCD_LINE_SIZE, "STANDBY AC:%s",
+            snprintf(r0, LCD_LINE_SIZE, "STBY %.5s A%s", wifi,
                      d->ac_connected ? "ON" : "OFF");
             snprintf(r1, LCD_LINE_SIZE, "LOW BAT:%4.1fV", d->battery_voltage);
         }
         else
         {
-            snprintf(r0, LCD_LINE_SIZE, "STANDBY AC:%s",
+            snprintf(r0, LCD_LINE_SIZE, "STBY %.5s A%s", wifi,
                      d->ac_connected ? "ON" : "OFF");
             snprintf(r1, LCD_LINE_SIZE, "BATTERY %3u%%", d->battery_pct);
         }
@@ -519,56 +504,39 @@ static uint8_t loading_progress(uint32_t elapsed, uint32_t duration)
     return 80 + (uint8_t)(remain * 20.0f);
 }
 
-static void draw_loading_bar(uint8_t pct)
+static void format_loading_bar(char *row, size_t row_len, uint8_t pct)
 {
-    char row[LCD_LINE_SIZE];
-    uint8_t slots = lcd_geometry_is_20x4() ? 14 : 10;
-    uint8_t blocks = (uint8_t)((pct * slots) / 100);
-    memset(row, ' ', sizeof(row));
+    const uint8_t slots = lcd_geometry_is_20x4() ? 14U : 10U;
+    const uint8_t blocks = (uint8_t)((pct * slots) / 100U);
+    memset(row, ' ', row_len);
     row[0] = '[';
     for (uint8_t i = 0; i < slots; i++)
-        row[i + 1] = (i < blocks) ? 0xFF : '-';
+        row[i + 1] = (i < blocks) ? '#': '-';
     row[slots + 1] = ']';
     row[lcd_geometry_cols()] = '\0';
-    draw_row(1, row);
 }
 
 static void draw_loading(const lcd_loading_data_t *d)
 {
-    static uint8_t last_pct = 255;
-    static uint32_t last_start_ms = 0;
-    if (d->start_ms != last_start_ms)
-    {
-        last_pct = 255;
-        last_start_ms = d->start_ms;
-    }
     uint32_t elapsed = _lcd_get_time_ms() - d->start_ms;
     uint8_t pct = loading_progress(elapsed, d->duration_ms);
-if (lcd_geometry_is_20x4())
-{
-    char row0[LCD_LINE_SIZE], row2[LCD_LINE_SIZE], row3[LCD_LINE_SIZE];
-    snprintf(row0, sizeof(row0), "%-20.20s", d->title);
-    snprintf(row2, sizeof(row2), "SYSTEM TASK ACTIVE");
-    snprintf(row3, sizeof(row3), "PLEASE WAIT  %3u%%", pct);
-    const char *rows[] = {row0, "", row2, row3};
-    draw_commit_rows(rows);
-    if (pct != last_pct)
+    char bar[LCD_LINE_SIZE];
+    format_loading_bar(bar, sizeof(bar), pct);
+
+    if (lcd_geometry_is_20x4())
     {
-        draw_loading_bar(pct);
-        last_pct = pct;
+        char row0[LCD_LINE_SIZE], row3[LCD_LINE_SIZE];
+        snprintf(row0, sizeof(row0), "%-20.20s", d->title);
+        snprintf(row3, sizeof(row3), "PLEASE WAIT  %3u%%", pct);
+        const char *rows[] = {row0, bar, "SYSTEM TASK ACTIVE", row3};
+        draw_commit_rows(rows);
     }
-}
-else
-{
-    char row0[LCD_LINE_SIZE];
-    snprintf(row0, sizeof(row0), "%-16.16s", d->title);
-    draw_row(0, row0);
-    if (pct != last_pct)
+    else
     {
-        draw_loading_bar(pct);
-        last_pct = pct;
+        char row0[LCD_LINE_SIZE];
+        snprintf(row0, sizeof(row0), "%-16.16s", d->title);
+        draw_commit(row0, bar);
     }
-}
 }
 
 static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
@@ -730,9 +698,11 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
 
     case FACTORY_RESET_PIN_ENTRY:
     {
-        if (security_is_locked_out())
-        {
-            int64_t remaining_ms = security_lockout_remaining_ms();
+            if (security_is_locked_out_for_scope(SECURITY_LOCKOUT_FACTORY_RESET))
+    {
+        int64_t remaining_ms =
+            security_lockout_remaining_ms_for_scope(SECURITY_LOCKOUT_FACTORY_RESET);
+
             uint32_t remaining_s = (remaining_ms > 0)
                                        ? (uint32_t)(remaining_ms / 1000) + 1
                                        : 0;
@@ -860,17 +830,6 @@ static void draw_security_submenu(void)
   Displays a live countdown so the user isn't left staring at a frozen
   digit-entry screen with no explanation.
 ------------------------------------------------------------------------------*/
-static void draw_security_lockout(void)
-{
-    int64_t remaining_ms = security_lockout_remaining_ms();
-    uint32_t remaining_s = (remaining_ms > 0)
-                               ? (uint32_t)(remaining_ms / 1000) + 1
-                               : 0;
-    char r1[LCD_LINE_SIZE];
-    snprintf(r1, sizeof(r1), "Retry in %3lus   ", (unsigned long)remaining_s);
-    draw_commit("PIN Locked      ", r1);
-}
-
 /*------------------------------------------------------------------------------
   draw_security_status()
   Shown for SECURITY_PHASE_VIEW_STATUS.
@@ -889,9 +848,10 @@ static void draw_security_status()
     }
     else if (security_is_locked_out())
     {
-        uint32_t remaining_s = security_lockout_remaining_ms() / 1000;
+        uint32_t remaining_s =
+            (uint32_t)((security_lockout_remaining_ms() + 999) / 1000);
         snprintf(line1, LCD_LINE_SIZE, "PIN Status:");
-        snprintf(line2, LCD_LINE_SIZE, "Locked %luds", remaining_s);
+        snprintf(line2, LCD_LINE_SIZE, "Locked %lus", (unsigned long)remaining_s);
     }
     else
     {
@@ -924,9 +884,20 @@ static void draw_security_status()
 static bool draw_security_pin_flow(change_pin_phase_t flow_phase,
                                     security_action_t security_action)
 {
-    if (security_is_locked_out())
+    const security_lockout_scope_t scope =
+        (security_action == SECURITY_ACTION_OTA_AUTH)
+            ? SECURITY_LOCKOUT_OTA
+            : SECURITY_LOCKOUT_GENERAL;
+    if (security_is_locked_out_for_scope(scope))
     {
-        draw_security_lockout();
+        const uint32_t remaining_s =
+            (uint32_t)((security_lockout_remaining_ms_for_scope(scope) + 999) / 1000);
+        char row[LCD_LINE_SIZE];
+        snprintf(row, sizeof(row), "Retry in %2lus", (unsigned long)remaining_s);
+        draw_commit(security_action == SECURITY_ACTION_OTA_AUTH
+                        ? "OTA LOCKED       "
+                        : "PIN LOCKED      ",
+                    row);
         return true;
     }
 
@@ -964,25 +935,6 @@ static bool draw_security_pin_flow(change_pin_phase_t flow_phase,
 
     pin_entry_render_line(&pin_snap.pin_ctx, r1, sizeof(r1));
     draw_commit(r0, r1);
-    return true;
-}
-
-static bool draw_factory_reset_pin_flow(void)
-{
-    if (security_is_locked_out())
-    {
-        draw_security_lockout();
-        return true;
-    }
-
-    char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
-
-    snprintf(r0, sizeof(r0), "%-16s", "Enter PIN:      ");
-
-    pin_entry_render_line(&sys_lcd.factory_reset.pin_ctx, r1, sizeof(r1));
-
-    draw_commit(r0, r1);
-
     return true;
 }
 
@@ -1116,8 +1068,6 @@ void lcd_task(void *arg)
     static lcd_screen_id_t last_screen = LCD_SCREEN_COUNT;
     bool need_clear = true;
 
-    static uint32_t main_page_last_change_ms = 0;
-    const uint32_t MAIN_PAGE_INTERVAL_MS = 2000;
 
     sys_lcd.main.sub_page = MAIN_SUB_OUTPUT;
     sys_lcd.main.sub_page_interval_ms = 5000;
@@ -1164,29 +1114,9 @@ void lcd_task(void *arg)
         if (lcd_flash_is_active())
             snap.screen = LCD_SCREEN_FLASH_MSG;
 
-        /* ====== STEP 5: SUB-PAGE CYCLING ====== */
-        if (snap.screen == LCD_SCREEN_MAIN &&
-            sys_state.inverter.inverter_state != INVERTER_STANDBY &&
-            !lcd_flash_is_active())
-        {
-            uint32_t now = _lcd_get_time_ms();
-            if (main_page_last_change_ms == 0)
-            {
-                main_page_last_change_ms = now;
-            }
-            else if (now - main_page_last_change_ms >= MAIN_PAGE_INTERVAL_MS)
-            {
-                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
-                snap.main.sub_page = (snap.main.sub_page + 1) % MAIN_SUB_COUNT;
-                sys_lcd.main.sub_page = snap.main.sub_page;
-                xSemaphoreGive(sys_state_mutex);
-                                main_page_last_change_ms = now;
-            }
-        }
-        else if (snap.screen != LCD_SCREEN_MAIN)
-        {
-            main_page_last_change_ms = 0;
-        }
+        /* ====== STEP 5: MAIN PAGE ROTATION ======
+         * Deliberately disabled. The Enter button owns page changes so the
+         * operator can read a stable dashboard without timed scrolling. */
         /* ====== STEP 6: SCREEN CHANGE DETECTION ====== */
         if (snap.screen != last_screen)
         {

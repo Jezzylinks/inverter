@@ -22,8 +22,8 @@ extern system_state_t sys_state;
 
 typedef struct {
     SemaphoreHandle_t mutex;
-    uint8_t attempts;
-    int64_t lockout_until_ms;
+    uint8_t attempts[SECURITY_LOCKOUT_SCOPE_COUNT];
+    int64_t lockout_until_ms[SECURITY_LOCKOUT_SCOPE_COUNT];
     bool force_change;
     bool initialized;
 } security_runtime_t;
@@ -168,8 +168,8 @@ esp_err_t security_init(void)
             return err;
         }
         s_sec.force_change = true;
-        s_sec.attempts = 0;
-        s_sec.lockout_until_ms = 0;
+        memset(s_sec.attempts, 0, sizeof(s_sec.attempts));
+        memset(s_sec.lockout_until_ms, 0, sizeof(s_sec.lockout_until_ms));
         s_sec.initialized = true;
         ESP_LOGW(TAG, "settings namespace unavailable; default PIN 0000 provisioned");
         return ESP_OK;
@@ -220,8 +220,8 @@ esp_err_t security_init(void)
         }
 
         s_sec.force_change = true;
-        s_sec.attempts = 0;
-        s_sec.lockout_until_ms = 0;
+        memset(s_sec.attempts, 0, sizeof(s_sec.attempts));
+        memset(s_sec.lockout_until_ms, 0, sizeof(s_sec.lockout_until_ms));
         s_sec.initialized = true;
         ESP_LOGW(TAG, "default PIN 0000 provisioned; change it before remote access");
         return ESP_OK;
@@ -234,9 +234,11 @@ esp_err_t security_init(void)
     return ESP_OK;
 }
 
-bool security_verify_pin(const uint8_t pin[SECURITY_PIN_LEN])
+bool security_verify_pin_for_scope(const uint8_t pin[SECURITY_PIN_LEN],
+                                    security_lockout_scope_t scope)
 {
-    if (!s_sec.initialized || !pin_is_valid(pin)) {
+    if (!s_sec.initialized || !pin_is_valid(pin) ||
+        scope >= SECURITY_LOCKOUT_SCOPE_COUNT) {
         return false;
     }
     if (!sys_state.security.enabled) {
@@ -246,13 +248,15 @@ bool security_verify_pin(const uint8_t pin[SECURITY_PIN_LEN])
     if (xSemaphoreTake(s_sec.mutex, portMAX_DELAY) != pdTRUE) {
         return false;
     }
-    if (s_sec.lockout_until_ms != 0 && now_ms() < s_sec.lockout_until_ms) {
+    const int64_t now = now_ms();
+    if (s_sec.lockout_until_ms[scope] != 0 &&
+        now < s_sec.lockout_until_ms[scope]) {
         xSemaphoreGive(s_sec.mutex);
         return false;
     }
-    if (s_sec.lockout_until_ms != 0) {
-        s_sec.lockout_until_ms = 0;
-        s_sec.attempts = 0;
+    if (s_sec.lockout_until_ms[scope] != 0) {
+        s_sec.lockout_until_ms[scope] = 0;
+        s_sec.attempts[scope] = 0;
     }
     xSemaphoreGive(s_sec.mutex);
 
@@ -286,17 +290,23 @@ bool security_verify_pin(const uint8_t pin[SECURITY_PIN_LEN])
         return false;
     }
     if (match) {
-        s_sec.attempts = 0;
-        s_sec.lockout_until_ms = 0;
-    } else if (s_sec.attempts < UINT8_MAX) {
-        s_sec.attempts++;
-        if (s_sec.attempts >= SECURITY_MAX_ATTEMPTS) {
-            s_sec.lockout_until_ms = now_ms() + SECURITY_LOCKOUT_MS;
-            ESP_LOGW(TAG, "PIN lockout active for %d ms", SECURITY_LOCKOUT_MS);
+        s_sec.attempts[scope] = 0;
+        s_sec.lockout_until_ms[scope] = 0;
+    } else if (s_sec.attempts[scope] < UINT8_MAX) {
+        s_sec.attempts[scope]++;
+        if (s_sec.attempts[scope] >= SECURITY_MAX_ATTEMPTS) {
+            s_sec.lockout_until_ms[scope] = now_ms() + SECURITY_LOCKOUT_MS;
+            ESP_LOGW(TAG, "PIN lockout scope %d active for %d ms",
+                     (int)scope, SECURITY_LOCKOUT_MS);
         }
     }
     xSemaphoreGive(s_sec.mutex);
     return match;
+}
+
+bool security_verify_pin(const uint8_t pin[SECURITY_PIN_LEN])
+{
+    return security_verify_pin_for_scope(pin, SECURITY_LOCKOUT_GENERAL);
 }
 
 esp_err_t security_set_pin(const uint8_t new_pin[SECURITY_PIN_LEN])
@@ -312,34 +322,50 @@ esp_err_t security_set_pin(const uint8_t new_pin[SECURITY_PIN_LEN])
         return ESP_ERR_TIMEOUT;
     }
     s_sec.force_change = false;
-    s_sec.attempts = 0;
-    s_sec.lockout_until_ms = 0;
+    memset(s_sec.attempts, 0, sizeof(s_sec.attempts));
+    memset(s_sec.lockout_until_ms, 0, sizeof(s_sec.lockout_until_ms));
     xSemaphoreGive(s_sec.mutex);
     return ESP_OK;
 }
 
-bool security_is_locked_out(void)
+bool security_is_locked_out_for_scope(security_lockout_scope_t scope)
 {
-    if (!s_sec.initialized || !s_sec.mutex) {
+    if (!s_sec.initialized || !s_sec.mutex || scope >= SECURITY_LOCKOUT_SCOPE_COUNT) {
         return false;
     }
     xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
-    const bool locked = s_sec.lockout_until_ms != 0 && now_ms() < s_sec.lockout_until_ms;
+    const int64_t now = now_ms();
+    const bool locked = s_sec.lockout_until_ms[scope] != 0 &&
+                        now < s_sec.lockout_until_ms[scope];
+    if (!locked && s_sec.lockout_until_ms[scope] != 0) {
+        s_sec.lockout_until_ms[scope] = 0;
+        s_sec.attempts[scope] = 0;
+    }
     xSemaphoreGive(s_sec.mutex);
     return locked;
 }
 
-int64_t security_lockout_remaining_ms(void)
+int64_t security_lockout_remaining_ms_for_scope(security_lockout_scope_t scope)
 {
-    if (!s_sec.initialized || !s_sec.mutex) {
+    if (!s_sec.initialized || !s_sec.mutex || scope >= SECURITY_LOCKOUT_SCOPE_COUNT) {
         return 0;
     }
     xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
-    const int64_t remaining = (s_sec.lockout_until_ms > now_ms())
-                                  ? (s_sec.lockout_until_ms - now_ms())
+    const int64_t remaining = (s_sec.lockout_until_ms[scope] > now_ms())
+                                  ? (s_sec.lockout_until_ms[scope] - now_ms())
                                   : 0;
     xSemaphoreGive(s_sec.mutex);
     return remaining;
+}
+
+bool security_is_locked_out(void)
+{
+    return security_is_locked_out_for_scope(SECURITY_LOCKOUT_GENERAL);
+}
+
+int64_t security_lockout_remaining_ms(void)
+{
+    return security_lockout_remaining_ms_for_scope(SECURITY_LOCKOUT_GENERAL);
 }
 
 bool security_pin_change_required(void)
@@ -359,7 +385,7 @@ void security_reset_attempts(void)
         return;
     }
     xSemaphoreTake(s_sec.mutex, portMAX_DELAY);
-    s_sec.attempts = 0;
-    s_sec.lockout_until_ms = 0;
+    memset(s_sec.attempts, 0, sizeof(s_sec.attempts));
+    memset(s_sec.lockout_until_ms, 0, sizeof(s_sec.lockout_until_ms));
     xSemaphoreGive(s_sec.mutex);
 }

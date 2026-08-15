@@ -38,10 +38,11 @@ static void handle_pin_entry_button(factory_reset_ctx_t *ctx,
     /* While locked out, only Back is meaningful (lets the user exit).
      * All other buttons are silently consumed so digit state can't
      * be mutated during a lockout window. */
-    if (security_is_locked_out())
+    if (security_is_locked_out_for_scope(SECURITY_LOCKOUT_FACTORY_RESET))
     {
         if (btn == BTN_BACK)
         {
+            atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
             atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
         }
         return;
@@ -67,19 +68,21 @@ static void handle_pin_entry_button(factory_reset_ctx_t *ctx,
         uint8_t entered[SECURITY_PIN_LEN];
         pin_entry_get_pin(&ctx->pin_ctx, entered);
 
-        if (security_verify_pin(entered))
+        if (security_verify_pin_for_scope(entered, SECURITY_LOCKOUT_FACTORY_RESET))
         {
             /* Correct PIN -- allow the selected action to proceed. */
             ESP_LOGI(TAG, "PIN verified, advancing to CONFIRM");
             atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
         }
-        else if (security_is_locked_out())
+        else if (security_is_locked_out_for_scope(SECURITY_LOCKOUT_FACTORY_RESET))
         {
             /* This failed attempt triggered the lockout. */
             ESP_LOGW(TAG, "PIN attempts exhausted, locked out");
 
-            lcd_flash_info("Locked out      ", "Try later       ", 1500);
-            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
+            lcd_flash_info("PIN LOCKED      ", "Retry countdown  ", 1200);
+            /* Stay in PIN_ENTRY so the LCD renders the live 60..0 countdown.
+             * Back remains available to cancel and return to the menu. */
+            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_RESET_PIN_ENTRY);
         }
         else
         {

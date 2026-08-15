@@ -597,6 +597,14 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         return;
     }
 
+    if (event_info->event == BUTTON_EVENT_CLICK &&
+        sys_state.menu_state == MENU_NONE &&
+        sys_lcd.screen == LCD_SCREEN_MAIN)
+    {
+        lcd_main_next_page();
+        return;
+    }
+
     switch (event_info->event)
     {
 

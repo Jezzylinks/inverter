@@ -8,6 +8,13 @@
 #include "freertos/task.h"
 #include "events/system_events.h"
 
+static security_lockout_scope_t lockout_scope_for_context(const change_pin_ctx_t *ctx)
+{
+    return (ctx && ctx->mode == CHANGE_PIN_MODE_VERIFY_ONLY)
+               ? SECURITY_LOCKOUT_OTA
+               : SECURITY_LOCKOUT_GENERAL;
+}
+
 static void post_security_event(bool success)
 {
     system_event_t evt = {0};
@@ -67,7 +74,7 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
 
     case CHANGE_PIN_VERIFY_OLD:
     {
-        if (security_is_locked_out())
+        if (security_is_locked_out_for_scope(lockout_scope_for_context(ctx)))
         {
             if (btn == BTN_BACK)
             {
@@ -88,7 +95,8 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
             uint8_t entered[SECURITY_PIN_LEN];
             pin_entry_get_pin(&ctx->pin_ctx, entered);
 
-            if (security_verify_pin(entered))
+            if (security_verify_pin_for_scope(
+                    entered, lockout_scope_for_context(ctx)))
             {
                 if (ctx->mode == CHANGE_PIN_MODE_VERIFY_ONLY)
                 {
@@ -116,13 +124,15 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
                 pin_entry_reset(&ctx->pin_ctx);
                 ctx->phase = CHANGE_PIN_ENTER_NEW;
             }
-            else if (security_is_locked_out())
+            else if (security_is_locked_out_for_scope(lockout_scope_for_context(ctx)))
             {
                 // lcd_flash_enqueue("Locked out", FLASH_PRIORITY_HIGH, FLASH_DURATION_LONG);
-                lcd_flash_info_to("Locked out", "Back To Return  ", 4000, LCD_SCREEN_SECURITY);
+                lcd_flash_info_to("PIN LOCKED", "Retry countdown  ", 1200, LCD_SCREEN_SECURITY);
                 post_security_event(false);
-                ctx->phase = CHANGE_PIN_IDLE;
-                return true;
+                /* Keep the verify phase active so the security renderer shows
+                 * the live scoped countdown; Back exits the option. */
+                ctx->phase = CHANGE_PIN_VERIFY_OLD;
+                return false;
             }
             else
             {
@@ -214,9 +224,11 @@ void change_pin_render(const change_pin_ctx_t *ctx,
     {
 
     case CHANGE_PIN_VERIFY_OLD:
-        if (security_is_locked_out())
+        if (security_is_locked_out_for_scope(lockout_scope_for_context(ctx)))
         {
-            uint32_t remaining_s = security_lockout_remaining_ms() / 1000;
+            uint32_t remaining_s =
+                (uint32_t)((security_lockout_remaining_ms_for_scope(
+                    lockout_scope_for_context(ctx)) + 999) / 1000);
             snprintf(line1, LCD_LINE_SIZE, "Locked out");
             snprintf(line2, LCD_LINE_SIZE, "Retry in %lus", remaining_s);
         }

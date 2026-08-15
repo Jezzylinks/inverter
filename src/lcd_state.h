@@ -83,6 +83,12 @@ extern "C"
         bool battery_charging;
         bool battery_low;
         bool battery_critical;
+        bool wifi_connected;
+        int8_t wifi_rssi;
+        float pv_power_kw;
+        float grid_power_kw;
+        float load_power_kw;
+        uint8_t voltage_system;
         uint8_t operating_mode;
         main_sub_page_t sub_page;
         uint32_t sub_page_last_change_ms;
@@ -211,6 +217,8 @@ extern "C"
         float low_voltage_threshold;
         uint8_t battery_pct;
         bool ac_connected;
+        bool wifi_connected;
+        int8_t wifi_rssi;
         uint8_t page;
     } lcd_standby_data_t;
 

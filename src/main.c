@@ -80,6 +80,7 @@
 #include "utility/quiet_hours.h"
 #include "wifi/wifi_security.h"
 #include "wifi/wifi_controller.h"
+#include "wifi/wifi_monitor.h"
 #include "wifi/wifi_scan.h"
 #include "wifi/wifi_storage.h"
 #include "ota/ota_service.h"
@@ -2541,6 +2542,23 @@ void adc_task(void *arg)
             sys_state.inverter.inverter_active,
             sys_state.inverter.connected,
             sys_state.battery_charging);
+
+        const float pv_kw = (sys_state.dc_input_voltage > 0.0f &&
+                             sys_state.dc_input_current > 0.0f)
+                                ? (sys_state.dc_input_voltage *
+                                   sys_state.dc_input_current / 1000.0f)
+                                : 0.0f;
+        const float load_kw = (sys_state.inverter.output_voltage > 0.0f &&
+                               sys_state.inverter.output_current > 0.0f)
+                                  ? (sys_state.inverter.output_voltage *
+                                     sys_state.inverter.output_current / 1000.0f)
+                                  : 0.0f;
+        /* There is no dedicated grid-power meter in the current hardware map;
+         * keep this honest rather than fabricating a value. */
+        lcd_update_main_power(pv_kw, 0.0f, load_kw,
+                              (uint8_t)sys_state.battery_profile.nominal_voltage);
+        lcd_update_wifi_status(wifi_monitor_is_online(),
+                               wifi_monitor_get_rssi());
 
         if (sys_lcd.screen == LCD_SCREEN_STANDBY) {
             lcd_show_standby(sys_state.inverter.battery.voltage,

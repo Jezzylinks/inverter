@@ -42,7 +42,7 @@ version,url,sha256,size
 
 The application layer stores its manifest source in NVS (`ota_manifest`) through `app_services_set_ota_manifest_url()`. It accepts only an HTTPS URL. After a Wi-Fi connection is available, the firmware checks that CSV on boot after a short delay and then at six-hour intervals. It compares numeric release versions and **only shows a screen notification** when a newer release exists; no background download is performed.
 
-From the **Firmware Update** menu, select **Check for Update** to run an immediate check. Select **Install Available** only after a notification has been received. The device then shows `Enter=Yes Back=No`; pressing **Enter** starts the CSV-based OTA transaction, while **Back** or **Power** defers it safely. The update screen cannot start an image transfer without that explicit confirmation and a verified panel PIN when security is enabled. A running transfer can be cancelled from the menu when the OTA transport reaches its cooperative cancellation point.
+From the **Firmware Update** menu, select **Check for Update** to run an immediate check. Select **Install Available** only after a notification has been received. The device then shows `Enter=Yes Back=No`; pressing **Enter** starts the CSV-based OTA transaction, while **Back** or **Power** defers it safely. The update screen cannot start an image transfer without that explicit confirmation and a verified panel PIN when security is enabled. A running transfer can be cancelled from the menu when the OTA transport reaches its cooperative cancellation point. The startup and loading screens use a stable bar row; the filled progress block advances without the previous blank-row overwrite that caused visible blinking.
 
 ## Wi-Fi provisioning and control
 
@@ -108,8 +108,8 @@ The value in `menu_config.h` is compiled throughout the entire firmware. It dete
 
 | `MENU_CONFIG_LCD_20X4` | Physical LCD | Result |
 |---:|---|---|
-| `0` | 16×2 | Two physical rows. The existing compact menu remains active, with the selected arrow following the item and the counter at the end of row two, such as `3/8`. |
-| `1` | 20×4 | Four physical rows. Four menu options are visible, the window scrolls as Up/Down changes the selection, the arrow follows the selected item, and the counter remains at the end of row four, such as `5/8`. |
+| `0` | 16×2 | Two physical rows. The compact dashboard uses explicit Enter-driven pages; the Wi-Fi indicator and signal bars remain visible without timed home-screen rotation. |
+| `1` | 20×4 | Four physical rows. The stable dashboard shows inverter state, Wi-Fi signal, PV/load/grid values, battery SOC, operating mode, and battery-system voltage in one view. |
 
 ### Selecting 16×2 before compiling
 
@@ -133,7 +133,18 @@ Then run `pio run` and upload the generated firmware. The firmware uses four row
 
 ### Screens and custom characters
 
-The compile-time selection controls boot, main telemetry, standby, menu, detail, confirmation, value-edit, shutdown, fault, loading, diagnostics, Wi-Fi scanning, Wi-Fi connection, event, security, and factory-reset screens. The 20×4 build exposes the additional telemetry and navigation rows, while the 16×2 build retains the compact two-row presentation.
+The compile-time selection controls boot, main telemetry, standby, menu, detail, confirmation, value-edit, shutdown, fault, loading, diagnostics, Wi-Fi scanning, Wi-Fi connection, event, security, and factory-reset screens. The 20×4 build exposes the full stable dashboard; the 16×2 build retains compact Enter-driven dashboard pages. Home and standby screens do not auto-rotate: the center/Enter button advances pages, while Up/Down remains reserved for menu navigation and value editing.
+
+The 20×4 home dashboard is arranged as:
+
+```text
+INV 5.0kW ON  W||||
+PV:2.45kW BAT:100%
+LD:1.35kW GR:0.00kW
+SOLAR PRIORITY 48V
+```
+
+`W||||` is the live Wi-Fi logo/signal indicator. The PV value is derived from the available DC input voltage/current telemetry; grid power remains `0.00kW` until a dedicated grid-power measurement is available, rather than displaying a fabricated value.
 
 CGRAM is initialized with the set matching the compiled geometry. The 16×2 build uses bar levels and battery bracket glyphs. The 20×4 build uses bar levels and Wi-Fi activity glyphs:
 
@@ -154,7 +165,7 @@ The 20×4 driver uses the standard HD44780 DDRAM offsets `{0x00, 0x40, 0x14, 0x5
 
 ## Security notes
 
-Panel security is enabled by default for new installations. The initial default PIN is `0000`, provisioned only as a salted hash and marked as requiring a change. If the settings namespace or PIN material is missing or corrupt, the firmware safely reprovisions `0000` and again requires a change. Product commissioning should change that PIN before enabling remote access. Remote API clients must provide the PIN as four decimal digits in the `X-Inverter-PIN` header. Five failed attempts are locked out temporarily, and disabling panel security is an explicit configuration choice rather than a startup side effect.
+Panel security is enabled by default for new installations. The initial default PIN is `0000`, provisioned only as a salted hash and marked as requiring a change. If the settings namespace or PIN material is missing or corrupt, the firmware safely reprovisions `0000` and again requires a change. Factory reset and firmware installation both verify this same persisted security PIN; they cannot use a separate or stale factory PIN. Each protected option allows five incorrect attempts, then applies its own 60-second lockout. The LCD counts down from 60 seconds to 0, and Back cancels the current option and returns to its parent page. Successful verification resets that option’s timer. Remote API clients must provide the PIN as four decimal digits in the `X-Inverter-PIN` header, and disabling panel security is an explicit configuration choice rather than a startup side effect.
 
 ## Battery profile and persistence notes
 

@@ -12,8 +12,16 @@ extern "C"
 
 #define SECURITY_PIN_LEN 4
 #define SECURITY_MAX_ATTEMPTS 5
-#define SECURITY_LOCKOUT_MS (30 * 1000) // 30s, tune later
+#define SECURITY_LOCKOUT_MS (60 * 1000) // 60-second per-option lockout
 #define SECURITY_DEFAULT_PIN {0, 0, 0, 0}
+
+    typedef enum
+    {
+        SECURITY_LOCKOUT_GENERAL = 0,
+        SECURITY_LOCKOUT_FACTORY_RESET,
+        SECURITY_LOCKOUT_OTA,
+        SECURITY_LOCKOUT_SCOPE_COUNT
+    } security_lockout_scope_t;
 
     typedef struct
     {
@@ -41,6 +49,10 @@ extern "C"
      */
     bool security_verify_pin(const uint8_t pin[SECURITY_PIN_LEN]);
 
+    /** Verify the shared PIN while applying the selected option's lockout. */
+    bool security_verify_pin_for_scope(const uint8_t pin[SECURITY_PIN_LEN],
+                                       security_lockout_scope_t scope);
+
     /**
      * Hash and persist a new PIN to NVS. Clears the force-change flag.
      * Caller is responsible for having verified the old PIN first, if required.
@@ -53,6 +65,9 @@ extern "C"
     /** Milliseconds remaining in the current lockout, 0 if not locked out. */
     int64_t security_lockout_remaining_ms(void);
 
+    bool security_is_locked_out_for_scope(security_lockout_scope_t scope);
+    int64_t security_lockout_remaining_ms_for_scope(security_lockout_scope_t scope);
+
     /** True if the PIN is still the factory default and must be changed. */
     bool security_pin_change_required(void);
 
@@ -62,6 +77,7 @@ extern "C"
      * a higher-level policy (e.g. reboot) needs to force-clear it.
      */
     void security_reset_attempts(void);
+    void security_reset_scope_attempts(security_lockout_scope_t scope);
 
 #ifdef __cplusplus
 }

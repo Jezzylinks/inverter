@@ -97,6 +97,35 @@ void lcd_show_main(void)
     LCD_UNLOCK();
 }
 
+void lcd_main_next_page(void)
+{
+    LCD_LOCK();
+    if (sys_lcd.screen == LCD_SCREEN_MAIN) {
+        sys_lcd.main.sub_page =
+            (main_sub_page_t)((sys_lcd.main.sub_page + 1U) % MAIN_SUB_COUNT);
+    }
+    LCD_UNLOCK();
+}
+
+void lcd_update_wifi_status(bool connected, int8_t rssi)
+{
+    LCD_LOCK();
+    sys_lcd.main.wifi_connected = connected;
+    sys_lcd.main.wifi_rssi = rssi;
+    LCD_UNLOCK();
+}
+
+void lcd_update_main_power(float pv_kw, float grid_kw, float load_kw,
+                           uint8_t voltage_system)
+{
+    LCD_LOCK();
+    sys_lcd.main.pv_power_kw = pv_kw;
+    sys_lcd.main.grid_power_kw = grid_kw;
+    sys_lcd.main.load_power_kw = load_kw;
+    sys_lcd.main.voltage_system = voltage_system;
+    LCD_UNLOCK();
+}
+
 /* ── Menu ────────────────────────────────────────────────────────────────── */
 void lcd_show_menu_rows(const char *const rows[], uint8_t row_count)
 {
@@ -318,6 +347,8 @@ void lcd_show_standby(float bat_v, uint8_t bat_pct, bool ac_connected)
         sys_state.battery_profile.low_voltage_warning_12v;
     sys_lcd.standby.battery_pct = bat_pct;
     sys_lcd.standby.ac_connected = ac_connected;
+    sys_lcd.standby.wifi_connected = sys_lcd.main.wifi_connected;
+    sys_lcd.standby.wifi_rssi = sys_lcd.main.wifi_rssi;
     LCD_UNLOCK();
 }
 
