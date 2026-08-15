@@ -48,18 +48,25 @@ static void display_event_notice(const system_event_t *event)
         return;
     }
 
-    /* Startup notices are intentionally quiet. The event is still available
-     * to the protection/logger/relay consumers; only its LCD flash is
-     * suppressed. Keep critical protection events visible so an emergency is
-     * never hidden. */
+    /* Startup notices are intentionally quiet. Events remain available to
+     * the protection/logger/relay consumers; only their LCD flash is
+     * suppressed. AC and battery voltage notices are excluded for the whole
+     * startup window, while unrelated critical protection events remain
+     * visible. */
     const bool startup_active = lcd_is_startup_active();
+    const bool is_protection = event->category == EVENT_CATEGORY_PROTECTION;
     const bool noncritical_protection =
-        event->category == EVENT_CATEGORY_PROTECTION &&
-        event->priority < EVENT_PRIORITY_CRITICAL;
+        is_protection && event->priority < EVENT_PRIORITY_CRITICAL;
+    const bool startup_voltage_protection =
+        is_protection &&
+        (event->quantity == PROT_QUANTITY_AC_VOLTAGE ||
+         event->quantity == PROT_QUANTITY_BATTERY_VOLTAGE);
     const bool boot_complete_notice =
         event->category == EVENT_CATEGORY_SYSTEM &&
         event->action == EVENT_ACTION_STARTUP;
-    if (startup_active && (noncritical_protection || boot_complete_notice)) {
+    if (startup_active &&
+        (noncritical_protection || startup_voltage_protection ||
+         boot_complete_notice)) {
         return;
     }
 
