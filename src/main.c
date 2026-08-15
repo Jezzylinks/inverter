@@ -4639,6 +4639,13 @@ void handle_menu_timeout(void)
     if (sys_state.menu_state != MENU_NONE &&
         now - sys_state.last_activity_time > MENU_TIMEOUT_MS)
     {
+        if (sys_state.menu_state == MENU_FACTORY_RESET)
+        {
+            /* An inactivity exit must discard the pending PIN/action so a
+             * later factory-reset entry always starts from a clean state. */
+            factory_reset_cancel(&sys_lcd.factory_reset);
+        }
+
         sys_state.menu_state = MENU_NONE;
         sys_state.menu_selection = 0;
         clear_menu_history();
