@@ -3730,7 +3730,12 @@ void post_button_click_event(void)
     evt.source = EVENT_SOURCE_BUTTON;
     evt.priority = EVENT_PRIORITY_LOW;
     evt.timestamp = xTaskGetTickCount();
-    system_event_post(&evt);
+
+    /* Button feedback is latency-sensitive. Deliver it directly to the
+     * subscriber queues so a busy global event queue cannot suppress the
+     * audible click. */
+    (void)event_dispatcher_send(EVENT_SUB_BUZZER, &evt);
+    (void)event_dispatcher_send(EVENT_SUB_LCD, &evt);
 }
 
 static void post_inverter_power_event(bool powered_on)

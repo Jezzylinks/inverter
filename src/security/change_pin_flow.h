@@ -24,8 +24,9 @@ extern "C"
     typedef enum
     {
         CHANGE_PIN_MODE_SET_NEW = 0,  // normal "Change PIN": verify old, pick + confirm new
-        CHANGE_PIN_MODE_RESET_DEFAULT // "Reset PIN": verify old, then jump straight to 0000
-                                      // + force-change flag, skipping ENTER_NEW/CONFIRM_NEW
+        CHANGE_PIN_MODE_RESET_DEFAULT, // "Reset PIN": verify old, then jump straight to 0000
+                                       // + force-change flag, skipping ENTER_NEW/CONFIRM_NEW
+        CHANGE_PIN_MODE_VERIFY_ONLY    // Authenticate one protected operation, then finish
     } change_pin_mode_t;
 
     typedef struct

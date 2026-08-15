@@ -164,6 +164,7 @@ extern "C"
         SECURITY_ACTION_CHANGE_PIN,
         SECURITY_ACTION_VIEW_STATUS,
         SECURITY_ACTION_RESET_PIN,
+        SECURITY_ACTION_OTA_AUTH,
     } security_action_t;
 
     typedef struct

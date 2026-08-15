@@ -32,6 +32,38 @@ extern battery_estimator_t bat_estimate;
 extern SemaphoreHandle_t change_pin_mutex;
 extern change_pin_ctx_t change_pin_ctx;
 
+static uint8_t s_ota_auth_selection = 1U;
+
+static void begin_ota_auth(uint8_t selection)
+{
+    s_ota_auth_selection = selection;
+    xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
+    change_pin_start_ex(&change_pin_ctx, CHANGE_PIN_MODE_VERIFY_ONLY);
+    xSemaphoreGive(change_pin_mutex);
+
+    sys_state.menu_state = MENU_SECURITY;
+    sys_state.menu_selection = 0U;
+    atomic_store(&sys_lcd.security.action, SECURITY_ACTION_OTA_AUTH);
+    atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_PIN_FLOW);
+    sys_lcd.screen = LCD_SCREEN_SECURITY;
+}
+
+static void return_from_ota_auth(bool authenticated)
+{
+    atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
+    atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
+    sys_state.menu_state = MENU_OTA;
+    sys_state.menu_selection = s_ota_auth_selection;
+
+    if (authenticated) {
+        if (app_services_request_update_confirmation() != ESP_OK) {
+            show_menu_screen(MENU_OTA, sys_state.menu_selection);
+        }
+    } else {
+        show_menu_screen(MENU_OTA, sys_state.menu_selection);
+    }
+}
+
 extern void post_button_click_event(void);
 extern void inverter_power_on(void);
 extern void shutdown_inverter(void);
@@ -118,7 +150,11 @@ static void handle_ota_menu_action(uint8_t selection)
         (void)app_services_check_for_update(true);
         break;
     case 1:
-        (void)app_services_request_update_confirmation();
+        if (sys_state.security.enabled) {
+            begin_ota_auth(selection);
+        } else {
+            (void)app_services_request_update_confirmation();
+        }
         break;
     case 2:
         (void)app_services_cancel_update();
@@ -159,7 +195,7 @@ void handle_power_button_event(button_event_info_t *event_info,
     {
         if (event_info->event == BUTTON_EVENT_CLICK)
         {
-            factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_POWER);
+            factory_reset_handle_pin_entry(&sys_lcd.factory_reset, BTN_POWER);
         }
         return;
     }
@@ -493,7 +529,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
     {
         if (event_info->event == BUTTON_EVENT_CLICK)
         {
-            factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_ENTER);
+            factory_reset_handle_pin_entry(&sys_lcd.factory_reset, BTN_ENTER);
         }
         return;
     }
@@ -519,10 +555,13 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             bool flow_done = false;
 
             xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
-            switch (atomic_load(&sys_lcd.security.action))
+            const security_action_t security_action =
+                atomic_load(&sys_lcd.security.action);
+            switch (security_action)
             {
             case SECURITY_ACTION_CHANGE_PIN:
             case SECURITY_ACTION_RESET_PIN:
+            case SECURITY_ACTION_OTA_AUTH:
                 flow_done = change_pin_handle_button(&change_pin_ctx, BTN_ENTER);
                 break;
             default:
@@ -533,9 +572,16 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
 
             if (flow_done)
             {
-                atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
-                atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
-                sys_lcd.screen = LCD_SCREEN_SECURITY;
+                const bool ota_authenticated =
+                    security_action == SECURITY_ACTION_OTA_AUTH &&
+                    change_pin_ctx.phase == CHANGE_PIN_SUCCESS;
+                if (security_action == SECURITY_ACTION_OTA_AUTH) {
+                    return_from_ota_auth(ota_authenticated);
+                } else {
+                    atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
+                    atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
+                    sys_lcd.screen = LCD_SCREEN_SECURITY;
+                }
             }
             return;
         }
@@ -574,7 +620,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_CONFIRM)
         {
             const char *done_msg = "                ";
-            switch (sys_state.factory_reset.action)
+            switch (atomic_load(&sys_lcd.factory_reset.action))
             {
             case FACTORY_ACTION_RESET_ALL:
                 ESP_LOGI(APP_INPUT_TAG, "Factory reset confirmed by user");
@@ -1039,7 +1085,7 @@ void handle_up_button_event(button_event_info_t *event_info,
     {
         if (event_info->event == BUTTON_EVENT_CLICK)
         {
-            factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_UP);
+            factory_reset_handle_pin_entry(&sys_lcd.factory_reset, BTN_UP);
         }
         return;
     }
@@ -1247,7 +1293,7 @@ void handle_down_button_event(button_event_info_t *event_info,
     {
         if (event_info->event == BUTTON_EVENT_CLICK)
         {
-            factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_DOWN);
+            factory_reset_handle_pin_entry(&sys_lcd.factory_reset, BTN_DOWN);
         }
         return;
     }
@@ -1485,7 +1531,7 @@ void handle_back_button_event(button_event_info_t *event_info,
         {
             if (event_info->event == BUTTON_EVENT_CLICK)
             {
-                factory_reset_handle_pin_entry(&sys_state.factory_reset, BTN_BACK);
+                factory_reset_handle_pin_entry(&sys_lcd.factory_reset, BTN_BACK);
                 show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
                 sys_lcd.screen = LCD_SCREEN_MENU;
             }
@@ -1505,15 +1551,21 @@ void handle_back_button_event(button_event_info_t *event_info,
             }
 
             xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
+            const security_action_t security_action =
+                atomic_load(&sys_lcd.security.action);
             bool flow_done = change_pin_handle_button(&change_pin_ctx, BTN_BACK);
             xSemaphoreGive(change_pin_mutex);
 
             if (flow_done)
             {
                 ESP_LOGI("DISPLAY MODE", "DISPLAYING MODE");
-                atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
-                atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
-                sys_lcd.screen = LCD_SCREEN_SECURITY;
+                if (security_action == SECURITY_ACTION_OTA_AUTH) {
+                    return_from_ota_auth(false);
+                } else {
+                    atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
+                    atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
+                    sys_lcd.screen = LCD_SCREEN_SECURITY;
+                }
             }
             return;
         }

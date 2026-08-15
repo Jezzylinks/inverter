@@ -743,17 +743,11 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
             return;
         }
 
-        factory_reset_ctx_t pin_snap;
-
-        /* If factory_reset_ctx is shared with the button task,
-           protect it with a mutex exactly like change_pin_ctx. */
-        memcpy(&pin_snap, &sys_state.factory_reset, sizeof(pin_snap));
-
         char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
 
         snprintf(r0, sizeof(r0), "%-16s", "Enter PIN:      ");
 
-        pin_entry_render_line(&pin_snap.pin_ctx, r1, sizeof(r1));
+        pin_entry_render_line(&d->pin_ctx, r1, sizeof(r1));
 
         draw_commit(r0, r1);
 
@@ -786,12 +780,7 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
 
     case FACTORY_PHASE_IDLE:
     {
-        static int last_selection = -1;
-        if (atomic_load(&d->action) != FACTORY_ACTION_NONE || last_selection < 0)
-        {
-            draw_commit("Factory Reset   ", "Select an option");
-            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_CONFIRM);
-        }
+        draw_commit("Factory Reset   ", "Select an option");
         break;
     }
     }
@@ -932,7 +921,8 @@ static void draw_security_status()
 
   Returns true if a frame was drawn, false if the frame was skipped.
 ------------------------------------------------------------------------------*/
-static bool draw_security_pin_flow(change_pin_phase_t flow_phase)
+static bool draw_security_pin_flow(change_pin_phase_t flow_phase,
+                                    security_action_t security_action)
 {
     if (security_is_locked_out())
     {
@@ -952,10 +942,13 @@ static bool draw_security_pin_flow(change_pin_phase_t flow_phase)
 
     char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
 
-    switch (flow_phase)
-    {
-    case CHANGE_PIN_VERIFY_OLD:
-        snprintf(r0, sizeof(r0), "%-16s", "Enter Old PIN:  ");
+    if (security_action == SECURITY_ACTION_OTA_AUTH) {
+        snprintf(r0, sizeof(r0), "%-16s", "OTA PIN:        ");
+    } else {
+        switch (flow_phase)
+        {
+        case CHANGE_PIN_VERIFY_OLD:
+            snprintf(r0, sizeof(r0), "%-16s", "Enter Old PIN:  ");
         break;
     case CHANGE_PIN_ENTER_NEW:
         snprintf(r0, sizeof(r0), "%-16s", "Enter New PIN:  ");
@@ -963,9 +956,10 @@ static bool draw_security_pin_flow(change_pin_phase_t flow_phase)
     case CHANGE_PIN_CONFIRM_NEW:
         snprintf(r0, sizeof(r0), "%-16s", "Confirm PIN:    ");
         break;
-    default:
-        snprintf(r0, sizeof(r0), "%-16s", "Enter PIN:      ");
-        break;
+        default:
+            snprintf(r0, sizeof(r0), "%-16s", "Enter PIN:      ");
+            break;
+        }
     }
 
     pin_entry_render_line(&pin_snap.pin_ctx, r1, sizeof(r1));
@@ -981,17 +975,11 @@ static bool draw_factory_reset_pin_flow(void)
         return true;
     }
 
-    factory_reset_ctx_t pin_snap;
-
-    /* If factory_reset_ctx is shared with the button task,
-       protect it with a mutex exactly like change_pin_ctx. */
-    memcpy(&pin_snap, &sys_state.factory_reset, sizeof(pin_snap));
-
     char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
 
     snprintf(r0, sizeof(r0), "%-16s", "Enter PIN:      ");
 
-    pin_entry_render_line(&pin_snap.pin_ctx, r1, sizeof(r1));
+    pin_entry_render_line(&sys_lcd.factory_reset.pin_ctx, r1, sizeof(r1));
 
     draw_commit(r0, r1);
 
@@ -1028,7 +1016,7 @@ static void draw_security(const lcd_security_data_t *d)
             xSemaphoreGive(change_pin_mutex);
         }
         /* draw_security_pin_flow() takes its own full snapshot internally. */
-        draw_security_pin_flow(flow_phase);
+        draw_security_pin_flow(flow_phase, sec_action);
         break;
     }
 

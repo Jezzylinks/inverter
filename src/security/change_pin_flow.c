@@ -50,7 +50,9 @@ void change_pin_start_ex(change_pin_ctx_t *ctx, change_pin_mode_t mode)
         // treat it as already done.
         ctx->phase = (mode == CHANGE_PIN_MODE_SET_NEW)
                          ? CHANGE_PIN_ENTER_NEW
-                         : CHANGE_PIN_SUCCESS;
+                         : (mode == CHANGE_PIN_MODE_VERIFY_ONLY
+                                ? CHANGE_PIN_VERIFY_OLD
+                                : CHANGE_PIN_SUCCESS);
     }
     else
     {
@@ -88,6 +90,12 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
 
             if (security_verify_pin(entered))
             {
+                if (ctx->mode == CHANGE_PIN_MODE_VERIFY_ONLY)
+                {
+                    post_security_event(true);
+                    ctx->phase = CHANGE_PIN_SUCCESS;
+                    return true;
+                }
                 if (ctx->mode == CHANGE_PIN_MODE_RESET_DEFAULT)
                 {
                     const uint8_t default_pin[SECURITY_PIN_LEN] = SECURITY_DEFAULT_PIN;
