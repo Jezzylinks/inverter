@@ -28,7 +28,7 @@ extern "C"
         float current_threshold;    /**< Maximum current (A) to be considered resting */
         uint32_t rest_time_seconds; /**< Required rest time */
 
-        uint32_t accumulated_seconds; /**< Time spent below threshold */
+        float accumulated_seconds; /**< Time spent below threshold */
 
         bool resting; /**< Current resting state */
     } battery_rest_t;
@@ -66,7 +66,7 @@ extern "C"
      */
     bool battery_rest_update(battery_rest_t *detector,
                              float battery_current,
-                             uint32_t dt_seconds);
+                             float dt_seconds);
 
     /**
      * @brief Returns current resting state.

@@ -31,7 +31,7 @@ void battery_rest_reset(battery_rest_t *detector)
 
 bool battery_rest_update(battery_rest_t *detector,
                          float battery_current,
-                         uint32_t dt_seconds)
+                         float dt_seconds)
 {
     if (detector == NULL)
     {

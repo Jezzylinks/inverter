@@ -161,28 +161,12 @@ static const char *rssi_bars(int8_t rssi)
 void lcd_display_startup_screen(uint8_t progress)
 {
     (void)progress;
+    /* Startup branding is intentionally disabled. The startup screen is
+     * reserved for progress/status information, not a splash logo. */
     if (lcd_geometry_is_20x4())
-    {
-        /* Premium boot composition: logo, breathing room, product class,
-         * then breathing room again. Empty rows are intentional. */
-        const char *rows[] = {
-            "      C-TECH      ",
-            "",
-            "    INVERTER      ",
-            ""};
-        draw_commit_rows(rows);
-    }
+        draw_commit_rows((const char *[]) {"", "", "", ""});
     else
-    {
-        /* A single calm brand line is more legible than two competing lines
-         * on the compact panel. */
-        draw_commit("  C-TECH POWER  ", "");
-    }
-}
-
-static void draw_boot_brand(void)
-{
-    lcd_display_startup_screen(0);
+        draw_commit("", "");
 }
 
 static void format_progress_line(char *out, uint8_t pct)
@@ -228,7 +212,9 @@ static void format_battery_time(char *out, size_t out_len,
                                  uint16_t remaining_minutes)
 {
     if (remaining_minutes == 0U) {
-        snprintf(out, out_len, "--");
+        /* Runtime is load-dependent. Make the reason visible instead of
+         * presenting an apparently missing value while the inverter is idle. */
+        snprintf(out, out_len, "IDLE");
         return;
     }
     const unsigned hours = remaining_minutes / 60U;
@@ -286,12 +272,14 @@ static void draw_main(lcd_main_data_t *m)
                      m->pv_power_kw, (unsigned)m->battery_pct);
             snprintf(rows[2], LCD_LINE_SIZE, "LD:%4.2fkW GR:%4.2fkW",
                      m->load_power_kw, m->grid_power_kw);
-            /* Show the live ADC-derived pack voltage on the home page.
-             * The selected system voltage is used for scaling before this
-             * value reaches lcd_update_main_data(), so 24/48 V readings are
-             * visible here instead of only in the battery sub-page. */
-            snprintf(rows[3], LCD_LINE_SIZE, "AC:%3uV BAT:%4.1fV",
-                     ac_voltage, m->battery_voltage);
+            /* Keep battery telemetry on the default home page. The voltage
+             * is already scaled by the selected 12/24/48 V system before it
+             * reaches this renderer. */
+            char remaining[12];
+            format_battery_time(remaining, sizeof(remaining),
+                                m->battery_remaining_minutes);
+            snprintf(rows[3], LCD_LINE_SIZE, "BAT:%4.1fV T:%5.5s",
+                     m->battery_voltage, remaining);
         }
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
         draw_commit_rows(row_ptrs);
@@ -414,13 +402,12 @@ static void draw_startup(const lcd_startup_data_t *d)
     format_progress_line(bar, d->progress_pct);
     if (lcd_geometry_is_20x4())
     {
-        const char *rows[] = {"      C-TECH      ", "",
-                              bar, ""};
+        const char *rows[] = {"OUTPUT STARTING", "", bar, ""};
         draw_commit_rows(rows);
     }
     else
     {
-        draw_commit(" C-TECH OUTPUT ", bar);
+        draw_commit("OUTPUT STARTING", bar);
     }
 }
 
@@ -604,14 +591,15 @@ static void draw_loading(const lcd_loading_data_t *d)
     {
         char status[LCD_LINE_SIZE];
         snprintf(status, sizeof(status), "  %s", startup_stage_label(pct));
-        const char *rows[] = {"      C-TECH      ", bar,
-                              status, ""};
+        char progress[LCD_LINE_SIZE];
+        snprintf(progress, sizeof(progress), "SYSTEM STARTING %3u%%", pct);
+        const char *rows[] = {progress, bar, status, ""};
         draw_commit_rows(rows);
     }
     else
     {
         char row0[LCD_LINE_SIZE];
-        snprintf(row0, sizeof(row0), " C-TECH %3u%%", pct);
+        snprintf(row0, sizeof(row0), "STARTING %3u%%", pct);
         draw_commit(row0, bar);
     }
 }
@@ -1249,9 +1237,8 @@ void lcd_task(void *arg)
         switch (snap.screen)
         {
         case LCD_SCREEN_BOOT_BRAND:
-            draw_boot_brand();
-            vTaskDelay(pdMS_TO_TICKS(2000));
-            lcd_show_loading("System Loading  ", 2000, LCD_SCREEN_MAIN);
+            /* No splash logo: move directly into functional startup status. */
+            lcd_show_loading("System Starting", 2000, LCD_SCREEN_MAIN);
             break;
 
         case LCD_SCREEN_MAIN:

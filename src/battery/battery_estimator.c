@@ -24,10 +24,13 @@ void battery_estimator_init(
         &est->voltage_filter,
         0.05f);
 
+    /* Recalibrate SOC from voltage after a short stable idle period.
+     * The ADC task updates this estimator every 20 ms; the rest detector
+     * preserves fractional seconds so this threshold is now meaningful. */
     battery_rest_init(
         &est->rest_detector,
         0.5f,
-        300);
+        10);
 
     coulomb_counter_init(
         &est->counter,
