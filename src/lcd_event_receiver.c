@@ -48,13 +48,18 @@ static void display_event_notice(const system_event_t *event)
         return;
     }
 
-    /* ADC/protection events are still dispatched to their safety consumers,
-     * but normal boot-time diagnostics must not hijack the branded startup
-     * screen with raw "AC Voltage" or "Battery Voltage" notices. Keep
-     * critical events visible so an emergency is never hidden. */
-    if (lcd_is_startup_active() &&
+    /* Startup notices are intentionally quiet. The event is still available
+     * to the protection/logger/relay consumers; only its LCD flash is
+     * suppressed. Keep critical protection events visible so an emergency is
+     * never hidden. */
+    const bool startup_active = lcd_is_startup_active();
+    const bool noncritical_protection =
         event->category == EVENT_CATEGORY_PROTECTION &&
-        event->priority < EVENT_PRIORITY_CRITICAL) {
+        event->priority < EVENT_PRIORITY_CRITICAL;
+    const bool boot_complete_notice =
+        event->category == EVENT_CATEGORY_SYSTEM &&
+        event->action == EVENT_ACTION_STARTUP;
+    if (startup_active && (noncritical_protection || boot_complete_notice)) {
         return;
     }
 
