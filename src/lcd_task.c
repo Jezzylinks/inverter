@@ -390,7 +390,13 @@ static void draw_value_edit(const lcd_value_edit_data_t *d)
     int len = strlen(d->value_str);
     while (len > 0 && d->value_str[len - 1] == ' ')
         len--;
-    if (len < lcd_geometry_cols())
+
+    /* ON/OFF is a complete boolean value. Do not append the blinking edit
+     * cursor after it; on the character LCD that looks like a stray marker. */
+    const bool is_boolean_value =
+        (len == 2 && d->value_str[0] == 'O' &&
+         (d->value_str[1] == 'N' || d->value_str[1] == 'F'));
+    if (!is_boolean_value && len < lcd_geometry_cols())
     {
         lcd_set_cursor(len, 1);
         lcd_print_string(blink_state ? "_" : " ");

@@ -1620,11 +1620,11 @@ static nvs_setting_t g_settings[] = {
     {"scroll_spd", &sys_state.display.scroll_speed, sizeof(uint8_t), DEFAULT_SCROLL_SPEED, false, "Scroll Speed"},
     {"out_volt", &sys_state.inverter.output_voltage, sizeof(int32_t), 220.0f, true, "Output Voltage"},
     {"out_freq", &sys_state.inverter.output_frequency, sizeof(int32_t), 50.0f, true, "Output Freq"},
-    {"volt_threshold", &sys_state.settings.voltage_threshold, sizeof(int32_t), 12.5f, true, "Voltage Thresh"},
+    {"volt_threshold", &sys_state.settings.voltage_threshold, sizeof(int32_t), 220.0f, true, "Voltage Thresh"},
     {"current_limit", &sys_state.settings.current_limit, sizeof(int32_t), 50.0f, true, "Current Limit"},
     {"temp_alarm", &sys_state.settings.temperature_alarm, sizeof(int32_t), 70.0f, true, "Temp Alarm"},
     {"frequency_range", &sys_state.settings.frequency_range, sizeof(int32_t), 50, false, "Freq Range"},
-    {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300, false, "Sys Timeout"},
+    {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300000, false, "Sys Timeout"},
     {"security_en", &sys_state.security.enabled, sizeof(uint8_t), 1, false, "Security Enable"},
 };
 
@@ -2136,6 +2136,11 @@ bool load_settings()
     if (nvs_load_all(nvs) != ESP_OK) {
         load_error = true;
     }
+
+    /* Timeout enforcement uses sys_state.system_timeout while the settings
+     * table persists sys_state.settings.system_timeout. Keep both fields
+     * synchronized after every NVS load. */
+    sys_state.system_timeout = sys_state.settings.system_timeout;
 
     uint8_t txn_marker = 0U;
     uint32_t stored_crc = 0U;
@@ -4191,10 +4196,28 @@ void shutdown_inverter(void)
 }
 
 // Helper functions to apply settings
-static void apply_voltage_threshold(float v) { inverter_set_output_voltage(v); }
-static void apply_frequency(float v) { inverter_set_output_frequency(v); }
-static void apply_current_limit(float v) { inverter_set_current_limit(v); }
-static void apply_temperature_limit(float v) { thermal_protection_set_limit(v); }
+static void apply_voltage_threshold(float v)
+{
+    sys_state.settings.voltage_threshold = v;
+    inverter_set_output_voltage(v);
+}
+static void apply_frequency(float v)
+{
+    sys_state.settings.frequency_range = v;
+    inverter_set_output_frequency(v);
+}
+static void apply_current_limit(float v)
+{
+    sys_state.settings.current_limit = v;
+    sys_state.current_limit = v;
+    inverter_set_current_limit(v);
+}
+static void apply_temperature_limit(float v)
+{
+    sys_state.settings.temperature_alarm = v;
+    sys_state.temperature_limit = v;
+    thermal_protection_set_limit(v);
+}
 static void apply_battery_cutoff(float v) { battery_monitor_set_cutoff(v); }
 static void apply_wifi(float v)
 {
@@ -4245,7 +4268,11 @@ static void apply_set_time_minute(float v)
     quiet_hours_set_manual_time(sys_state.manual_time_hour, sys_state.manual_time_minute);
 }
 static void apply_scroll_speed(float v) { sys_state.display.scroll_speed = (uint8_t)v; }
-static void apply_system_timeout(float v) { set_system_timeout((uint32_t)v); }
+static void apply_system_timeout(float v)
+{
+    sys_state.settings.system_timeout = (int32_t)v;
+    set_system_timeout((uint32_t)v);
+}
 
 /* Battery type change regenerates the active profile at the currently
  * configured voltage/capacity — it must not just overwrite profile_id
@@ -5147,24 +5174,39 @@ void enter_value_edit_mode(value_edit_context_t *value_type)
 void exit_value_edit_mode(bool save_changes)
 {
     if (!sys_state.value_edit_mode)
+    {
+        /* Clear stale operation state even if a caller is recovering from an
+         * interrupted or already-dismissed edit session. */
+        sys_state.current_value_type = NULL;
+        sys_state.value_changed = false;
+        sys_state.pending_confirmation = false;
+        sys_state.repeat_count = 0;
+        sys_state.fast_increment_active = false;
+        sys_state.hold_start_time = 0;
         return;
+    }
 
     value_edit_context_t *ctx = get_current_value_config();
     float *current_value = get_current_value_pointer();
 
     if (!ctx || !current_value)
     {
-        /* Nothing valid to save/restore — just clear state and bail */
         sys_state.value_edit_mode = false;
         sys_state.current_value_type = NULL;
         sys_state.value_changed = false;
         sys_state.pending_confirmation = false;
+        sys_state.repeat_count = 0;
+        sys_state.fast_increment_active = false;
+        sys_state.hold_start_time = 0;
         return;
     }
 
     if (save_changes && sys_state.value_changed)
     {
         apply_value_change();
+        /* Every accepted settings edit is durable immediately, including
+         * boolean, select, and list options. */
+        (void)save_settings();
         printf("Value saved successfully\n");
     }
     else if (!save_changes && sys_state.value_changed)
@@ -5177,6 +5219,10 @@ void exit_value_edit_mode(bool save_changes)
     sys_state.current_value_type = NULL;
     sys_state.value_changed = false;
     sys_state.pending_confirmation = false;
+    sys_state.repeat_count = 0;
+    sys_state.fast_increment_active = false;
+    sys_state.hold_start_time = 0;
+    sys_state.edit_backup_value = 0.0f;
 }
 
 void apply_value_change(void)
@@ -5187,14 +5233,20 @@ void apply_value_change(void)
     value_edit_context_t *ctx = get_current_value_config();
     float *current_value = get_current_value_pointer();
 
-    if (ctx && current_value)
-    {
-        update_system_parameter(ctx, *current_value);
-        sys_state.pending_confirmation = false;
-        printf("Applied %s: %.*f %s\n",
-               ctx->label, ctx->decimal_places,
-               *current_value, ctx->unit);
-    }
+    if (!ctx || !current_value)
+        return;
+
+    float value = *current_value;
+    if (ctx->edit_type == VALUE_EDIT_SELECT)
+        value = (float)ctx->selection_index;
+    else if (ctx->edit_type == VALUE_EDIT_LIST)
+        value = (float)ctx->list_index;
+
+    update_system_parameter(ctx, value);
+    sys_state.pending_confirmation = false;
+    printf("Applied %s: %.*f %s\n",
+           ctx->label, ctx->decimal_places,
+           value, ctx->unit ? ctx->unit : "");
 }
 
 void reset_value_to_backup(void)
@@ -5209,11 +5261,20 @@ void reset_value_to_backup(void)
     {
         *current_value = sys_state.edit_backup_value;
         ctx->current_value = sys_state.edit_backup_value;
+        if (ctx->edit_type == VALUE_EDIT_SELECT)
+            ctx->selection_index = (int)sys_state.edit_backup_value;
+        else if (ctx->edit_type == VALUE_EDIT_LIST)
+            ctx->list_index = (int)sys_state.edit_backup_value;
+        /* Live updates are applied while navigating. Re-apply the backup on
+         * cancellation so runtime hardware/state matches the saved value. */
+        if (ctx->live_update && ctx->apply)
+            ctx->apply(sys_state.edit_backup_value);
         sys_state.value_changed = false;
         sys_state.pending_confirmation = false;
 
         printf("Value reset to: %.*f %s\n",
-               ctx->decimal_places, sys_state.edit_backup_value, ctx->unit);
+               ctx->decimal_places, sys_state.edit_backup_value,
+               ctx->unit ? ctx->unit : "");
     }
 }
 
@@ -5356,7 +5417,7 @@ void handle_value_confirmation(void)
 
     case VALUE_EDIT_BOOL:
     {
-        bool state = *(bool *)current_value_ptr;
+        bool state = (*(float *)current_value_ptr != 0.0f);
         printf("%s set to: %s\n", ctx->label, state ? "ON" : "OFF");
 
         update_system_parameter(ctx, (float)state);
@@ -5380,15 +5441,10 @@ void handle_value_confirmation(void)
     }
 
     // ======== Post-confirmation handling ========
-    if (safety_check_passed)
+        if (safety_check_passed)
     {
-        sys_state.value_changed = false;
+        /* exit_value_edit_mode(true) applies and persists the accepted value. */
         exit_value_edit_mode(true);
-
-        /* Persist immediately -- without this, a confirmed change (e.g.
-         * Battery Type / Voltage System) only survives if the board
-         * happens to sleep, restart, or fault before losing power. */
-        save_settings();
 
         show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
         lcd_flash_info_to(ctx->label, "Value Saved!    ", 1000, LCD_SCREEN_MENU);
@@ -5862,6 +5918,7 @@ static bool validate_and_clamp_settings(void)
         sys_state.system_timeout = (sys_state.system_timeout < MIN_OFF_TIME_MS)
                                        ? MIN_OFF_TIME_MS
                                        : 600000;
+        sys_state.settings.system_timeout = (int32_t)sys_state.system_timeout;
         corrected = true;
     }
 
@@ -6723,223 +6780,123 @@ void error_handler(void)
 }
 
 // Value editing functions
-void edit_voltage_threshold(void)
+
+static void begin_setting_edit(value_edit_param_t param, float current_value)
 {
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_VOLTAGE];
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    value_edit_context_t *ctx = &value_edit[param];
+    ctx->current_value = current_value;
+    sys_state.current_value_type = ctx;
+    sys_state.edit_backup_value = current_value;
     sys_state.pending_confirmation = true;
     sys_state.value_changed = false;
     sys_state.repeat_count = 0;
     sys_state.fast_increment_active = false;
     sys_state.value_edit_mode = true;
     lcd_show_value_edit_screen();
+}
+
+void edit_voltage_threshold(void)
+{
+    begin_setting_edit(VALUE_TYPE_VOLTAGE, sys_state.settings.voltage_threshold);
 }
 
 void edit_current_limit(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_CURRENT];
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_CURRENT, sys_state.settings.current_limit);
 }
 
 void edit_frequency_range(void)
 {
-
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_FREQUENCY];
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_FREQUENCY, sys_state.settings.frequency_range);
 }
 
 void edit_temperature_alarm(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_TEMPERATURE];
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_TEMPERATURE, sys_state.settings.temperature_alarm);
 }
 
 void edit_system_timeout(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_TIMEOUT];
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_TIMEOUT, (float)sys_state.system_timeout);
 }
 
 void edit_auto_shutdown(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_AUTO_SHUTDOWN];
-    sys_state.current_value_type->current_value =
-        sys_state.display.auto_shutdown_enabled ? 1.0f : 0.0f;
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_AUTO_SHUTDOWN,
+                       sys_state.display.auto_shutdown_enabled ? 1.0f : 0.0f);
 }
 
 void edit_scroll_enable(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_SCROLL_ENABLE];
-    sys_state.current_value_type->current_value =
-        sys_state.display.scroll_enabled ? 1.0f : 0.0f;
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_SCROLL_ENABLE,
+                       sys_state.display.scroll_enabled ? 1.0f : 0.0f);
 }
 
 void edit_sound_enable(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_SOUND_ENABLE];
-    sys_state.current_value_type->current_value = sys_state.sound_enabled ? 1.0f : 0.0f;
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_SOUND_ENABLE,
+                       sys_state.sound_enabled ? 1.0f : 0.0f);
 }
 
 void edit_quiet_hours_enable(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_QUIET_HOURS_ENABLE];
-    sys_state.current_value_type->current_value = sys_state.quiet_hours_enabled ? 1.0f : 0.0f;
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_QUIET_HOURS_ENABLE,
+                       sys_state.quiet_hours_enabled ? 1.0f : 0.0f);
 }
 
 void edit_quiet_hours_start(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_QUIET_HOURS_START];
-    sys_state.current_value_type->current_value = (float)sys_state.quiet_hours_start;
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_QUIET_HOURS_START,
+                       (float)sys_state.quiet_hours_start);
 }
 
 void edit_quiet_hours_end(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_QUIET_HOURS_END];
-    sys_state.current_value_type->current_value = (float)sys_state.quiet_hours_end;
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_QUIET_HOURS_END,
+                       (float)sys_state.quiet_hours_end);
 }
 
 void edit_utc_offset(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_UTC_OFFSET];
-    sys_state.current_value_type->current_value = (float)sys_state.utc_offset_hours;
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_UTC_OFFSET,
+                       (float)sys_state.utc_offset_hours);
 }
 
 void edit_set_time_hour(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_SET_TIME_HOUR];
-    sys_state.current_value_type->current_value = (float)sys_state.manual_time_hour;
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_SET_TIME_HOUR,
+                       (float)sys_state.manual_time_hour);
 }
 
 void edit_set_time_minute(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_SET_TIME_MINUTE];
-    sys_state.current_value_type->current_value = (float)sys_state.manual_time_minute;
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_SET_TIME_MINUTE,
+                       (float)sys_state.manual_time_minute);
 }
 
 void edit_scroll_speed(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_SCROLL_SPEED];
-    sys_state.current_value_type->current_value = (float)sys_state.display.scroll_speed;
-    lcd_show_value_edit_screen();
+    begin_setting_edit(VALUE_TYPE_SCROLL_SPEED,
+                       (float)sys_state.display.scroll_speed);
 }
 
 void edit_battery_type(void)
 {
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_BATTERY_TYPE];
-    sys_state.current_value_type->selection_index = sys_state.battery_profile.profile_id;
+    begin_setting_edit(VALUE_TYPE_BATTERY_TYPE,
+                       (float)sys_state.battery_profile.profile_id);
+    value_edit_context_t *ctx = sys_state.current_value_type;
+    ctx->selection_index = sys_state.battery_profile.profile_id;
+    sys_state.edit_backup_value = (float)ctx->selection_index;
     lcd_show_value_edit_screen();
 }
 
 void edit_battery_voltage_system(void)
 {
-    sys_state.pending_confirmation = true;
-    sys_state.value_changed = false;
-    sys_state.repeat_count = 0;
-    sys_state.fast_increment_active = false;
-    sys_state.value_edit_mode = true;
-    sys_state.current_value_type = &value_edit[VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM];
-    sys_state.current_value_type->selection_index =
-        voltage_system_to_index((voltage_system_t)sys_state.battery_profile.nominal_voltage);
-    sys_state.current_value_type->current_value =
-        (float)sys_state.current_value_type->selection_index;
-    sys_state.edit_backup_value = sys_state.current_value_type->current_value;
+    int index = voltage_system_to_index(
+        (voltage_system_t)sys_state.battery_profile.nominal_voltage);
+    begin_setting_edit(VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM, (float)index);
+    sys_state.current_value_type->selection_index = index;
+    sys_state.edit_backup_value = (float)index;
     lcd_show_value_edit_screen();
 }
 

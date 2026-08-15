@@ -245,46 +245,17 @@ void handle_power_button_event(button_event_info_t *event_info,
 
     case BUTTON_EVENT_CLICK:
     {
-        /* P1: cancel value edit */
-        if (sys_state.value_edit_mode)
-        {
-            if (sys_state.value_changed)
-            {
-                float *val = get_current_value_pointer();
-                if (val)
-                    *val = sys_state.edit_backup_value;
-            }
-            sys_state.value_edit_mode = false;
-            sys_state.value_changed = false;
-            sys_state.pending_confirmation = false;
-            sys_state.current_value_type = NULL;
-            lcd_flash_info("Edit Cancelled  ", "                ", 600);
-            break;
-        }
-        /* P2: cancel confirmation */
-        if (sys_state.in_confirmation_screen)
-        {
-            sys_state.in_confirmation_screen = false;
-            show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
-            break;
-        }
-        /* P3: exit detail view */
+        /* Cancel the active edit, then continue through the normal power
+         * path so the power button always returns to the whole main page. */
+        /* Always forget an abandoned edit/confirmation/detail operation before
+         * continuing. The power button is the full-page exit. */
+        exit_value_edit_mode(false);
+        sys_state.in_confirmation_screen = false;
+        sys_state.in_info_screen = false;
         if (sys_state.in_detail_view)
         {
-            bool back_to_diag =
-                (sys_state.pre_detail_inverter_state == INVERTER_DIAGNOSTIC);
             sys_state.in_detail_view = false;
             sys_state.inverter.inverter_state = sys_state.pre_detail_inverter_state;
-            sys_state.menu_state = sys_state.detail_parent_menu;
-            sys_state.menu_selection = sys_state.detail_parent_selection;
-            show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
-            if (back_to_diag)
-            {
-                /* Re-enter diagnostic display with the real, live value —
-                 * no more reconstructing a blank row via a compound literal. */
-                lcd_draw_diagnostics_screen(sys_state.menu_selection);
-            }
-            break;
         }
         /* P4: exit diagnostic mode */
         if (sys_state.inverter.inverter_state == INVERTER_DIAGNOSTIC)
@@ -341,11 +312,10 @@ void handle_power_button_event(button_event_info_t *event_info,
     case BUTTON_EVENT_LONG_PRESS:
     {
 
+        /* A power hold abandons any setting edit; it must never leave a
+         * stale option that can be reopened after the power operation. */
         if (sys_state.value_edit_mode)
-        {
-            lcd_flash_info("Save/Cancel     ", "value first     ", 1200);
-            break;
-        }
+            exit_value_edit_mode(false);
         if (sys_state.inverter.inverter_state == INVERTER_DIAGNOSTIC)
         {
             exit_diagnostic_mode();
@@ -411,7 +381,7 @@ void handle_power_button_event(button_event_info_t *event_info,
     {
         ESP_LOGI("POWER BUTTON", "Button clicked twice");
         if (sys_state.value_edit_mode)
-            break;
+            exit_value_edit_mode(false);
         if (sys_state.inverter.inverter_state == INVERTER_ON ||
             sys_state.inverter.inverter_state == INVERTER_STARTING)
         {
@@ -449,11 +419,7 @@ void handle_power_button_event(button_event_info_t *event_info,
         if (sys_state.inverter.inverter_state == INVERTER_DIAGNOSTIC)
             exit_diagnostic_mode();
         if (sys_state.value_edit_mode)
-        {
-            sys_state.value_edit_mode = false;
-            sys_state.value_changed = false;
-            sys_state.pending_confirmation = false;
-        }
+            exit_value_edit_mode(false);
         sys_state.in_detail_view = false;
         sys_state.in_confirmation_screen = false;
         push_menu_history(sys_state.menu_state, sys_state.menu_selection);
@@ -1064,11 +1030,11 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             if (config && current_value)
             {
                 update_system_parameter(config, *current_value);
-                sys_state.pending_confirmation = false;
-                sys_state.value_changed = false;
-                sys_state.value_edit_mode = false;
-                lcd_show_value_saved_screen();
+                sys_state.value_changed = true;
+                exit_value_edit_mode(true);
                 show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
+                lcd_flash_info_to("Value Saved!    ", "                ",
+                                  800, LCD_SCREEN_MENU);
             }
         }
         else if (sys_state.menu_state == MAIN_MENU)
@@ -1657,15 +1623,18 @@ void handle_back_button_event(button_event_info_t *event_info,
             sys_lcd.screen = LCD_SCREEN_MAIN;
         }
 
-        /* P2 cancel value edit */
+        /* Cancel only the current option. Back from an option returns to the
+         * settings list, not to the home page, and the edit session is fully
+         * forgotten before the list is redrawn. */
         if (sys_state.value_edit_mode)
         {
+            menu_state_t parent_menu = sys_state.menu_state;
+            int parent_selection = sys_state.menu_selection;
             exit_value_edit_mode(false);
-            lcd_show_value_canceled_screen();
-            sys_state.menu_state = MAIN_MENU;
-            sys_state.menu_selection = 0;
-            sys_state.pending_confirmation = false;
             sys_state.last_activity_time = esp_timer_get_time() / 1000;
+            show_menu_screen(parent_menu, parent_selection);
+            lcd_flash_info_to("Edit Cancelled  ", "                ",
+                              600, LCD_SCREEN_MENU);
             return;
         }
         /* P3 exit detail view */
