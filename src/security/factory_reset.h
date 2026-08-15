@@ -116,6 +116,9 @@ extern "C"
   void factory_reset_begin(factory_reset_ctx_t *ctx,
                            factory_reset_action_t action);
 
+  /** Clear the complete pending factory-reset session and PIN entry state. */
+  void factory_reset_cancel(factory_reset_ctx_t *ctx);
+
   void factory_reset(void);
 
 #ifdef __cplusplus

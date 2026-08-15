@@ -43,8 +43,7 @@ static void handle_pin_entry_button(factory_reset_ctx_t *ctx,
     {
         if (btn == BTN_BACK)
         {
-            atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
-            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
+            factory_reset_cancel(&sys_lcd.factory_reset);
         }
         return;
     }
@@ -100,10 +99,7 @@ static void handle_pin_entry_button(factory_reset_ctx_t *ctx,
     case PIN_ENTRY_CANCELLED:
         ESP_LOGI(TAG, "PIN entry cancelled");
 
-        pin_entry_reset(&ctx->pin_ctx);
-
-        atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
-        atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
+        factory_reset_cancel(ctx);
 
         break;
 
@@ -115,6 +111,19 @@ static void handle_pin_entry_button(factory_reset_ctx_t *ctx,
 /*==============================================================================
   Public API
 ==============================================================================*/
+
+void factory_reset_cancel(factory_reset_ctx_t *ctx)
+{
+    if (ctx == NULL) {
+        return;
+    }
+
+    pin_entry_reset(&ctx->pin_ctx);
+    memset(ctx->pin_line, 0, sizeof(ctx->pin_line));
+    atomic_store(&ctx->action, FACTORY_ACTION_NONE);
+    atomic_store(&ctx->phase, FACTORY_PHASE_IDLE);
+    atomic_store(&ctx->progress_pct, 0U);
+}
 
 void factory_reset_begin(factory_reset_ctx_t *ctx,
                          factory_reset_action_t action)

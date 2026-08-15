@@ -253,12 +253,10 @@ void handle_power_button_event(button_event_info_t *event_info,
             sys_state.power_button_sequence_count = 0;
             break;
         }
-        /* P5: close menu (also clears any pending factory-reset action
-         * so we don't leave stale state behind) */
+        /* P5: close menu and clear any pending factory-reset session. */
         if (sys_state.menu_state != MENU_NONE)
         {
-            atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
-            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
+            factory_reset_cancel(&sys_lcd.factory_reset);
             sys_state.menu_state = MENU_NONE;
             sys_state.menu_selection = 0;
             sys_state.in_detail_view = false;
@@ -448,6 +446,7 @@ void handle_power_button_event(button_event_info_t *event_info,
             sys_state.menu_state = MENU_NONE;
             sys_state.menu_selection = 0;
         }
+        factory_reset_cancel(&sys_lcd.factory_reset);
         go_to_main_screen();
     }
 
@@ -665,8 +664,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 break;
             }
 
-            atomic_store(&sys_lcd.factory_reset.action, FACTORY_ACTION_NONE);
-            atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
+            factory_reset_cancel(&sys_lcd.factory_reset);
             sys_state.menu_state = MENU_NONE;
             sys_state.menu_selection = 0;
             clear_menu_history();
@@ -838,7 +836,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_DONE)
             {
                 sys_lcd.screen = LCD_SCREEN_MAIN;
-                atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_IDLE);
+                factory_reset_cancel(&sys_lcd.factory_reset);
                 break;
             }
             else if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_IDLE)
