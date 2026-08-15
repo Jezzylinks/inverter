@@ -221,6 +221,7 @@ static bool led_wait_for_critical(uint32_t duration_ms,
     const TickType_t duration = pdMS_TO_TICKS(duration_ms);
 
     while ((xTaskGetTickCount() - start) < duration) {
+        task_watchdog_feed();
         system_event_t pending = {0};
         TickType_t elapsed = xTaskGetTickCount() - start;
         TickType_t remaining = duration - elapsed;
