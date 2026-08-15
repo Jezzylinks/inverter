@@ -720,6 +720,13 @@ static void draw_wifi_connecting(const lcd_wifi_connect_data_t *d)
     }
 }
 
+static void format_empty_pin_slots(char *line, size_t line_size)
+{
+    pin_entry_ctx_t empty_ctx = {0};
+    empty_ctx.cursor = SECURITY_PIN_LEN;
+    pin_entry_render_line(&empty_ctx, line, line_size);
+}
+
 static void draw_factory_reset(const factory_reset_ctx_t *d)
 {
     factory_reset_action_t action = atomic_load(&d->action);
@@ -787,7 +794,7 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
                 char rows[4][LCD_LINE_SIZE];
                 snprintf(rows[0], LCD_LINE_SIZE, "FACTORY RESET");
                 snprintf(rows[1], LCD_LINE_SIZE, "PIN LOCKED");
-                snprintf(rows[2], LCD_LINE_SIZE, "[_][_][_][_]");
+                format_empty_pin_slots(rows[2], sizeof(rows[2]));
                 snprintf(rows[3], LCD_LINE_SIZE, "Retry %2lus  BACK",
                          (unsigned long)remaining_s);
                 const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
@@ -818,7 +825,9 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
             snprintf(r0_buf, sizeof(r0_buf), "LOCKED %2lus",
 
                      (unsigned long)remaining_s);
-            draw_commit(r0_buf, "[_][_][_][_]");
+            char pin_slots[LCD_LINE_SIZE];
+            format_empty_pin_slots(pin_slots, sizeof(pin_slots));
+            draw_commit(r0_buf, pin_slots);
             return;
         }
 
@@ -1005,7 +1014,7 @@ static bool draw_security_pin_flow(change_pin_phase_t flow_phase,
             char rows[4][LCD_LINE_SIZE];
             snprintf(rows[0], sizeof(rows[0]), "%-*.*s", LCD_COLS, LCD_COLS,
                      lock_title);
-            snprintf(rows[1], sizeof(rows[1]), "[ _ ][ _ ][ _ ][ _ ]");
+            format_empty_pin_slots(rows[1], sizeof(rows[1]));
             snprintf(rows[2], sizeof(rows[2]), "Retry in %2lus",
                      (unsigned long)remaining_s);
             snprintf(rows[3], sizeof(rows[3]), "BACK=EXIT");
@@ -1017,7 +1026,9 @@ static bool draw_security_pin_flow(change_pin_phase_t flow_phase,
             char row0[LCD_LINE_SIZE];
             snprintf(row0, sizeof(row0), "%s %2lus", lock_title,
                      (unsigned long)remaining_s);
-            draw_commit(row0, "[ _][ _][ _][ _]");
+            char pin_slots[LCD_LINE_SIZE];
+            format_empty_pin_slots(pin_slots, sizeof(pin_slots));
+            draw_commit(row0, pin_slots);
         }
         return true;
     }
