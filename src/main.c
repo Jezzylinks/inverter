@@ -5700,8 +5700,10 @@ void menu_exit(void)
 void show_profile_on_lcd(battery_profile_t *profile)
 {
     char l[LCD_LINE_SIZE], v[LCD_LINE_SIZE];
-    snprintf(l, LCD_LINE_SIZE, "Battery:%4.1fV  ", (float)profile->nominal_voltage * 10);
-    snprintf(v, LCD_LINE_SIZE, "Cutoff:%5.1fV   ", profile->cutoff_voltage_12v * 10);
+    snprintf(l, LCD_LINE_SIZE, "Battery:%4.1fV  ",
+             profile->nominal_voltage_actual_12v);
+    snprintf(v, LCD_LINE_SIZE, "Cutoff:%5.1fV   ",
+             profile->cutoff_voltage_12v);
     lcd_show_monitor_detail(l, v);
 }
 

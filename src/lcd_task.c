@@ -280,8 +280,12 @@ static void draw_main(lcd_main_data_t *m)
                      m->pv_power_kw, (unsigned)m->battery_pct);
             snprintf(rows[2], LCD_LINE_SIZE, "LD:%4.2fkW GR:%4.2fkW",
                      m->load_power_kw, m->grid_power_kw);
-            snprintf(rows[3], LCD_LINE_SIZE, "AC:%3uV SYS:%s %2uV",
-                     ac_voltage, state, (unsigned)voltage);
+            /* Show the live ADC-derived pack voltage on the home page.
+             * The selected system voltage is used for scaling before this
+             * value reaches lcd_update_main_data(), so 24/48 V readings are
+             * visible here instead of only in the battery sub-page. */
+            snprintf(rows[3], LCD_LINE_SIZE, "AC:%3uV BAT:%4.1fV",
+                     ac_voltage, m->battery_voltage);
         }
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
         draw_commit_rows(row_ptrs);
