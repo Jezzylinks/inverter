@@ -272,7 +272,7 @@
 #define SCREEN_SWITCH_INTERVAL_MS 1000
 #define ERROR_DISPLAY_INTERVAL_MS 1000
 #define STARTUP_DELAY_MS 2000
-#define INVERTER_STARTUP_STEP_DELAY_MS 200U
+#define INVERTER_STARTUP_STEP_DELAY_MS 300U
 #define NUM_DISPLAY_SCREENS 3
 #define LCD_SCROLL_DELAY_MS 300
 #define LCD_BLINK_INTERVAL_MS 500
@@ -1035,7 +1035,6 @@ static void post_inverter_fault_event(void);
 static void post_inverter_success_event(void);
 static void post_show_result_and_notify(post_result_t result);
 static void post_factory_reset_event(bool success);
-static void post_boot_complete_event(void);
 void post_button_click_event(void);
 void enter_diagnostic_mode(void);
 void exit_diagnostic_mode(void);
@@ -2613,10 +2612,7 @@ void adc_task(void *arg)
             first_sample = false;
             ESP_LOGI(TAG_ADC, "First valid sample: Battery=%.2fV",
                      sys_state.inverter.battery.voltage);
-            /* Keep the LCD loading screen visible for its configured
-             * duration. The LCD task owns the transition to the main screen;
-             * ADC warmup must not cut the startup presentation short. */
-            post_boot_complete_event();
+            /* ADC warmup must not cut the startup presentation short. */
             if (lcd_task_handle != NULL)
                 xTaskNotifyGive(lcd_task_handle);
         }
@@ -3891,16 +3887,6 @@ static void post_factory_reset_event(bool success)
     system_event_post(&evt);
 }
 
-static void post_boot_complete_event(void)
-{
-    system_event_t evt = {0};
-    evt.category = EVENT_CATEGORY_SYSTEM;
-    evt.action = EVENT_ACTION_STARTUP;
-    evt.source = EVENT_SOURCE_SYSTEM;
-    evt.priority = EVENT_PRIORITY_NORMAL;
-    evt.timestamp = xTaskGetTickCount();
-    system_event_post(&evt);
-}
 
 void inverter_power_on(void)
 {

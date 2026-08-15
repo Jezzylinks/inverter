@@ -48,7 +48,7 @@ extern led_pattern_t pattern;
 #define SCL_PIN 22
 #define LCD_BLINK_INTERVAL_MS 500
 #define LCD_FLASH_QUEUE_DEPTH 4
-#define SYSTEM_STARTUP_DISPLAY_DURATION_MS 4000U
+#define SYSTEM_STARTUP_DISPLAY_DURATION_MS 6000U
 
 static uint8_t loading_progress(uint32_t elapsed, uint32_t duration);
 
