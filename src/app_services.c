@@ -37,11 +37,13 @@ static esp_err_t persist_u8(const char *key, uint8_t value)
 {
     nvs_handle_t handle;
     esp_err_t err = nvs_open(APP_SERVICES_NVS_NAMESPACE, NVS_READWRITE, &handle);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         return err;
     }
     err = nvs_set_u8(handle, key, value);
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         err = nvs_commit(handle);
     }
     nvs_close(handle);
@@ -52,18 +54,24 @@ static esp_err_t persist_manifest_url(const char *url)
 {
     nvs_handle_t handle;
     esp_err_t err = nvs_open(APP_SERVICES_NVS_NAMESPACE, NVS_READWRITE, &handle);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         return err;
     }
-    if (url[0] == '\0') {
+    if (url[0] == '\0')
+    {
         err = nvs_erase_key(handle, APP_OTA_MANIFEST_KEY);
-        if (err == ESP_ERR_NVS_NOT_FOUND) {
+        if (err == ESP_ERR_NVS_NOT_FOUND)
+        {
             err = ESP_OK;
         }
-    } else {
+    }
+    else
+    {
         err = nvs_set_str(handle, APP_OTA_MANIFEST_KEY, url);
     }
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         err = nvs_commit(handle);
     }
     nvs_close(handle);
@@ -76,16 +84,20 @@ static void load_persisted_config(void)
     uint8_t auto_check = 1U;
     nvs_handle_t handle;
     esp_err_t err = nvs_open(APP_SERVICES_NVS_NAMESPACE, NVS_READONLY, &handle);
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         (void)nvs_get_u8(handle, APP_WIFI_ENABLED_KEY, &wifi_enabled);
         (void)nvs_get_u8(handle, APP_OTA_AUTOCHECK_KEY, &auto_check);
         size_t length = sizeof(s_manifest_url);
         err = nvs_get_str(handle, APP_OTA_MANIFEST_KEY, s_manifest_url, &length);
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             s_manifest_url[0] = '\0';
         }
         nvs_close(handle);
-    } else {
+    }
+    else
+    {
         s_manifest_url[0] = '\0';
     }
 
@@ -96,7 +108,8 @@ static void load_persisted_config(void)
 
 static const char *wifi_state_text(wifi_controller_state_t state)
 {
-    switch (state) {
+    switch (state)
+    {
     case WIFI_CONTROLLER_CONNECTED:
         return "Connected";
     case WIFI_CONTROLLER_CONNECTING:
@@ -114,7 +127,8 @@ static const char *wifi_state_text(wifi_controller_state_t state)
 
 static void ota_progress_callback(int percent)
 {
-    if (!s_services_mutex) {
+    if (!s_services_mutex)
+    {
         return;
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
@@ -125,13 +139,15 @@ static void ota_progress_callback(int percent)
 
 static void ota_status_callback(ota_status_t status, int percent)
 {
-    if (!s_services_mutex) {
+    if (!s_services_mutex)
+    {
         return;
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_ota_status.progress_percent = percent;
-    switch (status) {
+    switch (status)
+    {
     case OTA_STATUS_STARTED:
     case OTA_STATUS_DOWNLOADING:
     case OTA_STATUS_VERIFYING:
@@ -154,13 +170,20 @@ static void ota_status_callback(ota_status_t status, int percent)
     }
     xSemaphoreGive(s_services_mutex);
 
-    if (status == OTA_STATUS_VERIFYING) {
+    if (status == OTA_STATUS_VERIFYING)
+    {
         lcd_flash_message("Verifying Update", "Please wait", 1200U);
-    } else if (status == OTA_STATUS_FAILED) {
+    }
+    else if (status == OTA_STATUS_FAILED)
+    {
         lcd_flash_message("Update Failed", "Current kept", 1800U);
-    } else if (status == OTA_STATUS_CANCELLED) {
+    }
+    else if (status == OTA_STATUS_CANCELLED)
+    {
         lcd_flash_message("Update Cancelled", "Current kept", 1200U);
-    } else if (status == OTA_STATUS_SUCCESS) {
+    }
+    else if (status == OTA_STATUS_SUCCESS)
+    {
         lcd_flash_message("Update Complete", "Restarting", 800U);
     }
 }
@@ -170,25 +193,29 @@ static void ota_auto_check_task(void *parameter)
     task_watchdog_register("ota_auto_check_task");
     (void)parameter;
     uint32_t wait_ms = 30000U;
-    while (wait_ms > 0U) {
+    while (wait_ms > 0U)
+    {
         task_watchdog_feed();
         const uint32_t slice = wait_ms > 1000U ? 1000U : wait_ms;
         vTaskDelay(pdMS_TO_TICKS(slice));
         wait_ms -= slice;
         task_watchdog_feed();
     }
-    while (true) {
+    while (true)
+    {
         task_watchdog_feed();
         app_ota_status_t status;
         app_services_get_ota_status(&status);
         if (status.auto_check_enabled &&
             status.state != APP_OTA_DOWNLOADING &&
             status.state != APP_OTA_CHECKING &&
-            wifi_controller_is_connected()) {
+            wifi_controller_is_connected())
+        {
             (void)app_services_check_for_update(false);
         }
         wait_ms = APP_OTA_CHECK_INTERVAL_MS;
-        while (wait_ms > 0U) {
+        while (wait_ms > 0U)
+        {
             const uint32_t slice = wait_ms > 1000U ? 1000U : wait_ms;
             vTaskDelay(pdMS_TO_TICKS(slice));
             wait_ms -= slice;
@@ -199,9 +226,11 @@ static void ota_auto_check_task(void *parameter)
 
 esp_err_t app_services_init(void)
 {
-    if (!s_services_mutex) {
+    if (!s_services_mutex)
+    {
         s_services_mutex = xSemaphoreCreateMutex();
-        if (!s_services_mutex) {
+        if (!s_services_mutex)
+        {
             return ESP_ERR_NO_MEM;
         }
     }
@@ -213,33 +242,63 @@ esp_err_t app_services_init(void)
 
     load_persisted_config();
 
+    if (s_manifest_url[0] == '\0')
+    {
+        const char *bootstrap_manifest_url =
+            "https://github.com/Jezzylinks/inverter/releases/latest/download/inverter.csv";
+        const esp_err_t manifest_err =
+            app_services_set_ota_manifest_url(bootstrap_manifest_url);
+        if (manifest_err != ESP_OK)
+        {
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Could not provision OTA manifest URL: %s",
+                     esp_err_to_name(manifest_err));
+        }
+        else
+        {
+            ESP_LOGI(APP_SERVICES_TAG, "OTA manifest URL provisioned");
+        }
+    }
+
     esp_err_t err = wifi_security_init();
-    if (err != ESP_OK) {
+
+    esp_err_t err = wifi_security_init();
+    if (err != ESP_OK)
+    {
         ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi security storage unavailable: %s", esp_err_to_name(err));
     }
     err = wifi_controller_init();
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi controller unavailable: %s", esp_err_to_name(err));
-    } else if (sys_state.wifi.enabled) {
+    }
+    else if (sys_state.wifi.enabled)
+    {
         err = wifi_controller_start();
-        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+        {
             ESP_LOGW(APP_SERVICES_TAG, "Could not restore Wi-Fi state: %s", esp_err_to_name(err));
         }
     }
 
     const esp_err_t ota_err = ota_service_init();
-    if (ota_err != ESP_OK) {
+    if (ota_err != ESP_OK)
+    {
         ESP_LOGW(APP_SERVICES_TAG, "OTA service unavailable: %s", esp_err_to_name(ota_err));
-    } else {
+    }
+    else
+    {
         (void)ota_service_register_progress_callback(ota_progress_callback);
         (void)ota_service_register_status_callback(ota_status_callback);
         (void)ota_service_get_current_version(s_ota_status.installed_version,
                                               sizeof(s_ota_status.installed_version));
     }
 
-    if (!s_ota_check_task) {
+    if (!s_ota_check_task)
+    {
         if (xTaskCreate(ota_auto_check_task, "ota_check", APP_OTA_TASK_STACK_SIZE,
-                        NULL, APP_OTA_TASK_PRIORITY, &s_ota_check_task) != pdPASS) {
+                        NULL, APP_OTA_TASK_PRIORITY, &s_ota_check_task) != pdPASS)
+        {
             s_ota_check_task = NULL;
             ESP_LOGW(APP_SERVICES_TAG, "Could not create OTA availability task");
         }
@@ -253,30 +312,40 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
     sys_state.inverter.wifi_enabled = enabled;
 
     esp_err_t controller_err = ESP_OK;
-    if (enabled) {
+    if (enabled)
+    {
         lcd_show_wifi_connecting("Starting Wi-Fi");
         controller_err = wifi_controller_start();
-        if (controller_err == ESP_ERR_INVALID_STATE) {
+        if (controller_err == ESP_ERR_INVALID_STATE)
+        {
             controller_err = wifi_controller_reconnect();
         }
-    } else {
+    }
+    else
+    {
         lcd_flash_message("Wi-Fi Disabled", "Stopping...", 900U);
         controller_err = wifi_controller_stop();
-        if (controller_err == ESP_ERR_INVALID_STATE) {
+        if (controller_err == ESP_ERR_INVALID_STATE)
+        {
             controller_err = ESP_OK;
         }
     }
 
     const esp_err_t nvs_err = persist_u8(APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
-    if (nvs_err != ESP_OK) {
+    if (nvs_err != ESP_OK)
+    {
         ESP_LOGE(APP_SERVICES_TAG, "Could not persist Wi-Fi intent: %s", esp_err_to_name(nvs_err));
     }
 
-    if (controller_err == ESP_OK) {
-        if (!enabled) {
+    if (controller_err == ESP_OK)
+    {
+        if (!enabled)
+        {
             lcd_flash_message("Wi-Fi Disabled", "Saved to NVS", 1200U);
         }
-    } else {
+    }
+    else
+    {
         lcd_flash_message(enabled ? "Wi-Fi Start Failed" : "Wi-Fi Stop Failed",
                           "Setting saved", 1500U);
     }
@@ -290,7 +359,8 @@ bool app_services_wifi_enabled(void)
 
 esp_err_t app_services_wifi_scan(void)
 {
-    if (!sys_state.wifi.enabled) {
+    if (!sys_state.wifi.enabled)
+    {
         lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
         return ESP_ERR_INVALID_STATE;
     }
@@ -298,11 +368,13 @@ esp_err_t app_services_wifi_scan(void)
     wifi_ap_record_t records[WIFI_MAX_SCAN_RESULTS] = {0};
     uint16_t count = WIFI_MAX_SCAN_RESULTS;
     const esp_err_t err = wifi_scan_start_records(records, &count);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         lcd_flash_message("Scan Unavailable", "Try again", 1400U);
         return err;
     }
-    if (count == 0U) {
+    if (count == 0U)
+    {
         lcd_flash_message("No Networks", "Found", 1200U);
         return ESP_OK;
     }
@@ -310,7 +382,8 @@ esp_err_t app_services_wifi_scan(void)
     const uint8_t display_count = count < LCD_WIFI_MAX_AP ? (uint8_t)count : LCD_WIFI_MAX_AP;
     char ssids[LCD_WIFI_MAX_AP][9] = {{0}};
     int8_t rssi[LCD_WIFI_MAX_AP] = {0};
-    for (uint8_t i = 0U; i < display_count; ++i) {
+    for (uint8_t i = 0U; i < display_count; ++i)
+    {
         strncpy(ssids[i], (const char *)records[i].ssid, sizeof(ssids[i]) - 1U);
         rssi[i] = records[i].rssi;
     }
@@ -321,21 +394,25 @@ esp_err_t app_services_wifi_scan(void)
 
 esp_err_t app_services_wifi_connect_saved(void)
 {
-    if (!sys_state.wifi.enabled) {
+    if (!sys_state.wifi.enabled)
+    {
         lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
         return ESP_ERR_INVALID_STATE;
     }
-    if (!wifi_storage_has_credentials()) {
+    if (!wifi_storage_has_credentials())
+    {
         lcd_flash_message("No Saved Wi-Fi", "Start Setup AP", 1500U);
         return ESP_ERR_NOT_FOUND;
     }
 
     lcd_show_wifi_connecting("Saved network");
     esp_err_t err = wifi_controller_start();
-    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN)
+    {
         err = wifi_controller_reconnect();
     }
-    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN)
+    {
         lcd_show_wifi_result(false, true, false, "Connect failed");
     }
     return err;
@@ -351,13 +428,17 @@ esp_err_t app_services_wifi_disconnect(void)
 
 esp_err_t app_services_wifi_start_provisioning(void)
 {
-    if (!sys_state.wifi.enabled) {
+    if (!sys_state.wifi.enabled)
+    {
         return app_services_set_wifi_enabled(true);
     }
     const esp_err_t err = wifi_controller_start_provisioning();
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         lcd_flash_message("Setup AP Active", "Use installer", 1500U);
-    } else {
+    }
+    else
+    {
         lcd_flash_message("Setup AP Failed", "Try again", 1500U);
     }
     return err;
@@ -372,11 +453,13 @@ void app_services_show_wifi_status(void)
 esp_err_t app_services_set_ota_manifest_url(const char *url)
 {
     if (!url || strlen(url) >= sizeof(s_manifest_url) ||
-        (url[0] != '\0' && strncmp(url, "https://", 8U) != 0)) {
+        (url[0] != '\0' && strncmp(url, "https://", 8U) != 0))
+    {
         return ESP_ERR_INVALID_ARG;
     }
     const esp_err_t err = persist_manifest_url(url);
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         strncpy(s_manifest_url, url, sizeof(s_manifest_url) - 1U);
         s_manifest_url[sizeof(s_manifest_url) - 1U] = '\0';
@@ -387,11 +470,13 @@ esp_err_t app_services_set_ota_manifest_url(const char *url)
 
 esp_err_t app_services_get_ota_manifest_url(char *buffer, size_t buffer_len)
 {
-    if (!buffer || buffer_len == 0U) {
+    if (!buffer || buffer_len == 0U)
+    {
         return ESP_ERR_INVALID_ARG;
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    if (strlen(s_manifest_url) >= buffer_len) {
+    if (strlen(s_manifest_url) >= buffer_len)
+    {
         xSemaphoreGive(s_services_mutex);
         return ESP_ERR_INVALID_SIZE;
     }
@@ -403,23 +488,28 @@ esp_err_t app_services_get_ota_manifest_url(char *buffer, size_t buffer_len)
 esp_err_t app_services_check_for_update(bool user_initiated)
 {
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
-    if (!wifi_controller_is_connected()) {
-        if (user_initiated) {
+    if (!wifi_controller_is_connected())
+    {
+        if (user_initiated)
+        {
             lcd_flash_message("Wi-Fi Required", "Connect first", 1500U);
         }
         return ESP_ERR_INVALID_STATE;
     }
 
     (void)app_services_get_ota_manifest_url(manifest_url, sizeof(manifest_url));
-    if (manifest_url[0] == '\0') {
-        if (user_initiated) {
+    if (manifest_url[0] == '\0')
+    {
+        if (user_initiated)
+        {
             lcd_flash_message("OTA Not Set", "Configure URL", 1500U);
         }
         return ESP_ERR_NOT_FOUND;
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    if (s_ota_status.state == APP_OTA_DOWNLOADING || s_ota_status.state == APP_OTA_CHECKING) {
+    if (s_ota_status.state == APP_OTA_DOWNLOADING || s_ota_status.state == APP_OTA_CHECKING)
+    {
         xSemaphoreGive(s_services_mutex);
         return ESP_ERR_INVALID_STATE;
     }
@@ -432,28 +522,37 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     const esp_err_t err = ota_service_check_csv_manifest(manifest_url, &entry, &update_available);
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    if (err == ESP_OK && update_available) {
+    if (err == ESP_OK && update_available)
+    {
         s_ota_status.state = APP_OTA_AVAILABLE;
         s_ota_status.update_available = true;
         strncpy(s_ota_status.available_version, entry.version,
                 sizeof(s_ota_status.available_version) - 1U);
-    } else {
+    }
+    else
+    {
         s_ota_status.state = err == ESP_OK ? APP_OTA_IDLE : APP_OTA_ERROR;
         s_ota_status.update_available = false;
         s_ota_status.available_version[0] = '\0';
     }
     xSemaphoreGive(s_services_mutex);
 
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGW(APP_SERVICES_TAG, "OTA check failed: %s", esp_err_to_name(err));
-        if (user_initiated) {
+        if (user_initiated)
+        {
             lcd_flash_message("OTA Check Failed", "Try again", 1500U);
         }
-    } else if (update_available) {
+    }
+    else if (update_available)
+    {
         char line[LCD_LINE_SIZE];
         snprintf(line, sizeof(line), "Version %.8s", entry.version);
         lcd_flash_message("Update Available", line, 1800U);
-    } else if (user_initiated) {
+    }
+    else if (user_initiated)
+    {
         lcd_flash_message("Firmware Current", "No update", 1400U);
     }
     return err;
@@ -464,13 +563,15 @@ esp_err_t app_services_request_update_confirmation(void)
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool available = s_ota_status.update_available;
     const bool busy = s_ota_status.state == APP_OTA_DOWNLOADING;
-    if (available && !busy) {
+    if (available && !busy)
+    {
         s_ota_status.state = APP_OTA_CONFIRMING;
         s_ota_status.confirmation_pending = true;
     }
     xSemaphoreGive(s_services_mutex);
 
-    if (!available || busy) {
+    if (!available || busy)
+    {
         lcd_flash_message("No Update Ready", "Check first", 1400U);
         return ESP_ERR_INVALID_STATE;
     }
@@ -483,7 +584,8 @@ esp_err_t app_services_confirm_update(void)
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool confirmed = s_ota_status.confirmation_pending;
-    if (confirmed) {
+    if (confirmed)
+    {
         s_ota_status.confirmation_pending = false;
         s_ota_status.state = APP_OTA_DOWNLOADING;
         s_ota_status.progress_percent = 0;
@@ -491,11 +593,13 @@ esp_err_t app_services_confirm_update(void)
     strncpy(manifest_url, s_manifest_url, sizeof(manifest_url) - 1U);
     xSemaphoreGive(s_services_mutex);
 
-    if (!confirmed || manifest_url[0] == '\0') {
+    if (!confirmed || manifest_url[0] == '\0')
+    {
         return ESP_ERR_INVALID_STATE;
     }
     const esp_err_t err = ota_service_start_from_csv(manifest_url);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_ota_status.state = APP_OTA_ERROR;
         xSemaphoreGive(s_services_mutex);
@@ -511,15 +615,18 @@ esp_err_t app_services_cancel_update(void)
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool pending = s_ota_status.confirmation_pending;
     s_ota_status.confirmation_pending = false;
-    if (pending) {
+    if (pending)
+    {
         s_ota_status.state = APP_OTA_AVAILABLE;
     }
     xSemaphoreGive(s_services_mutex);
 
-    if (ota_service_in_progress()) {
+    if (ota_service_in_progress())
+    {
         return ota_service_cancel();
     }
-    if (pending) {
+    if (pending)
+    {
         lcd_flash_message("Update Deferred", "Current kept", 1200U);
     }
     return ESP_OK;
@@ -527,10 +634,12 @@ esp_err_t app_services_cancel_update(void)
 
 void app_services_get_ota_status(app_ota_status_t *status)
 {
-    if (!status) {
+    if (!status)
+    {
         return;
     }
-    if (!s_services_mutex) {
+    if (!s_services_mutex)
+    {
         memset(status, 0, sizeof(*status));
         return;
     }

@@ -1,0 +1,123 @@
+cd "C:\Users\hp\Documents\PlatformIO\Projects\Inverter_System_FileSystem"
+
+$VERSION="1.4.0"
+$TAG="v$VERSION"
+
+pio run
+
+$BIN=".pio\build\esp32dev\firmware.bin"
+$SIZE=(Get-Item $BIN ).Length
+$SHA=(Get-FileHash $BIN -Algorithm SHA256).Hash.ToLower()
+
+New-Item -ItemType Directory -Force "release\$VERSION" | Out-Null
+Copy-Item $BIN "release\$VERSION\inverter-$VERSION.bin"
+
+$URL="https://github.com/Jezzylinks/inverter/releases/download/$TAG/inverter-$VERSION.bin"
+
+"version,url,sha256,size`n$VERSION,$URL,$SHA,$SIZE" | Set-Content "release\$VERSION\inverter.csv"
+
+Get-Content "release\$VERSION\inverter.csv"
+
+gh release create $TAG `
+  "release\$VERSION\inverter-$VERSION.bin" `
+  "release\$VERSION\inverter.csv" `
+  --title "Inverter Firmware $VERSION" `
+  --notes "Supervised OTA firmware release $VERSION By Engr. Johsnon"
+
+// GitHub push for release
+
+gh release create v1.4.0 .\release\1.4.0\inverter-1.4.0.bin .\release\1.4.0\inverter.csv --title "Inverter Firmware 1.4.0" --notes "Supervised OTA firmware release 1.4.0"
+
+
+To publish an OTA release, you need to do two separate things:
+Push the source-code commit to master.
+Create a GitHub Release containing the ESP32 .bin file and inverter.csv.
+A. Push source code to GitHub
+From your project folder in the VS Code PowerShell terminal:
+powershell
+cd "C:\Users\hp\Documents\PlatformIO\Projects\Inverter_System_FileSystem"
+
+git add .
+git commit -m "Prepare OTA firmware release 1.4.0"
+git push origin master
+If Git reports that there is nothing to commit, that is acceptable; continue with the release creation.
+B. Build the firmware
+Use a release version greater than the version currently installed on the ESP32:
+powershell
+$VERSION="1.4.0"
+$TAG="v$VERSION"
+
+pio run
+After a successful build, the firmware file should exist here:
+text
+.pio\build\esp32dev\firmware.bin
+Check it:
+powershell
+Get-Item .\.pio\build\esp32dev\firmware.bin
+C. Create the release files
+Run this complete PowerShell block:
+powershell
+$VERSION="1.4.0"
+$TAG="v$VERSION"
+$BIN=".pio\build\esp32dev\firmware.bin"
+
+if (!(Test-Path $BIN)) {
+    Write-Error "Firmware file not found: $BIN"
+    return
+}
+
+$SIZE=(Get-Item $BIN).Length
+$SHA=(Get-FileHash $BIN -Algorithm SHA256).Hash.ToLower()
+
+New-Item -ItemType Directory -Force "release\$VERSION" | Out-Null
+Copy-Item $BIN "release\$VERSION\inverter-$VERSION.bin" -Force
+
+$FIRMWARE_URL="https://github.com/Jezzylinks/inverter/releases/download/$TAG/inverter-$VERSION.bin"
+
+"version,url,sha256,size`n$VERSION,$FIRMWARE_URL,$SHA,$SIZE" | Set-Content "release\$VERSION\inverter.csv"
+
+Get-ChildItem "release\$VERSION"
+Get-Content "release\$VERSION\inverter.csv"
+You should see:
+text
+release\1.4.0\inverter-1.4.0.bin
+release\1.4.0\inverter.csv
+The CSV should look similar to:
+csv
+version,url,sha256,size
+1.4.0,https://github.com/Jezzylinks/inverter/releases/download/v1.4.0/inverter-1.4.0.bin,0123456789abcdef...,1228032
+D. Create and upload the GitHub Release
+Run:
+powershell
+gh release create v1.4.0 .\release\1.4.0\inverter-1.4.0.bin .\release\1.4.0\inverter.csv --title "Inverter Firmware 1.4.0" --notes "Supervised OTA firmware release 1.4.0"
+This command creates the GitHub tag v1.4.0, creates the release, and uploads both files.
+Before doing this, confirm that GitHub CLI is logged in:
+powershell
+gh auth status
+If necessary:
+powershell
+gh auth login
+Choose:
+text
+GitHub.com
+HTTPS
+Login with a web browser
+E. Verify the release
+Run:
+powershell
+gh release view v1.4.0
+Or open this page in your browser:
+text
+https://github.com/Jezzylinks/inverter/releases/tag/v1.4.0
+The release must contain both:
+text
+inverter-1.4.0.bin
+inverter.csv
+F. Configure the inverter’s manifest URL
+The URL stored in the inverter should be:
+text
+https://github.com/Jezzylinks/inverter/releases/latest/download/inverter.csv
+The CSV then points to the version-specific binary URL:
+text
+https://github.com/Jezzylinks/inverter/releases/download/v1.4.0/inverter-1.4.0.bin
+The inverter uses the CSV URL, not the .bin URL.
