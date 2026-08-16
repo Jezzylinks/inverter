@@ -20,6 +20,7 @@
 #include "wifi/wifi_config.h"
 #include "security/security.h"
 #include "system_state.h"
+#include "network_services.h"
 
 static const char *TAG = "JSON_API";
 
@@ -37,6 +38,21 @@ static void add_cors_headers(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
 }
 
+static const char *api_status_line(int status_code)
+{
+    switch (status_code) {
+    case 200: return "200 OK";
+    case 202: return "202 Accepted";
+    case 400: return "400 Bad Request";
+    case 401: return "401 Unauthorized";
+    case 404: return "404 Not Found";
+    case 405: return "405 Method Not Allowed";
+    case 500: return "500 Internal Server Error";
+    case 503: return "503 Service Unavailable";
+    default: return "500 Internal Server Error";
+    }
+}
+
 static esp_err_t send_json(httpd_req_t *req, cJSON *root, int status_code)
 {
     add_cors_headers(req);
@@ -49,14 +65,203 @@ static esp_err_t send_json(httpd_req_t *req, cJSON *root, int status_code)
         return ESP_OK;
     }
 
-    char status_str[32];
-    snprintf(status_str, sizeof(status_str), "%d", status_code);
-    httpd_resp_set_status(req, status_code == 200 ? "200 OK" : status_str);
+    httpd_resp_set_status(req, api_status_line(status_code));
     httpd_resp_sendstr(req, json_str);
 
     free(json_str);
     cJSON_Delete(root);
     return ESP_OK;
+}
+
+static esp_err_t api_require_pin(httpd_req_t *req);
+
+static esp_err_t api_options_handler(httpd_req_t *req)
+{
+    add_cors_headers(req);
+    httpd_resp_set_hdr(req, "Access-Control-Max-Age", "600");
+    httpd_resp_set_status(req, "204 No Content");
+    return httpd_resp_send(req, NULL, 0);
+}
+
+static esp_err_t api_receive_json(httpd_req_t *req, cJSON **json)
+{
+    if (req == NULL || json == NULL || req->content_len == 0 || req->content_len > 2048) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    char *body = calloc((size_t)req->content_len + 1U, 1U);
+    if (body == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    size_t received = 0U;
+    while (received < (size_t)req->content_len) {
+        const int result = httpd_req_recv(req, body + received,
+                                           (size_t)req->content_len - received);
+        if (result <= 0) {
+            free(body);
+            return result == HTTPD_SOCK_ERR_TIMEOUT ? ESP_ERR_TIMEOUT : ESP_FAIL;
+        }
+        received += (size_t)result;
+    }
+    body[received] = '\0';
+    *json = cJSON_Parse(body);
+    free(body);
+    return *json != NULL ? ESP_OK : ESP_ERR_INVALID_ARG;
+}
+
+static void api_add_mqtt_config(cJSON *root, const network_mqtt_config_t *config)
+{
+    cJSON *mqtt = cJSON_CreateObject();
+    cJSON_AddBoolToObject(mqtt, "enabled", config->enabled);
+    cJSON_AddStringToObject(mqtt, "broker", config->broker_url);
+    cJSON_AddStringToObject(mqtt, "client_id", config->client_id);
+    cJSON_AddStringToObject(mqtt, "username", config->username);
+    cJSON_AddStringToObject(mqtt, "publish_topic", config->publish_topic);
+    cJSON_AddStringToObject(mqtt, "subscribe_topic", config->subscribe_topic);
+    cJSON_AddNumberToObject(mqtt, "keepalive_sec", config->keepalive_sec);
+    cJSON_AddNumberToObject(mqtt, "qos", config->qos);
+    cJSON_AddBoolToObject(mqtt, "retain", config->retain);
+    network_services_status_t status;
+    network_services_get_status(&status);
+    cJSON_AddBoolToObject(mqtt, "connected", status.mqtt_connected);
+    cJSON_AddItemToObject(root, "mqtt", mqtt);
+}
+
+static esp_err_t api_services_handler(httpd_req_t *req)
+{
+    esp_err_t auth_err = api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
+    network_services_status_t status;
+    network_mqtt_config_t config;
+    network_services_get_status(&status);
+    network_services_get_mqtt_config(&config);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "http", status.http_running);
+    cJSON_AddBoolToObject(root, "websocket", status.websocket_running);
+    cJSON_AddBoolToObject(root, "mdns", status.mdns_running);
+    cJSON_AddBoolToObject(root, "mqtt_configured", status.mqtt_configured);
+    cJSON_AddBoolToObject(root, "mqtt_connected", status.mqtt_connected);
+    api_add_mqtt_config(root, &config);
+    return send_json(req, root, 200);
+}
+
+static esp_err_t api_mqtt_config_handler(httpd_req_t *req)
+{
+    esp_err_t auth_err = api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
+    cJSON *json = NULL;
+    esp_err_t err = api_receive_json(req, &json);
+    if (err != ESP_OK) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Invalid JSON body");
+        return send_json(req, error, err == ESP_ERR_NO_MEM ? 503 : 400);
+    }
+
+    network_mqtt_config_t config;
+    (void)network_services_get_mqtt_config(&config);
+    cJSON *item = cJSON_GetObjectItem(json, "enabled");
+    if (item != NULL && cJSON_IsBool(item)) config.enabled = cJSON_IsTrue(item);
+    item = cJSON_GetObjectItem(json, "broker");
+    if (item != NULL && cJSON_IsString(item)) strncpy(config.broker_url, item->valuestring, sizeof(config.broker_url) - 1U);
+    item = cJSON_GetObjectItem(json, "client_id");
+    if (item != NULL && cJSON_IsString(item)) strncpy(config.client_id, item->valuestring, sizeof(config.client_id) - 1U);
+    item = cJSON_GetObjectItem(json, "username");
+    if (item != NULL && cJSON_IsString(item)) strncpy(config.username, item->valuestring, sizeof(config.username) - 1U);
+    item = cJSON_GetObjectItem(json, "password");
+    if (item != NULL && cJSON_IsString(item)) strncpy(config.password, item->valuestring, sizeof(config.password) - 1U);
+    item = cJSON_GetObjectItem(json, "publish_topic");
+    if (item != NULL && cJSON_IsString(item)) strncpy(config.publish_topic, item->valuestring, sizeof(config.publish_topic) - 1U);
+    item = cJSON_GetObjectItem(json, "subscribe_topic");
+    if (item != NULL && cJSON_IsString(item)) strncpy(config.subscribe_topic, item->valuestring, sizeof(config.subscribe_topic) - 1U);
+    item = cJSON_GetObjectItem(json, "keepalive_sec");
+    if (item != NULL && cJSON_IsNumber(item)) config.keepalive_sec = item->valueint;
+    item = cJSON_GetObjectItem(json, "qos");
+    if (item != NULL && cJSON_IsNumber(item)) config.qos = item->valueint;
+    item = cJSON_GetObjectItem(json, "retain");
+    if (item != NULL && cJSON_IsBool(item)) config.retain = cJSON_IsTrue(item);
+    cJSON_Delete(json);
+
+    err = network_services_set_mqtt_config(&config);
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", err == ESP_OK);
+    if (err == ESP_OK) {
+        cJSON_AddStringToObject(response, "message", "MQTT configuration saved");
+    } else {
+        cJSON_AddStringToObject(response, "error", esp_err_to_name(err));
+    }
+    return send_json(req, response, err == ESP_OK ? 200 : 400);
+}
+
+static esp_err_t api_mqtt_connect_handler(httpd_req_t *req)
+{
+    esp_err_t auth_err = api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
+    const esp_err_t err = network_services_mqtt_connect();
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", err == ESP_OK);
+    cJSON_AddBoolToObject(response, "pending", err == ESP_OK);
+    cJSON_AddStringToObject(response, "message", err == ESP_OK ? "MQTT connection requested" : esp_err_to_name(err));
+    return send_json(req, response, err == ESP_OK ? 202 : 400);
+}
+
+static esp_err_t api_mqtt_disconnect_handler(httpd_req_t *req)
+{
+    esp_err_t auth_err = api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
+    const esp_err_t err = network_services_mqtt_disconnect();
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", err == ESP_OK);
+    cJSON_AddStringToObject(response, "message", err == ESP_OK ? "MQTT disconnected" : esp_err_to_name(err));
+    return send_json(req, response, err == ESP_OK ? 200 : 400);
+}
+
+static esp_err_t api_mqtt_publish_handler(httpd_req_t *req)
+{
+    esp_err_t auth_err = api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
+    cJSON *json = NULL;
+    esp_err_t err = api_receive_json(req, &json);
+    if (err != ESP_OK) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Invalid JSON body");
+        return send_json(req, error, 400);
+    }
+    cJSON *topic = cJSON_GetObjectItem(json, "topic");
+    cJSON *data = cJSON_GetObjectItem(json, "data");
+    cJSON *qos = cJSON_GetObjectItem(json, "qos");
+    cJSON *retain = cJSON_GetObjectItem(json, "retain");
+    const int message_id = network_services_mqtt_publish(
+        topic && cJSON_IsString(topic) ? topic->valuestring : NULL,
+        data && cJSON_IsString(data) ? data->valuestring : NULL,
+        qos && cJSON_IsNumber(qos) ? qos->valueint : 0,
+        retain && cJSON_IsBool(retain) ? cJSON_IsTrue(retain) : false);
+    cJSON_Delete(json);
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", message_id >= 0);
+    cJSON_AddNumberToObject(response, "message_id", message_id);
+    return send_json(req, response, message_id >= 0 ? 200 : 400);
+}
+
+static esp_err_t api_mqtt_subscribe_handler(httpd_req_t *req)
+{
+    esp_err_t auth_err = api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
+    cJSON *json = NULL;
+    esp_err_t err = api_receive_json(req, &json);
+    if (err != ESP_OK) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Invalid JSON body");
+        return send_json(req, error, 400);
+    }
+    cJSON *topic = cJSON_GetObjectItem(json, "topic");
+    cJSON *qos = cJSON_GetObjectItem(json, "qos");
+    const int message_id = network_services_mqtt_subscribe(
+        topic && cJSON_IsString(topic) ? topic->valuestring : NULL,
+        qos && cJSON_IsNumber(qos) ? qos->valueint : 0);
+    cJSON_Delete(json);
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", message_id >= 0);
+    cJSON_AddNumberToObject(response, "message_id", message_id);
+    return send_json(req, response, message_id >= 0 ? 200 : 400);
 }
 
 static esp_err_t api_require_pin(httpd_req_t *req)
@@ -172,6 +377,14 @@ static esp_err_t api_status_handler(httpd_req_t *req)
 
     int8_t rssi = wifi_monitor_get_rssi();
     cJSON_AddNumberToObject(root, "monitor_rssi", rssi);
+
+    network_services_status_t services;
+    network_services_get_status(&services);
+    cJSON_AddBoolToObject(root, "http_service", services.http_running);
+    cJSON_AddBoolToObject(root, "websocket_service", services.websocket_running);
+    cJSON_AddBoolToObject(root, "mdns_service", services.mdns_running);
+    cJSON_AddBoolToObject(root, "mqtt_configured", services.mqtt_configured);
+    cJSON_AddBoolToObject(root, "mqtt_connected", services.mqtt_connected);
 
     return send_json(req, root, 200);
 }
@@ -469,6 +682,56 @@ static const httpd_uri_t uri_config = {
     .handler = api_config_handler,
 };
 
+static const httpd_uri_t uri_services = {
+    .uri = "/api/v1/services",
+    .method = HTTP_GET,
+    .handler = api_services_handler,
+};
+
+static const httpd_uri_t uri_mqtt_config = {
+    .uri = "/api/v1/mqtt/config",
+    .method = HTTP_POST,
+    .handler = api_mqtt_config_handler,
+};
+
+static const httpd_uri_t uri_mqtt_connect = {
+    .uri = "/api/v1/mqtt/connect",
+    .method = HTTP_POST,
+    .handler = api_mqtt_connect_handler,
+};
+
+static const httpd_uri_t uri_mqtt_disconnect = {
+    .uri = "/api/v1/mqtt/disconnect",
+    .method = HTTP_POST,
+    .handler = api_mqtt_disconnect_handler,
+};
+
+static const httpd_uri_t uri_mqtt_publish = {
+    .uri = "/api/v1/mqtt/publish",
+    .method = HTTP_POST,
+    .handler = api_mqtt_publish_handler,
+};
+
+static const httpd_uri_t uri_mqtt_subscribe = {
+    .uri = "/api/v1/mqtt/subscribe",
+    .method = HTTP_POST,
+    .handler = api_mqtt_subscribe_handler,
+};
+
+#define API_OPTIONS_URI(name, path) \
+    static const httpd_uri_t name = { \
+        .uri = path, .method = HTTP_OPTIONS, .handler = api_options_handler \
+    }
+
+API_OPTIONS_URI(uri_connect_options, "/api/v1/connect");
+API_OPTIONS_URI(uri_disconnect_options, "/api/v1/disconnect");
+API_OPTIONS_URI(uri_reset_options, "/api/v1/reset");
+API_OPTIONS_URI(uri_mqtt_config_options, "/api/v1/mqtt/config");
+API_OPTIONS_URI(uri_mqtt_connect_options, "/api/v1/mqtt/connect");
+API_OPTIONS_URI(uri_mqtt_disconnect_options, "/api/v1/mqtt/disconnect");
+API_OPTIONS_URI(uri_mqtt_publish_options, "/api/v1/mqtt/publish");
+API_OPTIONS_URI(uri_mqtt_subscribe_options, "/api/v1/mqtt/subscribe");
+
 /*----------------------------------------------------------
  * Start / Stop
  *---------------------------------------------------------*/
@@ -482,9 +745,13 @@ esp_err_t json_api_server_start(httpd_handle_t server)
     s_server = server;
 
     const httpd_uri_t *uris[] = {
-        &uri_status, &uri_scan, &uri_connect,
-        &uri_disconnect, &uri_reset, &uri_config,
-        NULL};
+        &uri_status, &uri_scan, &uri_connect, &uri_disconnect, &uri_reset,
+        &uri_config, &uri_services, &uri_mqtt_config, &uri_mqtt_connect,
+        &uri_mqtt_disconnect, &uri_mqtt_publish, &uri_mqtt_subscribe,
+        &uri_connect_options, &uri_disconnect_options, &uri_reset_options,
+        &uri_mqtt_config_options, &uri_mqtt_connect_options,
+        &uri_mqtt_disconnect_options, &uri_mqtt_publish_options,
+        &uri_mqtt_subscribe_options, NULL};
 
     for (const httpd_uri_t **uri = uris; *uri != NULL; uri++)
     {
@@ -514,6 +781,20 @@ esp_err_t json_api_server_stop(void)
     httpd_unregister_uri_handler(s_server, "/api/v1/disconnect", HTTP_POST);
     httpd_unregister_uri_handler(s_server, "/api/v1/reset", HTTP_POST);
     httpd_unregister_uri_handler(s_server, "/api/v1/config", HTTP_GET);
+    httpd_unregister_uri_handler(s_server, "/api/v1/services", HTTP_GET);
+    httpd_unregister_uri_handler(s_server, "/api/v1/mqtt/config", HTTP_POST);
+    httpd_unregister_uri_handler(s_server, "/api/v1/mqtt/connect", HTTP_POST);
+    httpd_unregister_uri_handler(s_server, "/api/v1/mqtt/disconnect", HTTP_POST);
+    httpd_unregister_uri_handler(s_server, "/api/v1/mqtt/publish", HTTP_POST);
+    httpd_unregister_uri_handler(s_server, "/api/v1/mqtt/subscribe", HTTP_POST);
+    httpd_unregister_uri_handler(s_server, "/api/v1/connect", HTTP_OPTIONS);
+    httpd_unregister_uri_handler(s_server, "/api/v1/disconnect", HTTP_OPTIONS);
+    httpd_unregister_uri_handler(s_server, "/api/v1/reset", HTTP_OPTIONS);
+    httpd_unregister_uri_handler(s_server, "/api/v1/mqtt/config", HTTP_OPTIONS);
+    httpd_unregister_uri_handler(s_server, "/api/v1/mqtt/connect", HTTP_OPTIONS);
+    httpd_unregister_uri_handler(s_server, "/api/v1/mqtt/disconnect", HTTP_OPTIONS);
+    httpd_unregister_uri_handler(s_server, "/api/v1/mqtt/publish", HTTP_OPTIONS);
+    httpd_unregister_uri_handler(s_server, "/api/v1/mqtt/subscribe", HTTP_OPTIONS);
 
     s_server = NULL;
 

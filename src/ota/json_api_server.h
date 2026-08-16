@@ -15,7 +15,15 @@ extern "C"
 #include "esp_http_server.h"
 
     /**
-     * @brief Register JSON API URI handlers on an existing HTTP server
+     * Routes registered on the shared station-mode HTTP server:
+     * GET  /api/v1/status, /api/v1/scan, /api/v1/config, /api/v1/services
+     * POST /api/v1/connect, /api/v1/disconnect, /api/v1/reset
+     * POST /api/v1/mqtt/config, /api/v1/mqtt/connect,
+     *      /api/v1/mqtt/disconnect, /api/v1/mqtt/publish,
+     *      /api/v1/mqtt/subscribe
+     *
+     * Mutating routes require X-Inverter-PIN when security is enabled.
+     * Register JSON API URI handlers on an existing HTTP server.
      * @param server Existing HTTP server handle
      * @return ESP_OK on success
      */

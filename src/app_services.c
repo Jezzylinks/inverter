@@ -17,6 +17,7 @@
 #include "wifi/wifi_scan.h"
 #include "wifi/wifi_security.h"
 #include "wifi/wifi_storage.h"
+#include "network_services.h"
 
 #include "task_watchdog.h"
 #define APP_SERVICES_TAG "APP_SERVICES"
@@ -464,6 +465,15 @@ esp_err_t app_services_init(void)
                      "Could not register Wi-Fi status callback: %s",
                      esp_err_to_name(callback_err));
         }
+        const esp_err_t network_err = network_services_init();
+        if (network_err != ESP_OK) {
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Network services unavailable: %s",
+                     esp_err_to_name(network_err));
+            if (err == ESP_OK) {
+                err = network_err;
+            }
+        }
         if (sys_state.wifi.enabled)
         {
             err = wifi_controller_start();
@@ -515,6 +525,9 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
                                      : APP_WIFI_OPERATION_DISABLE,
                              ssid);
 
+    if (!enabled) {
+        (void)network_services_stop();
+    }
     esp_err_t controller_err = enabled ? wifi_controller_start()
                                        : wifi_controller_stop();
     if (controller_err == ESP_ERR_INVALID_STATE && enabled) {

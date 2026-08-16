@@ -21,6 +21,8 @@
 
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_monitor.h"
+#include "security/security.h"
+#include "system_state.h"
 
 static const char *TAG = "WS_SERVER";
 
@@ -39,6 +41,7 @@ static ws_client_t s_clients[WS_MAX_CLIENTS];
 static SemaphoreHandle_t s_mutex = NULL;
 static httpd_handle_t s_server = NULL;
 static bool s_initialized = false;
+extern system_state_t sys_state;
 
 /*----------------------------------------------------------
  * Find or allocate client slot
@@ -189,10 +192,41 @@ static void ws_status_callback(const wifi_status_t *status)
 /*----------------------------------------------------------
  * WebSocket handler
  *---------------------------------------------------------*/
+static bool ws_authorized(httpd_req_t *req)
+{
+    if (!sys_state.security.enabled) {
+        return true;
+    }
+    if (httpd_req_get_hdr_value_len(req, "X-Inverter-PIN") != SECURITY_PIN_LEN) {
+        return false;
+    }
+    char pin_text[SECURITY_PIN_LEN + 1U] = {0};
+    if (httpd_req_get_hdr_value_str(req, "X-Inverter-PIN", pin_text,
+                                    sizeof(pin_text)) != ESP_OK) {
+        return false;
+    }
+    uint8_t pin[SECURITY_PIN_LEN] = {0};
+    for (size_t i = 0U; i < SECURITY_PIN_LEN; ++i) {
+        if (pin_text[i] < '0' || pin_text[i] > '9') {
+            return false;
+        }
+        pin[i] = (uint8_t)(pin_text[i] - '0');
+    }
+    const bool valid = security_verify_pin(pin);
+    memset(pin, 0, sizeof(pin));
+    memset(pin_text, 0, sizeof(pin_text));
+    return valid;
+}
+
 static esp_err_t ws_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET)
     {
+        if (!ws_authorized(req)) {
+            httpd_resp_set_status(req, "401 Unauthorized");
+            httpd_resp_set_type(req, "text/plain; charset=utf-8");
+            return httpd_resp_sendstr(req, "PIN required");
+        }
         ESP_LOGI(TAG, "WS handshake from fd %d", httpd_req_to_sockfd(req));
         return ESP_OK;
     }
