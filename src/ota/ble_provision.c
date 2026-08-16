@@ -45,7 +45,7 @@ static bool s_credentials_received = false;
 static int ble_prov_access(uint16_t conn_handle, uint16_t attr_handle,
                            struct ble_gatt_access_ctxt *ctxt, void *arg);
 
-static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
+static const struct ble_gatt_svc_def gatt_svr_svcs[] __attribute__((unused)) = {
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = BLE_UUID16_DECLARE(BLE_PROV_SVC_UUID),
@@ -190,7 +190,7 @@ static int ble_prov_access(uint16_t conn_handle, uint16_t attr_handle,
 /*----------------------------------------------------------
  * BLE Event Callbacks
  *---------------------------------------------------------*/
-static int ble_gap_event(struct ble_gap_event *event, void *arg)
+static int __attribute__((unused)) ble_gap_event(struct ble_gap_event *event, void *arg)
 {
     switch (event->type)
     {
@@ -233,6 +233,9 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg)
  *---------------------------------------------------------*/
 esp_err_t ble_provision_start_advertising(void)
 {
+#if !WIFI_RUNTIME_PROVISIONING_ENABLED
+    return ESP_ERR_NOT_SUPPORTED;
+#else
     struct ble_gap_adv_params adv_params;
     struct ble_hs_adv_fields fields;
     int rc;
@@ -269,12 +272,13 @@ esp_err_t ble_provision_start_advertising(void)
     ESP_LOGI(TAG, "BLE advertising started");
 
     return ESP_OK;
+#endif
 }
 
 /*----------------------------------------------------------
  * NimBLE Host Task
  *---------------------------------------------------------*/
-static void ble_host_task(void *param)
+static void __attribute__((unused)) ble_host_task(void *param)
 {
     ESP_LOGI(TAG, "BLE host task started");
     nimble_port_run();
@@ -286,6 +290,9 @@ static void ble_host_task(void *param)
  *---------------------------------------------------------*/
 esp_err_t ble_provision_init(void)
 {
+#if !WIFI_RUNTIME_PROVISIONING_ENABLED
+    return ESP_ERR_NOT_SUPPORTED;
+#else
     esp_err_t err = nvs_flash_init();
 
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
@@ -333,6 +340,7 @@ esp_err_t ble_provision_init(void)
     ESP_LOGI(TAG, "BLE provisioning initialized");
 
     return ESP_OK;
+#endif
 }
 
 /*----------------------------------------------------------
@@ -340,12 +348,17 @@ esp_err_t ble_provision_init(void)
  *---------------------------------------------------------*/
 esp_err_t ble_provision_start(ble_provision_complete_callback_t callback)
 {
+#if !WIFI_RUNTIME_PROVISIONING_ENABLED
+    (void)callback;
+    return ESP_ERR_NOT_SUPPORTED;
+#else
     s_complete_cb = callback;
     s_credentials_received = false;
     memset(s_ssid, 0, sizeof(s_ssid));
     memset(s_password, 0, sizeof(s_password));
 
     return ble_provision_start_advertising();
+#endif
 }
 
 /*----------------------------------------------------------
@@ -353,6 +366,9 @@ esp_err_t ble_provision_start(ble_provision_complete_callback_t callback)
  *---------------------------------------------------------*/
 esp_err_t ble_provision_stop(void)
 {
+#if !WIFI_RUNTIME_PROVISIONING_ENABLED
+    return ESP_OK;
+#else
     s_advertising = false;
 
     if (s_conn_handle != BLE_HS_CONN_HANDLE_NONE)
@@ -365,6 +381,7 @@ esp_err_t ble_provision_stop(void)
     ESP_LOGI(TAG, "BLE provisioning stopped");
 
     return ESP_OK;
+#endif
 }
 
 /*----------------------------------------------------------
@@ -372,8 +389,12 @@ esp_err_t ble_provision_stop(void)
  *---------------------------------------------------------*/
 esp_err_t ble_provision_deinit(void)
 {
+#if !WIFI_RUNTIME_PROVISIONING_ENABLED
+    return ESP_OK;
+#else
     ble_provision_stop();
     nimble_port_deinit();
 
-    return ESP_OK;
+        return ESP_OK;
+#endif
 }

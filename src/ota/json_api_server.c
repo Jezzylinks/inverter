@@ -405,6 +405,11 @@ static esp_err_t api_status_handler(httpd_req_t *req)
  *---------------------------------------------------------*/
 static esp_err_t api_scan_handler(httpd_req_t *req)
 {
+#if !WIFI_RUNTIME_PROVISIONING_ENABLED
+    cJSON *error = cJSON_CreateObject();
+    cJSON_AddStringToObject(error, "error", "Runtime Wi-Fi scanning is disabled; use menuconfig credentials");
+    return send_json(req, error, 403);
+#else
     esp_err_t auth_err = api_require_pin(req);
     if (auth_err != ESP_OK) return auth_err;
     cJSON *root = cJSON_CreateObject();
@@ -446,6 +451,7 @@ static esp_err_t api_scan_handler(httpd_req_t *req)
     cJSON_AddItemToObject(root, "networks", networks);
     cJSON_AddNumberToObject(root, "count", ap_count);
     return send_json(req, root, 200);
+#endif
 }
 
 /*----------------------------------------------------------
@@ -454,6 +460,11 @@ static esp_err_t api_scan_handler(httpd_req_t *req)
  *---------------------------------------------------------*/
 static esp_err_t api_connect_handler(httpd_req_t *req)
 {
+#if !WIFI_RUNTIME_PROVISIONING_ENABLED
+    cJSON *error = cJSON_CreateObject();
+    cJSON_AddStringToObject(error, "error", "Runtime Wi-Fi credentials are disabled; use menuconfig");
+    return send_json(req, error, 403);
+#else
     if (req->method == HTTP_OPTIONS)
     {
         add_cors_headers(req);
@@ -569,6 +580,7 @@ static esp_err_t api_connect_handler(httpd_req_t *req)
                                      : esp_err_to_name(err));
 
     return send_json(req, resp, accepted ? 202 : 500);
+#endif
 }
 
 /*----------------------------------------------------------
@@ -599,6 +611,11 @@ static esp_err_t api_disconnect_handler(httpd_req_t *req)
  *---------------------------------------------------------*/
 static esp_err_t api_reset_handler(httpd_req_t *req)
 {
+#if !WIFI_RUNTIME_PROVISIONING_ENABLED
+    cJSON *error = cJSON_CreateObject();
+    cJSON_AddStringToObject(error, "error", "Runtime Wi-Fi credential reset is disabled");
+    return send_json(req, error, 403);
+#else
     if (req->method == HTTP_OPTIONS)
     {
         add_cors_headers(req);
@@ -624,6 +641,7 @@ static esp_err_t api_reset_handler(httpd_req_t *req)
     cJSON_AddStringToObject(resp, "message", err == ESP_OK ? "Credentials erased" : esp_err_to_name(err));
 
     return send_json(req, resp, err == ESP_OK ? 200 : 500);
+#endif
 }
 
 /*----------------------------------------------------------

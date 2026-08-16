@@ -14,6 +14,7 @@
 #include "wifi_captive_portal.h"
 #include "wifi_http_server.h"
 #include "wifi_storage.h"
+#include "wifi_config.h"
 
 #define WIFI_PROVISION_TAG "WIFI_PROVISION"
 
@@ -35,6 +36,7 @@ static void provision_unlock(void)
     }
 }
 
+#if WIFI_RUNTIME_PROVISIONING_ENABLED
 static esp_err_t wifi_provision_configure_ap(void)
 {
     wifi_network_config_t config;
@@ -83,9 +85,13 @@ static void wifi_provision_credentials_saved(void)
         callback();
     }
 }
+#endif
 
 esp_err_t wifi_provision_init(void)
 {
+#if !WIFI_RUNTIME_PROVISIONING_ENABLED
+    return ESP_ERR_NOT_SUPPORTED;
+#else
     if (s_mutex != NULL) {
         return ESP_OK;
     }
@@ -101,6 +107,7 @@ esp_err_t wifi_provision_init(void)
     }
     s_state = WIFI_PROVISION_IDLE;
     return ESP_OK;
+#endif
 }
 
 esp_err_t wifi_provision_deinit(void)
@@ -121,6 +128,9 @@ esp_err_t wifi_provision_deinit(void)
 
 esp_err_t wifi_provision_start(void)
 {
+#if !WIFI_RUNTIME_PROVISIONING_ENABLED
+    return ESP_ERR_NOT_SUPPORTED;
+#else
     if (s_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -168,6 +178,7 @@ esp_err_t wifi_provision_start(void)
     provision_unlock();
     ESP_LOGI(WIFI_PROVISION_TAG, "Provisioning AP and portal started");
     return ESP_OK;
+#endif
 }
 
 esp_err_t wifi_provision_stop(void)
@@ -212,6 +223,10 @@ bool wifi_provision_is_running(void)
 
 esp_err_t wifi_provision_register_complete_callback(wifi_provision_complete_callback_t callback)
 {
+#if !WIFI_RUNTIME_PROVISIONING_ENABLED
+    (void)callback;
+    return ESP_ERR_NOT_SUPPORTED;
+#else
     if (s_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -219,4 +234,5 @@ esp_err_t wifi_provision_register_complete_callback(wifi_provision_complete_call
     s_complete_callback = callback;
     provision_unlock();
     return ESP_OK;
+#endif
 }

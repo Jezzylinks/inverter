@@ -4,12 +4,8 @@
  */
 
 #include "wifi_storage.h"
-#include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
-#include "esp_random.h"
-#include "esp_mac.h"
-#include "esp_system.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "wifi_config.h"
@@ -37,12 +33,15 @@ static bool wifi_storage_network_config_valid(const wifi_network_config_t *confi
     if (config == NULL || config->mode > WIFI_MODE_APSTA ||
         config->ap_channel < 1U || config->ap_channel > 13U ||
         config->ap_max_connection < 1U || config->ap_max_connection > 10U ||
-        config->ap_authmode == WIFI_AUTH_OPEN ||
-        strnlen(config->ap_ssid, sizeof(config->ap_ssid)) == 0U ||
         strnlen(config->ap_ssid, sizeof(config->ap_ssid)) >= sizeof(config->ap_ssid) ||
-        strnlen(config->ap_password, sizeof(config->ap_password)) < 8U ||
         strnlen(config->ap_password, sizeof(config->ap_password)) >= sizeof(config->ap_password) ||
         config->reconnect_interval_ms < 250U || config->reconnect_interval_ms > 60000U) {
+        return false;
+    }
+    const size_t ap_ssid_len = strnlen(config->ap_ssid, sizeof(config->ap_ssid));
+    const size_t ap_password_len = strnlen(config->ap_password, sizeof(config->ap_password));
+    if (ap_password_len > 0U &&
+        (ap_ssid_len == 0U || ap_password_len < 8U || config->ap_authmode == WIFI_AUTH_OPEN)) {
         return false;
     }
     return true;
@@ -54,23 +53,16 @@ void wifi_storage_set_default_network_config(wifi_network_config_t *config)
         return;
     }
     memset(config, 0, sizeof(*config));
-    config->mode = WIFI_MODE_APSTA;
+    config->mode = WIFI_MODE_NULL;
     config->auto_reconnect = true;
     config->reconnect_interval_ms = WIFI_RECONNECT_DELAY_MS;
     config->dhcp = true;
-    config->ap_channel = WIFI_PROVISION_CHANNEL;
+    config->ap_channel = WIFI_COMPILED_AP_CHANNEL;
     config->ap_max_connection = WIFI_PROVISION_MAX_CONN;
-    config->ap_authmode = WIFI_AUTH_WPA2_PSK;
-    strncpy(config->ap_ssid, WIFI_PROVISION_AP_SSID, sizeof(config->ap_ssid) - 1U);
-
-    if (WIFI_PROVISION_AP_PASSWORD[0] != '\0') {
-        strncpy(config->ap_password, WIFI_PROVISION_AP_PASSWORD,
-                sizeof(config->ap_password) - 1U);
-    } else {
-        const uint32_t nonce = esp_random();
-        snprintf(config->ap_password, sizeof(config->ap_password),
-                 "INV-%08lX", (unsigned long)nonce);
-    }
+    config->ap_authmode = INVERTER_WIFI_AUTH_MODE;
+    strncpy(config->ap_ssid, WIFI_COMPILED_AP_SSID, sizeof(config->ap_ssid) - 1);
+    strncpy(config->ap_password, WIFI_COMPILED_AP_PASSWORD,
+            sizeof(config->ap_password) - 1);
 }
 
 /*==========================================================

@@ -25,90 +25,6 @@
 
 #define APP_INPUT_TAG "APP_INPUT"
 #define APP_SEQUENCE_TIMEOUT_MS 3000U
-#define APP_WIFI_PASSWORD_CHARSET " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.!@#$%^&*()[]{}+=:;/?,"
-
-static char s_wifi_password_ssid[LCD_WIFI_SSID_MAX_LEN + 1U];
-static char s_wifi_password[LCD_WIFI_PASSWORD_MAX_LEN + 1U];
-static uint8_t s_wifi_password_length;
-static char s_wifi_password_current_char = 'a';
-
-static void wifi_scan_move_selection(int8_t delta)
-{
-    uint8_t selected;
-    uint8_t top;
-    uint8_t count;
-    LCD_LOCK();
-    selected = sys_lcd.wifi_scan.selected_index;
-    top = sys_lcd.wifi_scan.top_index;
-    count = sys_lcd.wifi_scan.count;
-    LCD_UNLOCK();
-    if (count == 0U) {
-        return;
-    }
-    if (delta > 0) {
-        selected = (selected + 1U) % count;
-    } else {
-        selected = selected == 0U ? count - 1U : selected - 1U;
-    }
-    const uint8_t visible = lcd_geometry_rows() > 1U ? lcd_geometry_rows() : 2U;
-    if (selected < top) {
-        top = selected;
-    } else if (selected >= top + visible) {
-        top = selected - visible + 1U;
-    }
-    lcd_update_wifi_selection(selected, top);
-}
-
-static void wifi_password_adjust_char(int8_t delta)
-{
-    const char *set = APP_WIFI_PASSWORD_CHARSET;
-    const size_t set_len = strlen(set);
-    size_t index = 0U;
-    const char *found = strchr(set, s_wifi_password_current_char);
-    if (found) {
-        index = (size_t)(found - set);
-    }
-    if (delta > 0) {
-        index = (index + 1U) % set_len;
-    } else {
-        index = index == 0U ? set_len - 1U : index - 1U;
-    }
-    s_wifi_password_current_char = set[index];
-    lcd_update_wifi_password(s_wifi_password_current_char, s_wifi_password,
-                             s_wifi_password_length);
-}
-
-static void wifi_open_password_entry(void)
-{
-    char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
-    LCD_LOCK();
-    strncpy(ssid, sys_lcd.wifi_scan.ssid[sys_lcd.wifi_scan.selected_index],
-            sizeof(ssid) - 1U);
-    LCD_UNLOCK();
-    strncpy(s_wifi_password_ssid, ssid, sizeof(s_wifi_password_ssid) - 1U);
-    s_wifi_password_ssid[sizeof(s_wifi_password_ssid) - 1U] = '\0';
-    memset(s_wifi_password, 0, sizeof(s_wifi_password));
-    s_wifi_password_length = 0U;
-    s_wifi_password_current_char = 'a';
-    lcd_show_wifi_password(s_wifi_password_ssid);
-}
-
-static void wifi_password_append_current_char(void)
-{
-    if (s_wifi_password_length >= LCD_WIFI_PASSWORD_MAX_LEN) {
-        return;
-    }
-    s_wifi_password[s_wifi_password_length++] = s_wifi_password_current_char;
-    s_wifi_password[s_wifi_password_length] = '\0';
-    lcd_update_wifi_password(s_wifi_password_current_char, s_wifi_password,
-                             s_wifi_password_length);
-}
-
-static void wifi_password_finish(void)
-{
-    (void)app_services_wifi_connect_network(s_wifi_password_ssid,
-                                             s_wifi_password);
-}
 
 extern system_state_t sys_state;
 extern lcd_render_state_t sys_lcd;
@@ -250,19 +166,13 @@ static void handle_wifi_menu_action(uint8_t selection)
         (void)app_services_set_wifi_enabled(!app_services_wifi_enabled());
         break;
     case 1:
-        (void)app_services_wifi_scan();
+        app_services_show_wifi_status();
         break;
     case 2:
-        (void)app_services_wifi_connect_saved();
-        break;
-    case 3:
         (void)app_services_wifi_disconnect();
         break;
-    case 4:
-        (void)app_services_wifi_start_provisioning();
-        break;
-    case 5:
-        app_services_show_wifi_status();
+    case 3:
+        (void)app_services_wifi_reconnect();
         break;
     default:
         break;
@@ -675,22 +585,6 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             }
             return;
         }
-    }
-
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
-            wifi_open_password_entry();
-        }
-        return;
-    }
-
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
-            wifi_password_append_current_char();
-        } else if (event_info->event == BUTTON_EVENT_LONG_PRESS) {
-            wifi_password_finish();
-        }
-        return;
     }
 
     if (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS) {
@@ -1227,20 +1121,6 @@ void handle_up_button_event(button_event_info_t *event_info,
         return; // Up just adjusts the current PIN digit -- never finishes the flow
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
-            wifi_scan_move_selection(1);
-        }
-        return;
-    }
-
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
-            wifi_password_adjust_char(1);
-        }
-        return;
-    }
-
     if (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS) {
         if (event_info->event == BUTTON_EVENT_CLICK) {
             uint8_t page;
@@ -1456,20 +1336,6 @@ void handle_down_button_event(button_event_info_t *event_info,
             xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
             change_pin_handle_button(&change_pin_ctx, BTN_DOWN);
             xSemaphoreGive(change_pin_mutex);
-        }
-        return;
-    }
-
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
-            wifi_scan_move_selection(-1);
-        }
-        return;
-    }
-
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
-            wifi_password_adjust_char(-1);
         }
         return;
     }
@@ -1746,16 +1612,7 @@ void handle_back_button_event(button_event_info_t *event_info,
     }
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
-        sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD) {
-        LCD_LOCK();
-        sys_lcd.screen = LCD_SCREEN_WIFI_SCAN;
-        LCD_UNLOCK();
-        return;
-    }
-
-    if (event_info->event == BUTTON_EVENT_CLICK &&
-        (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN ||
-         sys_lcd.screen == LCD_SCREEN_WIFI_STATUS ||
+        (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS ||
          sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING)) {
         show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
         return;

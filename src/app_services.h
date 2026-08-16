@@ -53,6 +53,7 @@ esp_err_t app_services_wifi_scan(void);
 esp_err_t app_services_wifi_connect_network(const char *ssid,
                                              const char *password);
 esp_err_t app_services_wifi_connect_saved(void);
+esp_err_t app_services_wifi_reconnect(void);
 esp_err_t app_services_wifi_disconnect(void);
 esp_err_t app_services_wifi_start_provisioning(void);
 void app_services_show_wifi_status(void);

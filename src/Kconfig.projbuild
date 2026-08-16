@@ -1,0 +1,66 @@
+menu "Inverter Wi-Fi Configuration"
+
+config INVERTER_WIFI_STA_SSID
+    string "Station SSID"
+    default ""
+    help
+        SSID used by the inverter in Station mode. Leave empty to disable
+        Station mode. Set this value with idf.py menuconfig before flashing.
+
+config INVERTER_WIFI_STA_PASSWORD
+    string "Station password"
+    default ""
+    help
+        Password used by the inverter in Station mode. Leave empty only for
+        an open network. Do not commit sdkconfig because it may contain this
+        secret.
+
+config INVERTER_WIFI_AP_SSID
+    string "Access Point SSID"
+    default "Vonix-Inverter"
+    help
+        SSID used by the optional Access Point. AP mode is disabled when the
+        AP password is empty.
+
+config INVERTER_WIFI_AP_PASSWORD
+    string "Access Point password"
+    default ""
+    help
+        Password used by the optional Access Point. An AP password must be at
+        least 8 characters; an empty value disables AP mode. Never use an open
+        AP in this firmware.
+
+config INVERTER_WIFI_AP_CHANNEL
+    int "Access Point channel"
+    range 1 13
+    default 6
+    help
+        Preferred AP channel. In AP+STA mode ESP-IDF may force the AP onto
+        the Station channel; the firmware logs a warning if they differ.
+
+choice INVERTER_WIFI_AUTH_MODE
+    prompt "Wi-Fi authentication mode"
+    default INVERTER_WIFI_AUTH_MODE_WPA_WPA2_PSK
+    help
+        Authentication mode used for the Station threshold and optional AP.
+
+config INVERTER_WIFI_AUTH_MODE_WPA2_PSK
+    bool "WPA2-PSK"
+
+config INVERTER_WIFI_AUTH_MODE_WPA3_PSK
+    bool "WPA3-PSK"
+
+config INVERTER_WIFI_AUTH_MODE_WPA_WPA2_PSK
+    bool "WPA/WPA2-PSK"
+
+endchoice
+
+config INVERTER_WIFI_RUNTIME_PROVISIONING
+    bool "Enable runtime Wi-Fi provisioning"
+    default n
+    help
+        Enable the captive portal, scan-and-enter-password UI, and runtime
+        credential REST/BLE paths. This is disabled by default because the
+        normal firmware uses compile-time menuconfig credentials.
+
+endmenu

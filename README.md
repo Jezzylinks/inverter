@@ -4,9 +4,13 @@ This repository contains the ESP32 firmware for the advanced inverter controller
 
 ## Build and flash
 
-The project is built with PlatformIO and ESP-IDF 5.3 through the pinned `espressif32@6.8.1` platform. The environment targets an ESP32 Dev Module with a 4 MiB flash device and uses `partitions.csv`, which provides two 1.5 MiB OTA application slots plus NVS, OTA metadata, PHY data, and SPIFFS storage.
+The project is built with PlatformIO and ESP-IDF 5.3 through the pinned `espressif32@6.8.1` platform. The environment targets an ESP32 Dev Module with a 4 MiB flash device and uses `partitions.csv`, which provides two 1.5 MiB OTA application slots plus NVS, OTA metadata, PHY data, and SPIFFS storage. Wi-Fi credentials are supplied through the project Kconfig menu and are compiled into the firmware; generated `sdkconfig` files are intentionally ignored by Git.
 
 ```bash
+# Configure Wi-Fi credentials before the first build/flash.
+idf.py -D SDKCONFIG=sdkconfig.esp32dev menuconfig
+# Select: Inverter Wi-Fi Configuration
+
 pio run
 pio run --target upload
 pio device monitor
@@ -20,15 +24,15 @@ The 4 MiB setting is intentional. Verify the physical module before flashing; do
 |---|---|
 | Button controller | All five physical buttons are handled by one FreeRTOS task. GPIO ISRs only enqueue edge notifications; debouncing, click classification, long-press detection, repeat generation, statistics, and callback dispatch are centralized. |
 | Security | PINs are stored as salted SHA-256 hashes. New devices, including a missing settings namespace, provision default PIN `0000` and mark it for mandatory change. Five incorrect attempts trigger a temporary lockout, comparisons are constant-time, and NVS writes are committed atomically. |
-| Wi-Fi | The controller owns the Wi-Fi stack, event loop integration, reconnect state, scan subsystem, provisioning lifecycle, and credential storage. Station credentials are length-checked, weak non-empty WPA passwords are rejected, and no station or AP secret is compiled into the source. Menu enable/disable actions update the LCD immediately; disabling Wi-Fi also disables automatic reconnect. |
-| HTTP API | JSON API endpoints require the local PIN through the `X-Inverter-PIN` header whenever panel security is enabled. Wildcard CORS is removed; the provisioning AP origin is explicitly allowed. Credential reset stops Wi-Fi before erasing stored credentials. |
+| Wi-Fi | The controller owns the Wi-Fi stack, event loop integration, reconnect state, monitor, and compile-time credential application. STA/AP credentials, AP channel, and authentication mode come from the `Inverter Wi-Fi Configuration` Kconfig menu; runtime provisioning is disabled by default and no credentials are loaded from NVS. Menu enable/disable actions update the LCD immediately; disabling Wi-Fi also disables automatic reconnect. |
+| HTTP API | JSON API endpoints require the local PIN through the `X-Inverter-PIN` header whenever panel security is enabled. Wildcard CORS is removed. Runtime Wi-Fi scan, credential-connect, and credential-reset endpoints return an explicit disabled response unless the opt-in provisioning Kconfig switch is enabled. |
 | OTA | OTA accepts only HTTPS CSV manifests, uses the ESP-IDF certificate bundle, runs in a dedicated task, supports cooperative cancellation, reports status/progress, verifies exact image size and SHA-256 while writing the next partition, rejects equal or older releases, and switches boot partitions only after verification. Direct unverified URL updates are rejected. |
 | OTA CSV | Release metadata is fetched from a bounded HTTPS CSV document. The first valid row uses `version,url,sha256,size`; version, HTTPS URL, 64-hex SHA-256, and positive image size are mandatory. A digest or size mismatch aborts the update and leaves the running partition unchanged. |
 | POST | LCD, ADC, and fan tests all run and report independently. Results include a failure bitmask and elapsed time. A failed fan preparation path explicitly disables the fan before returning. |
 | Events | Subscriber queues are allocated transactionally, initialization is idempotent, teardown is available, and queue overflow is logged instead of silently disappearing. |
 | Battery | Learned SOC/SOH state is accepted only when its version, size, finite-value, and range checks pass. Boot no longer overwrites the user’s battery profile; defaults are generated only when no valid profile exists. The selected 12/24/48 V system is stored under the canonical NVS key and resynchronizes protection thresholds and display state after validation. |
 | Application modules | `main.c` now concentrates on boot, hardware, POST, and the top-level supervisory loop. `app_menu.c` owns menu tables, rendering, and history; `app_input.c` owns all Power, Enter/Menu, Up, Down, and Back semantics; `app_buttons.c` binds the five GPIOs to the one shared button task; and `app_services.c` owns menu-facing Wi-Fi and OTA intent. |
-| Runtime hardening | Every firmware-owned long-running task registers with the shared task-watchdog helper and feeds it during work and bounded waits. A supervisor records feed age, feed count, and stack high-water marks and logs stale tasks. Button clicks are delivered directly to the buzzer subscriber for reliable low-latency feedback; held Up/Down input emits a limit tone whenever a numeric boundary is reached, including repeated boundary hits. The inverter status LED is restored after higher-priority LED patterns while the inverter remains active. |
+| Runtime hardening | Wi-Fi and network-service tasks deliberately do not register with the shared task-watchdog helper. Their waits are bounded, reconnect work is cancellable, and Wi-Fi operations have explicit terminal timeouts. Unrelated firmware tasks continue to use the shared watchdog. Button clicks are delivered directly to the buzzer subscriber for reliable low-latency feedback; held Up/Down input emits a limit tone whenever a numeric boundary is reached, including repeated boundary hits. The inverter status LED is restored after higher-priority LED patterns while the inverter remains active. |
 | Protected actions | Factory-reset input and confirmation share one authoritative LCD context, so the verified PIN advances to the selected action rather than a stale prompt. Firmware installation requires a verified panel PIN before the final OTA confirmation; automatic availability checks remain read-only. |
 
 ## OTA CSV manifest
@@ -44,24 +48,26 @@ The application layer stores its manifest source in NVS (`ota_manifest`) through
 
 From the **Firmware Update** menu, select **Check for Update** to run an immediate check. Select **Install Available** only after a notification has been received. The device then shows `Enter=Yes Back=No`; pressing **Enter** starts the CSV-based OTA transaction, while **Back** or **Power** defers it safely. The update screen cannot start an image transfer without that explicit confirmation and a verified panel PIN when security is enabled. A running transfer can be cancelled from the menu when the OTA transport reaches its cooperative cancellation point. The startup and loading screens use a stable bar row; the filled progress block advances without the previous blank-row overwrite that caused visible blinking.
 
-## Wi-Fi provisioning and control
+## Wi-Fi compile-time configuration and control
 
-The **WiFi Control** menu is the user-facing control plane. **WiFi On / Off** immediately starts or stops the controller and persists the requested state in NVS (`wifi_enabled`), so the same state is restored after reset. The remaining actions scan networks, connect saved credentials, disconnect without erasing them, start the provisioning AP, and show current Wi-Fi state. Scans and connection attempts are rejected with a screen message while Wi-Fi is disabled.
+Before building or flashing, run `idf.py -D SDKCONFIG=sdkconfig.esp32dev menuconfig` and open **Inverter Wi-Fi Configuration**. Set the Station SSID and password for normal STA operation. Set an AP password of at least eight characters to enable the optional AP; leaving the AP password empty disables AP mode. The AP is never started as an open network. Configure the AP channel and WPA2/WPA3 authentication choice in the same menu.
 
-When no station credentials are present, the Wi-Fi controller enters provisioning mode. The AP SSID defaults to `INVERTER_SETUP`; its WPA2 password is generated from the device’s hardware random-number source when no explicit product password is configured. This avoids shipping a shared factory password. The generated password is persisted with the network configuration and should be communicated to the installer through the device commissioning process.
+The **WiFi Control** menu now contains only **WiFi On / Off**, **WiFi Status**, **Disconnect**, and **Reconnect**. It does not scan networks, accept passwords, start a setup AP, or connect to NVS-saved credentials. The status view reports the compiled STA SSID together with connection state, IP, RSSI, and internet availability. Wi-Fi intent (`wifi_enabled`) may still be persisted in NVS, but credentials and AP identity are not.
+
+Runtime provisioning is controlled by `CONFIG_INVERTER_WIFI_RUNTIME_PROVISIONING` and defaults to disabled. When disabled, the captive portal, scan-and-enter-password UI, BLE credential path, and REST credential mutation operations are unavailable. Enabling that compatibility option is an explicit product decision and does not change the default compile-time credential path.
 
 ## Wi-Fi runtime hardening
 
-The Wi-Fi implementation is organized around a controller-owned lifecycle. The manager creates and owns the ESP-IDF network interfaces; scanning, monitoring, station mode, provisioning, captive DNS, and the provisioning HTTP server are started only through coordinated controller transitions. Partial startup failures roll back already-created components, while disabling Wi-Fi stops monitor, portal, scan, and manager activity in dependency order. This keeps the persistent menu preference separate from transient connection status and prevents an incomplete portal or scan from surviving a failed operation.
+The Wi-Fi implementation is organized around an event-driven controller-owned lifecycle. The manager creates and owns the ESP-IDF network interfaces, applies Kconfig credentials, and skips STA connection cleanly when the Station SSID is empty. Reconnect delays use capped exponential backoff with cancellable 250 ms slices. In AP+STA mode, the AP channel must follow the associated STA channel; the firmware logs a warning if the preferred AP channel differs.
 
 | Area | Safeguard |
 |---|---|
-| Provisioning portal | Credential submission is accepted only through a bounded `POST` form. Request parsing limits encoded body size and field lengths, HTML output is escaped, responses add browser security headers, and credential-save callbacks run asynchronously outside the HTTP request context. DNS and HTTP startup is transactional; either service is rolled back if the companion service cannot start. |
-| Credentials and configuration | Station and AP configuration is validated before it is written to NVS and again after it is loaded. Malformed persisted data is replaced with safe defaults rather than passed to the Wi-Fi driver. The manager restarts DHCP after applying a valid configuration and applies the requested authentication mode rather than assuming an open or WPA mode. |
-| Scanning and event delivery | Network scans are serialized by a mutex, have an idempotent lifecycle, and release driver state on all paths. Connection status is exposed as synchronized snapshots; retry policy is explicit, reconnect work is deferred from event callbacks, and user callbacks run after locks are released. JSON and WebSocket status endpoints use those snapshots instead of mutable manager-owned pointers. |
-| Captive DNS and monitoring | DNS packets must contain exactly one complete question before a captive response is built; name and question offsets are bounds-checked. Stopping the DNS service closes its socket before waiting for its task. The RSSI and internet monitor publishes callbacks outside locks and exits cooperatively when signaled, so its resources are not deleted while it is still executing. |
+| Compile-time credentials | Kconfig strings are length-checked at compile time against ESP32 SSID/password limits. An AP password must be empty or at least eight characters; an AP with an empty password is disabled rather than opened. Generated `sdkconfig` files are ignored so real credentials are not committed. |
+| Configuration and state | NVS retains operational settings such as DHCP and reconnect policy, but the default STA/AP credential source is `sdkconfig.h`. Empty STA configuration is reported clearly and skipped. |
+| Scanning and event delivery | Runtime scanning and password entry are removed from the default UI. Connection status is exposed as synchronized snapshots; reconnect work is deferred from event callbacks, uses capped exponential backoff, and user callbacks run after locks are released. JSON and WebSocket status endpoints use those snapshots instead of mutable manager-owned pointers. |
+| Captive DNS and monitoring | Captive DNS and provisioning HTTP are not started when runtime provisioning is disabled. The internet monitor avoids blocking DNS resolution, uses bounded ping waits, and exits cooperatively when signaled. Wi-Fi paths intentionally remain outside the application task-watchdog registry. |
 
-> The provisioning portal is intentionally local to the installer AP and does not expose the PIN-protected remote-control API. It should still be used only during commissioning, with the generated AP password handled as an installation secret.
+> The default firmware does not expose a provisioning portal or runtime credential-entry flow. Configure credentials with `idf.py menuconfig` before flashing and treat the generated `sdkconfig` files as secrets.
 
 ## P0/P1 hardening behavior
 
@@ -69,7 +75,7 @@ The ADC path now records bounded telemetry health for each voltage channel, reje
 
 Settings persistence retains the existing per-key compatibility format but adds a versioned generation marker and deterministic fingerprint. A partially written settings set is rejected on the next boot and replaced with validated defaults rather than being silently treated as complete. Persistent diagnostics record boot count, reset reason, last fault flags, battery voltage, and fault timestamp. The watchdog supervisor records task heartbeats and stack margins in addition to the ESP-IDF 15-second task watchdog.
 
-The provisioning portal allows read-only status and scan access, but state-changing credential save and erase actions require the same four-digit security PIN used by the panel. Failed web PIN attempts use the general security scope and its lockout policy. The repository also includes host-side firmware contract tests and GitHub Actions validation for both LCD selectors, static analysis, and whitespace checks.
+The REST API retains read-only status/configuration reporting and requires the same panel PIN when security is enabled. Runtime scan, connect, and credential-reset operations are explicitly disabled by default. Failed web PIN attempts use the general security scope and its lockout policy. The repository also includes host-side firmware contract tests and GitHub Actions validation for both LCD selectors, static analysis, and whitespace checks.
 
 ## Hardening behavior
 
@@ -77,9 +83,9 @@ The factory-reset PIN flow accepts `0000` on a new or recovered installation, th
 
 The voltage-system setting is persisted using the same canonical NVS key used by the battery state. On boot, the value is validated first and then the battery protection thresholds, runtime battery state, and LCD presentation are synchronized again, so selecting 24 V or 48 V is not silently displayed as 12 V after restart.
 
-Wi-Fi menu actions are intentionally asynchronous from the user-interface perspective. The LCD displays `Starting Wi-Fi` or `Wi-Fi Disabled` before the controller begins its transition. Turning Wi-Fi off disables automatic reconnect before stopping the manager, preventing a reconnect worker from undoing the user’s request.
+Wi-Fi menu actions are intentionally asynchronous from the user-interface perspective. The LCD displays `Starting Wi-Fi`, `Wi-Fi Disabled`, or `Wi-Fi Not Config / Use menuconfig` before the controller begins or rejects its transition. Turning Wi-Fi off disables automatic reconnect before stopping the manager, preventing a reconnect worker from undoing the user’s request.
 
-The shared task-watchdog helper uses a 15-second timeout and bounded queue/sleep intervals so all firmware-owned tasks can feed the watchdog even while idle. The optional NimBLE host task remains managed by the NimBLE port because its event loop is third-party-owned; the firmware-owned provisioning and callback paths remain bounded and watchdog-covered.
+The Wi-Fi and network-service paths are intentionally excluded from the shared task-watchdog registry because watchdog interaction previously caused harmful resets during startup. They instead use bounded waits, cancellation notifications, timeout screens, and capped reconnect backoff. The shared watchdog remains available to unrelated firmware-owned tasks.
 
 ## Wokwi simulation
 

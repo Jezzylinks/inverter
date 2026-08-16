@@ -6,8 +6,10 @@
 #include "wifi_manager.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #include "esp_log.h"
+#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
@@ -17,7 +19,6 @@
 
 #include "wifi_storage.h"
 #include "wifi_events.h"
-#include "wifi_provision.h"
 #include "wifi_config.h"
 
 static const char *TAG = "wifi_manager";
@@ -33,7 +34,6 @@ static bool s_initialized = false;
 static bool s_started = false;
 uint8_t s_retry_limit = WIFI_MAXIMUM_RETRY;
 bool s_auto_reconnect = true;
-static wifi_credentials_t s_credentials;
 static SemaphoreHandle_t s_manager_mutex = NULL;
 
 /*----------------------------------------------------------
@@ -120,7 +120,7 @@ static void wifi_manager_load_network_config(void)
         wifi_storage_set_default_network_config(&net_cfg);
     }
 
-    s_config.mode = net_cfg.mode;
+    s_config.mode = WIFI_MODE_NULL;
     s_config.authmode = INVERTER_WIFI_AUTH_MODE;
     s_config.dhcp = net_cfg.dhcp;
     s_config.auto_reconnect = net_cfg.auto_reconnect;
@@ -130,30 +130,19 @@ static void wifi_manager_load_network_config(void)
     s_config.ap_max_connection = net_cfg.ap_max_connection;
     s_config.ap_authmode = net_cfg.ap_authmode;
 
-    /* AP SSID/password from storage or fall back to provision defaults */
-    if (net_cfg.ap_ssid[0] != '\0')
-    {
-        strncpy(s_config.ap_ssid, net_cfg.ap_ssid, sizeof(s_config.ap_ssid) - 1);
-        s_config.ap_ssid[sizeof(s_config.ap_ssid) - 1] = '\0';
-        strncpy(s_config.ap_password, net_cfg.ap_password, sizeof(s_config.ap_password) - 1);
-        s_config.ap_password[sizeof(s_config.ap_password) - 1] = '\0';
-    }
-    else
-    {
-        strncpy(s_config.ap_ssid, WIFI_PROVISION_AP_SSID, sizeof(s_config.ap_ssid) - 1);
-        s_config.ap_ssid[sizeof(s_config.ap_ssid) - 1] = '\0';
-        strncpy(s_config.ap_password, WIFI_PROVISION_AP_PASSWORD, sizeof(s_config.ap_password) - 1);
-        s_config.ap_password[sizeof(s_config.ap_password) - 1] = '\0';
-    }
-
-    if (net_cfg.ap_channel != 0)
-    {
-        s_config.ap_channel = net_cfg.ap_channel;
-    }
-    else
-    {
-        s_config.ap_channel = WIFI_PROVISION_CHANNEL;
-    }
+    /* Credentials and AP identity are compile-time configuration. NVS keeps
+     * only operational network settings such as DHCP and reconnect policy. */
+    strncpy(s_config.ssid, WIFI_COMPILED_STA_SSID, sizeof(s_config.ssid) - 1U);
+    s_config.ssid[sizeof(s_config.ssid) - 1U] = '\0';
+    strncpy(s_config.password, WIFI_COMPILED_STA_PASSWORD, sizeof(s_config.password) - 1U);
+    s_config.password[sizeof(s_config.password) - 1U] = '\0';
+    strncpy(s_config.ap_ssid, WIFI_COMPILED_AP_SSID, sizeof(s_config.ap_ssid) - 1U);
+    s_config.ap_ssid[sizeof(s_config.ap_ssid) - 1U] = '\0';
+    strncpy(s_config.ap_password, WIFI_COMPILED_AP_PASSWORD,
+            sizeof(s_config.ap_password) - 1U);
+    s_config.ap_password[sizeof(s_config.ap_password) - 1U] = '\0';
+    s_config.ap_channel = WIFI_COMPILED_AP_CHANNEL;
+    s_config.ap_authmode = INVERTER_WIFI_AUTH_MODE;
 }
 
 /*----------------------------------------------------------
@@ -173,6 +162,15 @@ static void wifi_manager_event_update(wifi_connection_state_t state)
         break;
     case WIFI_STATE_CONNECTED:
         ESP_LOGI(TAG, "WiFi connected");
+        if (s_config.ap_ssid[0] != '\0' && s_config.mode == WIFI_MODE_APSTA) {
+            wifi_ap_record_t ap_info = {0};
+            if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK &&
+                ap_info.primary != s_config.ap_channel) {
+                ESP_LOGW(TAG,
+                         "AP channel %u differs from STA channel %u; APSTA will follow the STA channel",
+                         (unsigned)s_config.ap_channel, (unsigned)ap_info.primary);
+            }
+        }
         break;
     case WIFI_STATE_DISCONNECTED:
         ESP_LOGW(TAG, "WiFi disconnected");
@@ -203,16 +201,16 @@ static bool wifi_manager_config_valid(const wifi_manager_config_t *config)
         ESP_LOGE(TAG, "WiFi configuration is not NUL terminated");
         return false;
     }
-    if (config->ssid[0] == '\0' && config->ap_ssid[0] == '\0') {
-        ESP_LOGW(TAG, "Both STA and AP SSIDs are empty");
-        return false;
-    }
     if (config->ssid[0] != '\0' && strlen(config->password) > 0U && strlen(config->password) < 8U) {
         ESP_LOGW(TAG, "STA password is shorter than WPA minimum");
         return false;
     }
-    if (config->ap_ssid[0] != '\0' && strlen(config->ap_password) < 8U) {
-        ESP_LOGW(TAG, "Provisioning AP password is too short");
+    if (config->ap_password[0] != '\0' && config->ap_ssid[0] == '\0') {
+        ESP_LOGE(TAG, "AP password requires an AP SSID");
+        return false;
+    }
+    if (config->ap_password[0] != '\0' && strlen(config->ap_password) < 8U) {
+        ESP_LOGE(TAG, "AP password must contain at least 8 characters");
         return false;
     }
     return true;
@@ -238,29 +236,14 @@ esp_err_t wifi_manager_init(void)
     esp_err_t err;
 
     memset(&s_config, 0, sizeof(s_config));
-    memset(&s_credentials, 0, sizeof(s_credentials));
 
-    /* Load network config first (sets defaults if none stored) */
+    /* Load operational network settings; credentials are compiled in. */
     wifi_manager_load_network_config();
-
-    if (wifi_storage_has_credentials())
-    {
-        err = wifi_storage_load_credentials(&s_credentials);
-        if (err == ESP_OK)
-        {
-            strncpy(s_config.ssid, s_credentials.ssid, sizeof(s_config.ssid) - 1);
-            s_config.ssid[sizeof(s_config.ssid) - 1] = '\0';
-            strncpy(s_config.password, s_credentials.password, sizeof(s_config.password) - 1);
-            s_config.password[sizeof(s_config.password) - 1] = '\0';
-        }
-        else
-        {
-            ESP_LOGW(TAG, "Failed to load stored credentials: %s", esp_err_to_name(err));
-        }
+    if (s_config.ssid[0] == '\0') {
+        ESP_LOGW(TAG, "Station SSID is empty; STA mode is disabled");
     }
-    else
-    {
-        ESP_LOGW(TAG, "No WiFi credentials stored");
+    if (s_config.ap_password[0] == '\0') {
+        ESP_LOGI(TAG, "AP password is empty; AP mode is disabled");
     }
 
     err = esp_netif_init();
@@ -285,7 +268,15 @@ esp_err_t wifi_manager_init(void)
         goto rollback_netif;
     }
 
-    esp_netif_set_hostname(s_sta_netif, WIFI_HOSTNAME);
+    uint8_t sta_mac[6] = {0};
+    char hostname[32];
+    if (esp_read_mac(sta_mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+        snprintf(hostname, sizeof(hostname), "%s-%02X%02X",
+                 WIFI_HOSTNAME, sta_mac[4], sta_mac[5]);
+        esp_netif_set_hostname(s_sta_netif, hostname);
+    } else {
+        esp_netif_set_hostname(s_sta_netif, WIFI_HOSTNAME);
+    }
 
     s_ap_netif = esp_netif_create_default_wifi_ap();
     if (s_ap_netif == NULL)
@@ -396,7 +387,6 @@ esp_err_t wifi_manager_deinit(void)
     }
 
     memset(&s_config, 0, sizeof(s_config));
-    memset(&s_credentials, 0, sizeof(s_credentials));
 
     s_retry_limit = WIFI_MAXIMUM_RETRY;
     s_auto_reconnect = true;
@@ -429,6 +419,10 @@ esp_err_t wifi_manager_start(void)
     {
         ESP_LOGE(TAG, "Invalid WiFi configuration");
         return ESP_ERR_INVALID_ARG;
+    }
+    if (s_config.ssid[0] == '\0' && s_config.ap_ssid[0] == '\0') {
+        ESP_LOGW(TAG, "No compile-time STA or AP credentials configured");
+        return ESP_ERR_NOT_FOUND;
     }
 
     esp_err_t err = wifi_manager_configure_apsta();
@@ -496,31 +490,40 @@ esp_err_t wifi_manager_connect(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    /* Always reload latest credentials */
-    esp_err_t err = wifi_storage_load_credentials(&s_credentials);
-    if (err != ESP_OK)
+#if WIFI_RUNTIME_PROVISIONING_ENABLED
+    wifi_credentials_t runtime_credentials = {0};
+    if (wifi_storage_load_credentials(&runtime_credentials) == ESP_OK &&
+        runtime_credentials.ssid[0] != '\0') {
+        strncpy(s_config.ssid, runtime_credentials.ssid, sizeof(s_config.ssid) - 1U);
+        s_config.ssid[sizeof(s_config.ssid) - 1U] = '\0';
+        strncpy(s_config.password, runtime_credentials.password,
+                sizeof(s_config.password) - 1U);
+        s_config.password[sizeof(s_config.password) - 1U] = '\0';
+    }
+#endif
+
+    if (s_config.ssid[0] == '\0')
     {
-        ESP_LOGE(TAG, "No WiFi credentials available");
-        return err;
+        ESP_LOGW(TAG, "Station SSID is empty; STA connect skipped");
+        return ESP_ERR_NOT_FOUND;
     }
 
-    if (s_credentials.ssid[0] == '\0')
-    {
-        ESP_LOGE(TAG, "SSID is empty");
-        return ESP_ERR_INVALID_ARG;
-    }
-
+    esp_err_t err;
     wifi_config_t wifi_config;
     memset(&wifi_config, 0, sizeof(wifi_config));
 
-    strncpy((char *)wifi_config.sta.ssid, s_credentials.ssid, sizeof(wifi_config.sta.ssid) - 1);
-    strncpy((char *)wifi_config.sta.password, s_credentials.password, sizeof(wifi_config.sta.password) - 1);
+    strncpy((char *)wifi_config.sta.ssid, s_config.ssid, sizeof(wifi_config.sta.ssid) - 1U);
+    strncpy((char *)wifi_config.sta.password, s_config.password, sizeof(wifi_config.sta.password) - 1U);
     wifi_config.sta.threshold.authmode = s_config.authmode;
 
-    err = esp_wifi_set_mode(WIFI_MODE_STA);
+    const wifi_mode_t connect_mode =
+        (s_config.ap_ssid[0] != '\0' && s_config.ap_password[0] != '\0')
+            ? WIFI_MODE_APSTA
+            : WIFI_MODE_STA;
+    err = esp_wifi_set_mode(connect_mode);
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "Set mode STA failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Set mode %d failed: %s", (int)connect_mode, esp_err_to_name(err));
         return err;
     }
 
@@ -548,7 +551,7 @@ esp_err_t wifi_manager_connect(void)
     err = esp_wifi_connect();
     if (err == ESP_OK)
     {
-        ESP_LOGI(TAG, "Connecting to %s", s_credentials.ssid);
+        ESP_LOGI(TAG, "Connecting to compile-time STA SSID %s", s_config.ssid);
     }
     else
     {
@@ -820,10 +823,10 @@ static esp_err_t wifi_manager_configure_apsta(void)
         sta_config.sta.threshold.authmode = s_config.authmode;
     }
 
-    if (s_config.ap_ssid[0] != '\0')
+    if (s_config.ap_ssid[0] != '\0' && s_config.ap_password[0] != '\0')
     {
-        strncpy((char *)ap_config.ap.ssid, s_config.ap_ssid, sizeof(ap_config.ap.ssid) - 1);
-        strncpy((char *)ap_config.ap.password, s_config.ap_password, sizeof(ap_config.ap.password) - 1);
+        strncpy((char *)ap_config.ap.ssid, s_config.ap_ssid, sizeof(ap_config.ap.ssid) - 1U);
+        strncpy((char *)ap_config.ap.password, s_config.ap_password, sizeof(ap_config.ap.password) - 1U);
         ap_config.ap.channel = s_config.ap_channel;
         ap_config.ap.max_connection = s_config.ap_max_connection;
         ap_config.ap.authmode = s_config.ap_authmode;
@@ -854,6 +857,7 @@ static esp_err_t wifi_manager_configure_apsta(void)
         }
     }
 
+    s_config.mode = mode;
     esp_err_t err = esp_wifi_set_mode(mode);
     if (err != ESP_OK)
     {

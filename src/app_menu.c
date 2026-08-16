@@ -88,14 +88,12 @@ static const menu_item_t diagnostic_items[] = {
     {"Uptime", MENU_DIAGNOSTIC},
     {"Memory Usage", MENU_DIAGNOSTIC}};
 
-// Wi-Fi control actions persist enablement intent in NVS and apply immediately.
+// Wi-Fi credentials are compiled through menuconfig; no runtime provisioning UI.
 static const menu_item_t wifi_items[] = {
     {"WiFi On / Off", MENU_WIFI_CONFIG},
-    {"Scan Networks", MENU_WIFI_CONFIG},
-    {"Connect Saved", MENU_WIFI_CONFIG},
+    {"WiFi Status", MENU_WIFI_CONFIG},
     {"Disconnect", MENU_WIFI_CONFIG},
-    {"Start Setup AP", MENU_WIFI_CONFIG},
-    {"WiFi Status", MENU_WIFI_CONFIG}};
+    {"Reconnect", MENU_WIFI_CONFIG}};
 
 static const menu_item_t ota_items[] = {
     {"Check for Update", MENU_OTA},

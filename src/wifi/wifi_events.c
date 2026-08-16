@@ -69,15 +69,35 @@ static void wifi_publish_state(wifi_connection_state_t state)
     }
 }
 
+static uint32_t wifi_reconnect_backoff_ms(uint8_t retry_count)
+{
+    uint32_t delay_ms = WIFI_RECONNECT_DELAY_MS;
+    const uint8_t shifts = retry_count > 4U ? 4U : retry_count;
+    for (uint8_t i = 0U; i < shifts; ++i) {
+        if (delay_ms >= 60000U / 2U) {
+            return 60000U;
+        }
+        delay_ms *= 2U;
+    }
+    return delay_ms;
+}
+
 static void wifi_reconnect_task(void *arg)
 {
     const uint32_t generation = (uint32_t)(uintptr_t)arg;
     uint32_t waited_ms = 0U;
+    uint8_t retry_count = 0U;
+    events_lock();
+    retry_count = s_status.retry_count;
+    events_unlock();
+    const uint32_t backoff_ms = wifi_reconnect_backoff_ms(retry_count);
+    ESP_LOGI(WIFI_EVENTS_TAG, "Reconnect backoff: %lums (retry %u)",
+             (unsigned long)backoff_ms, (unsigned)retry_count);
 
-    while (waited_ms < WIFI_RECONNECT_DELAY_MS) {
-        const uint32_t slice = (WIFI_RECONNECT_DELAY_MS - waited_ms) > 250U
+    while (waited_ms < backoff_ms) {
+        const uint32_t slice = (backoff_ms - waited_ms) > 250U
                                    ? 250U
-                                   : (WIFI_RECONNECT_DELAY_MS - waited_ms);
+                                   : (backoff_ms - waited_ms);
         vTaskDelay(pdMS_TO_TICKS(slice));
         waited_ms += slice;
 

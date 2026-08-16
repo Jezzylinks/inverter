@@ -2,7 +2,6 @@
 
 #include <stdio.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -17,9 +16,9 @@
 #include "wifi/wifi_manager.h"
 #include "wifi/wifi_monitor.h"
 #include "wifi/wifi_types.h"
-#include "wifi/wifi_scan.h"
 #include "wifi/wifi_security.h"
 #include "wifi/wifi_storage.h"
+#include "wifi/wifi_config.h"
 #include "network_services.h"
 
 #include "task_watchdog.h"
@@ -31,8 +30,8 @@
 #define APP_OTA_CHECK_INTERVAL_MS (6U * 60U * 60U * 1000U)
 #define APP_OTA_TASK_STACK_SIZE 4096U
 #define APP_OTA_TASK_PRIORITY 3U
-#define APP_WIFI_SCAN_STACK_SIZE 4096U
-#define APP_WIFI_SCAN_PRIORITY 5U
+#define APP_WIFI_OPERATION_WATCH_STACK_SIZE 3072U
+#define APP_WIFI_OPERATION_WATCH_PRIORITY 5U
 #define APP_WIFI_OPERATION_TIMEOUT_MS 30000U
 
 extern system_state_t sys_state;
@@ -41,7 +40,6 @@ extern SemaphoreHandle_t sys_state_mutex;
 static SemaphoreHandle_t s_services_mutex;
 static TaskHandle_t s_ota_check_task;
 static TaskHandle_t s_wifi_operation_watch_task;
-static bool s_wifi_scan_in_progress;
 static char s_manifest_url[APP_OTA_MANIFEST_URL_MAX];
 static app_ota_status_t s_ota_status;
 
@@ -310,46 +308,6 @@ static const char *wifi_state_text(wifi_controller_state_t state)
     }
 }
 
-static void app_wifi_scan_task(void *parameter)
-{
-    (void)parameter;
-
-    /* A full ESP-IDF scan record table is too large for this short-lived UI
-     * task's stack. Keep the large buffer on the heap and retain only the
-     * bounded display arrays on the task stack. */
-    wifi_ap_record_t *records = calloc(WIFI_MAX_SCAN_RESULTS, sizeof(*records));
-    if (records == NULL) {
-        lcd_flash_message("Scan Memory Error", "Try again", 1400U);
-    } else {
-        uint16_t count = WIFI_MAX_SCAN_RESULTS;
-        const esp_err_t err = wifi_scan_start_records(records, &count);
-        if (err != ESP_OK) {
-            lcd_flash_message("Scan Unavailable", "Try again", 1400U);
-        } else if (count == 0U) {
-            lcd_flash_message("No Networks", "Found", 1200U);
-        } else {
-            const uint8_t display_count = count < LCD_WIFI_MAX_AP
-                                               ? (uint8_t)count
-                                               : LCD_WIFI_MAX_AP;
-            char ssids[LCD_WIFI_MAX_AP][LCD_WIFI_SSID_MAX_LEN + 1U] = {{0}};
-            int8_t rssi[LCD_WIFI_MAX_AP] = {0};
-            for (uint8_t i = 0U; i < display_count; ++i) {
-                strncpy(ssids[i], (const char *)records[i].ssid,
-                        LCD_WIFI_SSID_MAX_LEN);
-                ssids[i][LCD_WIFI_SSID_MAX_LEN] = '\0';
-                rssi[i] = records[i].rssi;
-            }
-            lcd_show_wifi_scan(display_count, ssids, rssi, 0U, 0U);
-        }
-        free(records);
-    }
-
-    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    s_wifi_scan_in_progress = false;
-    xSemaphoreGive(s_services_mutex);
-    vTaskDelete(NULL);
-}
-
 static void ota_progress_callback(int percent)
 {
     if (!s_services_mutex)
@@ -555,9 +513,9 @@ esp_err_t app_services_init(void)
     {
         if (xTaskCreate(app_wifi_operation_watch_task,
                         "wifi_op_watch",
-                        APP_WIFI_SCAN_STACK_SIZE,
+                        APP_WIFI_OPERATION_WATCH_STACK_SIZE,
                         NULL,
-                        APP_WIFI_SCAN_PRIORITY,
+                        APP_WIFI_OPERATION_WATCH_PRIORITY,
                         &s_wifi_operation_watch_task) != pdPASS)
         {
             s_wifi_operation_watch_task = NULL;
@@ -571,10 +529,7 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
 {
     char ssid[WIFI_MAX_SSID_LEN + 1U] = {0};
     if (enabled) {
-        wifi_credentials_t credentials = {0};
-        if (wifi_storage_load_credentials(&credentials) == ESP_OK) {
-            strncpy(ssid, credentials.ssid, sizeof(ssid) - 1U);
-        }
+        strncpy(ssid, WIFI_COMPILED_STA_SSID, sizeof(ssid) - 1U);
     }
 
     sys_state.wifi.enabled = enabled;
@@ -606,8 +561,12 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
         lcd_flash_message("Wi-Fi Disabled", "Saved", 1200U);
     } else if (controller_err != ESP_OK && controller_err != ESP_ERR_WIFI_CONN) {
         app_wifi_end_operation();
-        lcd_flash_message(enabled ? "Wi-Fi Start Failed" : "Wi-Fi Stop Failed",
-                          "Try again", 1500U);
+        if (enabled && controller_err == ESP_ERR_NOT_FOUND) {
+            lcd_flash_message("Wi-Fi Not Config", "Use menuconfig", 1800U);
+        } else {
+            lcd_flash_message(enabled ? "Wi-Fi Start Failed" : "Wi-Fi Stop Failed",
+                              "Try again", 1500U);
+        }
     }
     return controller_err != ESP_OK ? controller_err : nvs_err;
 }
@@ -619,94 +578,38 @@ bool app_services_wifi_enabled(void)
 
 esp_err_t app_services_wifi_scan(void)
 {
-    if (!sys_state.wifi.enabled)
-    {
-        lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    const bool busy = s_wifi_scan_in_progress;
-    if (!busy) {
-        s_wifi_scan_in_progress = true;
-    }
-    xSemaphoreGive(s_services_mutex);
-    if (busy) {
-        lcd_flash_message("Scan In Progress", "Please wait", 1000U);
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    lcd_flash_message("Scanning Wi-Fi", "Please wait", 5000U);
-    if (xTaskCreate(app_wifi_scan_task, "wifi_scan_ui", APP_WIFI_SCAN_STACK_SIZE,
-                    NULL, APP_WIFI_SCAN_PRIORITY, NULL) != pdPASS) {
-        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-        s_wifi_scan_in_progress = false;
-        xSemaphoreGive(s_services_mutex);
-        lcd_flash_message("Scan Unavailable", "Try again", 1400U);
-        return ESP_ERR_NO_MEM;
-    }
-    return ESP_OK;
+    lcd_flash_message("Scan Disabled", "Use menuconfig", 1600U);
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t app_services_wifi_connect_network(const char *ssid,
                                                const char *password)
 {
-    if (!sys_state.wifi.enabled) {
-        lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (!ssid || ssid[0] == '\0' || strlen(ssid) > WIFI_MAX_SSID_LEN ||
-        (password && strlen(password) > WIFI_MAX_PASSWORD_LEN)) {
-        lcd_flash_message("Invalid Wi-Fi", "Credentials", 1400U);
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    wifi_credentials_t credentials = {0};
-    strncpy(credentials.ssid, ssid, sizeof(credentials.ssid) - 1U);
-    if (password) {
-        strncpy(credentials.password, password, sizeof(credentials.password) - 1U);
-    }
-    const esp_err_t save_err = wifi_storage_save_credentials(&credentials);
-    if (save_err != ESP_OK) {
-        lcd_flash_message("Wi-Fi Save Failed", "Try again", 1500U);
-        return save_err;
-    }
-
-    app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, credentials.ssid);
-    lcd_show_wifi_connecting(credentials.ssid);
-    (void)wifi_controller_stop();
-    esp_err_t err = wifi_controller_start();
-    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN && err != ESP_ERR_INVALID_STATE) {
-        app_wifi_end_operation();
-        lcd_show_wifi_result(false, true, false, credentials.ssid);
-    }
-    return err;
+    (void)ssid;
+    (void)password;
+    lcd_flash_message("Runtime Connect", "Disabled", 1600U);
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t app_services_wifi_connect_saved(void)
 {
-    if (!sys_state.wifi.enabled)
-    {
+    return app_services_wifi_reconnect();
+}
+
+esp_err_t app_services_wifi_reconnect(void)
+{
+    if (!sys_state.wifi.enabled) {
         lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
         return ESP_ERR_INVALID_STATE;
     }
-    if (!wifi_storage_has_credentials())
-    {
-        lcd_flash_message("No Saved Wi-Fi", "Start Setup AP", 1500U);
+    if (WIFI_COMPILED_STA_SSID[0] == '\0') {
+        lcd_flash_message("Wi-Fi Not Config", "Use menuconfig", 1800U);
         return ESP_ERR_NOT_FOUND;
     }
-
-    wifi_credentials_t credentials = {0};
-    (void)wifi_storage_load_credentials(&credentials);
-    app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, credentials.ssid);
-    lcd_show_wifi_connecting(credentials.ssid);
-    esp_err_t err = wifi_controller_start();
-    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN && err != ESP_ERR_INVALID_STATE)
-    {
-        err = wifi_controller_reconnect();
-    }
-    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN)
-    {
+    app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, WIFI_COMPILED_STA_SSID);
+    lcd_show_wifi_connecting(WIFI_COMPILED_STA_SSID);
+    esp_err_t err = wifi_controller_reconnect();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
         app_wifi_end_operation();
         lcd_show_wifi_result(false, true, false, "Connect failed");
     }
@@ -729,18 +632,8 @@ esp_err_t app_services_wifi_disconnect(void)
 
 esp_err_t app_services_wifi_start_provisioning(void)
 {
-    if (!sys_state.wifi.enabled)
-    {
-        return app_services_set_wifi_enabled(true);
-    }
-    app_wifi_begin_operation(APP_WIFI_OPERATION_PROVISION, NULL);
-    const esp_err_t err = wifi_controller_start_provisioning();
-    if (err != ESP_OK)
-    {
-        app_wifi_end_operation();
-        lcd_flash_message("Setup AP Failed", "Try again", 1500U);
-    }
-    return err;
+    lcd_flash_message("Setup AP Disabled", "Use menuconfig", 1800U);
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
 void app_services_show_wifi_status(void)
@@ -751,12 +644,9 @@ void app_services_show_wifi_status(void)
         status = *status_ptr;
     }
 
-    wifi_credentials_t credentials = {0};
-    const char *ssid = "Not configured";
-    if (wifi_storage_load_credentials(&credentials) == ESP_OK &&
-        credentials.ssid[0] != '\0') {
-        ssid = credentials.ssid;
-    }
+    const char *ssid = WIFI_COMPILED_STA_SSID[0] != '\0'
+                           ? WIFI_COMPILED_STA_SSID
+                           : "Not configured";
 
     char ip[16] = "0.0.0.0";
     char gateway[16] = "0.0.0.0";
