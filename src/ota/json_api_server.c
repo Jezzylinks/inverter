@@ -21,6 +21,7 @@
 #include "security/security.h"
 #include "system_state.h"
 #include "network_services.h"
+#include "inverter_errors.h"
 
 static const char *TAG = "JSON_API";
 
@@ -387,6 +388,14 @@ static esp_err_t api_status_handler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "mdns_service", services.mdns_running);
     cJSON_AddBoolToObject(root, "mqtt_configured", services.mqtt_configured);
     cJSON_AddBoolToObject(root, "mqtt_connected", services.mqtt_connected);
+    const inverter_start_error_code_t start_error = inverter_get_last_start_error_code();
+    cJSON_AddNumberToObject(root, "start_error_code", (unsigned)start_error);
+    char start_error_text[16];
+    snprintf(start_error_text, sizeof(start_error_text), "E%03X",
+             (unsigned)start_error & 0x0FFFU);
+    cJSON_AddStringToObject(root, "start_error", start_error_text);
+    cJSON_AddStringToObject(root, "start_error_reason",
+                            inverter_get_last_start_error_reason());
 
     return send_json(req, root, 200);
 }

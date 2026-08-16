@@ -13,6 +13,7 @@
 #include "wifi/wifi_controller.h"
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_manager.h"
+#include "wifi/wifi_monitor.h"
 #include "wifi/wifi_types.h"
 #include "wifi/wifi_scan.h"
 #include "wifi/wifi_security.h"
@@ -759,6 +760,15 @@ esp_err_t app_services_check_for_update(bool user_initiated)
         }
         return ESP_ERR_INVALID_STATE;
     }
+    if (!wifi_monitor_is_online())
+    {
+        if (user_initiated)
+        {
+            lcd_flash_message("Internet Offline", "Connect internet", 1800U);
+        }
+        ESP_LOGW(APP_SERVICES_TAG, "Update check skipped: internet is not connected");
+        return ESP_ERR_INVALID_STATE;
+    }
 
     (void)app_services_get_ota_manifest_url(manifest_url, sizeof(manifest_url));
     if (manifest_url[0] == '\0')
@@ -858,6 +868,15 @@ esp_err_t app_services_confirm_update(void)
 
     if (!confirmed || manifest_url[0] == '\0')
     {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!wifi_monitor_is_online())
+    {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_ota_status.confirmation_pending = false;
+        s_ota_status.state = APP_OTA_AVAILABLE;
+        xSemaphoreGive(s_services_mutex);
+        lcd_flash_message("Internet Offline", "Connect internet", 1800U);
         return ESP_ERR_INVALID_STATE;
     }
     const esp_err_t err = ota_service_start_from_csv(manifest_url);

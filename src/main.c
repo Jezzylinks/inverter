@@ -89,6 +89,7 @@
 #include "app_buttons.h"
 #include "app_menu.h"
 #include "app_services.h"
+#include "inverter_errors.h"
 
 /* ── All original #defines─────────────────────────────── */
 #define WEATHER_API_KEY "YOUR_OPEN_WEATHER_API_KEY"
@@ -1049,6 +1050,8 @@ void menu_navigate_up(void);
 void menu_navigate_down(void);
 void menu_go_back(void);
 bool check_safety_conditions(void);
+static void set_last_start_error(inverter_start_error_code_t code,
+                                 const char *reason);
 void handle_menu_timeout(void);
 void enter_submenu(menu_state_t submenu);
 void clear_menu_history(void);
@@ -4093,9 +4096,10 @@ void inverter_emergency_disable(const char *reason)
 
 void inverter_power_on(void)
 {
+    set_last_start_error(INVERTER_START_ERROR_NONE, "No start error");
     if (!check_safety_conditions())
     {
-        lcd_show_fault("Safety check    ", "FAILED! See log ");
+        inverter_show_last_start_error();
         post_inverter_fault_event();
         vTaskDelay(pdMS_TO_TICKS(2000));
         go_to_main_screen();
@@ -4128,7 +4132,9 @@ void inverter_power_on(void)
         sys_state.inverter.inverter_active = false;
         led_set_inverter_active(false);
         sys_state.error.error_flags |= SYSTEM_FAILURE_ERROR;
-        lcd_show_fault("** START FAILED ", "Check relay/HW  ");
+        set_last_start_error(INVERTER_START_ERROR_RELAY,
+                             "Power relay control failed");
+        inverter_show_last_start_error();
         post_inverter_fault_event();
         vTaskDelay(pdMS_TO_TICKS(2000));
         go_to_main_screen();
@@ -4591,6 +4597,34 @@ void perform_factory_reset(void)
     factory_reset();
 }
 
+static inverter_start_error_code_t s_last_start_error_code =
+    INVERTER_START_ERROR_NONE;
+static char s_last_start_error_reason[64] = "No start error";
+
+static void set_last_start_error(inverter_start_error_code_t code,
+                                 const char *reason)
+{
+    s_last_start_error_code = code;
+    snprintf(s_last_start_error_reason, sizeof(s_last_start_error_reason),
+             "%s", reason != NULL ? reason : "Inverter start failed");
+}
+
+inverter_start_error_code_t inverter_get_last_start_error_code(void)
+{
+    return s_last_start_error_code;
+}
+
+const char *inverter_get_last_start_error_reason(void)
+{
+    return s_last_start_error_reason;
+}
+
+void inverter_show_last_start_error(void)
+{
+    lcd_show_inverter_start_error(s_last_start_error_code,
+                                  s_last_start_error_reason);
+}
+
 bool check_safety_conditions(void)
 {
     /* A hardware fault caught by POST at boot shouldn't be forgotten by
@@ -4600,6 +4634,8 @@ bool check_safety_conditions(void)
     {
         printf("SAFETY CHECK FAILED: POST did not pass (lcd=%d adc=%d fan=%d)\n",
                post_result.lcd_ok, post_result.adc_ok, post_result.fan_ok);
+        set_last_start_error(INVERTER_START_ERROR_POST,
+                             "Power-on self-test failed");
         return false;
     }
 
@@ -4612,6 +4648,8 @@ bool check_safety_conditions(void)
         ESP_LOGE(INV_TAG,
                  "SAFETY CHECK FAILED: required battery telemetry invalid or stale");
         sys_state.error.error_flags |= ERR_BATTERY_VOLTAGE;
+        set_last_start_error(INVERTER_START_ERROR_TELEMETRY,
+                             "Battery telemetry invalid or stale");
         return false;
     }
 
@@ -4641,6 +4679,8 @@ bool check_safety_conditions(void)
     {
         printf("❌ OVERVOLTAGE! %.2fV > %.2fV\n",
                measured_voltage, battery->overvoltage_protection_12v);
+        set_last_start_error(INVERTER_START_ERROR_BATTERY_OVERVOLTAGE,
+                             "Battery voltage too high");
         all_checks_passed = false;
     }
     else
@@ -4654,6 +4694,8 @@ bool check_safety_conditions(void)
     {
         printf("❌ UNDERVOLTAGE! %.2fV < %.2fV\n",
                measured_voltage, battery->undervoltage_protection_12v);
+        set_last_start_error(INVERTER_START_ERROR_BATTERY_UNDERVOLTAGE,
+                             "Battery voltage too low");
         all_checks_passed = false;
     }
     else
@@ -4675,6 +4717,8 @@ bool check_safety_conditions(void)
         sys_state.grid_voltage > GRID_VOLTAGE_MAX)
     {
         printf("ERROR: Grid voltage out of range: %.2fV\n", sys_state.grid_voltage);
+        set_last_start_error(INVERTER_START_ERROR_GRID_VOLTAGE,
+                             "Grid voltage out of range");
         return false;
     }
 
@@ -4683,6 +4727,8 @@ bool check_safety_conditions(void)
         sys_state.grid_frequency > GRID_FREQ_MAX)
     {
         printf("ERROR: Grid frequency out of range: %.2fHz\n", sys_state.grid_frequency);
+        set_last_start_error(INVERTER_START_ERROR_GRID_FREQUENCY,
+                             "Grid frequency out of range");
         return false;
     }
 #endif
@@ -4694,6 +4740,8 @@ bool check_safety_conditions(void)
     {
         printf("ERROR: DC input current too high: %.2fA (max: %.2fA)\n",
                sys_state.dc_input_current, DC_CURRENT_MAX);
+        set_last_start_error(INVERTER_START_ERROR_DC_OVER_CURRENT,
+                             "DC input current too high");
         return false;
     }
 
@@ -4702,6 +4750,8 @@ bool check_safety_conditions(void)
     {
         printf("ERROR: AC output current exceeds limit: %.2fA (max: %.2fA)\n",
                sys_state.ac_output_current, AC_CURRENT_MAX);
+        set_last_start_error(INVERTER_START_ERROR_AC_OVER_CURRENT,
+                             "AC output current too high");
         return false;
     }
 
@@ -4709,6 +4759,8 @@ bool check_safety_conditions(void)
     if (sys_state.fault_flags & FAULT_OVERCURRENT)
     {
         printf("ERROR: Overcurrent protection triggered!\n");
+        set_last_start_error(INVERTER_START_ERROR_OVERCURRENT,
+                             "Overcurrent protection active");
         return false;
     }
 
@@ -4719,6 +4771,8 @@ bool check_safety_conditions(void)
     {
         printf("ERROR: Heatsink temperature too high: %.1f°C (max: %.1f°C)\n",
                sys_state.heatsink_temperature, HEATSINK_TEMP_MAX);
+        set_last_start_error(INVERTER_START_ERROR_HEATSINK_TEMPERATURE,
+                             "Heatsink temperature too high");
         return false;
     }
 
@@ -4727,6 +4781,8 @@ bool check_safety_conditions(void)
     {
         printf("ERROR: Transformer temperature too high: %.1f°C (max: %.1f°C)\n",
                sys_state.transformer_temperature, TRANSFORMER_TEMP_MAX);
+        set_last_start_error(INVERTER_START_ERROR_TRANSFORMER_TEMPERATURE,
+                             "Transformer temperature too high");
         return false;
     }
 
@@ -4736,6 +4792,8 @@ bool check_safety_conditions(void)
     {
         printf("ERROR: Ambient temperature out of range: %.1f°C\n",
                sys_state.ambient_temperature);
+        set_last_start_error(INVERTER_START_ERROR_AMBIENT_TEMPERATURE,
+                             "Ambient temperature out of range");
         return false;
     }
 
@@ -4752,6 +4810,8 @@ bool check_safety_conditions(void)
     if (sys_state.fault_flags & FAULT_SHORT_CIRCUIT)
     {
         printf("ERROR: Short circuit detected!\n");
+        set_last_start_error(INVERTER_START_ERROR_SHORT_CIRCUIT,
+                             "Short circuit detected");
         return false;
     }
 
@@ -4759,6 +4819,8 @@ bool check_safety_conditions(void)
     if (sys_state.fault_flags & FAULT_GROUND_FAULT)
     {
         printf("ERROR: Ground fault detected!\n");
+        set_last_start_error(INVERTER_START_ERROR_GROUND_FAULT,
+                             "Ground fault detected");
         return false;
     }
 
@@ -4768,6 +4830,8 @@ bool check_safety_conditions(void)
     if (sys_state.fault_flags & FAULT_GATE_DRIVER)
     {
         printf("ERROR: Gate driver fault detected!\n");
+        set_last_start_error(INVERTER_START_ERROR_GATE_DRIVER,
+                             "Gate driver fault detected");
         return false;
     }
 
@@ -4775,6 +4839,8 @@ bool check_safety_conditions(void)
     if (fabs(sys_state.dc_bus_positive - sys_state.dc_bus_negative) > DC_BUS_IMBALANCE_MAX)
     {
         printf("ERROR: DC bus voltage imbalance detected!\n");
+        set_last_start_error(INVERTER_START_ERROR_DC_BUS_IMBALANCE,
+                             "DC bus voltage imbalance");
         return false;
     }
 
@@ -4782,6 +4848,8 @@ bool check_safety_conditions(void)
     if (sys_state.inverter.inverter_state == INVERTER_STANDBY && !sys_state.precharge_complete)
     {
         printf("ERROR: Pre-charge not complete!\n");
+        set_last_start_error(INVERTER_START_ERROR_PRECHARGE,
+                             "Pre-charge not complete");
         return false;
     }
 
@@ -4802,6 +4870,8 @@ bool check_safety_conditions(void)
     {
         printf("ERROR: Battery SOC too low: %.1f%% (min: %.1f%%)\n",
                sys_state.battery_soc, BATTERY_SOC_MIN);
+        set_last_start_error(INVERTER_START_ERROR_BATTERY_SOC,
+                             "Battery charge level too low");
         return false;
     }
 
@@ -4816,6 +4886,8 @@ bool check_safety_conditions(void)
     if (sys_state.fault_flags & FAULT_REVERSE_POLARITY)
     {
         printf("ERROR: Battery reverse polarity detected!\n");
+        set_last_start_error(INVERTER_START_ERROR_REVERSE_POLARITY,
+                             "Battery reverse polarity");
         return false;
     }
 #endif
@@ -4828,6 +4900,8 @@ bool check_safety_conditions(void)
     {
         printf("ERROR: Minimum off-time not met (%.0fms remaining)\n",
                MIN_OFF_TIME_MS - time_since_last_off);
+        set_last_start_error(INVERTER_START_ERROR_MINIMUM_OFF_TIME,
+                             "Minimum off-time not met");
         return false;
     }
 
@@ -4835,6 +4909,8 @@ bool check_safety_conditions(void)
     if (sys_state.emergency_stop_active)
     {
         printf("ERROR: Emergency stop is active!\n");
+        set_last_start_error(INVERTER_START_ERROR_EMERGENCY_STOP,
+                             "Emergency stop is active");
         return false;
     }
 
@@ -4843,6 +4919,8 @@ bool check_safety_conditions(void)
     if (!sys_state.enclosure_closed)
     {
         printf("ERROR: Enclosure door open!\n");
+        set_last_start_error(INVERTER_START_ERROR_ENCLOSURE,
+                             "Enclosure door is open");
         return false;
     }
 #endif
@@ -4853,6 +4931,8 @@ bool check_safety_conditions(void)
     if (sys_state.fault_flags & FAULT_WATCHDOG)
     {
         printf("ERROR: Watchdog timeout detected!\n");
+        set_last_start_error(INVERTER_START_ERROR_WATCHDOG,
+                             "Watchdog timeout detected");
         return false;
     }
 
@@ -4862,6 +4942,10 @@ bool check_safety_conditions(void)
     if (!all_checks_passed)
     {
         printf("ERROR: One or more safety checks failed!\n");
+        if (s_last_start_error_code == INVERTER_START_ERROR_NONE) {
+            set_last_start_error(INVERTER_START_ERROR_SAFETY,
+                                 "Safety checks failed");
+        }
         return false;
     }
 

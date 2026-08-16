@@ -12,6 +12,7 @@
 #include "esp_log.h"
 #include "system_state.h"
 #include "lcd_flash_queue.h"
+#include "lcd.h"
 
 /* The LCD render instance and mutex are declared by lcd_writer.h. */
 extern system_state_t sys_state; /* the single system-state instance */
@@ -219,6 +220,20 @@ void lcd_show_fault(const char *line0, const char *line1)
     set_line(sys_lcd.fault.line1, line1);
     sys_lcd.fault.blink = true;
     LCD_UNLOCK();
+}
+
+void lcd_show_inverter_start_error(inverter_start_error_code_t code,
+                                   const char *reason)
+{
+    char code_line[LCD_LINE_SIZE];
+    snprintf(code_line, sizeof(code_line), "CODE:E%03X",
+             (unsigned)code & 0x0FFFU);
+    if (lcd_geometry_is_20x4()) {
+        lcd_show_fault(reason != NULL ? reason : "Inverter start failed",
+                       code_line);
+    } else {
+        lcd_show_fault("SYSTEM ERROR", code_line);
+    }
 }
 
 void lcd_clear_fault(void)

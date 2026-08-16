@@ -193,6 +193,7 @@ extern void post_button_click_event(void);
 extern void inverter_power_on(void);
 extern void shutdown_inverter(void);
 extern bool check_safety_conditions(void);
+extern void inverter_show_last_start_error(void);
 extern void enter_diagnostic_mode(void);
 extern void exit_diagnostic_mode(void);
 extern void perform_factory_reset(void);
@@ -448,7 +449,7 @@ void handle_power_button_event(button_event_info_t *event_info,
             }
             else
             {
-                lcd_show_fault("Fault persists  ", "Check system!   ");
+                inverter_show_last_start_error();
                 post_buzzer_event(false);
 
                 vTaskDelay(pdMS_TO_TICKS(2000));

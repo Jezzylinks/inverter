@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "lcd_state.h"
+#include "inverter_errors.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -81,6 +82,8 @@ void lcd_show_shutdown_progress(uint8_t pct, bool load_warn, float load_a);
 
 /* ── Faults ──────────────────────────────────────────────────────────────── */
 void lcd_show_fault(const char *line0, const char *line1);
+void lcd_show_inverter_start_error(inverter_start_error_code_t code,
+                                   const char *reason);
 void lcd_clear_fault(void); /* returns to LCD_SCREEN_MAIN     */
 
 /* ── Factory reset ───────────────────────────────────────────────────────── */
