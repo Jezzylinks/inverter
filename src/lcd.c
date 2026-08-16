@@ -81,11 +81,11 @@ static const uint8_t cgram_wifi_tx[8] = {
 static const uint8_t cgram_wifi_rx[8] = {
     0x00, 0x04, 0x0C, 0x1F, 0x0C, 0x04, 0x00, 0x00};
 static const uint8_t cgram_wifi_link[8] = {
-    0x00, 0x00, 0x04, 0x0A, 0x15, 0x04, 0x00, 0x00};
-static const uint8_t cgram_wifi_lock[8] = {
-    0x0E, 0x11, 0x1F, 0x1B, 0x1F, 0x11, 0x0E, 0x00};
-static const uint8_t cgram_wifi_alert[8] = {
-    0x04, 0x0E, 0x0E, 0x04, 0x04, 0x00, 0x04, 0x00};
+    0x00, 0x04, 0x0E, 0x1F, 0x0E, 0x04, 0x00, 0x00};
+static const uint8_t cgram_wifi_device_local[8] = {
+    0x1F, 0x11, 0x15, 0x11, 0x1F, 0x04, 0x0E, 0x04};
+static const uint8_t cgram_wifi_device_remote[8] = {
+    0x1F, 0x11, 0x1B, 0x11, 0x1F, 0x04, 0x0E, 0x04};
 
 static uint8_t lcd_scan_and_find_address(void);
 // --------------------------------------------------
@@ -534,8 +534,8 @@ void lcd_init_cgram(void)
         lcd_create_custom_char(CHAR_WIFI_TX, cgram_wifi_tx);
         lcd_create_custom_char(CHAR_WIFI_RX, cgram_wifi_rx);
         lcd_create_custom_char(CHAR_WIFI_LINK, cgram_wifi_link);
-        lcd_create_custom_char(CHAR_WIFI_LOCK, cgram_wifi_lock);
-        lcd_create_custom_char(CHAR_WIFI_ALERT, cgram_wifi_alert);
+        lcd_create_custom_char(CHAR_WIFI_DEVICE_LOCAL, cgram_wifi_device_local);
+        lcd_create_custom_char(CHAR_WIFI_DEVICE_REMOTE, cgram_wifi_device_remote);
         lcd_create_custom_char(CHAR_BAR_0, cgram_bar[0]);
         lcd_create_custom_char(CHAR_BAR_1, cgram_bar[1]);
         lcd_create_custom_char(CHAR_BAR_2, cgram_bar[2]);

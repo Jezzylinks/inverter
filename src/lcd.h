@@ -29,6 +29,8 @@ extern "C"
 #define CHAR_WIFI_LINK 5
 #define CHAR_WIFI_LOCK 6
 #define CHAR_WIFI_ALERT 7
+#define CHAR_WIFI_DEVICE_LOCAL 6
+#define CHAR_WIFI_DEVICE_REMOTE 7
 
     // --------------------------------------------------
     // LCD STATE STRUCTURE

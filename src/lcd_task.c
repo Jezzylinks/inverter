@@ -865,61 +865,66 @@ static void draw_wifi_clients(const lcd_wifi_clients_data_t *d)
 
 static void draw_wifi_connecting(const lcd_wifi_connect_data_t *d)
 {
-    if (lcd_geometry_is_20x4())
-    {
-        static uint8_t frame = 0;
-        frame = (uint8_t)((frame + 1) % 4);
-        if (d->connected)
-        {
-            const char *rows[] = {"WI-FI CONNECTED", d->ssid,
-                                  "LINK ESTABLISHED", "READY FOR DATA"};
-            draw_commit_rows(rows);
-        }
-        else if (d->failed)
-        {
-            const char *rows[] = {"WI-FI FAILED", d->ssid,
-                                  "CHECK CREDENTIALS", "BACK TO RETURN"};
-            draw_commit_rows(rows);
-        }
-        else if (d->timed_out)
-        {
-            const char *rows[] = {"WI-FI TIMEOUT", d->ssid,
-                                  "NO RESPONSE", "BACK TO RETURN"};
-            draw_commit_rows(rows);
-        }
-        else
-        {
-            const char *activity[] = {"CONNECTING  ", "CONNECTING .", "CONNECTING ..", "CONNECTING ..."};
-            char rows[4][LCD_LINE_SIZE];
+    static uint8_t frame = 0;
+    frame = (uint8_t)((frame + 1U) % 4U);
+
+    if (lcd_geometry_is_20x4()) {
+        char rows[4][LCD_LINE_SIZE];
+        if (d->connected) {
+            snprintf(rows[0], LCD_LINE_SIZE, "WI-FI CONNECTED");
+            snprintf(rows[1], LCD_LINE_SIZE, "%c  %-15.15s",
+                     CHAR_WIFI_DEVICE_LOCAL, d->ssid);
+            snprintf(rows[2], LCD_LINE_SIZE, "RSSI: %4d dBm", (int)d->rssi);
+            snprintf(rows[3], LCD_LINE_SIZE, "%-20.20s",
+                     d->detail[0] ? d->detail : "LINK ESTABLISHED");
+        } else if (d->failed) {
+            snprintf(rows[0], LCD_LINE_SIZE, "WI-FI CONNECTION");
+            snprintf(rows[1], LCD_LINE_SIZE, "FAILED: %-12.12s",
+                     d->detail[0] ? d->detail : "Try again");
+            snprintf(rows[2], LCD_LINE_SIZE, "RSSI: %4d dBm", (int)d->rssi);
+            snprintf(rows[3], LCD_LINE_SIZE, "BACK TO RETURN");
+        } else if (d->timed_out) {
+            snprintf(rows[0], LCD_LINE_SIZE, "WI-FI TIMEOUT");
+            snprintf(rows[1], LCD_LINE_SIZE, "%-20.20s", d->ssid);
+            snprintf(rows[2], LCD_LINE_SIZE, "RSSI: %4d dBm", (int)d->rssi);
+            snprintf(rows[3], LCD_LINE_SIZE, "%-20.20s",
+                     d->detail[0] ? d->detail : "Connection failed");
+        } else {
+            const char *activity[] = {"CONNECTING    ", "CONNECTING .  ",
+                                      "CONNECTING .. ", "CONNECTING ..."};
             snprintf(rows[0], LCD_LINE_SIZE, "%s", activity[frame]);
-            snprintf(rows[1], LCD_LINE_SIZE, "%c %-18.18s", CHAR_WIFI_TX, d->ssid);
-            snprintf(rows[2], LCD_LINE_SIZE, "%c WAITING FOR AP", CHAR_WIFI_RX);
-            snprintf(rows[3], LCD_LINE_SIZE, "%c SIGNAL / AUTH", CHAR_WIFI_LINK);
-            const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
-            draw_commit_rows(row_ptrs);
+            snprintf(rows[1], LCD_LINE_SIZE, "%c %c%c %c %-11.11s",
+                     CHAR_WIFI_DEVICE_LOCAL, CHAR_WIFI_LINK, CHAR_WIFI_LINK,
+                     CHAR_WIFI_DEVICE_REMOTE, d->ssid);
+            snprintf(rows[2], LCD_LINE_SIZE, "RSSI: %4d dBm", (int)d->rssi);
+            snprintf(rows[3], LCD_LINE_SIZE, "%c WAITING FOR AP",
+                     CHAR_WIFI_RX);
         }
-    }
-    else
-    {
-        char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
-        if (d->connected)
-        {
-            snprintf(r0, LCD_LINE_SIZE, "%-16s", "Wi-Fi Connected ");
+        draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
+    } else {
+        char r0[LCD_LINE_SIZE];
+        char r1[LCD_LINE_SIZE];
+        char rssi[8];
+        if (d->rssi <= -127) {
+            snprintf(rssi, sizeof(rssi), "--");
+        } else {
+            snprintf(rssi, sizeof(rssi), "%d", (int)d->rssi);
+        }
+        if (d->connected) {
+            snprintf(r0, LCD_LINE_SIZE, "OK R:%s", rssi);
             snprintf(r1, LCD_LINE_SIZE, "%-16.16s", d->ssid);
-        }
-        else if (d->failed)
-        {
-            snprintf(r0, LCD_LINE_SIZE, "%-16s", "Wi-Fi Failed    ");
-            snprintf(r1, LCD_LINE_SIZE, "%-16s", "Check SSID/Pass ");
-        }
-        else if (d->timed_out)
-        {
-            snprintf(r0, LCD_LINE_SIZE, "%-16s", "Wi-Fi Timeout   ");
-            snprintf(r1, LCD_LINE_SIZE, "%-16s", "No Connection   ");
-        }
-        else
-        {
-            snprintf(r0, LCD_LINE_SIZE, "%-16s", "Connecting Wi-Fi");
+        } else if (d->failed) {
+            snprintf(r0, LCD_LINE_SIZE, "CONNECT FAILED");
+            snprintf(r1, LCD_LINE_SIZE, "%-16.16s",
+                     d->detail[0] ? d->detail : "Try again");
+        } else if (d->timed_out) {
+            snprintf(r0, LCD_LINE_SIZE, "TO R:%s", rssi);
+            snprintf(r1, LCD_LINE_SIZE, "%-16.16s",
+                     d->detail[0] ? d->detail : "No connection");
+        } else {
+            static const char spinner[] = {'|', '/', '-', '\\'};
+            snprintf(r0, LCD_LINE_SIZE, "CONN%c R:%s",
+                     spinner[frame], rssi);
             snprintf(r1, LCD_LINE_SIZE, "%-16.16s", d->ssid);
         }
         draw_commit(r0, r1);

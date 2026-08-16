@@ -3844,7 +3844,7 @@ void lcd_show_bt_connecting_screen(const char *device_name)
 {
     char r1[LCD_LINE_SIZE];
     snprintf(r1, LCD_LINE_SIZE, "%-16.16s", device_name ? device_name : "");
-    lcd_show_wifi_connecting(device_name ? device_name : "");
+    lcd_show_wifi_connecting(device_name ? device_name : "", -127);
     /* reuse wifi_connecting screen — same layout */
 }
 

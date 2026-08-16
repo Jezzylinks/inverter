@@ -116,9 +116,9 @@ void lcd_show_wifi_status(const char *state, const char *ssid, const char *ip,
                           const char *gateway, int8_t rssi, bool connected,
                           bool got_ip, bool internet_available);
 void lcd_update_wifi_status_page(uint8_t page);
-void lcd_show_wifi_connecting(const char *ssid);
+void lcd_show_wifi_connecting(const char *ssid, int8_t rssi);
 void lcd_show_wifi_result(bool connected, bool failed, bool timed_out,
-                          const char *ssid);
+                          const char *ssid, int8_t rssi, const char *detail);
 void lcd_show_wifi_clients(uint8_t count,
                            const char macs[][18],
                            uint8_t selected);

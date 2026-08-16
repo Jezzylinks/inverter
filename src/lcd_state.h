@@ -247,6 +247,8 @@ extern "C"
     typedef struct
     {
         char ssid[LCD_WIFI_SSID_MAX_LEN + 1U];
+        char detail[LCD_LINE_SIZE];
+        int8_t rssi;
         bool connected;
         bool failed;
         bool timed_out;

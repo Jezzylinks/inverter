@@ -482,13 +482,15 @@ void lcd_update_wifi_status_page(uint8_t page)
     LCD_UNLOCK();
 }
 
-void lcd_show_wifi_connecting(const char *ssid)
+void lcd_show_wifi_connecting(const char *ssid, int8_t rssi)
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_WIFI_CONNECTING;
     strncpy(sys_lcd.wifi_connect.ssid, ssid ? ssid : "",
             LCD_WIFI_SSID_MAX_LEN);
     sys_lcd.wifi_connect.ssid[LCD_WIFI_SSID_MAX_LEN] = '\0';
+    sys_lcd.wifi_connect.detail[0] = '\0';
+    sys_lcd.wifi_connect.rssi = rssi;
     sys_lcd.wifi_connect.connected = false;
     sys_lcd.wifi_connect.failed = false;
     sys_lcd.wifi_connect.timed_out = false;
@@ -498,13 +500,16 @@ void lcd_show_wifi_connecting(const char *ssid)
 }
 
 void lcd_show_wifi_result(bool connected, bool failed, bool timed_out,
-                          const char *ssid)
+                          const char *ssid, int8_t rssi, const char *detail)
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_WIFI_CONNECTING;
     strncpy(sys_lcd.wifi_connect.ssid, ssid ? ssid : "",
             LCD_WIFI_SSID_MAX_LEN);
     sys_lcd.wifi_connect.ssid[LCD_WIFI_SSID_MAX_LEN] = '\0';
+    snprintf(sys_lcd.wifi_connect.detail, sizeof(sys_lcd.wifi_connect.detail),
+             "%s", detail ? detail : "");
+    sys_lcd.wifi_connect.rssi = rssi;
     sys_lcd.wifi_connect.connected = connected;
     sys_lcd.wifi_connect.failed = failed;
     sys_lcd.wifi_connect.timed_out = timed_out;

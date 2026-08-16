@@ -69,6 +69,7 @@ static app_wifi_operation_t s_wifi_operation;
 static char s_wifi_operation_ssid[WIFI_MAX_SSID_LEN + 1U];
 static uint32_t s_wifi_operation_generation;
 static TickType_t s_wifi_operation_started_tick;
+static int8_t s_wifi_operation_rssi = -127;
 
 static bool app_wifi_scan_cancel_requested(void)
 {
@@ -153,12 +154,18 @@ static void app_wifi_operation_watch_task(void *parameter)
         vTaskDelay(pdMS_TO_TICKS(500U));
 
         bool timed_out = false;
+        char timed_out_ssid[sizeof(s_wifi_operation_ssid)] = {0};
+        int8_t timed_out_rssi = -127;
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         if (s_wifi_operation != APP_WIFI_OPERATION_NONE &&
             (uint32_t)(xTaskGetTickCount() - s_wifi_operation_started_tick) >=
                 pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
+            strncpy(timed_out_ssid, s_wifi_operation_ssid,
+                    sizeof(timed_out_ssid) - 1U);
+            timed_out_rssi = s_wifi_operation_rssi;
             s_wifi_operation = APP_WIFI_OPERATION_NONE;
             s_wifi_operation_ssid[0] = '\0';
+            s_wifi_operation_rssi = -127;
             ++s_wifi_operation_generation;
             timed_out = true;
         }
@@ -167,13 +174,15 @@ static void app_wifi_operation_watch_task(void *parameter)
         if (timed_out) {
             ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi operation timed out after %ums",
                      (unsigned)APP_WIFI_OPERATION_TIMEOUT_MS);
-            lcd_show_wifi_result(false, true, true, "Wi-Fi timeout");
+            lcd_show_wifi_result(false, true, true,
+                                 timed_out_ssid[0] ? timed_out_ssid : "Wi-Fi",
+                                 timed_out_rssi, "Connection timed out");
         }
     }
 }
 
 static void app_wifi_begin_operation(app_wifi_operation_t operation,
-                                     const char *ssid)
+                                     const char *ssid, int8_t rssi)
 {
     if (s_services_mutex == NULL) {
         return;
@@ -182,6 +191,7 @@ static void app_wifi_begin_operation(app_wifi_operation_t operation,
     s_wifi_operation = operation;
     ++s_wifi_operation_generation;
     s_wifi_operation_started_tick = xTaskGetTickCount();
+    s_wifi_operation_rssi = rssi;
     s_wifi_operation_ssid[0] = '\0';
     if (ssid != NULL) {
         strncpy(s_wifi_operation_ssid, ssid, sizeof(s_wifi_operation_ssid) - 1U);
@@ -198,6 +208,7 @@ static void app_wifi_end_operation(void)
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_wifi_operation = APP_WIFI_OPERATION_NONE;
     s_wifi_operation_ssid[0] = '\0';
+    s_wifi_operation_rssi = -127;
     xSemaphoreGive(s_services_mutex);
 }
 
@@ -220,6 +231,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
 
     app_wifi_operation_t operation;
     char ssid[sizeof(s_wifi_operation_ssid)] = {0};
+    int8_t operation_rssi = -127;
     bool terminal = false;
     bool connected = false;
     bool failed = false;
@@ -228,6 +240,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     operation = s_wifi_operation;
     strncpy(ssid, s_wifi_operation_ssid, sizeof(ssid) - 1U);
+    operation_rssi = s_wifi_operation_rssi;
     xSemaphoreGive(s_services_mutex);
 
     if (operation == APP_WIFI_OPERATION_NONE) {
@@ -300,7 +313,11 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         operation == APP_WIFI_OPERATION_DISCONNECT) {
         lcd_flash_message(message, "Saved", 1200U);
     } else {
-        lcd_show_wifi_result(connected, failed, false, message);
+        const char *display_ssid = ssid[0] != '\0' ? ssid : message;
+        const char *detail = connected ? "Connection succeeded" : message;
+        lcd_show_wifi_result(connected, failed, false, display_ssid,
+                             status->rssi != -127 ? status->rssi : operation_rssi,
+                             detail);
     }
 }
 
@@ -631,7 +648,7 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
     sys_state.inverter.wifi_enabled = enabled;
     app_wifi_begin_operation(enabled ? APP_WIFI_OPERATION_ENABLE
                                      : APP_WIFI_OPERATION_DISABLE,
-                             ssid);
+                             ssid, -127);
 
     if (!enabled) {
         (void)network_services_stop();
@@ -801,13 +818,16 @@ void app_services_show_wifi_network_details(uint8_t selected_index)
 esp_err_t app_services_wifi_connect_selected(uint8_t selected_index)
 {
     char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
+    int8_t selected_rssi = -127;
     LCD_LOCK();
     if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS) {
         strncpy(ssid, sys_lcd.wifi_network_detail.ssid, sizeof(ssid) - 1U);
+        selected_rssi = sys_lcd.wifi_network_detail.rssi;
     } else if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN &&
                sys_lcd.wifi_scan.stage == LCD_WIFI_SCAN_COMPLETE &&
                selected_index < sys_lcd.wifi_scan.count) {
         strncpy(ssid, sys_lcd.wifi_scan.ssid[selected_index], sizeof(ssid) - 1U);
+        selected_rssi = sys_lcd.wifi_scan.rssi[selected_index];
     } else {
         LCD_UNLOCK();
         return ESP_ERR_INVALID_STATE;
@@ -833,7 +853,7 @@ esp_err_t app_services_wifi_connect_selected(uint8_t selected_index)
         return ESP_ERR_NOT_SUPPORTED;
 #endif
     }
-    return app_services_wifi_connect_network(ssid, password);
+    return app_services_wifi_connect_network_with_rssi(ssid, password, selected_rssi);
 }
 
 esp_err_t app_services_wifi_submit_password(void)
@@ -859,6 +879,13 @@ esp_err_t app_services_wifi_submit_password(void)
 
 esp_err_t app_services_wifi_connect_network(const char *ssid,
                                                const char *password)
+{
+    return app_services_wifi_connect_network_with_rssi(ssid, password, -127);
+}
+
+esp_err_t app_services_wifi_connect_network_with_rssi(const char *ssid,
+                                                      const char *password,
+                                                      int8_t rssi)
 {
     if (ssid == NULL || ssid[0] == '\0' || password == NULL ||
         strlen(ssid) > WIFI_MAX_SSID_LEN || strlen(password) > 63U) {
@@ -891,12 +918,12 @@ esp_err_t app_services_wifi_connect_network(const char *ssid,
     strncpy(credentials.password, password, sizeof(credentials.password) - 1U);
     (void)wifi_storage_save_credentials(&credentials);
 
-    app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, ssid);
-    lcd_show_wifi_connecting(ssid);
+    app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, ssid, rssi);
+    lcd_show_wifi_connecting(ssid, rssi);
     err = wifi_controller_reconnect();
     if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
         app_wifi_end_operation();
-        lcd_show_wifi_result(false, true, false, "Connect failed");
+        lcd_show_wifi_result(false, true, false, ssid, rssi, "Connect failed");
     }
     return err;
 }
@@ -921,26 +948,26 @@ esp_err_t app_services_wifi_reconnect(void)
         lcd_flash_message("Wi-Fi Not Config", "Scan a network", 1800U);
         return ESP_ERR_NOT_FOUND;
     }
-    app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, config.ssid);
-    lcd_show_wifi_connecting(config.ssid);
+    app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, config.ssid, -127);
+    lcd_show_wifi_connecting(config.ssid, -127);
     esp_err_t err = wifi_controller_reconnect();
     if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
         app_wifi_end_operation();
-        lcd_show_wifi_result(false, true, false, "Connect failed");
+        lcd_show_wifi_result(false, true, false, config.ssid, -127, "Connect failed");
     }
     return err;
 }
 
 esp_err_t app_services_wifi_disconnect(void)
 {
-    app_wifi_begin_operation(APP_WIFI_OPERATION_DISCONNECT, NULL);
+    app_wifi_begin_operation(APP_WIFI_OPERATION_DISCONNECT, NULL, -127);
     const esp_err_t err = wifi_controller_disconnect();
     if (err != ESP_OK) {
         app_wifi_end_operation();
-        lcd_show_wifi_result(false, true, false, "Disconnect failed");
+        lcd_show_wifi_result(false, true, false, "", -127, "Disconnect failed");
     } else if (!wifi_controller_is_connected() && app_wifi_operation_pending()) {
         app_wifi_end_operation();
-        lcd_show_wifi_result(false, false, false, "Disconnected");
+        lcd_show_wifi_result(false, false, false, "", -127, "Disconnected");
     }
     return err;
 }

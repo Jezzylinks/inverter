@@ -58,6 +58,9 @@ esp_err_t app_services_wifi_connect_selected(uint8_t selected_index);
 esp_err_t app_services_wifi_submit_password(void);
 esp_err_t app_services_wifi_connect_network(const char *ssid,
                                              const char *password);
+esp_err_t app_services_wifi_connect_network_with_rssi(const char *ssid,
+                                                      const char *password,
+                                                      int8_t rssi);
 esp_err_t app_services_wifi_connect_saved(void);
 esp_err_t app_services_wifi_reconnect(void);
 esp_err_t app_services_wifi_disconnect(void);
