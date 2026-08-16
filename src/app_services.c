@@ -33,8 +33,6 @@
 #define APP_WIFI_SCAN_STACK_SIZE 4096U
 #define APP_WIFI_SCAN_PRIORITY 5U
 #define APP_WIFI_OPERATION_TIMEOUT_MS 30000U
-#define APP_WIFI_OPERATION_TIMEOUT_STACK_SIZE 3072U
-#define APP_WIFI_OPERATION_TIMEOUT_PRIORITY 3U
 
 extern system_state_t sys_state;
 extern SemaphoreHandle_t sys_state_mutex;
@@ -63,10 +61,8 @@ static TickType_t s_wifi_operation_started_tick;
 static void app_wifi_operation_watch_task(void *parameter)
 {
     (void)parameter;
-    task_watchdog_register("wifi_operation_watch");
 
     while (true) {
-        task_watchdog_feed();
         vTaskDelay(pdMS_TO_TICKS(500U));
 
         bool timed_out = false;
@@ -315,7 +311,6 @@ static const char *wifi_state_text(wifi_controller_state_t state)
 
 static void app_wifi_scan_task(void *parameter)
 {
-    task_watchdog_register("app_wifi_scan_task");
     (void)parameter;
 
     wifi_ap_record_t records[WIFI_MAX_SCAN_RESULTS] = {0};

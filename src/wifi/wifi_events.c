@@ -3,7 +3,6 @@
  * @brief Wi-Fi runtime state and ESP-IDF event integration.
  */
 #include "wifi_events.h"
-#include "task_watchdog.h"
 
 #include <string.h>
 
@@ -72,7 +71,6 @@ static void wifi_publish_state(wifi_connection_state_t state)
 
 static void wifi_reconnect_task(void *arg)
 {
-    task_watchdog_register("wifi_reconnect_task");
     const uint32_t generation = (uint32_t)(uintptr_t)arg;
     uint32_t waited_ms = 0U;
 
@@ -80,7 +78,6 @@ static void wifi_reconnect_task(void *arg)
         const uint32_t slice = (WIFI_RECONNECT_DELAY_MS - waited_ms) > 250U
                                    ? 250U
                                    : (WIFI_RECONNECT_DELAY_MS - waited_ms);
-        task_watchdog_feed();
         vTaskDelay(pdMS_TO_TICKS(slice));
         waited_ms += slice;
 

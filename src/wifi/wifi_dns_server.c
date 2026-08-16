@@ -4,7 +4,6 @@
  */
 
 #include "wifi_dns_server.h"
-#include "task_watchdog.h"
 #include <string.h>
 #include <errno.h>
 
@@ -178,7 +177,6 @@ static void dns_socket_destroy(void)
 
 static void dns_server_task(void *arg)
 {
-    task_watchdog_register("dns_server_task");
     (void)arg;
 
     uint8_t buffer[DNS_MAX_PACKET_SIZE];
@@ -200,7 +198,6 @@ static void dns_server_task(void *arg)
 
     while (s_running)
     {
-        task_watchdog_feed();
         client_len = sizeof(client_addr);
 
         int len =

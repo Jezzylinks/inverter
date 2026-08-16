@@ -3,7 +3,6 @@
  * @brief Hardened local HTTP server for Wi-Fi provisioning.
  */
 #include "wifi_http_server.h"
-#include "task_watchdog.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -175,7 +174,6 @@ static esp_err_t wifi_http_receive_form(httpd_req_t *req, char **form)
 
 static void wifi_http_save_callback_task(void *arg)
 {
-    task_watchdog_register("wifi_http_save_callback_task");
     (void)arg;
     wifi_http_lock();
     wifi_http_save_callback_t callback = s_save_callback;

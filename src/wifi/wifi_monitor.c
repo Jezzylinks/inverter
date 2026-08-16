@@ -1,4 +1,3 @@
-#include "task_watchdog.h"
 /**
  * @file wifi_monitor.c
  * @brief Wi-Fi Runtime Monitor
@@ -14,7 +13,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include "task_watchdog.h"
 
 #include "lwip/sockets.h"
 #include "ping/ping_sock.h"
@@ -87,9 +85,8 @@ static void wifi_monitor_notify(void)
 
 static wifi_internet_status_t wifi_monitor_check_internet(void)
 {
-    /* The ping is performed in a bounded, watchdog-fed worker path. Avoid
-     * getaddrinfo() here: lwIP DNS resolution can block for an uncontrolled
-     * interval and previously starved the task watchdog during Wi-Fi startup. */
+    /* The ping is performed in a bounded worker path. Avoid getaddrinfo()
+     * here: lwIP DNS resolution can block for an uncontrolled interval. */
     return wifi_monitor_ping_test()
                ? WIFI_INTERNET_AVAILABLE
                : WIFI_INTERNET_UNAVAILABLE;
@@ -134,19 +131,16 @@ static bool wifi_monitor_ping_test(void)
 
     esp_ping_start(ping);
 
-    /* Wait in short, watchdog-fed slices. A stop notification interrupts the
-     * probe immediately, so Wi-Fi off/disconnect cannot wait behind a long
+    /* Wait in short slices. A stop notification interrupts the probe
+     * immediately, so Wi-Fi off/disconnect cannot wait behind a long
      * network operation. */
     uint32_t waited_ms = 0U;
     while (waited_ms < 3500U && s_running) {
-        task_watchdog_feed();
         if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100U)) > 0U) {
             break;
         }
         waited_ms += 100U;
     }
-    task_watchdog_feed();
-
     /* Get statistics */
     uint32_t transmitted = 0;
     esp_ping_get_profile(ping, ESP_PING_PROF_REQUEST, &transmitted, sizeof(transmitted));
@@ -169,12 +163,10 @@ static bool wifi_monitor_ping_test(void)
 
 static void wifi_monitor_task(void *arg)
 {
-    task_watchdog_register("wifi_monitor_task");
     (void)arg;
 
     while (s_running) {
 
-        task_watchdog_feed();
         wifi_status_t event_status = {0};
         const bool have_event_status =
             wifi_events_get_status_copy(&event_status) == ESP_OK;
