@@ -4,7 +4,7 @@ This repository contains the ESP32 firmware for the advanced inverter controller
 
 ## Build and flash
 
-The project is built with PlatformIO and ESP-IDF 5.3 through the pinned `espressif32@6.8.1` platform. The environment targets an ESP32 Dev Module with a 4 MiB flash device and uses `partitions.csv`, which provides two 1.5 MiB OTA application slots plus NVS, OTA metadata, PHY data, and SPIFFS storage. Wi-Fi credentials are supplied through the project Kconfig menu and are compiled into the firmware; generated `sdkconfig` files are intentionally ignored by Git.
+The project is built with PlatformIO and ESP-IDF 5.3 through the pinned `espressif32@6.8.1` platform. The environment targets an ESP32 Dev Module with a 4 MiB flash device and uses `partitions.csv`, which provides two 1.5 MiB OTA application slots plus NVS, OTA metadata, PHY data, and SPIFFS storage. Wi-Fi credentials are supplied through the project Kconfig menu and are compiled into the firmware. The tracked `sdkconfig.defaults` file is sanitized and contains no real credentials; generated `sdkconfig` files are intentionally ignored by Git.
 
 ```bash
 # Configure Wi-Fi credentials before the first build/flash.
@@ -50,7 +50,7 @@ From the **Firmware Update** menu, select **Check for Update** to run an immedia
 
 ## Wi-Fi compile-time configuration and control
 
-Before building or flashing, run `idf.py -D SDKCONFIG=sdkconfig.esp32dev menuconfig` and open **Inverter Wi-Fi Configuration**. Set the Station SSID and password for normal STA operation. Set an AP password of at least eight characters to enable the optional AP; leaving the AP password empty disables AP mode. The AP is never started as an open network. Configure the AP channel and WPA2/WPA3 authentication choice in the same menu.
+The repository includes a sanitized `sdkconfig.defaults` seed containing the non-secret project settings. Before building or flashing, run `idf.py -D SDKCONFIG=sdkconfig.esp32dev menuconfig` and open **Inverter Wi-Fi Configuration**. Set the Station SSID and password for normal STA operation. Set an AP password of at least eight characters to enable the optional AP; leaving the AP password empty disables AP mode. The AP is never started as an open network. Configure the AP channel and WPA2/WPA3 authentication choice in the same menu.
 
 The **WiFi Control** menu now contains only **WiFi On / Off**, **WiFi Status**, **Disconnect**, and **Reconnect**. It does not scan networks, accept passwords, start a setup AP, or connect to NVS-saved credentials. The status view reports the compiled STA SSID together with connection state, IP, RSSI, and internet availability. Wi-Fi intent (`wifi_enabled`) may still be persisted in NVS, but credentials and AP identity are not.
 
