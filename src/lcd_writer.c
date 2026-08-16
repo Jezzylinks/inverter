@@ -13,10 +13,8 @@
 #include "system_state.h"
 #include "lcd_flash_queue.h"
 
-/* These are defined in main.c */
-extern SemaphoreHandle_t sys_state_mutex;
-extern lcd_render_state_t sys_lcd; /* the single render-state instance */
-extern system_state_t sys_state;   /* the single system-state instance */
+/* The LCD render instance and mutex are declared by lcd_writer.h. */
+extern system_state_t sys_state; /* the single system-state instance */
 
 static bool s_startup_released = false;
 
