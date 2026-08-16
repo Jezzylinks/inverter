@@ -35,6 +35,8 @@ extern SemaphoreHandle_t change_pin_mutex;
 extern change_pin_ctx_t change_pin_ctx;
 
 static uint8_t s_ota_auth_selection = 1U;
+static bool s_ota_feedback_active = false;
+static bool s_wifi_settings_child_active = false;
 
 static void return_factory_reset_to_menu(void)
 {
@@ -288,6 +290,7 @@ static void handle_wifi_menu_action(uint8_t selection)
         (void)app_services_wifi_scan();
         break;
     case 4:
+        s_wifi_settings_child_active = false;
         push_menu_history(MENU_WIFI_CONFIG, selection);
         sys_state.menu_state = MENU_WIFI_SETTINGS;
         sys_state.menu_selection = 0U;
@@ -302,16 +305,20 @@ static void handle_wifi_settings_action(uint8_t selection)
 {
     switch (selection) {
     case 0:
+        s_wifi_settings_child_active = false;
         (void)app_services_wifi_request_forget_saved();
         break;
     case 1:
+        s_wifi_settings_child_active = true;
         lcd_flash_message("Network Mode", app_services_wifi_mode_name(), 1200U);
         break;
     case 2:
+        s_wifi_settings_child_active = false;
         (void)app_services_wifi_toggle_dhcp();
         show_menu_screen(MENU_WIFI_SETTINGS, selection);
         break;
     case 3:
+        s_wifi_settings_child_active = true;
         app_services_show_ap_clients();
         break;
     default:
@@ -323,9 +330,11 @@ static void handle_ota_menu_action(uint8_t selection)
 {
     switch (selection) {
     case 0:
+        s_ota_feedback_active = true;
         (void)app_services_check_for_update(true);
         break;
     case 1:
+        s_ota_feedback_active = true;
         if (sys_state.security.enabled) {
             begin_ota_auth(selection);
         } else {
@@ -333,6 +342,7 @@ static void handle_ota_menu_action(uint8_t selection)
         }
         break;
     case 2:
+        s_ota_feedback_active = true;
         (void)app_services_cancel_update();
         break;
     default:
@@ -1886,6 +1896,25 @@ void handle_back_button_event(button_event_info_t *event_info,
     }
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
+        sys_state.menu_state == MENU_OTA &&
+        s_ota_feedback_active &&
+        sys_lcd.screen == LCD_SCREEN_FLASH_MSG) {
+        s_ota_feedback_active = false;
+        show_menu_screen(MENU_OTA, sys_state.menu_selection);
+        return;
+    }
+
+    if (event_info->event == BUTTON_EVENT_CLICK &&
+        sys_state.menu_state == MENU_WIFI_SETTINGS &&
+        s_wifi_settings_child_active &&
+        (sys_lcd.screen == LCD_SCREEN_FLASH_MSG ||
+         sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS)) {
+        s_wifi_settings_child_active = false;
+        show_menu_screen(MENU_WIFI_SETTINGS, sys_state.menu_selection);
+        return;
+    }
+
+    if (event_info->event == BUTTON_EVENT_CLICK &&
         (app_services_wifi_forget_confirmation_pending() ||
          app_services_wifi_disconnect_confirmation_pending())) {
         app_services_wifi_cancel_forget_saved();
@@ -1914,8 +1943,7 @@ void handle_back_button_event(button_event_info_t *event_info,
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
         (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS ||
-         sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING ||
-         sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS)) {
+         sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING)) {
         show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
         return;
     }

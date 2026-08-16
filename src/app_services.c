@@ -9,6 +9,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lcd_writer.h"
+#include "lcd_flash_queue.h"
 #include "nvs.h"
 #include "system_state.h"
 #include "wifi/wifi_controller.h"
@@ -1227,7 +1228,10 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     {
         if (user_initiated)
         {
-            lcd_show_system_error(SYSTEM_ERROR_WIFI_NOT_CONNECTED);
+            const bool enabled = app_services_wifi_enabled();
+            lcd_flash_warning_to(enabled ? "Wi-Fi ON" : "Wi-Fi OFF",
+                                 enabled ? "Connect first" : "Turn Wi-Fi ON",
+                                 1800U, LCD_SCREEN_MENU);
         }
         ESP_LOGW(APP_SERVICES_TAG, "Update check skipped: station is not connected");
         return ESP_ERR_INVALID_STATE;
@@ -1236,7 +1240,8 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     {
         if (user_initiated)
         {
-            lcd_show_system_error(SYSTEM_ERROR_WIFI_INTERNET_UNAVAILABLE);
+            lcd_flash_warning_to("Wi-Fi Connected", "Internet OFF",
+                                 1800U, LCD_SCREEN_MENU);
         }
         ESP_LOGW(APP_SERVICES_TAG, "Internet Not Available; OTA check skipped");
         return ESP_ERR_INVALID_STATE;
@@ -1247,7 +1252,8 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     {
         if (user_initiated)
         {
-            lcd_flash_message("OTA Not Set", "Configure URL", 1500U);
+            lcd_flash_warning_to("OTA Not Set", "Configure URL",
+                                 1500U, LCD_SCREEN_MENU);
         }
         return ESP_ERR_NOT_FOUND;
     }
@@ -1287,18 +1293,22 @@ esp_err_t app_services_check_for_update(bool user_initiated)
         ESP_LOGW(APP_SERVICES_TAG, "OTA check failed: %s", esp_err_to_name(err));
         if (user_initiated)
         {
-            lcd_show_system_error(SYSTEM_ERROR_OTA_MANIFEST);
+            char error_line[LCD_LINE_SIZE];
+            snprintf(error_line, sizeof(error_line), "ERR:%s",
+                     esp_err_to_name(err));
+            lcd_flash_warning_to("OTA Check Failed", error_line,
+                                 2000U, LCD_SCREEN_MENU);
         }
     }
     else if (update_available)
     {
         char line[LCD_LINE_SIZE];
         snprintf(line, sizeof(line), "Version %.8s", entry.version);
-        lcd_flash_message("Update Available", line, 1800U);
+        lcd_flash_info_to("Update Available", line, 1800U, LCD_SCREEN_MENU);
     }
     else if (user_initiated)
     {
-        lcd_flash_message("Firmware Current", "No update", 1400U);
+        lcd_flash_info_to("Firmware Current", "No update", 1400U, LCD_SCREEN_MENU);
     }
     return err;
 }
@@ -1348,7 +1358,8 @@ esp_err_t app_services_confirm_update(void)
         s_ota_status.confirmation_pending = false;
         s_ota_status.state = APP_OTA_AVAILABLE;
         xSemaphoreGive(s_services_mutex);
-        lcd_show_system_error(SYSTEM_ERROR_WIFI_INTERNET_UNAVAILABLE);
+        lcd_flash_warning_to("Wi-Fi Connected", "Internet OFF",
+                             1800U, LCD_SCREEN_MENU);
         return ESP_ERR_INVALID_STATE;
     }
     const esp_err_t err = ota_service_start_from_csv(manifest_url);
@@ -1357,7 +1368,8 @@ esp_err_t app_services_confirm_update(void)
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_ota_status.state = APP_OTA_ERROR;
         xSemaphoreGive(s_services_mutex);
-        lcd_flash_message("Update Start Fail", "Current kept", 1500U);
+        lcd_flash_warning_to("Update Start Fail", "Current kept",
+                             1500U, LCD_SCREEN_MENU);
         return err;
     }
     lcd_flash_message("Updating", "Do not power off", 1500U);
