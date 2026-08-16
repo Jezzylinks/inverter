@@ -1542,13 +1542,9 @@ void lcd_task(void *arg)
                      draw_time, snap.screen);
 #endif
 
-        /* ====== STEP 8: YIELD ====== */
-        vTaskDelay(pdMS_TO_TICKS(100));
+        /* ====== STEP 8: YIELD ======
+         * Sleep for the normal refresh interval, but wake immediately when a
+         * writer or flash queue publishes a state change. */
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
     }
-
-    /* Notification-based wakeup path (unreachable in normal operation
-     * but kept so the task can be signalled immediately on flash enqueue). */
-    uint32_t notify_value = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
-    if (notify_value > 0)
-        ESP_LOGD(TAG, "Woken by flash enqueue notification");
 }

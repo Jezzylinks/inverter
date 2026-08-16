@@ -7,7 +7,6 @@
 #include "wifi_monitor.h"
 #include <string.h>
 #include <sys/socket.h>
-#include <netdb.h>
 
 #include "esp_log.h"
 #include "wifi_events.h"
@@ -15,6 +14,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "task_watchdog.h"
 
 #include "lwip/sockets.h"
 #include "ping/ping_sock.h"
@@ -54,7 +54,6 @@ static wifi_monitor_callback_t
  *
  *---------------------------------------------------------*/
 
-static bool wifi_monitor_dns_test(void);
 static bool wifi_monitor_ping_test(void);
 
 static void wifi_monitor_notify(void)
@@ -88,41 +87,12 @@ static void wifi_monitor_notify(void)
 
 static wifi_internet_status_t wifi_monitor_check_internet(void)
 {
-    if (!wifi_monitor_dns_test() || !wifi_monitor_ping_test()) {
-        return WIFI_INTERNET_UNAVAILABLE;
-    }
-    return WIFI_INTERNET_AVAILABLE;
-}
-
-static bool wifi_monitor_dns_test(void)
-{
-    struct addrinfo hints;
-    struct addrinfo *result = NULL;
-
-    memset(&hints,
-           0,
-           sizeof(hints));
-
-    hints.ai_family = AF_INET;
-
-    int err =
-        getaddrinfo(
-            "www.google.com",
-            NULL,
-            &hints,
-            &result);
-
-    if (err != 0)
-    {
-        ESP_LOGW(TAG,
-                 "DNS failed");
-
-        return false;
-    }
-
-    freeaddrinfo(result);
-
-    return true;
+    /* The ping is performed in a bounded, watchdog-fed worker path. Avoid
+     * getaddrinfo() here: lwIP DNS resolution can block for an uncontrolled
+     * interval and previously starved the task watchdog during Wi-Fi startup. */
+    return wifi_monitor_ping_test()
+               ? WIFI_INTERNET_AVAILABLE
+               : WIFI_INTERNET_UNAVAILABLE;
 }
 
 static bool wifi_monitor_ping_test(void)
@@ -164,9 +134,18 @@ static bool wifi_monitor_ping_test(void)
 
     esp_ping_start(ping);
 
-    /* Wait for pings to complete (3 * 500ms + margin) */
-    vTaskDelay(
-        pdMS_TO_TICKS(2500));
+    /* Wait in short, watchdog-fed slices. A stop notification interrupts the
+     * probe immediately, so Wi-Fi off/disconnect cannot wait behind a long
+     * network operation. */
+    uint32_t waited_ms = 0U;
+    while (waited_ms < 3500U && s_running) {
+        task_watchdog_feed();
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100U)) > 0U) {
+            break;
+        }
+        waited_ms += 100U;
+    }
+    task_watchdog_feed();
 
     /* Get statistics */
     uint32_t transmitted = 0;
@@ -355,20 +334,15 @@ esp_err_t wifi_monitor_deinit(void)
 
 bool wifi_monitor_is_online(void)
 {
-    bool connected;
-
-    if (s_mutex)
-    {
-        xSemaphoreTake(s_mutex, portMAX_DELAY);
-        connected = s_status.connected;
-        xSemaphoreGive(s_mutex);
-    }
-    else
-    {
-        connected = s_status.connected;
+    if (s_mutex == NULL) {
+        return false;
     }
 
-    return connected;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    const bool online = s_status.connected && s_status.got_ip &&
+                        s_status.internet == WIFI_INTERNET_AVAILABLE;
+    xSemaphoreGive(s_mutex);
+    return online;
 }
 
 int8_t wifi_monitor_get_rssi(void)

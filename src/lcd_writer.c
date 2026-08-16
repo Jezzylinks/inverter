@@ -7,6 +7,7 @@
 #include "lcd_writer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
 #include "esp_log.h"
@@ -16,6 +17,14 @@
 
 /* The LCD render instance and mutex are declared by lcd_writer.h. */
 extern system_state_t sys_state; /* the single system-state instance */
+extern TaskHandle_t lcd_task_handle;
+
+static void lcd_request_refresh(void)
+{
+    if (lcd_task_handle != NULL) {
+        xTaskNotifyGive(lcd_task_handle);
+    }
+}
 
 static bool s_startup_released = false;
 
@@ -372,6 +381,7 @@ void lcd_show_wifi_connecting(const char *ssid)
     sys_lcd.wifi_connect.timed_out = false;
     sys_lcd.wifi_connect.entered_ms = _lcd_get_time_ms();
     LCD_UNLOCK();
+    lcd_request_refresh();
 }
 
 void lcd_show_wifi_result(bool connected, bool failed, bool timed_out,
@@ -387,6 +397,7 @@ void lcd_show_wifi_result(bool connected, bool failed, bool timed_out,
     sys_lcd.wifi_connect.timed_out = timed_out;
     sys_lcd.wifi_connect.entered_ms = _lcd_get_time_ms();
     LCD_UNLOCK();
+    lcd_request_refresh();
 }
 
 /* ── Confirmation prompt ─────────────────────────────────────────────────── */

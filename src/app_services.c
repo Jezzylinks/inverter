@@ -1,6 +1,7 @@
 #include "app_services.h"
 
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -31,12 +32,16 @@
 #define APP_OTA_TASK_PRIORITY 3U
 #define APP_WIFI_SCAN_STACK_SIZE 4096U
 #define APP_WIFI_SCAN_PRIORITY 5U
+#define APP_WIFI_OPERATION_TIMEOUT_MS 30000U
+#define APP_WIFI_OPERATION_TIMEOUT_STACK_SIZE 3072U
+#define APP_WIFI_OPERATION_TIMEOUT_PRIORITY 3U
 
 extern system_state_t sys_state;
 extern SemaphoreHandle_t sys_state_mutex;
 
 static SemaphoreHandle_t s_services_mutex;
 static TaskHandle_t s_ota_check_task;
+static TaskHandle_t s_wifi_operation_watch_task;
 static bool s_wifi_scan_in_progress;
 static char s_manifest_url[APP_OTA_MANIFEST_URL_MAX];
 static app_ota_status_t s_ota_status;
@@ -52,6 +57,37 @@ typedef enum {
 
 static app_wifi_operation_t s_wifi_operation;
 static char s_wifi_operation_ssid[WIFI_MAX_SSID_LEN + 1U];
+static uint32_t s_wifi_operation_generation;
+static TickType_t s_wifi_operation_started_tick;
+
+static void app_wifi_operation_watch_task(void *parameter)
+{
+    (void)parameter;
+    task_watchdog_register("wifi_operation_watch");
+
+    while (true) {
+        task_watchdog_feed();
+        vTaskDelay(pdMS_TO_TICKS(500U));
+
+        bool timed_out = false;
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        if (s_wifi_operation != APP_WIFI_OPERATION_NONE &&
+            (uint32_t)(xTaskGetTickCount() - s_wifi_operation_started_tick) >=
+                pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
+            s_wifi_operation = APP_WIFI_OPERATION_NONE;
+            s_wifi_operation_ssid[0] = '\0';
+            ++s_wifi_operation_generation;
+            timed_out = true;
+        }
+        xSemaphoreGive(s_services_mutex);
+
+        if (timed_out) {
+            ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi operation timed out after %ums",
+                     (unsigned)APP_WIFI_OPERATION_TIMEOUT_MS);
+            lcd_show_wifi_result(false, true, true, "Wi-Fi timeout");
+        }
+    }
+}
 
 static void app_wifi_begin_operation(app_wifi_operation_t operation,
                                      const char *ssid)
@@ -61,6 +97,8 @@ static void app_wifi_begin_operation(app_wifi_operation_t operation,
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_wifi_operation = operation;
+    ++s_wifi_operation_generation;
+    s_wifi_operation_started_tick = xTaskGetTickCount();
     s_wifi_operation_ssid[0] = '\0';
     if (ssid != NULL) {
         strncpy(s_wifi_operation_ssid, ssid, sizeof(s_wifi_operation_ssid) - 1U);
@@ -423,6 +461,8 @@ esp_err_t app_services_init(void)
     s_ota_status.state = APP_OTA_IDLE;
     s_wifi_operation = APP_WIFI_OPERATION_NONE;
     s_wifi_operation_ssid[0] = '\0';
+    s_wifi_operation_generation = 0U;
+    s_wifi_operation_started_tick = 0U;
     xSemaphoreGive(s_services_mutex);
 
     load_persisted_config();
@@ -505,6 +545,19 @@ esp_err_t app_services_init(void)
         {
             s_ota_check_task = NULL;
             ESP_LOGW(APP_SERVICES_TAG, "Could not create OTA availability task");
+        }
+    }
+    if (!s_wifi_operation_watch_task)
+    {
+        if (xTaskCreate(app_wifi_operation_watch_task,
+                        "wifi_op_watch",
+                        APP_WIFI_SCAN_STACK_SIZE,
+                        NULL,
+                        APP_WIFI_SCAN_PRIORITY,
+                        &s_wifi_operation_watch_task) != pdPASS)
+        {
+            s_wifi_operation_watch_task = NULL;
+            ESP_LOGW(APP_SERVICES_TAG, "Could not create Wi-Fi operation watcher");
         }
     }
     return err == ESP_OK ? ota_err : err;

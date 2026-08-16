@@ -32,6 +32,7 @@
 #define NETWORK_MQTT_RETAIN_KEY "mqtt_retain"
 #define NETWORK_HTTP_PORT 80U
 #define NETWORK_HTTP_STACK_SIZE 8192U
+#define NETWORK_SYNC_TASK_STACK_SIZE 8192U
 #define NETWORK_HTTP_MAX_URI_HANDLERS 32U
 
 static SemaphoreHandle_t s_mutex;
@@ -212,20 +213,24 @@ static void network_services_sync_task(void *arg)
 {
     task_watchdog_register("network_services_sync");
     (void)arg;
-    while (true) {
-        services_lock();
-        const bool ready = s_station_ready;
-        const bool running = s_running;
-        s_sync_scheduled = false;
-        services_unlock();
 
-        if (ready && !running) {
-            (void)network_services_start();
-        } else if (!ready && running) {
-            (void)network_services_stop();
-        }
-        vTaskDelete(NULL);
+    services_lock();
+    const bool ready = s_station_ready;
+    const bool running = s_running;
+    services_unlock();
+
+    task_watchdog_feed();
+    if (ready && !running) {
+        (void)network_services_start();
+    } else if (!ready && running) {
+        (void)network_services_stop();
     }
+    task_watchdog_feed();
+
+    services_lock();
+    s_sync_scheduled = false;
+    services_unlock();
+    vTaskDelete(NULL);
 }
 
 static void network_wifi_status_callback(const wifi_status_t *status)
@@ -251,7 +256,7 @@ static void network_wifi_status_callback(const wifi_status_t *status)
     }
     services_unlock();
     if (schedule && xTaskCreate(network_services_sync_task,
-                                "net_services_sync", 4096U, NULL, 4U,
+                                "net_services_sync", NETWORK_SYNC_TASK_STACK_SIZE, NULL, 4U,
                                 NULL) != pdPASS) {
         services_lock();
         s_sync_scheduled = false;
@@ -381,11 +386,13 @@ esp_err_t network_services_start(void)
     http_config.lru_purge_enable = true;
 
     httpd_handle_t server = NULL;
+    task_watchdog_feed();
     esp_err_t err = httpd_start(&server, &http_config);
     if (err != ESP_OK) {
         return err;
     }
     s_http_server = server;
+    task_watchdog_feed();
 
     err = web_dashboard_server_init();
     if (err == ESP_OK) {
@@ -400,11 +407,13 @@ esp_err_t network_services_start(void)
         ESP_LOGW(NETWORK_SERVICES_TAG, "Dashboard unavailable: %s", esp_err_to_name(err));
     }
 
+    task_watchdog_feed();
     err = json_api_server_start(server);
     if (err != ESP_OK) {
         cleanup_http_services();
         return err;
     }
+    task_watchdog_feed();
     err = websocket_server_init();
     if (err == ESP_OK) {
         err = websocket_server_register(server);
@@ -415,6 +424,7 @@ esp_err_t network_services_start(void)
     }
     s_websocket_running = true;
 
+    task_watchdog_feed();
     err = mdns_service_init(WIFI_HOSTNAME);
     if (err == ESP_OK) {
         s_mdns_running = true;
@@ -425,7 +435,9 @@ esp_err_t network_services_start(void)
     services_lock();
     s_running = true;
     services_unlock();
+    task_watchdog_feed();
     (void)start_mqtt_if_enabled();
+    task_watchdog_feed();
     ESP_LOGI(NETWORK_SERVICES_TAG, "Station network services started");
     return ESP_OK;
 }
