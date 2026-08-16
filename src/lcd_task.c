@@ -656,7 +656,10 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
             if (idx >= d->count)
                 break;
             char row[LCD_LINE_SIZE];
-            snprintf(row, LCD_LINE_SIZE, "%c%-8s %4s  ",
+            /* 16 columns: marker(1) + SSID(8) + gap(1) + RSSI(4) + pad(2).
+             * The precision is essential: %-8s is only a minimum width and
+             * would let a long SSID overflow the row buffer/display. */
+            snprintf(row, LCD_LINE_SIZE, "%c%-8.8s %4.4s  ",
                      (idx == d->selected_index) ? '>' : ' ',
                      d->ssid[idx], rssi_bars(d->rssi[idx]));
             draw_row(line, row);
@@ -686,9 +689,14 @@ static void draw_wifi_password(const lcd_wifi_password_data_t *d)
     } else {
         char row0[LCD_LINE_SIZE];
         char row1[LCD_LINE_SIZE];
+        const unsigned password_length = d->length > LCD_WIFI_PASSWORD_MAX_LEN
+                                             ? LCD_WIFI_PASSWORD_MAX_LEN
+                                             : d->length;
         snprintf(row0, LCD_LINE_SIZE, "P:%-14.14s", masked);
-        snprintf(row1, LCD_LINE_SIZE, "[%c] %u/63 HOLD=SAVE",
-                 d->current_char ? d->current_char : ' ', d->length);
+        /* 16 columns: [X] + length/63 + SAVE. The previous HOLD=SAVE
+         * instruction could require up to 21 bytes in a 17-byte row buffer. */
+        snprintf(row1, LCD_LINE_SIZE, "[%c] %02u/63 SAVE",
+                 d->current_char ? d->current_char : ' ', password_length);
         draw_commit(row0, row1);
     }
 }
