@@ -751,6 +751,13 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         }
     }
 
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING) {
+        /* The connection screen is intentionally non-interactive while the
+         * controller is connecting or showing its terminal result. Enter
+         * must not fall through to the parent Wi-Fi menu; Back owns exit. */
+        return;
+    }
+
     if (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD) {
         if (event_info->event == BUTTON_EVENT_CLICK) {
             handle_wifi_password_append();
