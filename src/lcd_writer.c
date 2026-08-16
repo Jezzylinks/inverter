@@ -235,8 +235,13 @@ void lcd_show_fault(const char *line0, const char *line1)
 void lcd_show_system_error(uint16_t code)
 {
     char code_line[LCD_LINE_SIZE];
-    snprintf(code_line, sizeof(code_line), "Error code: 0x%03X",
-             (unsigned)code & 0x0FFFU);
+    if (lcd_geometry_is_20x4()) {
+        snprintf(code_line, sizeof(code_line), "Error code: 0x%03X",
+                 (unsigned)code & 0x0FFFU);
+    } else {
+        snprintf(code_line, sizeof(code_line), "ERR 0x%03X",
+                 (unsigned)code & 0x0FFFU);
+    }
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_FAULT;
     set_line(sys_lcd.fault.line0, "SYSTEM ERROR");
@@ -408,6 +413,17 @@ void lcd_show_wifi_network_details(const char *ssid, int8_t rssi,
     lcd_request_refresh();
 }
 
+void lcd_update_wifi_network_detail_page(uint8_t page)
+{
+    LCD_LOCK();
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS) {
+        sys_lcd.wifi_network_detail.page = page % 3U;
+        sys_lcd.wifi_network_detail.entered_ms = _lcd_get_time_ms();
+    }
+    LCD_UNLOCK();
+    lcd_request_refresh();
+}
+
 void lcd_show_wifi_password(const char *ssid)
 {
     LCD_LOCK();
@@ -460,7 +476,8 @@ void lcd_show_wifi_status(const char *state, const char *ssid, const char *ip,
 void lcd_update_wifi_status_page(uint8_t page)
 {
     LCD_LOCK();
-    sys_lcd.wifi_status.page = page % 3U;
+    const uint8_t page_count = lcd_geometry_is_20x4() ? 3U : 4U;
+    sys_lcd.wifi_status.page = page % page_count;
     sys_lcd.wifi_status.entered_ms = _lcd_get_time_ms();
     LCD_UNLOCK();
 }

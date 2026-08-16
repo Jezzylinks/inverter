@@ -669,7 +669,7 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
         char row1[LCD_LINE_SIZE];
         snprintf(row0, LCD_LINE_SIZE, "SCAN %c FOUND:%02u", spin, d->count);
         if (d->count == 0U) {
-            snprintf(row1, LCD_LINE_SIZE, "CENTER STOP      ");
+            snprintf(row1, LCD_LINE_SIZE, "ENTER STOP");
         } else {
             const uint8_t idx = d->selected_index < d->count ? d->selected_index : 0U;
             snprintf(row1, LCD_LINE_SIZE, "%c%-8.8s %4.4s",
@@ -677,14 +677,15 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
         }
         draw_commit(row0, row1);
     } else if (d->count == 0U) {
-        draw_commit("SCAN COMPLETE    ", "NO NETWORKS      ");
+        draw_commit("SCAN DONE       ", "NO NETWORKS     ");
     } else {
         const uint8_t idx = d->selected_index < d->count ? d->selected_index : 0U;
         char row0[LCD_LINE_SIZE];
         char row1[LCD_LINE_SIZE];
-        snprintf(row0, LCD_LINE_SIZE, "%c%-8.8s %4.4s",
+        snprintf(row0, LCD_LINE_SIZE, "NET%02u/%02u",
+                 (unsigned)(idx + 1U), (unsigned)d->count);
+        snprintf(row1, LCD_LINE_SIZE, "%c%-8.8s %4.4s",
                  marker, d->ssid[idx], rssi_bars(d->rssi[idx]));
-        snprintf(row1, LCD_LINE_SIZE, "ENTER CONNECT    ");
         draw_commit(row0, row1);
     }
 }
@@ -719,8 +720,28 @@ static void draw_wifi_network_details(const lcd_wifi_network_detail_data_t *d)
         draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
     } else {
         char row0[LCD_LINE_SIZE];
-        snprintf(row0, LCD_LINE_SIZE, "%-16.16s", d->ssid);
-        draw_commit(row0, "ENTER CONNECT");
+        char row1[LCD_LINE_SIZE];
+        switch (d->page % 3U) {
+        case 0:
+            snprintf(row0, LCD_LINE_SIZE, "%-16.16s", d->ssid);
+            snprintf(row1, LCD_LINE_SIZE, "SIG:%d dBm", (int)d->rssi);
+            break;
+        case 1:
+            snprintf(row0, LCD_LINE_SIZE, "SECURITY:");
+            if (d->channel > 0U) {
+                snprintf(row1, LCD_LINE_SIZE, "%-9.9s C:%u",
+                         wifi_auth_label(d->authmode), (unsigned)d->channel);
+            } else {
+                snprintf(row1, LCD_LINE_SIZE, "%-9.9s C:--",
+                         wifi_auth_label(d->authmode));
+            }
+            break;
+        default:
+            snprintf(row0, LCD_LINE_SIZE, "CONNECT?");
+            snprintf(row1, LCD_LINE_SIZE, "ENT=YES BACK=NO");
+            break;
+        }
+        draw_commit(row0, row1);
     }
 }
 
@@ -789,19 +810,23 @@ static void draw_wifi_status(const lcd_wifi_status_data_t *d)
     } else {
         char row0[LCD_LINE_SIZE];
         char row1[LCD_LINE_SIZE];
-        switch (d->page % 3U) {
+        switch (d->page % 4U) {
         case 0:
-            snprintf(row0, LCD_LINE_SIZE, "%-16.16s", d->state);
-            snprintf(row1, LCD_LINE_SIZE, "SSID:%-11.11s", d->ssid);
+            snprintf(row0, LCD_LINE_SIZE, "WiFi: %-10.10s", d->state);
+            snprintf(row1, LCD_LINE_SIZE, "%-16.16s", d->ssid);
             break;
         case 1:
-            snprintf(row0, LCD_LINE_SIZE, "IP:%-13.13s", d->ip);
-            snprintf(row1, LCD_LINE_SIZE, "GW:%-13.13s", d->gateway);
+            snprintf(row0, LCD_LINE_SIZE, "IP Address:");
+            snprintf(row1, LCD_LINE_SIZE, "%-16.16s", d->ip);
+            break;
+        case 2:
+            snprintf(row0, LCD_LINE_SIZE, "Signal:");
+            snprintf(row1, LCD_LINE_SIZE, "%d dBm", (int)d->rssi);
             break;
         default:
-            snprintf(row0, LCD_LINE_SIZE, "RSSI:%d dBm", d->rssi);
-            snprintf(row1, LCD_LINE_SIZE, "NET:%s",
-                     d->internet_available ? "ONLINE" : "OFFLINE");
+            snprintf(row0, LCD_LINE_SIZE, "Internet:");
+            snprintf(row1, LCD_LINE_SIZE, "%s",
+                     d->connected ? (d->internet_available ? "Available" : "Offline") : "N/A");
             break;
         }
         draw_commit(row0, row1);

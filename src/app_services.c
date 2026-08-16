@@ -995,7 +995,7 @@ const char *app_services_wifi_saved_network_label(void)
     wifi_credentials_t credentials = {0};
     if (wifi_storage_load_credentials(&credentials) == ESP_OK &&
         credentials.ssid[0] != '\0') {
-        snprintf(label, sizeof(label), "Saved: %.12s", credentials.ssid);
+        snprintf(label, sizeof(label), "Saved: %.9s", credentials.ssid);
     } else {
         snprintf(label, sizeof(label), "Saved: None");
     }

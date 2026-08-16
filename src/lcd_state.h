@@ -217,6 +217,7 @@ extern "C"
         int8_t rssi;
         uint8_t channel;
         uint8_t authmode;
+        uint8_t page;
         uint32_t entered_ms;
     } lcd_wifi_network_detail_data_t;
 

@@ -108,6 +108,7 @@ void lcd_show_wifi_scan(uint8_t count,
 void lcd_update_wifi_selection(uint8_t selected, uint8_t top);
 void lcd_show_wifi_network_details(const char *ssid, int8_t rssi,
                                    uint8_t channel, uint8_t authmode);
+void lcd_update_wifi_network_detail_page(uint8_t page);
 void lcd_show_wifi_password(const char *ssid);
 void lcd_update_wifi_password(char current_char, const char *password,
                               uint8_t length);

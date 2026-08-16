@@ -752,7 +752,15 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
 
     if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS) {
         if (event_info->event == BUTTON_EVENT_CLICK) {
-            (void)app_services_wifi_connect_selected(0U);
+            uint8_t page = 0U;
+            LCD_LOCK();
+            page = sys_lcd.wifi_network_detail.page;
+            LCD_UNLOCK();
+            if (lcd_geometry_is_20x4() || page >= 2U) {
+                (void)app_services_wifi_connect_selected(0U);
+            } else {
+                lcd_update_wifi_network_detail_page((uint8_t)(page + 1U));
+            }
         }
         return;
     }
@@ -1331,6 +1339,13 @@ void handle_up_button_event(button_event_info_t *event_info,
     }
 
     if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS) {
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            uint8_t page = 0U;
+            LCD_LOCK();
+            page = sys_lcd.wifi_network_detail.page;
+            LCD_UNLOCK();
+            lcd_update_wifi_network_detail_page(page == 0U ? 2U : (uint8_t)(page - 1U));
+        }
         return;
     }
 
@@ -1575,6 +1590,13 @@ void handle_down_button_event(button_event_info_t *event_info,
     }
 
     if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS) {
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            uint8_t page = 0U;
+            LCD_LOCK();
+            page = sys_lcd.wifi_network_detail.page;
+            LCD_UNLOCK();
+            lcd_update_wifi_network_detail_page((uint8_t)((page + 1U) % 3U));
+        }
         return;
     }
 
