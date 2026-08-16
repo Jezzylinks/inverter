@@ -225,6 +225,7 @@ extern "C"
     {
         char ssid[LCD_WIFI_SSID_MAX_LEN + 1U];
         char password[LCD_WIFI_PASSWORD_MAX_LEN + 1U];
+        int8_t rssi;
         uint8_t length;
         char current_char;
         uint32_t entered_ms;

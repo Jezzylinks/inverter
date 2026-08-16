@@ -424,7 +424,7 @@ void lcd_update_wifi_network_detail_page(uint8_t page)
     lcd_request_refresh();
 }
 
-void lcd_show_wifi_password(const char *ssid)
+void lcd_show_wifi_password(const char *ssid, int8_t rssi)
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_WIFI_PASSWORD;
@@ -432,6 +432,7 @@ void lcd_show_wifi_password(const char *ssid)
     strncpy(sys_lcd.wifi_password.ssid, ssid ? ssid : "",
             LCD_WIFI_SSID_MAX_LEN);
     sys_lcd.wifi_password.ssid[LCD_WIFI_SSID_MAX_LEN] = '\0';
+    sys_lcd.wifi_password.rssi = rssi;
     sys_lcd.wifi_password.current_char = 'a';
     sys_lcd.wifi_password.entered_ms = _lcd_get_time_ms();
     LCD_UNLOCK();

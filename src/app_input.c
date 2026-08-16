@@ -787,7 +787,10 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 (void)app_services_wifi_scan_cancel();
                 show_menu_screen(MENU_WIFI_CONFIG, 1U);
             } else {
-                app_services_show_wifi_network_details(selected);
+                /* Selecting a found network starts the connection flow. The
+                 * connection screen owns the RSSI, animation, timeout, and
+                 * terminal result instead of returning to Networks. */
+                (void)app_services_wifi_connect_selected(selected);
             }
         }
         return;

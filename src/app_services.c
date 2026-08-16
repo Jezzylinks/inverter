@@ -845,13 +845,8 @@ esp_err_t app_services_wifi_connect_selected(uint8_t selected_index)
     }
 
     if (password == NULL) {
-#if WIFI_RUNTIME_PROVISIONING_ENABLED
-        lcd_show_wifi_password(ssid);
+        lcd_show_wifi_password(ssid, selected_rssi);
         return ESP_ERR_INVALID_STATE;
-#else
-        lcd_flash_message("Password Entry Off", "Use menuconfig", 1800U);
-        return ESP_ERR_NOT_SUPPORTED;
-#endif
     }
     return app_services_wifi_connect_network_with_rssi(ssid, password, selected_rssi);
 }
@@ -860,6 +855,7 @@ esp_err_t app_services_wifi_submit_password(void)
 {
     char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
     char password[LCD_WIFI_PASSWORD_MAX_LEN + 1U] = {0};
+    int8_t rssi = -127;
     LCD_LOCK();
     if (sys_lcd.screen != LCD_SCREEN_WIFI_PASSWORD) {
         LCD_UNLOCK();
@@ -867,14 +863,9 @@ esp_err_t app_services_wifi_submit_password(void)
     }
     strncpy(ssid, sys_lcd.wifi_password.ssid, sizeof(ssid) - 1U);
     strncpy(password, sys_lcd.wifi_password.password, sizeof(password) - 1U);
+    rssi = sys_lcd.wifi_password.rssi;
     LCD_UNLOCK();
-#if WIFI_RUNTIME_PROVISIONING_ENABLED
-    return app_services_wifi_connect_network(ssid, password);
-#else
-    (void)ssid;
-    (void)password;
-    return ESP_ERR_NOT_SUPPORTED;
-#endif
+    return app_services_wifi_connect_network_with_rssi(ssid, password, rssi);
 }
 
 esp_err_t app_services_wifi_connect_network(const char *ssid,
