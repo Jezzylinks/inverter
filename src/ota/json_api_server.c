@@ -136,6 +136,7 @@ static esp_err_t api_services_handler(httpd_req_t *req)
     network_services_get_mqtt_config(&config);
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "http", status.http_running);
+    cJSON_AddBoolToObject(root, "dashboard", status.dashboard_running);
     cJSON_AddBoolToObject(root, "websocket", status.websocket_running);
     cJSON_AddBoolToObject(root, "mdns", status.mdns_running);
     cJSON_AddBoolToObject(root, "mqtt_configured", status.mqtt_configured);
@@ -381,6 +382,7 @@ static esp_err_t api_status_handler(httpd_req_t *req)
     network_services_status_t services;
     network_services_get_status(&services);
     cJSON_AddBoolToObject(root, "http_service", services.http_running);
+    cJSON_AddBoolToObject(root, "dashboard_service", services.dashboard_running);
     cJSON_AddBoolToObject(root, "websocket_service", services.websocket_running);
     cJSON_AddBoolToObject(root, "mdns_service", services.mdns_running);
     cJSON_AddBoolToObject(root, "mqtt_configured", services.mqtt_configured);

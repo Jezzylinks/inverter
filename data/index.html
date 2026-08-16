@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#09111f">
+  <meta name="description" content="Solar inverter local control dashboard">
+  <title>Solar Inverter Control</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div>
+          <p class="eyebrow">LOCAL CONTROL</p>
+          <h1>Solar Inverter</h1>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <div id="connectionBadge" class="status-badge status-neutral" role="status" aria-live="polite">
+          <span class="status-dot"></span><span id="connectionLabel">Starting…</span>
+        </div>
+        <button id="pinButton" class="icon-button" type="button" title="Set security PIN" aria-label="Set security PIN">•••</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero-panel">
+        <div>
+          <p class="eyebrow">NETWORK OVERVIEW</p>
+          <h2 id="heroTitle">Preparing your control center</h2>
+          <p id="heroSubtitle" class="hero-subtitle">Connecting to live inverter services.</p>
+        </div>
+        <div class="hero-signal" aria-label="Wi-Fi signal strength">
+          <div class="signal-bars"><i></i><i></i><i></i><i></i></div>
+          <span id="signalLabel">— dBm</span>
+        </div>
+      </section>
+
+      <section class="metric-grid" aria-label="Network metrics">
+        <article class="metric-card accent-cyan">
+          <div class="metric-icon">⌁</div>
+          <div><p class="metric-label">Wi‑Fi state</p><strong id="wifiState">Unknown</strong><span id="wifiSsid" class="metric-detail">No network</span></div>
+        </article>
+        <article class="metric-card accent-green">
+          <div class="metric-icon">⌂</div>
+          <div><p class="metric-label">Device address</p><strong id="deviceIp">—</strong><span id="deviceHost" class="metric-detail">solar-inverter.local</span></div>
+        </article>
+        <article class="metric-card accent-amber">
+          <div class="metric-icon">◌</div>
+          <div><p class="metric-label">Internet</p><strong id="internetState">Unknown</strong><span id="lastUpdate" class="metric-detail">Waiting for data</span></div>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel panel-wide">
+          <div class="panel-heading">
+            <div><p class="eyebrow">WIRELESS CONTROL</p><h3>Network connection</h3></div>
+            <button id="refreshButton" class="button button-quiet" type="button"><span class="button-icon">↻</span> Refresh</button>
+          </div>
+          <div id="networkNotice" class="inline-notice" hidden></div>
+          <div class="network-actions">
+            <button id="scanButton" class="button button-primary" type="button"><span class="button-icon">⌕</span> Scan networks</button>
+            <button id="disconnectButton" class="button button-secondary" type="button"><span class="button-icon">×</span> Disconnect</button>
+          </div>
+          <div id="networkList" class="network-list" aria-live="polite">
+            <div class="empty-state"><div class="empty-icon">⌁</div><p>Scan to discover nearby networks.</p></div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading"><div><p class="eyebrow">SERVICE HEALTH</p><h3>System services</h3></div><span id="servicePulse" class="pulse"></span></div>
+          <div class="service-list">
+            <div class="service-row"><span class="service-name"><span class="service-symbol">H</span> HTTP API</span><span id="serviceHttp" class="service-state">—</span></div>
+            <div class="service-row"><span class="service-name"><span class="service-symbol">W</span> Live updates</span><span id="serviceWs" class="service-state">—</span></div>
+            <div class="service-row"><span class="service-name"><span class="service-symbol">M</span> Local discovery</span><span id="serviceMdns" class="service-state">—</span></div>
+            <div class="service-row"><span class="service-name"><span class="service-symbol">Q</span> MQTT bridge</span><span id="serviceMqtt" class="service-state">—</span></div>
+          </div>
+          <button id="mqttToggleButton" class="button button-secondary full-width" type="button">Configure MQTT</button>
+        </article>
+
+        <article id="mqttPanel" class="panel panel-wide collapsible" hidden>
+          <div class="panel-heading"><div><p class="eyebrow">OPTIONAL INTEGRATION</p><h3>MQTT bridge</h3></div><button id="mqttCloseButton" class="icon-button small" type="button" aria-label="Close MQTT settings">×</button></div>
+          <form id="mqttForm" class="form-grid">
+            <label class="toggle-row full-span"><input id="mqttEnabled" type="checkbox"><span class="toggle-control"></span><span><strong>Enable MQTT</strong><small>Connect after Wi‑Fi receives an IP address.</small></span></label>
+            <label>Broker URL<input id="mqttBroker" name="broker" placeholder="mqtts://broker.example.com" autocomplete="off"></label>
+            <label>Client ID<input id="mqttClientId" name="client_id" placeholder="solar-inverter" autocomplete="off"></label>
+            <label>Username<input id="mqttUsername" name="username" autocomplete="username"></label>
+            <label>Password<input id="mqttPassword" name="password" type="password" autocomplete="new-password"></label>
+            <label>Publish topic<input id="mqttPublishTopic" name="publish_topic" placeholder="inverter/status"></label>
+            <label>Subscribe topic<input id="mqttSubscribeTopic" name="subscribe_topic" placeholder="inverter/command"></label>
+            <div class="form-actions full-span"><button class="button button-primary" type="submit">Save MQTT settings</button><button id="mqttConnectButton" class="button button-secondary" type="button">Connect now</button></div>
+          </form>
+        </article>
+
+        <article class="panel panel-wide">
+          <div class="panel-heading"><div><p class="eyebrow">ACTIVITY</p><h3>Recent events</h3></div><button id="clearLogButton" class="text-button" type="button">Clear</button></div>
+          <div id="eventLog" class="event-log" aria-live="polite"><div class="log-empty">No events yet.</div></div>
+        </article>
+      </section>
+    </main>
+
+    <footer class="footer"><span>Solar Inverter Control</span><span id="footerVersion">Local device interface</span></footer>
+  </div>
+
+  <dialog id="pinDialog" class="dialog">
+    <form id="pinForm" method="dialog" class="dialog-card">
+      <button id="pinCloseButton" class="dialog-close" type="button" aria-label="Close">×</button>
+      <p class="eyebrow">SECURITY</p><h3>Unlock live controls</h3>
+      <p class="dialog-copy">Enter the device security PIN to authorize network changes and live updates. It stays in this browser session only.</p>
+      <label>Security PIN<input id="pinInput" inputmode="numeric" pattern="[0-9]*" maxlength="8" type="password" autocomplete="one-time-code" required></label>
+      <div id="pinError" class="form-error" hidden>That PIN was not accepted.</div>
+      <button class="button button-primary full-width" type="submit">Continue</button>
+    </form>
+  </dialog>
+
+  <dialog id="passwordDialog" class="dialog">
+    <form id="passwordForm" method="dialog" class="dialog-card">
+      <button id="passwordCloseButton" class="dialog-close" type="button" aria-label="Close">×</button>
+      <p class="eyebrow">CONNECT NETWORK</p><h3 id="passwordTitle">Enter network password</h3>
+      <p id="passwordCopy" class="dialog-copy">Your password is sent only to this inverter.</p>
+      <input id="selectedSsid" type="hidden">
+      <label>Password<input id="networkPassword" type="password" autocomplete="current-password"></label>
+      <div id="passwordError" class="form-error" hidden></div>
+      <button class="button button-primary full-width" type="submit">Connect</button>
+    </form>
+  </dialog>
+
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

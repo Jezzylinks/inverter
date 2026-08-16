@@ -35,6 +35,7 @@ typedef struct
 {
     int fd;
     bool active;
+    bool authenticated;
 } ws_client_t;
 
 static ws_client_t s_clients[WS_MAX_CLIENTS];
@@ -66,6 +67,7 @@ static int ws_alloc_client(httpd_handle_t server, int fd)
         {
             s_clients[i].fd = fd;
             s_clients[i].active = true;
+            s_clients[i].authenticated = !sys_state.security.enabled;
             return i;
         }
     }
@@ -80,6 +82,7 @@ static void ws_remove_client(int fd)
     {
         s_clients[idx].active = false;
         s_clients[idx].fd = -1;
+        s_clients[idx].authenticated = false;
     }
 }
 
@@ -146,7 +149,7 @@ void websocket_broadcast_status(const wifi_status_t *status)
     }
     for (int i = 0; i < WS_MAX_CLIENTS; i++)
     {
-        if (s_clients[i].active)
+        if (s_clients[i].active && s_clients[i].authenticated)
         {
             httpd_ws_frame_t ws_pkt = {
                 .final = true,
@@ -192,6 +195,24 @@ static void ws_status_callback(const wifi_status_t *status)
 /*----------------------------------------------------------
  * WebSocket handler
  *---------------------------------------------------------*/
+static bool ws_verify_pin_text(const char *pin_text)
+{
+    if (pin_text == NULL || strlen(pin_text) != SECURITY_PIN_LEN) {
+        return false;
+    }
+    uint8_t pin[SECURITY_PIN_LEN] = {0};
+    for (size_t i = 0U; i < SECURITY_PIN_LEN; ++i) {
+        if (pin_text[i] < '0' || pin_text[i] > '9') {
+            memset(pin, 0, sizeof(pin));
+            return false;
+        }
+        pin[i] = (uint8_t)(pin_text[i] - '0');
+    }
+    const bool valid = security_verify_pin(pin);
+    memset(pin, 0, sizeof(pin));
+    return valid;
+}
+
 static bool ws_authorized(httpd_req_t *req)
 {
     if (!sys_state.security.enabled) {
@@ -205,29 +226,61 @@ static bool ws_authorized(httpd_req_t *req)
                                     sizeof(pin_text)) != ESP_OK) {
         return false;
     }
-    uint8_t pin[SECURITY_PIN_LEN] = {0};
-    for (size_t i = 0U; i < SECURITY_PIN_LEN; ++i) {
-        if (pin_text[i] < '0' || pin_text[i] > '9') {
-            return false;
-        }
-        pin[i] = (uint8_t)(pin_text[i] - '0');
-    }
-    const bool valid = security_verify_pin(pin);
-    memset(pin, 0, sizeof(pin));
+    const bool valid = ws_verify_pin_text(pin_text);
     memset(pin_text, 0, sizeof(pin_text));
     return valid;
+}
+
+static esp_err_t ws_send_json(int fd, cJSON *root)
+{
+    char *payload = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (payload == NULL || s_server == NULL) {
+        free(payload);
+        return ESP_ERR_NO_MEM;
+    }
+    httpd_ws_frame_t frame = {
+        .final = true,
+        .fragmented = false,
+        .type = HTTPD_WS_TYPE_TEXT,
+        .payload = (uint8_t *)payload,
+        .len = strlen(payload),
+    };
+    const esp_err_t err = httpd_ws_send_frame_async(s_server, fd, &frame);
+    free(payload);
+    return err;
 }
 
 static esp_err_t ws_handler(httpd_req_t *req)
 {
     if (req->method == HTTP_GET)
     {
-        if (!ws_authorized(req)) {
+        /* Browsers cannot set X-Inverter-PIN on a WebSocket constructor. A
+         * header remains supported for native clients, while browser clients
+         * authenticate with the first JSON message after this handshake. */
+        const size_t pin_header_len = httpd_req_get_hdr_value_len(req, "X-Inverter-PIN");
+        const bool header_authenticated = !sys_state.security.enabled ||
+            (pin_header_len == SECURITY_PIN_LEN && ws_authorized(req));
+        if (sys_state.security.enabled && pin_header_len > 0U && !header_authenticated) {
             httpd_resp_set_status(req, "401 Unauthorized");
             httpd_resp_set_type(req, "text/plain; charset=utf-8");
-            return httpd_resp_sendstr(req, "PIN required");
+            return httpd_resp_sendstr(req, "Invalid PIN");
         }
-        ESP_LOGI(TAG, "WS handshake from fd %d", httpd_req_to_sockfd(req));
+        const int fd = httpd_req_to_sockfd(req);
+        if (s_mutex) {
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
+        }
+        int client_idx = ws_find_client(fd);
+        if (client_idx < 0) {
+            client_idx = ws_alloc_client(req->handle, fd);
+        }
+        if (client_idx >= 0) {
+            s_clients[client_idx].authenticated = header_authenticated;
+        }
+        if (s_mutex) {
+            xSemaphoreGive(s_mutex);
+        }
+        ESP_LOGI(TAG, "WS handshake from fd %d", fd);
         return ESP_OK;
     }
 
@@ -262,11 +315,55 @@ static esp_err_t ws_handler(httpd_req_t *req)
             cJSON *json = cJSON_Parse(buf);
             if (json)
             {
+                int client_idx = -1;
+                if (s_mutex) {
+                    xSemaphoreTake(s_mutex, portMAX_DELAY);
+                }
+                client_idx = ws_find_client(fd);
+                if (client_idx < 0) {
+                    client_idx = ws_alloc_client(req->handle, fd);
+                }
+                const bool already_authenticated = client_idx >= 0 &&
+                    s_clients[client_idx].authenticated;
+                if (s_mutex) {
+                    xSemaphoreGive(s_mutex);
+                }
+
                 cJSON *cmd = cJSON_GetObjectItem(json, "cmd");
                 if (cmd && cJSON_IsString(cmd))
                 {
                     const char *cmd_str = cJSON_GetStringValue(cmd);
-                    if (strcmp(cmd_str, "get_status") == 0)
+                    if (strcmp(cmd_str, "authenticate") == 0)
+                    {
+                        cJSON *pin = cJSON_GetObjectItem(json, "pin");
+                        const bool valid = !sys_state.security.enabled ||
+                            (pin && cJSON_IsString(pin) &&
+                             ws_verify_pin_text(cJSON_GetStringValue(pin)));
+                        if (client_idx >= 0 && s_mutex) {
+                            xSemaphoreTake(s_mutex, portMAX_DELAY);
+                        }
+                        if (client_idx >= 0) {
+                            s_clients[client_idx].authenticated = valid;
+                        }
+                        if (client_idx >= 0 && s_mutex) {
+                            xSemaphoreGive(s_mutex);
+                        }
+                        cJSON *reply = cJSON_CreateObject();
+                        cJSON_AddStringToObject(reply, "type", "authenticated");
+                        cJSON_AddBoolToObject(reply, "ok", valid);
+                        if (!valid) {
+                            cJSON_AddStringToObject(reply, "error", "invalid_pin");
+                        }
+                        (void)ws_send_json(fd, reply);
+                    }
+                    else if (!already_authenticated)
+                    {
+                        cJSON *reply = cJSON_CreateObject();
+                        cJSON_AddStringToObject(reply, "type", "error");
+                        cJSON_AddStringToObject(reply, "error", "authentication_required");
+                        (void)ws_send_json(fd, reply);
+                    }
+                    else if (strcmp(cmd_str, "get_status") == 0)
                     {
                         /* Send current status immediately */
                         wifi_status_t status;

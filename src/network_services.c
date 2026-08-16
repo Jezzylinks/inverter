@@ -13,6 +13,7 @@
 #include "ota/mdns_service.h"
 #include "ota/mqtt_client_manager.h"
 #include "ota/websocket_server.h"
+#include "ota/web_dashboard_server.h"
 #include "wifi/wifi_config.h"
 #include "wifi/wifi_events.h"
 #include "task_watchdog.h"
@@ -40,6 +41,7 @@ static bool s_initialized;
 static bool s_running;
 static bool s_mdns_running;
 static bool s_websocket_running;
+static bool s_dashboard_running;
 static bool s_station_ready;
 static bool s_sync_scheduled;
 
@@ -269,6 +271,9 @@ static void mqtt_message_callback(const mqtt_message_t *message)
 
 static void cleanup_http_services(void)
 {
+    (void)web_dashboard_server_unregister(s_http_server);
+    s_dashboard_running = false;
+    (void)web_dashboard_server_deinit();
     (void)websocket_server_unregister(s_http_server);
     s_websocket_running = false;
     (void)json_api_server_stop();
@@ -327,6 +332,7 @@ esp_err_t network_services_init(void)
     s_running = false;
     s_mdns_running = false;
     s_websocket_running = false;
+    s_dashboard_running = false;
     s_station_ready = false;
     s_sync_scheduled = false;
     const esp_err_t callback_err = wifi_events_register_status_callback(network_wifi_status_callback);
@@ -380,6 +386,19 @@ esp_err_t network_services_start(void)
         return err;
     }
     s_http_server = server;
+
+    err = web_dashboard_server_init();
+    if (err == ESP_OK) {
+        err = web_dashboard_server_register(server);
+        if (err == ESP_OK) {
+            s_dashboard_running = true;
+        } else {
+            (void)web_dashboard_server_deinit();
+        }
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(NETWORK_SERVICES_TAG, "Dashboard unavailable: %s", esp_err_to_name(err));
+    }
 
     err = json_api_server_start(server);
     if (err != ESP_OK) {
@@ -456,6 +475,7 @@ void network_services_get_status(network_services_status_t *status)
     }
     services_lock();
     status->http_running = s_http_server != NULL;
+    status->dashboard_running = s_dashboard_running;
     status->websocket_running = s_websocket_running;
     status->mdns_running = s_mdns_running;
     status->mqtt_configured = s_mqtt_config.enabled && s_mqtt_config.broker_url[0] != '\0';

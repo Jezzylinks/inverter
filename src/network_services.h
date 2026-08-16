@@ -32,6 +32,7 @@ typedef struct {
 
 typedef struct {
     bool http_running;
+    bool dashboard_running;
     bool websocket_running;
     bool mdns_running;
     bool mqtt_configured;
