@@ -20,6 +20,7 @@
 #include "wifi/wifi_storage.h"
 #include "wifi/wifi_config.h"
 #include "network_services.h"
+#include "system_error_codes.h"
 
 #include "task_watchdog.h"
 #define APP_SERVICES_TAG "APP_SERVICES"
@@ -300,11 +301,13 @@ static const char *wifi_state_text(wifi_controller_state_t state)
         return "Connecting";
     case WIFI_CONTROLLER_PROVISIONING:
         return "Setup AP Active";
+    case WIFI_CONTROLLER_AP_ACTIVE:
+        return "AP active";
     case WIFI_CONTROLLER_ERROR:
         return "Controller Error";
     case WIFI_CONTROLLER_IDLE:
     default:
-        return "Disabled";
+        return "Not connected";
     }
 }
 
@@ -556,9 +559,10 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
         ESP_LOGE(APP_SERVICES_TAG, "Could not persist Wi-Fi intent: %s", esp_err_to_name(nvs_err));
     }
 
-    if (!enabled && controller_err == ESP_OK && app_wifi_operation_pending()) {
+    if (controller_err == ESP_OK && app_wifi_operation_pending() &&
+        (wifi_manager_get_mode() == WIFI_MODE_AP || !enabled)) {
         app_wifi_end_operation();
-        lcd_flash_message("Wi-Fi Disabled", "Saved", 1200U);
+        lcd_flash_message(enabled ? "Wi-Fi ON" : "Wi-Fi OFF", "Ready", 900U);
     } else if (controller_err != ESP_OK && controller_err != ESP_ERR_WIFI_CONN) {
         app_wifi_end_operation();
         if (enabled && controller_err == ESP_ERR_NOT_FOUND) {
@@ -574,6 +578,45 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
 bool app_services_wifi_enabled(void)
 {
     return sys_state.wifi.enabled;
+}
+
+const char *app_services_wifi_mode_name(void)
+{
+    switch (wifi_manager_get_mode()) {
+    case WIFI_MODE_STA:
+        return "STA";
+    case WIFI_MODE_AP:
+        return "AP";
+    case WIFI_MODE_APSTA:
+        return "APSTA";
+    default:
+        return "OFF";
+    }
+}
+
+const char *app_services_wifi_connect_action_label(void)
+{
+    const wifi_mode_t mode = wifi_manager_get_mode();
+    if (mode == WIFI_MODE_AP) {
+        return "AP Clients";
+    }
+    return wifi_controller_is_connected() ? "Disconnect" : "Connect";
+}
+
+const char *app_services_wifi_secondary_action_label(void)
+{
+    return wifi_manager_get_mode() == WIFI_MODE_AP ? "AP Status" : "AP Clients";
+}
+
+bool app_services_wifi_can_manage_clients(void)
+{
+    const wifi_mode_t mode = wifi_manager_get_mode();
+    return mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA;
+}
+
+bool app_services_wifi_is_ap_only(void)
+{
+    return wifi_manager_get_mode() == WIFI_MODE_AP;
 }
 
 esp_err_t app_services_wifi_scan(void)
@@ -598,6 +641,10 @@ esp_err_t app_services_wifi_connect_saved(void)
 
 esp_err_t app_services_wifi_reconnect(void)
 {
+    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+        lcd_flash_message("AP Mode", "No STA Connect", 1400U);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     if (!sys_state.wifi.enabled) {
         lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
         return ESP_ERR_INVALID_STATE;
@@ -644,9 +691,11 @@ void app_services_show_wifi_status(void)
         status = *status_ptr;
     }
 
-    const char *ssid = WIFI_COMPILED_STA_SSID[0] != '\0'
-                           ? WIFI_COMPILED_STA_SSID
-                           : "Not configured";
+    const char *ssid = wifi_manager_get_mode() == WIFI_MODE_AP
+                           ? WIFI_COMPILED_AP_SSID
+                           : (WIFI_COMPILED_STA_SSID[0] != '\0'
+                                  ? WIFI_COMPILED_STA_SSID
+                                  : "Not configured");
 
     char ip[16] = "0.0.0.0";
     char gateway[16] = "0.0.0.0";
@@ -656,9 +705,63 @@ void app_services_show_wifi_status(void)
     }
 
     int8_t rssi = status.connected ? wifi_manager_get_rssi() : status.rssi;
-    lcd_show_wifi_status(wifi_state_text(wifi_controller_get_state()), ssid,
+    char state_text[sizeof(status.ip) + 24U];
+    snprintf(state_text, sizeof(state_text), "%s %s",
+             app_services_wifi_mode_name(),
+             wifi_manager_get_mode() == WIFI_MODE_AP
+                 ? "AP active"
+                 : wifi_state_text(wifi_controller_get_state()));
+    lcd_show_wifi_status(state_text, ssid,
                          ip, gateway, rssi, status.connected, status.got_ip,
                          status.internet_available);
+}
+
+esp_err_t app_services_get_ap_clients(wifi_ap_client_info_t clients[],
+                                      size_t capacity,
+                                      size_t *count)
+{
+    return wifi_manager_get_ap_clients(clients, capacity, count);
+}
+
+esp_err_t app_services_disconnect_ap_client(const uint8_t mac[6])
+{
+    return wifi_manager_disconnect_ap_client(mac);
+}
+
+esp_err_t app_services_disconnect_ap_client_at(uint8_t index)
+{
+    wifi_ap_client_info_t clients[WIFI_AP_MAX_CLIENTS] = {0};
+    size_t count = 0U;
+    esp_err_t err = app_services_get_ap_clients(clients, WIFI_AP_MAX_CLIENTS, &count);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_SIZE) {
+        return err;
+    }
+    if (index >= count) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    return app_services_disconnect_ap_client(clients[index].mac);
+}
+
+void app_services_show_ap_clients(void)
+{
+    if (!app_services_wifi_can_manage_clients()) {
+        lcd_flash_message("AP Clients", "STA mode only", 1400U);
+        return;
+    }
+    wifi_ap_client_info_t clients[WIFI_AP_MAX_CLIENTS] = {0};
+    char macs[WIFI_AP_MAX_CLIENTS][18] = {{0}};
+    size_t count = 0U;
+    const esp_err_t err = app_services_get_ap_clients(clients, WIFI_AP_MAX_CLIENTS, &count);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_SIZE) {
+        lcd_show_system_error(SYSTEM_ERROR_WIFI_AP_CLIENT_LIMIT);
+        return;
+    }
+    for (size_t i = 0U; i < count; ++i) {
+        snprintf(macs[i], sizeof(macs[i]), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 clients[i].mac[0], clients[i].mac[1], clients[i].mac[2],
+                 clients[i].mac[3], clients[i].mac[4], clients[i].mac[5]);
+    }
+    lcd_show_wifi_clients((uint8_t)count, (const char (*)[18])macs, 0U);
 }
 
 esp_err_t app_services_set_ota_manifest_url(const char *url)
@@ -703,17 +806,18 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     {
         if (user_initiated)
         {
-            lcd_flash_message("Wi-Fi Required", "Connect first", 1500U);
+            lcd_show_system_error(SYSTEM_ERROR_WIFI_NOT_CONNECTED);
         }
+        ESP_LOGW(APP_SERVICES_TAG, "Update check skipped: station is not connected");
         return ESP_ERR_INVALID_STATE;
     }
     if (!wifi_monitor_is_online())
     {
         if (user_initiated)
         {
-            lcd_flash_message("Internet Offline", "Connect internet", 1800U);
+            lcd_show_system_error(SYSTEM_ERROR_WIFI_INTERNET_UNAVAILABLE);
         }
-        ESP_LOGW(APP_SERVICES_TAG, "Update check skipped: internet is not connected");
+        ESP_LOGW(APP_SERVICES_TAG, "Internet Not Available; OTA check skipped");
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -762,7 +866,7 @@ esp_err_t app_services_check_for_update(bool user_initiated)
         ESP_LOGW(APP_SERVICES_TAG, "OTA check failed: %s", esp_err_to_name(err));
         if (user_initiated)
         {
-            lcd_flash_message("OTA Check Failed", "Try again", 1500U);
+            lcd_show_system_error(SYSTEM_ERROR_OTA_MANIFEST);
         }
     }
     else if (update_available)
@@ -823,7 +927,7 @@ esp_err_t app_services_confirm_update(void)
         s_ota_status.confirmation_pending = false;
         s_ota_status.state = APP_OTA_AVAILABLE;
         xSemaphoreGive(s_services_mutex);
-        lcd_flash_message("Internet Offline", "Connect internet", 1800U);
+        lcd_show_system_error(SYSTEM_ERROR_WIFI_INTERNET_UNAVAILABLE);
         return ESP_ERR_INVALID_STATE;
     }
     const esp_err_t err = ota_service_start_from_csv(manifest_url);

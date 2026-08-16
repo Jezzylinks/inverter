@@ -7,6 +7,7 @@
 
 #include "esp_err.h"
 #include "ota/ota_service.h"
+#include "wifi/wifi_manager.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,6 +58,17 @@ esp_err_t app_services_wifi_reconnect(void);
 esp_err_t app_services_wifi_disconnect(void);
 esp_err_t app_services_wifi_start_provisioning(void);
 void app_services_show_wifi_status(void);
+const char *app_services_wifi_mode_name(void);
+const char *app_services_wifi_connect_action_label(void);
+const char *app_services_wifi_secondary_action_label(void);
+bool app_services_wifi_can_manage_clients(void);
+bool app_services_wifi_is_ap_only(void);
+void app_services_show_ap_clients(void);
+esp_err_t app_services_get_ap_clients(wifi_ap_client_info_t clients[],
+                                      size_t capacity,
+                                      size_t *count);
+esp_err_t app_services_disconnect_ap_client(const uint8_t mac[6]);
+esp_err_t app_services_disconnect_ap_client_at(uint8_t index);
 
 /**
  * Persist the HTTPS CSV manifest URL used for update availability checks.

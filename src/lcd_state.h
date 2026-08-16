@@ -38,6 +38,7 @@ extern "C"
         LCD_SCREEN_WIFI_PASSWORD,
         LCD_SCREEN_WIFI_STATUS,
         LCD_SCREEN_WIFI_CONNECTING,
+        LCD_SCREEN_WIFI_CLIENTS,
         LCD_SCREEN_CONFIRMATION,
         LCD_SCREEN_FLASH_MSG, /* timed 2-line message then returns */
         LCD_SCREEN_STANDBY,
@@ -159,6 +160,7 @@ extern "C"
         char line0[LCD_LINE_SIZE];
         char line1[LCD_LINE_SIZE];
         bool blink;
+        bool system_error;
     } lcd_fault_data_t;
 
     typedef enum
@@ -229,6 +231,15 @@ extern "C"
         uint32_t entered_ms;
     } lcd_wifi_connect_data_t;
 
+#define LCD_WIFI_MAX_CLIENTS 4U
+    typedef struct
+    {
+        char mac[LCD_WIFI_MAX_CLIENTS][18];
+        uint8_t count;
+        uint8_t selected;
+        uint32_t entered_ms;
+    } lcd_wifi_clients_data_t;
+
     /* timed flash message (SAVED / CANCELLED / any short notice) */
     typedef struct
     {
@@ -273,6 +284,7 @@ extern "C"
         lcd_wifi_password_data_t wifi_password;
         lcd_wifi_status_data_t wifi_status;
         lcd_wifi_connect_data_t wifi_connect;
+        lcd_wifi_clients_data_t wifi_clients;
         lcd_two_line_t confirm;
         lcd_flash_data_t flash;
         lcd_standby_data_t standby;

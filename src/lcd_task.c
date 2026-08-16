@@ -466,9 +466,14 @@ static void draw_fault(const lcd_fault_data_t *d)
     {
         if (lcd_geometry_is_20x4())
         {
-            const char *rows[] = {"!!! SYSTEM FAULT !!!", d->line0,
-                                  d->line1, "OUTPUT DISABLED"};
-            draw_commit_rows(rows);
+            if (d->system_error) {
+                const char *rows[] = {d->line0, d->line1, "", ""};
+                draw_commit_rows(rows);
+            } else {
+                const char *rows[] = {"!!! SYSTEM FAULT !!!", d->line0,
+                                      d->line1, "OUTPUT DISABLED"};
+                draw_commit_rows(rows);
+            }
         }
         else
         {
@@ -748,6 +753,36 @@ static void draw_wifi_status(const lcd_wifi_status_data_t *d)
             break;
         }
         draw_commit(row0, row1);
+    }
+}
+
+static void draw_wifi_clients(const lcd_wifi_clients_data_t *d)
+{
+    if (d->count == 0U) {
+        if (lcd_geometry_is_20x4()) {
+            draw_commit_rows((const char *[]){"AP CLIENTS: 0", "No devices", "BACK Return", ""});
+        } else {
+            draw_commit("AP CLIENTS: 0", "BACK Return");
+        }
+        return;
+    }
+    if (lcd_geometry_is_20x4()) {
+        char rows[4][LCD_LINE_SIZE];
+        snprintf(rows[0], LCD_LINE_SIZE, "AP CLIENTS %u/4", (unsigned)d->count);
+        for (uint8_t row = 1U; row < 4U; ++row) {
+            const uint8_t index = row - 1U;
+            if (index < d->count) {
+                snprintf(rows[row], LCD_LINE_SIZE, "%c%.17s",
+                         index == d->selected ? '>' : ' ', d->mac[index]);
+            } else {
+                rows[row][0] = '\0';
+            }
+        }
+        draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
+    } else {
+        char row0[LCD_LINE_SIZE];
+        snprintf(row0, LCD_LINE_SIZE, ">%-.15s", d->mac[d->selected]);
+        draw_commit(row0, "UP/DN SEL ENT DEL");
     }
 }
 
@@ -1467,6 +1502,10 @@ void lcd_task(void *arg)
                 sys_lcd.screen = LCD_SCREEN_MENU;
                 xSemaphoreGive(sys_state_mutex);
             }
+            break;
+
+        case LCD_SCREEN_WIFI_CLIENTS:
+            draw_wifi_clients(&snap.wifi_clients);
             break;
 
         case LCD_SCREEN_CONFIRMATION:

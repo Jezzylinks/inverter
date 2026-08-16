@@ -37,6 +37,8 @@ extern "C"
 
         WIFI_CONTROLLER_PROVISIONING,
 
+        WIFI_CONTROLLER_AP_ACTIVE,
+
         WIFI_CONTROLLER_ERROR
 
     } wifi_controller_state_t;

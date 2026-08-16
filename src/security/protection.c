@@ -6,6 +6,8 @@
 #include "esp_log.h"
 #include "system_state.h"
 #include "events/system_events.h"
+#include "lcd_writer.h"
+#include "system_error_codes.h"
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
@@ -30,6 +32,24 @@ typedef struct
     protection_quantity_t quantity;
     protection_error_handler_t handler;
 } protection_error_map_t;
+
+static bool thresholds_valid(const protection_thresholds_t *t)
+{
+    if (t == NULL) return false;
+    const float values[] = {
+        t->warning_high, t->derate_high, t->fault_high,
+        t->hysteresis_high, t->warning_low, t->derate_low,
+        t->fault_low, t->hysteresis_low};
+    for (size_t i = 0U; i < ARRAY_SIZE(values); ++i) {
+        if (!isfinite(values[i]) || values[i] < 0.0f) return false;
+    }
+    if (!(t->warning_high <= t->derate_high &&
+          t->derate_high <= t->fault_high)) return false;
+    if (t->has_low_bound &&
+        !(t->warning_low >= t->derate_low &&
+          t->derate_low >= t->fault_low)) return false;
+    return true;
+}
 
 static const protection_error_handler_t error_handlers[] =
     {
@@ -89,6 +109,7 @@ bool protection_init(void)
         xQueueCreate(10, sizeof(protection_event_msg_t));
     if (!protection_event_queue) {
         ESP_LOGE(TAG, "failed to create protection event queue");
+        lcd_show_system_error(SYSTEM_ERROR_PROTECTION_UNINITIALIZED);
         return false;
     }
 
@@ -96,6 +117,7 @@ bool protection_init(void)
     if (!s_mutex)
     {
         ESP_LOGE(TAG, "failed to create mutex");
+        lcd_show_system_error(SYSTEM_ERROR_PROTECTION_UNINITIALIZED);
         return false;
     }
     load_defaults();
@@ -105,8 +127,14 @@ bool protection_init(void)
 
 bool protection_set_thresholds(protection_quantity_t q, const protection_thresholds_t *t)
 {
-    if (q >= PROT_QUANTITY_COUNT || !t)
+    if (q >= PROT_QUANTITY_COUNT || !thresholds_valid(t)) {
+        lcd_show_system_error(SYSTEM_ERROR_PROTECTION_INVALID_THRESHOLD);
         return false;
+    }
+    if (s_mutex == NULL) {
+        lcd_show_system_error(SYSTEM_ERROR_PROTECTION_UNINITIALIZED);
+        return false;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_thresholds[q] = *t;
     xSemaphoreGive(s_mutex);
@@ -246,8 +274,11 @@ protection_action_t protection_update(protection_quantity_t q,
                                       float value,
                                       uint32_t now_ms)
 {
-    if (q >= PROT_QUANTITY_COUNT)
+    if (q >= PROT_QUANTITY_COUNT || s_mutex == NULL)
     {
+        lcd_show_system_error(s_mutex == NULL
+                                  ? SYSTEM_ERROR_PROTECTION_UNINITIALIZED
+                                  : SYSTEM_ERROR_PROTECTION_INVALID_TELEMETRY);
         return PROT_ACTION_NONE;
     }
 
@@ -260,6 +291,7 @@ protection_action_t protection_update(protection_quantity_t q,
         s_state[q].stage_entry_time_ms = now_ms;
         s_state[q].transition_count++;
         sys_state.error.error_flags |= ERR_SYSTEM_FAILURE;
+        lcd_show_system_error(SYSTEM_ERROR_PROTECTION_INVALID_TELEMETRY);
         if (previous != PROT_STAGE_FAULT) {
             system_event_post_protection(q, PROT_ACTION_SHUTDOWN, value);
         }

@@ -4,6 +4,7 @@
 import hashlib
 import re
 import unittest
+from pathlib import Path
 
 
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -65,6 +66,20 @@ class FirmwareContracts(unittest.TestCase):
         self.assertEqual(digit, 0)
         self.assertEqual(cursor, 0)
         self.assertEqual(confirmed, [False, False, False, False])
+
+    def test_wifi_kconfig_exposes_exactly_three_architectures_and_four_client_cap(self):
+        kconfig = Path(__file__).parents[1].joinpath("src", "Kconfig.projbuild").read_text()
+        for symbol in ("INVERTER_WIFI_MODE_STA", "INVERTER_WIFI_MODE_AP", "INVERTER_WIFI_MODE_APSTA"):
+            self.assertIn(f"config {symbol}", kconfig)
+        self.assertIn('range 1 4', kconfig)
+        self.assertIn('default INVERTER_WIFI_MODE_APSTA', kconfig)
+
+    def test_system_error_codes_are_unique_and_include_internet_failure(self):
+        text = Path(__file__).parents[1].joinpath("src", "system_error_codes.h").read_text()
+        values = re.findall(r"SYSTEM_ERROR_[A-Z0-9_]+\s*=\s*0x([0-9A-Fa-f]+)", text)
+        self.assertEqual(len(values), len(set(values)))
+        self.assertIn("SYSTEM_ERROR_WIFI_INTERNET_UNAVAILABLE", text)
+        self.assertIn("SYSTEM_ERROR_PROTECTION_INVALID_TELEMETRY", text)
 
 
 if __name__ == "__main__":

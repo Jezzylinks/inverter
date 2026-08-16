@@ -31,7 +31,8 @@ extern "C"
         WIFI_STATE_DISCONNECTED,
         WIFI_STATE_RECONNECTING,
         WIFI_STATE_FAILED,
-        WIFI_STATE_PROVISIONING
+        WIFI_STATE_PROVISIONING,
+        WIFI_STATE_AP_ACTIVE
 
     } wifi_connection_state_t;
 

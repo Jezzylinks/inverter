@@ -1,5 +1,33 @@
 menu "Inverter Wi-Fi Configuration"
 
+choice INVERTER_WIFI_OPERATION_MODE
+    prompt "Wi-Fi operation mode"
+    default INVERTER_WIFI_MODE_APSTA
+    help
+        Select the complete runtime architecture. STA connects to the
+        configured home network only. AP exposes the inverter network only.
+        APSTA exposes the inverter network and may connect to the home network
+        when the user explicitly requests it.
+
+config INVERTER_WIFI_MODE_STA
+    bool "Station only"
+
+config INVERTER_WIFI_MODE_AP
+    bool "Access Point only"
+
+config INVERTER_WIFI_MODE_APSTA
+    bool "Access Point + Station"
+
+endchoice
+
+config INVERTER_WIFI_AP_MAX_CONNECTION
+    int "Maximum Access Point clients"
+    range 1 4
+    default 4
+    help
+        Maximum number of devices allowed on the inverter Access Point.
+        The firmware hard-caps this value at four.
+
 config INVERTER_WIFI_STA_SSID
     string "Station SSID"
     default ""

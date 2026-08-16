@@ -16,6 +16,7 @@
 #include "ota/web_dashboard_server.h"
 #include "wifi/wifi_config.h"
 #include "wifi/wifi_events.h"
+#include "wifi/wifi_manager.h"
 
 #define NETWORK_SERVICES_TAG "NET_SERVICES"
 #define NETWORK_SERVICES_NVS_NAMESPACE NVS_NS_SYSTEM
@@ -234,7 +235,11 @@ static void network_wifi_status_callback(const wifi_status_t *status)
     if (status == NULL || !s_initialized || s_mutex == NULL) {
         return;
     }
-    const bool ready = status->state == WIFI_STATE_CONNECTED && status->got_ip;
+    const wifi_mode_t mode = wifi_manager_get_mode();
+    const bool station_ready = status->state == WIFI_STATE_CONNECTED && status->got_ip;
+    const bool ap_ready = (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) &&
+                          status->state == WIFI_STATE_AP_ACTIVE;
+    const bool ready = station_ready || ap_ready;
     bool mdns_running = false;
     services_lock();
     mdns_running = s_mdns_running;
@@ -427,7 +432,8 @@ esp_err_t network_services_start(void)
     s_running = true;
     services_unlock();
     (void)start_mqtt_if_enabled();
-    ESP_LOGI(NETWORK_SERVICES_TAG, "Station network services started");
+    ESP_LOGI(NETWORK_SERVICES_TAG, "%s network services started",
+             WIFI_COMPILED_OPERATION_MODE_NAME);
     return ESP_OK;
 }
 
@@ -453,7 +459,8 @@ esp_err_t network_services_stop(void)
         (void)mdns_service_deinit();
     }
     cleanup_http_services();
-    ESP_LOGI(NETWORK_SERVICES_TAG, "Station network services stopped");
+    ESP_LOGI(NETWORK_SERVICES_TAG, "%s network services stopped",
+             WIFI_COMPILED_OPERATION_MODE_NAME);
     return ESP_OK;
 }
 

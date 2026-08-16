@@ -49,6 +49,9 @@ static void wifi_manager_load_network_config(void);
  *---------------------------------------------------------*/
 static esp_err_t wifi_manager_set_static_ip(void)
 {
+    if (s_config.mode == WIFI_MODE_AP) {
+        return ESP_OK;
+    }
     if (s_sta_netif == NULL)
     {
         ESP_LOGE(TAG, "STA netif not initialized");
@@ -120,14 +123,14 @@ static void wifi_manager_load_network_config(void)
         wifi_storage_set_default_network_config(&net_cfg);
     }
 
-    s_config.mode = WIFI_MODE_NULL;
+    s_config.mode = WIFI_COMPILED_OPERATION_MODE;
     s_config.authmode = INVERTER_WIFI_AUTH_MODE;
     s_config.dhcp = net_cfg.dhcp;
     s_config.auto_reconnect = net_cfg.auto_reconnect;
     s_config.reconnect_interval_ms = net_cfg.reconnect_interval_ms;
     s_config.ip_info = net_cfg.ip_info;
     s_config.dns = net_cfg.dns;
-    s_config.ap_max_connection = net_cfg.ap_max_connection;
+    s_config.ap_max_connection = WIFI_AP_MAX_CONNECTION;
     s_config.ap_authmode = net_cfg.ap_authmode;
 
     /* Credentials and AP identity are compile-time configuration. NVS keeps
@@ -420,8 +423,14 @@ esp_err_t wifi_manager_start(void)
         ESP_LOGE(TAG, "Invalid WiFi configuration");
         return ESP_ERR_INVALID_ARG;
     }
-    if (s_config.ssid[0] == '\0' && s_config.ap_ssid[0] == '\0') {
-        ESP_LOGW(TAG, "No compile-time STA or AP credentials configured");
+    if ((s_config.mode == WIFI_MODE_STA || s_config.mode == WIFI_MODE_APSTA) &&
+        s_config.ssid[0] == '\0') {
+        ESP_LOGW(TAG, "Station mode selected but no compile-time STA SSID is configured");
+        return ESP_ERR_NOT_FOUND;
+    }
+    if ((s_config.mode == WIFI_MODE_AP || s_config.mode == WIFI_MODE_APSTA) &&
+        (s_config.ap_ssid[0] == '\0' || s_config.ap_password[0] == '\0')) {
+        ESP_LOGW(TAG, "AP mode selected but AP SSID/password is not configured");
         return ESP_ERR_NOT_FOUND;
     }
 
@@ -502,6 +511,10 @@ esp_err_t wifi_manager_connect(void)
     }
 #endif
 
+    if (s_config.mode == WIFI_MODE_AP) {
+        ESP_LOGW(TAG, "Station connect is unavailable in AP-only mode");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     if (s_config.ssid[0] == '\0')
     {
         ESP_LOGW(TAG, "Station SSID is empty; STA connect skipped");
@@ -516,14 +529,12 @@ esp_err_t wifi_manager_connect(void)
     strncpy((char *)wifi_config.sta.password, s_config.password, sizeof(wifi_config.sta.password) - 1U);
     wifi_config.sta.threshold.authmode = s_config.authmode;
 
-    const wifi_mode_t connect_mode =
-        (s_config.ap_ssid[0] != '\0' && s_config.ap_password[0] != '\0')
-            ? WIFI_MODE_APSTA
-            : WIFI_MODE_STA;
-    err = esp_wifi_set_mode(connect_mode);
+    /* Keep the architecture selected in menuconfig. A station connect in
+     * APSTA must not silently collapse the AP interface into STA mode. */
+    err = esp_wifi_set_mode(s_config.mode);
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "Set mode %d failed: %s", (int)connect_mode, esp_err_to_name(err));
+        ESP_LOGE(TAG, "Set mode %d failed: %s", (int)s_config.mode, esp_err_to_name(err));
         return err;
     }
 
@@ -712,6 +723,65 @@ const wifi_status_t *wifi_manager_get_status(void)
 }
 
 /*----------------------------------------------------------
+ * Selected mode and AP clients
+ *---------------------------------------------------------*/
+wifi_mode_t wifi_manager_get_mode(void)
+{
+    return s_config.mode;
+}
+
+esp_err_t wifi_manager_get_ap_clients(wifi_ap_client_info_t clients[],
+                                      size_t capacity,
+                                      size_t *count)
+{
+    if (count == NULL || (capacity > 0U && clients == NULL)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *count = 0U;
+    if (!s_initialized || (s_config.mode != WIFI_MODE_AP && s_config.mode != WIFI_MODE_APSTA)) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    wifi_sta_list_t list = {0};
+    esp_err_t err = esp_wifi_ap_get_sta_list(&list);
+    if (err != ESP_OK) {
+        return err;
+    }
+    const size_t copy_count = list.num < capacity ? list.num : capacity;
+    for (size_t i = 0U; i < copy_count; ++i) {
+        memcpy(clients[i].mac, list.sta[i].mac, sizeof(clients[i].mac));
+        clients[i].aid = 0U;
+        (void)esp_wifi_ap_get_sta_aid(clients[i].mac, &clients[i].aid);
+    }
+    *count = copy_count;
+    return list.num > capacity ? ESP_ERR_INVALID_SIZE : ESP_OK;
+}
+
+esp_err_t wifi_manager_disconnect_ap_client(const uint8_t mac[6])
+{
+    if (mac == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_initialized || (s_config.mode != WIFI_MODE_AP && s_config.mode != WIFI_MODE_APSTA)) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    wifi_sta_list_t list = {0};
+    esp_err_t err = esp_wifi_ap_get_sta_list(&list);
+    if (err != ESP_OK) {
+        return err;
+    }
+    for (int i = 0; i < list.num; ++i) {
+        if (memcmp(list.sta[i].mac, mac, sizeof(list.sta[i].mac)) == 0) {
+            uint16_t aid = 0U;
+            err = esp_wifi_ap_get_sta_aid(mac, &aid);
+            return err == ESP_OK ? esp_wifi_deauth_sta(aid) : err;
+        }
+    }
+    return ESP_ERR_NOT_FOUND;
+}
+
+/*----------------------------------------------------------
  * Get RSSI
  *---------------------------------------------------------*/
 int8_t wifi_manager_get_rssi(void)
@@ -828,7 +898,9 @@ static esp_err_t wifi_manager_configure_apsta(void)
         strncpy((char *)ap_config.ap.ssid, s_config.ap_ssid, sizeof(ap_config.ap.ssid) - 1U);
         strncpy((char *)ap_config.ap.password, s_config.ap_password, sizeof(ap_config.ap.password) - 1U);
         ap_config.ap.channel = s_config.ap_channel;
-        ap_config.ap.max_connection = s_config.ap_max_connection;
+        ap_config.ap.max_connection = s_config.ap_max_connection > WIFI_AP_MAX_CONNECTION
+                                           ? WIFI_AP_MAX_CONNECTION
+                                           : s_config.ap_max_connection;
         ap_config.ap.authmode = s_config.ap_authmode;
     }
 

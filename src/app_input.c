@@ -17,6 +17,7 @@
 #include "lcd_flash_queue.h"
 #include "lcd_writer.h"
 #include "utils.h"
+#include "wifi/wifi_controller.h"
 #include "security/change_pin_flow.h"
 #include "security/factory_reset.h"
 #include "security/security.h"
@@ -159,20 +160,60 @@ static bool ota_confirmation_is_pending(void)
     return status.confirmation_pending;
 }
 
+static void handle_wifi_clients_move(bool up)
+{
+    uint8_t count = 0U;
+    uint8_t selected = 0U;
+    LCD_LOCK();
+    count = sys_lcd.wifi_clients.count;
+    selected = sys_lcd.wifi_clients.selected;
+    LCD_UNLOCK();
+    if (count == 0U) return;
+    selected = up
+        ? (selected == 0U ? count - 1U : selected - 1U)
+        : (selected + 1U) % count;
+    lcd_update_wifi_client_selection(selected);
+}
+
+static void handle_wifi_client_delete(void)
+{
+    uint8_t selected = 0U;
+    LCD_LOCK();
+    selected = sys_lcd.wifi_clients.selected;
+    LCD_UNLOCK();
+    const esp_err_t err = app_services_disconnect_ap_client_at(selected);
+    if (err == ESP_OK) {
+        app_services_show_ap_clients();
+    } else {
+        lcd_flash_message("Remove Failed", "Try again", 1200U);
+    }
+}
+
 static void handle_wifi_menu_action(uint8_t selection)
 {
     switch (selection) {
     case 0:
         (void)app_services_set_wifi_enabled(!app_services_wifi_enabled());
+        show_menu_screen(MENU_WIFI_CONFIG, selection);
         break;
     case 1:
         app_services_show_wifi_status();
         break;
     case 2:
-        (void)app_services_wifi_disconnect();
+        if (app_services_wifi_is_ap_only()) {
+            app_services_show_ap_clients();
+        } else if (wifi_controller_is_connected()) {
+            (void)app_services_wifi_disconnect();
+        } else {
+            (void)app_services_wifi_reconnect();
+        }
         break;
     case 3:
-        (void)app_services_wifi_reconnect();
+        if (app_services_wifi_is_ap_only()) {
+            app_services_show_wifi_status();
+        } else {
+            app_services_show_ap_clients();
+        }
         break;
     default:
         break;
@@ -585,6 +626,13 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             }
             return;
         }
+    }
+
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            handle_wifi_client_delete();
+        }
+        return;
     }
 
     if (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS) {
@@ -1121,6 +1169,13 @@ void handle_up_button_event(button_event_info_t *event_info,
         return; // Up just adjusts the current PIN digit -- never finishes the flow
     }
 
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            handle_wifi_clients_move(true);
+        }
+        return;
+    }
+
     if (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS) {
         if (event_info->event == BUTTON_EVENT_CLICK) {
             uint8_t page;
@@ -1336,6 +1391,13 @@ void handle_down_button_event(button_event_info_t *event_info,
             xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
             change_pin_handle_button(&change_pin_ctx, BTN_DOWN);
             xSemaphoreGive(change_pin_mutex);
+        }
+        return;
+    }
+
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            handle_wifi_clients_move(false);
         }
         return;
     }
@@ -1613,7 +1675,8 @@ void handle_back_button_event(button_event_info_t *event_info,
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
         (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS ||
-         sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING)) {
+         sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING ||
+         sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS)) {
         show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
         return;
     }

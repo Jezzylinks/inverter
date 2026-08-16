@@ -222,42 +222,30 @@ esp_err_t wifi_controller_start(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    wifi_manager_enable_auto_reconnect(true);
+    /* Wi-Fi On starts the selected radio architecture only. Station
+     * association is an explicit Connect action, never a side effect of
+     * enabling the radio. */
+    wifi_manager_enable_auto_reconnect(false);
     wifi_controller_lock();
     s_state = WIFI_CONTROLLER_STARTING;
     wifi_controller_unlock();
 
-    esp_err_t err;
-
-    if (WIFI_COMPILED_STA_SSID[0] == '\0') {
-        ESP_LOGW(TAG, "Compile-time STA SSID is empty; STA connect skipped");
-        err = wifi_manager_start();
-        if (err == ESP_OK) {
-            wifi_controller_lock();
-            s_state = WIFI_CONTROLLER_IDLE;
-            wifi_controller_unlock();
-        }
-        return err;
-    }
-
-    ESP_LOGI(TAG, "Starting compile-time STA configuration");
-    err = wifi_manager_start();
+    const esp_err_t err = wifi_manager_start();
     if (err != ESP_OK && err != ESP_ERR_WIFI_CONN)
     {
         ESP_LOGE(TAG, "Failed to start WiFi manager: %s", esp_err_to_name(err));
         return err;
     }
 
-    err = wifi_manager_connect();
-    if (err == ESP_OK)
-    {
-        wifi_controller_lock();
-        s_state = WIFI_CONTROLLER_CONNECTING;
-        wifi_controller_unlock();
+    wifi_controller_lock();
+    s_state = WIFI_CONTROLLER_IDLE;
+    wifi_controller_unlock();
+    if (wifi_manager_get_mode() != WIFI_MODE_AP) {
+        (void)wifi_monitor_start();
     }
-
-    wifi_monitor_start();
-    return err;
+    ESP_LOGI(TAG, "WiFi architecture started in %s mode; station connect awaits user action",
+             WIFI_COMPILED_OPERATION_MODE_NAME);
+    return ESP_OK;
 }
 
 esp_err_t wifi_controller_stop(void)
@@ -271,10 +259,13 @@ esp_err_t wifi_controller_stop(void)
     wifi_manager_enable_auto_reconnect(false);
     esp_err_t first_err = ESP_OK;
 
-    esp_err_t err = wifi_monitor_stop();
-    if (err != ESP_OK) {
-        first_err = err;
-        ESP_LOGW(TAG, "Failed to stop monitor: %s", esp_err_to_name(err));
+    esp_err_t err = ESP_OK;
+    if (wifi_manager_get_mode() != WIFI_MODE_AP) {
+        err = wifi_monitor_stop();
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            first_err = err;
+            ESP_LOGW(TAG, "Failed to stop monitor: %s", esp_err_to_name(err));
+        }
     }
 
 #if WIFI_RUNTIME_PROVISIONING_ENABLED
@@ -307,6 +298,9 @@ esp_err_t wifi_controller_reconnect(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
     wifi_manager_enable_auto_reconnect(true);
     esp_err_t err = wifi_manager_reconnect();
     if (err == ESP_OK)
@@ -322,6 +316,9 @@ esp_err_t wifi_controller_disconnect(void)
 {
     if (!s_initialized) {
         return ESP_ERR_INVALID_STATE;
+    }
+    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+        return ESP_ERR_NOT_SUPPORTED;
     }
     wifi_manager_enable_auto_reconnect(false);
     const esp_err_t err = wifi_manager_disconnect();
@@ -403,6 +400,9 @@ wifi_controller_state_t wifi_controller_get_state(void)
             break;
         case WIFI_STATE_PROVISIONING:
             state = WIFI_CONTROLLER_PROVISIONING;
+            break;
+        case WIFI_STATE_AP_ACTIVE:
+            state = WIFI_CONTROLLER_AP_ACTIVE;
             break;
         default:
             break;

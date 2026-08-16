@@ -92,8 +92,8 @@ static const menu_item_t diagnostic_items[] = {
 static const menu_item_t wifi_items[] = {
     {"WiFi On / Off", MENU_WIFI_CONFIG},
     {"WiFi Status", MENU_WIFI_CONFIG},
-    {"Disconnect", MENU_WIFI_CONFIG},
-    {"Reconnect", MENU_WIFI_CONFIG}};
+    {"Connect", MENU_WIFI_CONFIG},
+    {"AP Clients", MENU_WIFI_CONFIG}};
 
 static const menu_item_t ota_items[] = {
     {"Check for Update", MENU_OTA},
@@ -109,6 +109,20 @@ static const menu_item_t security_items[] = {
     {"Change PIN", MENU_SECURITY},
     {"View PIN Status", MENU_SECURITY},
     {"Reset PIN", MENU_SECURITY}};
+
+static const char *wifi_menu_label(int index)
+{
+    switch (index) {
+    case 0:
+        return app_services_wifi_enabled() ? "WiFi: ON" : "WiFi: OFF";
+    case 2:
+        return app_services_wifi_connect_action_label();
+    case 3:
+        return app_services_wifi_secondary_action_label();
+    default:
+        return wifi_items[index].label;
+    }
+}
 
 const menu_item_t *get_menu_items(menu_state_t state, int *item_count)
 {
@@ -190,9 +204,6 @@ void show_menu_screen(menu_state_t menu_st, int selection)
         selection = item_count - 1;
 
     uint8_t cols = lcd_geometry_cols();
-    char wifi_toggle_label[LCD_LINE_SIZE];
-    snprintf(wifi_toggle_label, sizeof(wifi_toggle_label), "WiFi: %s",
-             app_services_wifi_enabled() ? "ON" : "OFF");
 if (lcd_geometry_is_20x4())
 {
     char rows[LCD_ROWS][LCD_LINE_SIZE];
@@ -218,8 +229,8 @@ if (lcd_geometry_is_20x4())
         }
 
         char marker = item_index == selection ? APP_MENU_ARROW : APP_MENU_INDENT;
-        const char *label = (menu_st == MENU_WIFI_CONFIG && item_index == 0)
-                                ? wifi_toggle_label : items[item_index].label;
+        const char *label = menu_st == MENU_WIFI_CONFIG
+                                ? wifi_menu_label(item_index) : items[item_index].label;
         int label_width = cols - 1;
         if (row == visible_rows - 1)
         {
@@ -243,8 +254,8 @@ else
     char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
 
     /* Preserve the established 16×2 menu behavior. */
-    const char *selected_label = (menu_st == MENU_WIFI_CONFIG && selection == 0)
-                                     ? wifi_toggle_label : items[selection].label;
+    const char *selected_label = menu_st == MENU_WIFI_CONFIG
+                                     ? wifi_menu_label(selection) : items[selection].label;
     snprintf(r0, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_ARROW,
              cols - 1, cols - 1, selected_label);
 
@@ -257,16 +268,16 @@ else
         int label_w = cols - 1 - ind_len;
         if (label_w < 1)
             label_w = 1;
-        const char *next_label = (menu_st == MENU_WIFI_CONFIG && next == 0)
-                                     ? wifi_toggle_label : items[next].label;
+        const char *next_label = menu_st == MENU_WIFI_CONFIG
+                                     ? wifi_menu_label(next) : items[next].label;
         snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s%s",
                  APP_MENU_INDENT, label_w, label_w,
                  next_label, ind);
     }
     else
     {
-        const char *next_label = (menu_st == MENU_WIFI_CONFIG && next == 0)
-                                     ? wifi_toggle_label : items[next].label;
+        const char *next_label = menu_st == MENU_WIFI_CONFIG
+                                     ? wifi_menu_label(next) : items[next].label;
         snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_INDENT,
                  cols - 1, cols - 1, next_label);
     }

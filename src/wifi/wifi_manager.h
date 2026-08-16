@@ -13,6 +13,7 @@ extern "C"
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 #include "esp_err.h"
 #include "esp_wifi.h"
@@ -94,6 +95,20 @@ extern "C"
     /*----------------------------------------------------------
      * Information
      *---------------------------------------------------------*/
+    wifi_mode_t wifi_manager_get_mode(void);
+
+    typedef struct
+    {
+        uint8_t mac[6];
+        uint16_t aid;
+    } wifi_ap_client_info_t;
+
+    esp_err_t wifi_manager_get_ap_clients(wifi_ap_client_info_t clients[],
+                                           size_t capacity,
+                                           size_t *count);
+
+    esp_err_t wifi_manager_disconnect_ap_client(const uint8_t mac[6]);
+
     esp_err_t wifi_manager_get_mac(uint8_t mac[6]);
 
     esp_err_t wifi_manager_get_ip(esp_netif_ip_info_t *ip);

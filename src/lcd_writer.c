@@ -228,7 +228,23 @@ void lcd_show_fault(const char *line0, const char *line1)
     set_line(sys_lcd.fault.line0, line0);
     set_line(sys_lcd.fault.line1, line1);
     sys_lcd.fault.blink = true;
+    sys_lcd.fault.system_error = false;
     LCD_UNLOCK();
+}
+
+void lcd_show_system_error(uint16_t code)
+{
+    char code_line[LCD_LINE_SIZE];
+    snprintf(code_line, sizeof(code_line), "Error code: 0x%03X",
+             (unsigned)code & 0x0FFFU);
+    LCD_LOCK();
+    sys_lcd.screen = LCD_SCREEN_FAULT;
+    set_line(sys_lcd.fault.line0, "SYSTEM ERROR");
+    set_line(sys_lcd.fault.line1, code_line);
+    sys_lcd.fault.blink = false;
+    sys_lcd.fault.system_error = true;
+    LCD_UNLOCK();
+    lcd_request_refresh();
 }
 
 void lcd_show_inverter_start_error(inverter_start_error_code_t code,
@@ -396,6 +412,35 @@ void lcd_show_wifi_result(bool connected, bool failed, bool timed_out,
     sys_lcd.wifi_connect.failed = failed;
     sys_lcd.wifi_connect.timed_out = timed_out;
     sys_lcd.wifi_connect.entered_ms = _lcd_get_time_ms();
+    LCD_UNLOCK();
+    lcd_request_refresh();
+}
+
+void lcd_show_wifi_clients(uint8_t count,
+                           const char macs[][18],
+                           uint8_t selected)
+{
+    LCD_LOCK();
+    sys_lcd.screen = LCD_SCREEN_WIFI_CLIENTS;
+    lcd_wifi_clients_data_t *clients = &sys_lcd.wifi_clients;
+    memset(clients, 0, sizeof(*clients));
+    clients->count = count > LCD_WIFI_MAX_CLIENTS ? LCD_WIFI_MAX_CLIENTS : count;
+    clients->selected = selected < clients->count ? selected : 0U;
+    clients->entered_ms = _lcd_get_time_ms();
+    for (uint8_t i = 0U; i < clients->count; ++i) {
+        snprintf(clients->mac[i], sizeof(clients->mac[i]), "%s", macs[i]);
+    }
+    LCD_UNLOCK();
+    lcd_request_refresh();
+}
+
+void lcd_update_wifi_client_selection(uint8_t selected)
+{
+    LCD_LOCK();
+    if (selected < sys_lcd.wifi_clients.count) {
+        sys_lcd.wifi_clients.selected = selected;
+        sys_lcd.wifi_clients.entered_ms = _lcd_get_time_ms();
+    }
     LCD_UNLOCK();
     lcd_request_refresh();
 }

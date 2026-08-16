@@ -84,6 +84,7 @@ void lcd_show_shutdown_progress(uint8_t pct, bool load_warn, float load_a);
 void lcd_show_fault(const char *line0, const char *line1);
 void lcd_show_inverter_start_error(inverter_start_error_code_t code,
                                    const char *reason);
+void lcd_show_system_error(uint16_t code);
 void lcd_clear_fault(void); /* returns to LCD_SCREEN_MAIN     */
 
 /* ── Factory reset ───────────────────────────────────────────────────────── */
@@ -106,6 +107,10 @@ void lcd_update_wifi_status_page(uint8_t page);
 void lcd_show_wifi_connecting(const char *ssid);
 void lcd_show_wifi_result(bool connected, bool failed, bool timed_out,
                           const char *ssid);
+void lcd_show_wifi_clients(uint8_t count,
+                           const char macs[][18],
+                           uint8_t selected);
+void lcd_update_wifi_client_selection(uint8_t selected);
 
 /* ── Generic confirmation prompt ─────────────────────────────────────────── */
 void lcd_show_confirm(const char *line0, const char *line1);

@@ -251,8 +251,9 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
             s_status.connected = false;
             s_status.got_ip = false;
             events_unlock();
-            wifi_publish_state(WIFI_STATE_CONNECTING);
-            (void)esp_wifi_connect();
+            /* Radio startup is not a station-connect request. The manager
+             * issues esp_wifi_connect() only after an explicit user action or
+             * a reconnect task. Leave APSTA's AP_ACTIVE state untouched. */
             break;
         case WIFI_EVENT_STA_CONNECTED:
             events_lock();
@@ -297,7 +298,7 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
             wifi_publish_state(WIFI_STATE_IDLE);
             break;
         case WIFI_EVENT_AP_START:
-            wifi_publish_state(WIFI_STATE_PROVISIONING);
+            wifi_publish_state(WIFI_STATE_AP_ACTIVE);
             break;
         case WIFI_EVENT_AP_STOP:
             if (!wifi_events_is_connected()) {
@@ -321,7 +322,9 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
         events_lock();
         s_status.connected = true;
         s_status.got_ip = true;
-        s_status.internet_available = true;
+        /* DHCP proves local network access, not internet reachability. The
+         * monitor owns the internet-availability result. */
+        s_status.internet_available = false;
         s_status.retry_count = 0U;
         s_status.ip = event->ip_info.ip;
         s_status.gateway = event->ip_info.gw;
