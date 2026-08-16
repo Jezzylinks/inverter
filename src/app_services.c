@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -313,26 +314,34 @@ static void app_wifi_scan_task(void *parameter)
 {
     (void)parameter;
 
-    wifi_ap_record_t records[WIFI_MAX_SCAN_RESULTS] = {0};
-    uint16_t count = WIFI_MAX_SCAN_RESULTS;
-    const esp_err_t err = wifi_scan_start_records(records, &count);
-    if (err != ESP_OK) {
-        lcd_flash_message("Scan Unavailable", "Try again", 1400U);
-    } else if (count == 0U) {
-        lcd_flash_message("No Networks", "Found", 1200U);
+    /* A full ESP-IDF scan record table is too large for this short-lived UI
+     * task's stack. Keep the large buffer on the heap and retain only the
+     * bounded display arrays on the task stack. */
+    wifi_ap_record_t *records = calloc(WIFI_MAX_SCAN_RESULTS, sizeof(*records));
+    if (records == NULL) {
+        lcd_flash_message("Scan Memory Error", "Try again", 1400U);
     } else {
-        const uint8_t display_count = count < LCD_WIFI_MAX_AP
-                                           ? (uint8_t)count
-                                           : LCD_WIFI_MAX_AP;
-        char ssids[LCD_WIFI_MAX_AP][LCD_WIFI_SSID_MAX_LEN + 1U] = {{0}};
-        int8_t rssi[LCD_WIFI_MAX_AP] = {0};
-        for (uint8_t i = 0U; i < display_count; ++i) {
-            strncpy(ssids[i], (const char *)records[i].ssid,
-                    LCD_WIFI_SSID_MAX_LEN);
-            ssids[i][LCD_WIFI_SSID_MAX_LEN] = '\0';
-            rssi[i] = records[i].rssi;
+        uint16_t count = WIFI_MAX_SCAN_RESULTS;
+        const esp_err_t err = wifi_scan_start_records(records, &count);
+        if (err != ESP_OK) {
+            lcd_flash_message("Scan Unavailable", "Try again", 1400U);
+        } else if (count == 0U) {
+            lcd_flash_message("No Networks", "Found", 1200U);
+        } else {
+            const uint8_t display_count = count < LCD_WIFI_MAX_AP
+                                               ? (uint8_t)count
+                                               : LCD_WIFI_MAX_AP;
+            char ssids[LCD_WIFI_MAX_AP][LCD_WIFI_SSID_MAX_LEN + 1U] = {{0}};
+            int8_t rssi[LCD_WIFI_MAX_AP] = {0};
+            for (uint8_t i = 0U; i < display_count; ++i) {
+                strncpy(ssids[i], (const char *)records[i].ssid,
+                        LCD_WIFI_SSID_MAX_LEN);
+                ssids[i][LCD_WIFI_SSID_MAX_LEN] = '\0';
+                rssi[i] = records[i].rssi;
+            }
+            lcd_show_wifi_scan(display_count, ssids, rssi, 0U, 0U);
         }
-        lcd_show_wifi_scan(display_count, ssids, rssi, 0U, 0U);
+        free(records);
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
