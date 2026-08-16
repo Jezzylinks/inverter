@@ -3449,7 +3449,7 @@ void update_led_status()
     // Temperature or Fan Failure Error LED (Yellow/Orange)
     if (sys_state.error.error_flags & (ERR_OVER_TEMP | ERR_FAN_FAIL))
     {
-        blink_led(LED_ERROR, 200, 200, 3); // Blink: Temp or Fan error
+        blink_led(LED_ERROR, 200, 200, 2); // Blink twice: Temp or Fan error
     }
     else
     {
@@ -3459,7 +3459,7 @@ void update_led_status()
     // Battery Voltage Error LED (Blue)
     if (sys_state.error.error_flags & (ERR_LOW_BAT | ERR_HIGH_BAT))
     {
-        blink_led(LED_ERROR, 200, 200, 3); // Blue: Battery error
+        blink_led(LED_ERROR, 200, 200, 2); // Blink twice: Battery error
     }
     else
     {
@@ -3473,7 +3473,7 @@ void update_led_status()
         static uint32_t last_blink_time = 0;
         if ((xTaskGetTickCount() - last_blink_time) > pdMS_TO_TICKS(500))
         {
-            blink_led(LED_ERROR, 200, 200, 3); // Toggle LED every 500ms
+            blink_led(LED_ERROR, 200, 200, 2); // Blink twice for active error
             last_blink_time = xTaskGetTickCount();
         }
     }
@@ -3985,9 +3985,12 @@ void post_button_click_event(void)
     evt.priority = EVENT_PRIORITY_LOW;
     evt.timestamp = xTaskGetTickCount();
 
-    /* Button feedback is latency-sensitive. Notify the buzzer task directly
-     * so a busy shared subscriber queue cannot suppress the click tone. */
-    buzzer_button_click();
+    /* Use the same subscriber pipeline as the other button events. The
+     * direct notification remains a fallback for a temporarily unavailable
+     * or full buzzer queue, so a click can never be silently discarded. */
+    if (!event_dispatcher_send(EVENT_SUB_BUZZER, &evt)) {
+        buzzer_button_click();
+    }
     (void)event_dispatcher_send(EVENT_SUB_LCD, &evt);
 }
 
@@ -6543,7 +6546,7 @@ void handle_critical_error(void)
     ESP_LOGE(TAG_ERROR, "Critical Error: 0x%02X", sys_state.error.error_flags);
     log_error_to_nvs(sys_state.error.error_flags);
     post_buzzer_event(false);
-    blink_led(LED_ERROR, 200, 200, 5);
+    blink_led(LED_ERROR, 200, 200, 2);
 
     char l0[LCD_LINE_SIZE], l1[LCD_LINE_SIZE];
     if (sys_state.error.error_flags & ERR_OVER_TEMP)

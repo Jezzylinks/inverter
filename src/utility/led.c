@@ -446,7 +446,7 @@ void led_event_task(void *pv)
                 pattern.type = LED_PATTERN_BLINK;
                 pattern.on_time_ms = 150;
                 pattern.off_time_ms = 150;
-                pattern.repeat = 4;
+                pattern.repeat = 2;
                 have_pattern = true;
                 break;
 
