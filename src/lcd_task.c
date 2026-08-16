@@ -15,6 +15,7 @@
 #include "freertos/semphr.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "esp_wifi.h"
 #include "lcd.h"
 #include <string.h>
 #include <stdio.h>
@@ -688,6 +689,41 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
     }
 }
 
+static const char *wifi_auth_label(uint8_t authmode)
+{
+    switch ((wifi_auth_mode_t)authmode) {
+    case WIFI_AUTH_OPEN: return "OPEN";
+    case WIFI_AUTH_WEP: return "WEP";
+    case WIFI_AUTH_WPA_PSK: return "WPA";
+    case WIFI_AUTH_WPA2_PSK: return "WPA2";
+    case WIFI_AUTH_WPA_WPA2_PSK: return "WPA/WPA2";
+    case WIFI_AUTH_WPA3_PSK: return "WPA3";
+    default: return "UNKNOWN";
+    }
+}
+
+static void draw_wifi_network_details(const lcd_wifi_network_detail_data_t *d)
+{
+    if (lcd_geometry_is_20x4()) {
+        char rows[4][LCD_LINE_SIZE];
+        snprintf(rows[0], LCD_LINE_SIZE, "NETWORK DETAILS");
+        snprintf(rows[1], LCD_LINE_SIZE, "%-20.20s", d->ssid);
+        snprintf(rows[2], LCD_LINE_SIZE, "Signal:%4d dBm", (int)d->rssi);
+        if (d->channel > 0U) {
+            snprintf(rows[3], LCD_LINE_SIZE, "%-6.6s C%02u ENTER",
+                     wifi_auth_label(d->authmode), (unsigned)d->channel);
+        } else {
+            snprintf(rows[3], LCD_LINE_SIZE, "%-8.8s C-- ENTER",
+                     wifi_auth_label(d->authmode));
+        }
+        draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
+    } else {
+        char row0[LCD_LINE_SIZE];
+        snprintf(row0, LCD_LINE_SIZE, "%-16.16s", d->ssid);
+        draw_commit(row0, "ENTER CONNECT");
+    }
+}
+
 static void draw_wifi_password(const lcd_wifi_password_data_t *d)
 {
     char masked[LCD_WIFI_PASSWORD_MAX_LEN + 1U] = {0};
@@ -704,7 +740,7 @@ static void draw_wifi_password(const lcd_wifi_password_data_t *d)
         snprintf(rows[1], LCD_LINE_SIZE, "SSID: %-14.14s", d->ssid);
         snprintf(rows[2], LCD_LINE_SIZE, "Pass:%-10.10s [%c]", masked,
                  d->current_char ? d->current_char : ' ');
-        snprintf(rows[3], LCD_LINE_SIZE, "UP/DN CHAR ENTER ADD");
+        snprintf(rows[3], LCD_LINE_SIZE, "UP/DN CHAR 2X=GO");
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
         draw_commit_rows(row_ptrs);
     } else {
@@ -714,9 +750,9 @@ static void draw_wifi_password(const lcd_wifi_password_data_t *d)
                                              ? LCD_WIFI_PASSWORD_MAX_LEN
                                              : d->length;
         snprintf(row0, LCD_LINE_SIZE, "P:%-14.14s", masked);
-        /* 16 columns: [X] + length/63 + SAVE. The previous HOLD=SAVE
-         * instruction could require up to 21 bytes in a 17-byte row buffer. */
-        snprintf(row1, LCD_LINE_SIZE, "[%c] %02u/63 SAVE",
+        /* Keep the 16-column password prompt within the row buffer while
+         * making the double-click submit gesture visible. */
+        snprintf(row1, LCD_LINE_SIZE, "[%c] %02u/63 2X=GO",
                  d->current_char ? d->current_char : ' ', password_length);
         draw_commit(row0, row1);
     }
@@ -1482,6 +1518,15 @@ void lcd_task(void *arg)
 
         case LCD_SCREEN_WIFI_SCAN:
             draw_wifi_scan(&snap.wifi_scan);
+            break;
+
+        case LCD_SCREEN_WIFI_NETWORK_DETAILS:
+            draw_wifi_network_details(&snap.wifi_network_detail);
+            if (_lcd_get_time_ms() - snap.wifi_network_detail.entered_ms >= 60000U) {
+                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+                sys_lcd.screen = LCD_SCREEN_WIFI_SCAN;
+                xSemaphoreGive(sys_state_mutex);
+            }
             break;
 
         case LCD_SCREEN_WIFI_PASSWORD:

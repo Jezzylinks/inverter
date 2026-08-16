@@ -310,6 +310,8 @@ void lcd_show_wifi_scan_start(void)
 void lcd_update_wifi_scan_results(uint8_t count,
                                   const char ssids[][LCD_WIFI_SSID_MAX_LEN + 1U],
                                   const int8_t rssi[],
+                                  const uint8_t channel[],
+                                  const uint8_t authmode[],
                                   uint8_t spinner_frame)
 {
     LCD_LOCK();
@@ -325,6 +327,8 @@ void lcd_update_wifi_scan_results(uint8_t count,
         strncpy(w->ssid[i], ssids[i], LCD_WIFI_SSID_MAX_LEN);
         w->ssid[i][LCD_WIFI_SSID_MAX_LEN] = '\0';
         w->rssi[i] = rssi[i];
+        w->channel[i] = channel ? channel[i] : 0U;
+        w->authmode[i] = authmode ? authmode[i] : 0U;
     }
     if (n == 0U) {
         w->top_index = 0U;
@@ -353,7 +357,8 @@ void lcd_update_wifi_scan_spinner(uint8_t spinner_frame)
 
 void lcd_show_wifi_scan(uint8_t count,
                         const char ssids[][LCD_WIFI_SSID_MAX_LEN + 1U],
-                        const int8_t rssi[], uint8_t selected, uint8_t top)
+                        const int8_t rssi[], const uint8_t channel[],
+                        const uint8_t authmode[], uint8_t selected, uint8_t top)
 {
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_WIFI_SCAN;
@@ -370,6 +375,8 @@ void lcd_show_wifi_scan(uint8_t count,
         strncpy(w->ssid[i], ssids[i], LCD_WIFI_SSID_MAX_LEN);
         w->ssid[i][LCD_WIFI_SSID_MAX_LEN] = '\0';
         w->rssi[i] = rssi[i];
+        w->channel[i] = channel ? channel[i] : 0U;
+        w->authmode[i] = authmode ? authmode[i] : 0U;
     }
     LCD_UNLOCK();
 }
@@ -383,6 +390,22 @@ void lcd_update_wifi_selection(uint8_t selected, uint8_t top)
     sys_lcd.wifi_scan.top_index = top;
     sys_lcd.wifi_scan.entered_ms = _lcd_get_time_ms();
     LCD_UNLOCK();
+}
+
+void lcd_show_wifi_network_details(const char *ssid, int8_t rssi,
+                                   uint8_t channel, uint8_t authmode)
+{
+    LCD_LOCK();
+    sys_lcd.screen = LCD_SCREEN_WIFI_NETWORK_DETAILS;
+    memset(&sys_lcd.wifi_network_detail, 0, sizeof(sys_lcd.wifi_network_detail));
+    snprintf(sys_lcd.wifi_network_detail.ssid,
+             sizeof(sys_lcd.wifi_network_detail.ssid), "%s", ssid ? ssid : "");
+    sys_lcd.wifi_network_detail.rssi = rssi;
+    sys_lcd.wifi_network_detail.channel = channel;
+    sys_lcd.wifi_network_detail.authmode = authmode;
+    sys_lcd.wifi_network_detail.entered_ms = _lcd_get_time_ms();
+    LCD_UNLOCK();
+    lcd_request_refresh();
 }
 
 void lcd_show_wifi_password(const char *ssid)

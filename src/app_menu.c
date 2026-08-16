@@ -42,7 +42,7 @@ static const menu_item_t main_menu_items[] = {
     {"Settings", MENU_SETTINGS},
     {"Monitoring", MENU_MONITORING},
     {"Diagnostic", MENU_DIAGNOSTIC},
-    {"WiFi Control", MENU_WIFI_CONFIG},
+    {"Wi-Fi", MENU_WIFI_CONFIG},
     {"Firmware Update", MENU_OTA},
     {"Factory Reset", MENU_FACTORY_RESET},
     {"Security", MENU_SECURITY},
@@ -88,13 +88,20 @@ static const menu_item_t diagnostic_items[] = {
     {"Uptime", MENU_DIAGNOSTIC},
     {"Memory Usage", MENU_DIAGNOSTIC}};
 
-// Wi-Fi can be scanned from the panel; station credentials remain optional compile-time defaults.
+// The top-level Wi-Fi menu stays focused on everyday actions. Technical
+// configuration lives in the nested Settings menu below.
 static const menu_item_t wifi_items[] = {
-    {"WiFi On / Off", MENU_WIFI_CONFIG},
-    {"Scan Networks", MENU_WIFI_CONFIG},
-    {"WiFi Status", MENU_WIFI_CONFIG},
+    {"ON/OFF", MENU_WIFI_CONFIG},
+    {"Status", MENU_WIFI_CONFIG},
     {"Connect", MENU_WIFI_CONFIG},
-    {"AP Clients", MENU_WIFI_CONFIG}};
+    {"Networks", MENU_WIFI_CONFIG},
+    {"Settings", MENU_WIFI_SETTINGS}};
+
+static const menu_item_t wifi_settings_items[] = {
+    {"Saved Network", MENU_WIFI_SETTINGS},
+    {"Network Mode", MENU_WIFI_SETTINGS},
+    {"DHCP", MENU_WIFI_SETTINGS},
+    {"AP Clients", MENU_WIFI_SETTINGS}};
 
 static const menu_item_t ota_items[] = {
     {"Check for Update", MENU_OTA},
@@ -115,13 +122,29 @@ static const char *wifi_menu_label(int index)
 {
     switch (index) {
     case 0:
-        return app_services_wifi_enabled() ? "WiFi: ON" : "WiFi: OFF";
-    case 3:
+        return app_services_wifi_enabled() ? "Wi-Fi: ON" : "Wi-Fi: OFF";
+    case 2:
         return app_services_wifi_connect_action_label();
-    case 4:
-        return app_services_wifi_secondary_action_label();
     default:
         return wifi_items[index].label;
+    }
+}
+
+static const char *wifi_settings_menu_label(int index)
+{
+    switch (index) {
+    case 0:
+        return app_services_wifi_saved_network_label();
+    case 1:
+    {
+        static char mode[LCD_LINE_SIZE];
+        snprintf(mode, sizeof(mode), "Mode: %s", app_services_wifi_mode_name());
+        return mode;
+    }
+    case 2:
+        return app_services_wifi_dhcp_enabled() ? "DHCP: ON" : "DHCP: OFF";
+    default:
+        return wifi_settings_items[index].label;
     }
 }
 
@@ -150,6 +173,10 @@ const menu_item_t *get_menu_items(menu_state_t state, int *item_count)
     case MENU_WIFI_CONFIG:
         *item_count = sizeof(wifi_items) / sizeof(wifi_items[0]);
         return wifi_items;
+
+    case MENU_WIFI_SETTINGS:
+        *item_count = sizeof(wifi_settings_items) / sizeof(wifi_settings_items[0]);
+        return wifi_settings_items;
 
     case MENU_OTA:
         *item_count = sizeof(ota_items) / sizeof(ota_items[0]);
@@ -231,7 +258,10 @@ if (lcd_geometry_is_20x4())
 
         char marker = item_index == selection ? APP_MENU_ARROW : APP_MENU_INDENT;
         const char *label = menu_st == MENU_WIFI_CONFIG
-                                ? wifi_menu_label(item_index) : items[item_index].label;
+                                ? wifi_menu_label(item_index)
+                                : menu_st == MENU_WIFI_SETTINGS
+                                    ? wifi_settings_menu_label(item_index)
+                                    : items[item_index].label;
         int label_width = cols - 1;
         if (row == visible_rows - 1)
         {
@@ -256,7 +286,10 @@ else
 
     /* Preserve the established 16×2 menu behavior. */
     const char *selected_label = menu_st == MENU_WIFI_CONFIG
-                                     ? wifi_menu_label(selection) : items[selection].label;
+                                     ? wifi_menu_label(selection)
+                                     : menu_st == MENU_WIFI_SETTINGS
+                                         ? wifi_settings_menu_label(selection)
+                                         : items[selection].label;
     snprintf(r0, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_ARROW,
              cols - 1, cols - 1, selected_label);
 
@@ -270,7 +303,10 @@ else
         if (label_w < 1)
             label_w = 1;
         const char *next_label = menu_st == MENU_WIFI_CONFIG
-                                     ? wifi_menu_label(next) : items[next].label;
+                                     ? wifi_menu_label(next)
+                                     : menu_st == MENU_WIFI_SETTINGS
+                                         ? wifi_settings_menu_label(next)
+                                         : items[next].label;
         snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s%s",
                  APP_MENU_INDENT, label_w, label_w,
                  next_label, ind);
@@ -278,7 +314,10 @@ else
     else
     {
         const char *next_label = menu_st == MENU_WIFI_CONFIG
-                                     ? wifi_menu_label(next) : items[next].label;
+                                     ? wifi_menu_label(next)
+                                     : menu_st == MENU_WIFI_SETTINGS
+                                         ? wifi_settings_menu_label(next)
+                                         : items[next].label;
         snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_INDENT,
                  cols - 1, cols - 1, next_label);
     }

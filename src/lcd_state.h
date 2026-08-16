@@ -35,6 +35,7 @@ extern "C"
         LCD_SCREEN_FAULT,
         LCD_SCREEN_FACTORY_RESET,
         LCD_SCREEN_WIFI_SCAN,
+        LCD_SCREEN_WIFI_NETWORK_DETAILS,
         LCD_SCREEN_WIFI_PASSWORD,
         LCD_SCREEN_WIFI_STATUS,
         LCD_SCREEN_WIFI_CONNECTING,
@@ -200,6 +201,8 @@ extern "C"
     {
         char ssid[LCD_WIFI_MAX_AP][LCD_WIFI_SSID_MAX_LEN + 1U];
         int8_t rssi[LCD_WIFI_MAX_AP];
+        uint8_t channel[LCD_WIFI_MAX_AP];
+        uint8_t authmode[LCD_WIFI_MAX_AP];
         uint8_t count;
         uint8_t selected_index;
         uint8_t top_index;
@@ -207,6 +210,15 @@ extern "C"
         lcd_wifi_scan_stage_t stage;
         uint32_t entered_ms;
     } lcd_wifi_scan_data_t;
+
+    typedef struct
+    {
+        char ssid[LCD_WIFI_SSID_MAX_LEN + 1U];
+        int8_t rssi;
+        uint8_t channel;
+        uint8_t authmode;
+        uint32_t entered_ms;
+    } lcd_wifi_network_detail_data_t;
 
     typedef struct
     {
@@ -290,6 +302,7 @@ extern "C"
         factory_reset_ctx_t factory_reset;
         lcd_security_data_t security;
         lcd_wifi_scan_data_t wifi_scan;
+        lcd_wifi_network_detail_data_t wifi_network_detail;
         lcd_wifi_password_data_t wifi_password;
         lcd_wifi_status_data_t wifi_status;
         lcd_wifi_connect_data_t wifi_connect;

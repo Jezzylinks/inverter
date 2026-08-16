@@ -48,6 +48,8 @@ static SemaphoreHandle_t s_services_mutex;
 static TaskHandle_t s_ota_check_task;
 static TaskHandle_t s_wifi_operation_watch_task;
 static TaskHandle_t s_wifi_scan_task;
+static bool s_wifi_forget_pending;
+static bool s_wifi_disconnect_pending;
 static bool s_wifi_scan_active;
 static bool s_wifi_scan_cancel_requested;
 static char s_manifest_url[APP_OTA_MANIFEST_URL_MAX];
@@ -87,6 +89,8 @@ static void app_wifi_scan_task(void *parameter)
     wifi_ap_record_t records[WIFI_MAX_SCAN_RESULTS] = {0};
     char ssids[LCD_WIFI_MAX_AP][LCD_WIFI_SSID_MAX_LEN + 1U] = {{0}};
     int8_t rssi[LCD_WIFI_MAX_AP] = {0};
+    uint8_t channel[LCD_WIFI_MAX_AP] = {0};
+    uint8_t authmode[LCD_WIFI_MAX_AP] = {0};
 
     while (!app_wifi_scan_cancel_requested() &&
            (xTaskGetTickCount() - started) < duration) {
@@ -100,8 +104,10 @@ static void app_wifi_scan_task(void *parameter)
                 strncpy(ssids[i], (const char *)records[i].ssid, LCD_WIFI_SSID_MAX_LEN);
                 ssids[i][LCD_WIFI_SSID_MAX_LEN] = '\0';
                 rssi[i] = records[i].rssi;
+                channel[i] = records[i].primary;
+                authmode[i] = (uint8_t)records[i].authmode;
             }
-            lcd_update_wifi_scan_results(visible, ssids, rssi, spinner++);
+            lcd_update_wifi_scan_results(visible, ssids, rssi, channel, authmode, spinner++);
         } else {
             lcd_update_wifi_scan_spinner(spinner++);
         }
@@ -127,7 +133,7 @@ static void app_wifi_scan_task(void *parameter)
         if (count > 0U && selected >= count) {
             selected = count - 1U;
         }
-        lcd_show_wifi_scan(count, ssids, rssi, selected, top);
+        lcd_show_wifi_scan(count, ssids, rssi, channel, authmode, selected, top);
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
@@ -511,6 +517,8 @@ esp_err_t app_services_init(void)
     s_wifi_scan_active = false;
     s_wifi_scan_cancel_requested = false;
     s_wifi_scan_task = NULL;
+    s_wifi_forget_pending = false;
+    s_wifi_disconnect_pending = false;
     xSemaphoreGive(s_services_mutex);
 
     load_persisted_config();
@@ -767,24 +775,85 @@ bool app_services_wifi_scan_is_active(void)
     return active;
 }
 
-esp_err_t app_services_wifi_connect_selected(uint8_t selected_index)
+void app_services_show_wifi_network_details(uint8_t selected_index)
 {
     char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
+    int8_t rssi = 0;
+    uint8_t channel = 0U;
+    uint8_t authmode = 0U;
+
     LCD_LOCK();
     if (sys_lcd.screen != LCD_SCREEN_WIFI_SCAN ||
         sys_lcd.wifi_scan.stage != LCD_WIFI_SCAN_COMPLETE ||
         selected_index >= sys_lcd.wifi_scan.count) {
         LCD_UNLOCK();
-        return ESP_ERR_INVALID_STATE;
+        return;
     }
     strncpy(ssid, sys_lcd.wifi_scan.ssid[selected_index], sizeof(ssid) - 1U);
+    rssi = sys_lcd.wifi_scan.rssi[selected_index];
+    channel = sys_lcd.wifi_scan.channel[selected_index];
+    authmode = sys_lcd.wifi_scan.authmode[selected_index];
+    LCD_UNLOCK();
+    lcd_show_wifi_network_details(ssid, rssi, channel, authmode);
+}
+
+esp_err_t app_services_wifi_connect_selected(uint8_t selected_index)
+{
+    char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
+    LCD_LOCK();
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS) {
+        strncpy(ssid, sys_lcd.wifi_network_detail.ssid, sizeof(ssid) - 1U);
+    } else if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN &&
+               sys_lcd.wifi_scan.stage == LCD_WIFI_SCAN_COMPLETE &&
+               selected_index < sys_lcd.wifi_scan.count) {
+        strncpy(ssid, sys_lcd.wifi_scan.ssid[selected_index], sizeof(ssid) - 1U);
+    } else {
+        LCD_UNLOCK();
+        return ESP_ERR_INVALID_STATE;
+    }
     LCD_UNLOCK();
 
-    const char *password = "";
-    if (strncmp(ssid, WIFI_COMPILED_STA_SSID, sizeof(ssid)) == 0) {
+    const char *password = NULL;
+    wifi_credentials_t saved = {0};
+    if (WIFI_COMPILED_STA_SSID[0] != '\0' &&
+        strncmp(ssid, WIFI_COMPILED_STA_SSID, sizeof(ssid)) == 0) {
         password = WIFI_COMPILED_STA_PASSWORD;
+    } else if (wifi_storage_load_credentials(&saved) == ESP_OK &&
+               strncmp(ssid, saved.ssid, sizeof(ssid)) == 0) {
+        password = saved.password;
+    }
+
+    if (password == NULL) {
+#if WIFI_RUNTIME_PROVISIONING_ENABLED
+        lcd_show_wifi_password(ssid);
+        return ESP_ERR_INVALID_STATE;
+#else
+        lcd_flash_message("Password Entry Off", "Use menuconfig", 1800U);
+        return ESP_ERR_NOT_SUPPORTED;
+#endif
     }
     return app_services_wifi_connect_network(ssid, password);
+}
+
+esp_err_t app_services_wifi_submit_password(void)
+{
+    char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
+    char password[LCD_WIFI_PASSWORD_MAX_LEN + 1U] = {0};
+    LCD_LOCK();
+    if (sys_lcd.screen != LCD_SCREEN_WIFI_PASSWORD) {
+        LCD_UNLOCK();
+        return ESP_ERR_INVALID_STATE;
+    }
+    strncpy(ssid, sys_lcd.wifi_password.ssid, sizeof(ssid) - 1U);
+    strncpy(password, sys_lcd.wifi_password.password, sizeof(password) - 1U);
+    LCD_UNLOCK();
+#if WIFI_RUNTIME_PROVISIONING_ENABLED
+    return app_services_wifi_connect_network(ssid, password);
+#else
+    (void)ssid;
+    (void)password;
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
 }
 
 esp_err_t app_services_wifi_connect_network(const char *ssid,
@@ -884,16 +953,19 @@ esp_err_t app_services_wifi_start_provisioning(void)
 void app_services_show_wifi_status(void)
 {
     wifi_status_t status = {0};
-    const wifi_status_t *status_ptr = wifi_controller_get_status();
-    if (status_ptr) {
-        status = *status_ptr;
-    }
+    wifi_manager_config_t config = {0};
+    (void)wifi_events_get_status_copy(&status);
+    (void)wifi_manager_get_config(&config);
 
-    const char *ssid = wifi_manager_get_mode() == WIFI_MODE_AP
-                           ? WIFI_COMPILED_AP_SSID
-                           : (WIFI_COMPILED_STA_SSID[0] != '\0'
-                                  ? WIFI_COMPILED_STA_SSID
-                                  : "Not configured");
+    char ssid[WIFI_MAX_SSID_LEN + 1U] = {0};
+    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+        strncpy(ssid, config.ap_ssid, sizeof(ssid) - 1U);
+    } else {
+        strncpy(ssid, config.ssid, sizeof(ssid) - 1U);
+    }
+    if (ssid[0] == '\0') {
+        strncpy(ssid, "Not configured", sizeof(ssid) - 1U);
+    }
 
     char ip[16] = "0.0.0.0";
     char gateway[16] = "0.0.0.0";
@@ -902,16 +974,167 @@ void app_services_show_wifi_status(void)
         snprintf(gateway, sizeof(gateway), IPSTR, IP2STR(&status.gateway));
     }
 
-    int8_t rssi = status.connected ? wifi_manager_get_rssi() : status.rssi;
-    char state_text[sizeof(status.ip) + 24U];
-    snprintf(state_text, sizeof(state_text), "%s %s",
-             app_services_wifi_mode_name(),
-             wifi_manager_get_mode() == WIFI_MODE_AP
-                 ? "AP active"
-                 : wifi_state_text(wifi_controller_get_state()));
-    lcd_show_wifi_status(state_text, ssid,
-                         ip, gateway, rssi, status.connected, status.got_ip,
-                         status.internet_available);
+    char state_text[LCD_LINE_SIZE] = {0};
+    if (!sys_state.wifi.enabled) {
+        snprintf(state_text, sizeof(state_text), "Wi-Fi OFF");
+    } else if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+        snprintf(state_text, sizeof(state_text), "AP active");
+    } else {
+        snprintf(state_text, sizeof(state_text), "%s",
+                 wifi_state_text(wifi_controller_get_state()));
+    }
+    const int8_t rssi = status.connected ? wifi_manager_get_rssi() : status.rssi;
+    lcd_show_wifi_status(state_text, ssid, ip, gateway, rssi,
+                         status.connected, status.got_ip,
+                         status.connected && status.internet_available);
+}
+
+const char *app_services_wifi_saved_network_label(void)
+{
+    static char label[LCD_LINE_SIZE];
+    wifi_credentials_t credentials = {0};
+    if (wifi_storage_load_credentials(&credentials) == ESP_OK &&
+        credentials.ssid[0] != '\0') {
+        snprintf(label, sizeof(label), "Saved: %.12s", credentials.ssid);
+    } else {
+        snprintf(label, sizeof(label), "Saved: None");
+    }
+    return label;
+}
+
+bool app_services_wifi_forget_confirmation_pending(void)
+{
+    bool pending = false;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        pending = s_wifi_forget_pending;
+        xSemaphoreGive(s_services_mutex);
+    }
+    return pending;
+}
+
+esp_err_t app_services_wifi_request_forget_saved(void)
+{
+    wifi_credentials_t credentials = {0};
+    if (wifi_storage_load_credentials(&credentials) != ESP_OK ||
+        credentials.ssid[0] == '\0') {
+        lcd_flash_message("No Saved Network", "Nothing to forget", 1400U);
+        return ESP_ERR_NOT_FOUND;
+    }
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_wifi_forget_pending = true;
+    xSemaphoreGive(s_services_mutex);
+    lcd_show_confirm("Forget network?", "Enter=Yes Back=No");
+    return ESP_OK;
+}
+
+esp_err_t app_services_wifi_confirm_forget_saved(void)
+{
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_wifi_forget_pending = false;
+    xSemaphoreGive(s_services_mutex);
+
+    esp_err_t err = wifi_storage_erase_credentials();
+    if (err != ESP_OK) {
+        lcd_flash_message("Forget failed", "Try again", 1400U);
+        return err;
+    }
+
+    wifi_manager_config_t config = {0};
+    if (wifi_manager_get_config(&config) == ESP_OK) {
+        config.ssid[0] = '\0';
+        config.password[0] = '\0';
+        (void)wifi_manager_set_config(&config);
+    }
+    if (wifi_controller_is_connected()) {
+        (void)wifi_controller_disconnect();
+    }
+    lcd_flash_message("Network Forgotten", "Wi-Fi ready", 1200U);
+    return ESP_OK;
+}
+
+void app_services_wifi_cancel_forget_saved(void)
+{
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_wifi_forget_pending = false;
+        xSemaphoreGive(s_services_mutex);
+    }
+}
+
+bool app_services_wifi_disconnect_confirmation_pending(void)
+{
+    bool pending = false;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        pending = s_wifi_disconnect_pending;
+        xSemaphoreGive(s_services_mutex);
+    }
+    return pending;
+}
+
+esp_err_t app_services_wifi_request_disconnect(void)
+{
+    if (!wifi_controller_is_connected()) {
+        return app_services_wifi_reconnect();
+    }
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_wifi_disconnect_pending = true;
+    xSemaphoreGive(s_services_mutex);
+    lcd_show_confirm("Disconnect Wi-Fi?", "Enter=Yes Back=No");
+    return ESP_OK;
+}
+
+esp_err_t app_services_wifi_confirm_disconnect(void)
+{
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_wifi_disconnect_pending = false;
+    xSemaphoreGive(s_services_mutex);
+    return app_services_wifi_disconnect();
+}
+
+void app_services_wifi_cancel_disconnect(void)
+{
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_wifi_disconnect_pending = false;
+        xSemaphoreGive(s_services_mutex);
+    }
+}
+
+bool app_services_wifi_dhcp_enabled(void)
+{
+    wifi_manager_config_t config = {0};
+    return wifi_manager_get_config(&config) == ESP_OK ? config.dhcp : true;
+}
+
+esp_err_t app_services_wifi_toggle_dhcp(void)
+{
+    wifi_manager_config_t config = {0};
+    esp_err_t err = wifi_manager_get_config(&config);
+    if (err != ESP_OK) {
+        return err;
+    }
+    config.dhcp = !config.dhcp;
+    err = wifi_manager_set_config(&config);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    wifi_network_config_t stored = {0};
+    if (wifi_storage_load_network_config(&stored) != ESP_OK) {
+        wifi_storage_set_default_network_config(&stored);
+    }
+    stored.dhcp = config.dhcp;
+    stored.ip_info = config.ip_info;
+    stored.dns = config.dns;
+    err = wifi_storage_save_network_config(&stored);
+    if (err == ESP_OK) {
+        lcd_flash_message(config.dhcp ? "DHCP ON" : "DHCP OFF",
+                          wifi_controller_is_connected() ? "Reconnect needed" : "Saved",
+                          1400U);
+    }
+    return err;
 }
 
 esp_err_t app_services_get_ap_clients(wifi_ap_client_info_t clients[],
