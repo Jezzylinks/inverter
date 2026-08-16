@@ -620,55 +620,71 @@ static void draw_loading(const lcd_loading_data_t *d)
 
 static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
 {
-    if (d->count == 0)
-    {
-        if (lcd_geometry_is_20x4())
-        {
-            const char *rows[] = {"WI-FI SCAN", "NO NETWORKS FOUND",
-                                  "CHECK ROUTER", "BACK TO RETURN"};
-            draw_commit_rows(rows);
-        }
-        else
-        {
-            draw_commit("No Networks     ", "Found           ");
-        }
-        return;
-    }
-    if (lcd_geometry_is_20x4())
-    {
+    static const char spinner[] = {'|', '/', '-', '\\'};
+    const char spin = spinner[d->spinner_frame % (sizeof(spinner) / sizeof(spinner[0]))];
+    const char marker = lcd_geometry_is_20x4() ? CHAR_WIFI_TX : CHAR_BAR_5;
+
+    if (lcd_geometry_is_20x4()) {
         char rows[4][LCD_LINE_SIZE];
-        for (uint8_t line = 0; line < 4; line++)
-        {
-            uint8_t idx = d->top_index + line;
-            if (idx < d->count)
-                snprintf(rows[line], LCD_LINE_SIZE, "%c%-12.12s %4s",
-                         (idx == d->selected_index) ? '>' : ' ',
-                         d->ssid[idx], rssi_bars(d->rssi[idx]));
-            else
-            {
-                memset(rows[line], ' ', LCD_COLS);
-                rows[line][LCD_COLS] = '\0';
+        if (d->stage == LCD_WIFI_SCAN_SCANNING) {
+            snprintf(rows[0], LCD_LINE_SIZE, "WI-FI SCAN %c F:%02u", spin, d->count);
+            if (d->count == 0U) {
+                snprintf(rows[1], LCD_LINE_SIZE, "SEARCHING...     ");
+                snprintf(rows[2], LCD_LINE_SIZE, "PLEASE WAIT      ");
+            } else {
+                for (uint8_t line = 0U; line < 2U; ++line) {
+                    const uint8_t idx = d->top_index + line;
+                    if (idx < d->count) {
+                        snprintf(rows[line + 1U], LCD_LINE_SIZE, "%c%-12.12s %4s",
+                                 idx == d->selected_index ? marker : ' ',
+                                 d->ssid[idx], rssi_bars(d->rssi[idx]));
+                    } else {
+                        snprintf(rows[line + 1U], LCD_LINE_SIZE, "%-20s", "");
+                    }
+                }
+            }
+            snprintf(rows[3], LCD_LINE_SIZE, "CENTER=STOP       ");
+        } else if (d->count == 0U) {
+            const char *done_rows[] = {"WI-FI SCAN DONE", "NO NETWORKS FOUND",
+                                       "UP/DN RETRY", "BACK TO RETURN"};
+            draw_commit_rows(done_rows);
+            return;
+        } else {
+            for (uint8_t line = 0U; line < 4U; ++line) {
+                const uint8_t idx = d->top_index + line;
+                if (idx < d->count) {
+                    snprintf(rows[line], LCD_LINE_SIZE, "%c%-12.12s %4s",
+                             idx == d->selected_index ? marker : ' ',
+                             d->ssid[idx], rssi_bars(d->rssi[idx]));
+                } else {
+                    snprintf(rows[line], LCD_LINE_SIZE, "%-20s", "");
+                }
             }
         }
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
         draw_commit_rows(row_ptrs);
-    }
-    else
-    {
-        for (uint8_t line = 0; line < 2; line++)
-        {
-            uint8_t idx = d->top_index + line;
-            if (idx >= d->count)
-                break;
-            char row[LCD_LINE_SIZE];
-            /* 16 columns: marker(1) + SSID(8) + gap(1) + RSSI(4) + pad(2).
-             * The precision is essential: %-8s is only a minimum width and
-             * would let a long SSID overflow the row buffer/display. */
-            snprintf(row, LCD_LINE_SIZE, "%c%-8.8s %4.4s  ",
-                     (idx == d->selected_index) ? '>' : ' ',
-                     d->ssid[idx], rssi_bars(d->rssi[idx]));
-            draw_row(line, row);
+    } else if (d->stage == LCD_WIFI_SCAN_SCANNING) {
+        char row0[LCD_LINE_SIZE];
+        char row1[LCD_LINE_SIZE];
+        snprintf(row0, LCD_LINE_SIZE, "SCAN %c FOUND:%02u", spin, d->count);
+        if (d->count == 0U) {
+            snprintf(row1, LCD_LINE_SIZE, "CENTER STOP      ");
+        } else {
+            const uint8_t idx = d->selected_index < d->count ? d->selected_index : 0U;
+            snprintf(row1, LCD_LINE_SIZE, "%c%-8.8s %4.4s",
+                     marker, d->ssid[idx], rssi_bars(d->rssi[idx]));
         }
+        draw_commit(row0, row1);
+    } else if (d->count == 0U) {
+        draw_commit("SCAN COMPLETE    ", "NO NETWORKS      ");
+    } else {
+        const uint8_t idx = d->selected_index < d->count ? d->selected_index : 0U;
+        char row0[LCD_LINE_SIZE];
+        char row1[LCD_LINE_SIZE];
+        snprintf(row0, LCD_LINE_SIZE, "%c%-8.8s %4.4s",
+                 marker, d->ssid[idx], rssi_bars(d->rssi[idx]));
+        snprintf(row1, LCD_LINE_SIZE, "ENTER CONNECT    ");
+        draw_commit(row0, row1);
     }
 }
 
@@ -1466,11 +1482,6 @@ void lcd_task(void *arg)
 
         case LCD_SCREEN_WIFI_SCAN:
             draw_wifi_scan(&snap.wifi_scan);
-            if (_lcd_get_time_ms() - snap.wifi_scan.entered_ms >= 30000U) {
-                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
-                sys_lcd.screen = LCD_SCREEN_MENU;
-                xSemaphoreGive(sys_state_mutex);
-            }
             break;
 
         case LCD_SCREEN_WIFI_PASSWORD:

@@ -296,6 +296,61 @@ void lcd_show_factory_done(void)
 }
 
 /* ── Wi-Fi ───────────────────────────────────────────────────────────────── */
+void lcd_show_wifi_scan_start(void)
+{
+    LCD_LOCK();
+    sys_lcd.screen = LCD_SCREEN_WIFI_SCAN;
+    memset(&sys_lcd.wifi_scan, 0, sizeof(sys_lcd.wifi_scan));
+    sys_lcd.wifi_scan.stage = LCD_WIFI_SCAN_SCANNING;
+    sys_lcd.wifi_scan.entered_ms = _lcd_get_time_ms();
+    LCD_UNLOCK();
+    lcd_request_refresh();
+}
+
+void lcd_update_wifi_scan_results(uint8_t count,
+                                  const char ssids[][LCD_WIFI_SSID_MAX_LEN + 1U],
+                                  const int8_t rssi[],
+                                  uint8_t spinner_frame)
+{
+    LCD_LOCK();
+    lcd_wifi_scan_data_t *w = &sys_lcd.wifi_scan;
+    const uint8_t n = count < LCD_WIFI_MAX_AP ? count : LCD_WIFI_MAX_AP;
+    w->count = n;
+    w->spinner_frame = spinner_frame;
+    w->stage = LCD_WIFI_SCAN_SCANNING;
+    if (w->selected_index >= n) {
+        w->selected_index = n > 0U ? n - 1U : 0U;
+    }
+    for (uint8_t i = 0U; i < n; ++i) {
+        strncpy(w->ssid[i], ssids[i], LCD_WIFI_SSID_MAX_LEN);
+        w->ssid[i][LCD_WIFI_SSID_MAX_LEN] = '\0';
+        w->rssi[i] = rssi[i];
+    }
+    if (n == 0U) {
+        w->top_index = 0U;
+    } else {
+        const uint8_t visible = lcd_geometry_is_20x4() ? 3U : 2U;
+        if (w->selected_index < w->top_index) {
+            w->top_index = w->selected_index;
+        } else if (w->selected_index >= w->top_index + visible) {
+            w->top_index = w->selected_index - visible + 1U;
+        }
+    }
+    LCD_UNLOCK();
+    lcd_request_refresh();
+}
+
+void lcd_update_wifi_scan_spinner(uint8_t spinner_frame)
+{
+    LCD_LOCK();
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN &&
+        sys_lcd.wifi_scan.stage == LCD_WIFI_SCAN_SCANNING) {
+        sys_lcd.wifi_scan.spinner_frame = spinner_frame;
+    }
+    LCD_UNLOCK();
+    lcd_request_refresh();
+}
+
 void lcd_show_wifi_scan(uint8_t count,
                         const char ssids[][LCD_WIFI_SSID_MAX_LEN + 1U],
                         const int8_t rssi[], uint8_t selected, uint8_t top)
@@ -307,6 +362,8 @@ void lcd_show_wifi_scan(uint8_t count,
     w->count = n;
     w->selected_index = selected < n ? selected : 0U;
     w->top_index = top;
+    w->spinner_frame = 0U;
+    w->stage = LCD_WIFI_SCAN_COMPLETE;
     w->entered_ms = _lcd_get_time_ms();
     for (uint8_t i = 0; i < n; i++)
     {

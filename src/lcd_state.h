@@ -189,6 +189,13 @@ extern "C"
 #define LCD_WIFI_MAX_AP 10
 #define LCD_WIFI_SSID_MAX_LEN 32U
 #define LCD_WIFI_PASSWORD_MAX_LEN 63U
+
+    typedef enum
+    {
+        LCD_WIFI_SCAN_SCANNING = 0,
+        LCD_WIFI_SCAN_COMPLETE,
+    } lcd_wifi_scan_stage_t;
+
     typedef struct
     {
         char ssid[LCD_WIFI_MAX_AP][LCD_WIFI_SSID_MAX_LEN + 1U];
@@ -196,6 +203,8 @@ extern "C"
         uint8_t count;
         uint8_t selected_index;
         uint8_t top_index;
+        uint8_t spinner_frame;
+        lcd_wifi_scan_stage_t stage;
         uint32_t entered_ms;
     } lcd_wifi_scan_data_t;
 

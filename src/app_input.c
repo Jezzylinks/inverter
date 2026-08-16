@@ -160,6 +160,36 @@ static bool ota_confirmation_is_pending(void)
     return status.confirmation_pending;
 }
 
+static void handle_wifi_scan_move(bool up)
+{
+    uint8_t count = 0U;
+    uint8_t selected = 0U;
+    uint8_t top = 0U;
+    LCD_LOCK();
+    if (sys_lcd.screen != LCD_SCREEN_WIFI_SCAN) {
+        LCD_UNLOCK();
+        return;
+    }
+    count = sys_lcd.wifi_scan.count;
+    selected = sys_lcd.wifi_scan.selected_index;
+    top = sys_lcd.wifi_scan.top_index;
+    LCD_UNLOCK();
+    if (count == 0U) {
+        return;
+    }
+
+    selected = up
+        ? (selected == 0U ? count - 1U : selected - 1U)
+        : (selected + 1U) % count;
+    const uint8_t visible = lcd_geometry_is_20x4() ? 3U : 2U;
+    if (selected < top) {
+        top = selected;
+    } else if (selected >= top + visible) {
+        top = selected - visible + 1U;
+    }
+    lcd_update_wifi_selection(selected, top);
+}
+
 static void handle_wifi_clients_move(bool up)
 {
     uint8_t count = 0U;
@@ -197,9 +227,12 @@ static void handle_wifi_menu_action(uint8_t selection)
         show_menu_screen(MENU_WIFI_CONFIG, selection);
         break;
     case 1:
-        app_services_show_wifi_status();
+        (void)app_services_wifi_scan();
         break;
     case 2:
+        app_services_show_wifi_status();
+        break;
+    case 3:
         if (app_services_wifi_is_ap_only()) {
             app_services_show_ap_clients();
         } else if (wifi_controller_is_connected()) {
@@ -208,7 +241,7 @@ static void handle_wifi_menu_action(uint8_t selection)
             (void)app_services_wifi_reconnect();
         }
         break;
-    case 3:
+    case 4:
         if (app_services_wifi_is_ap_only()) {
             app_services_show_wifi_status();
         } else {
@@ -281,6 +314,9 @@ void handle_power_button_event(button_event_info_t *event_info,
 
     case BUTTON_EVENT_CLICK:
     {
+        if (app_services_wifi_scan_is_active()) {
+            (void)app_services_wifi_scan_cancel();
+        }
         /* Cancel the active edit, then continue through the normal power
          * path so the power button always returns to the whole main page. */
         /* Always forget an abandoned edit/confirmation/detail operation before
@@ -626,6 +662,24 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             }
             return;
         }
+    }
+
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN) {
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            lcd_wifi_scan_stage_t stage;
+            uint8_t selected;
+            LCD_LOCK();
+            stage = sys_lcd.wifi_scan.stage;
+            selected = sys_lcd.wifi_scan.selected_index;
+            LCD_UNLOCK();
+            if (stage == LCD_WIFI_SCAN_SCANNING) {
+                (void)app_services_wifi_scan_cancel();
+                show_menu_screen(MENU_WIFI_CONFIG, 1U);
+            } else {
+                (void)app_services_wifi_connect_selected(selected);
+            }
+        }
+        return;
     }
 
     if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
@@ -1169,6 +1223,13 @@ void handle_up_button_event(button_event_info_t *event_info,
         return; // Up just adjusts the current PIN digit -- never finishes the flow
     }
 
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN) {
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            handle_wifi_scan_move(true);
+        }
+        return;
+    }
+
     if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
         if (event_info->event == BUTTON_EVENT_CLICK) {
             handle_wifi_clients_move(true);
@@ -1391,6 +1452,13 @@ void handle_down_button_event(button_event_info_t *event_info,
             xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
             change_pin_handle_button(&change_pin_ctx, BTN_DOWN);
             xSemaphoreGive(change_pin_mutex);
+        }
+        return;
+    }
+
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN) {
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            handle_wifi_scan_move(false);
         }
         return;
     }
@@ -1674,6 +1742,15 @@ void handle_back_button_event(button_event_info_t *event_info,
     }
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
+        sys_lcd.screen == LCD_SCREEN_WIFI_SCAN) {
+        if (app_services_wifi_scan_is_active()) {
+            (void)app_services_wifi_scan_cancel();
+        }
+        show_menu_screen(MENU_WIFI_CONFIG, 1U);
+        return;
+    }
+
+    if (event_info->event == BUTTON_EVENT_CLICK &&
         (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS ||
          sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING ||
          sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS)) {
@@ -1783,12 +1860,20 @@ void handle_back_button_event(button_event_info_t *event_info,
         case MENU_MONITORING:
         case MENU_DIAGNOSTIC:
         case MENU_WIFI_CONFIG:
-        case MENU_OTA:
             sys_state.inverter.inverter_state = sys_state.inverter.previous_inverter_state;
             sys_state.menu_state = MENU_NONE;
             sys_state.menu_selection = 0;
             sys_state.value_edit_mode = false;
             go_to_main_screen();
+            break;
+        case MENU_OTA:
+            /* Firmware update is a child of Main Menu. If history was lost by
+             * an OTA status transition, recover to that parent rather than
+             * treating Back as a power/home operation. */
+            sys_state.menu_state = MAIN_MENU;
+            sys_state.menu_selection = 4U;
+            sys_state.value_edit_mode = false;
+            show_menu_screen(MAIN_MENU, sys_state.menu_selection);
             break;
         case MAIN_MENU:
             sys_state.menu_state = MENU_NONE;

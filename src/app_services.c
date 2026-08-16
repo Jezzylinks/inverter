@@ -19,6 +19,7 @@
 #include "wifi/wifi_security.h"
 #include "wifi/wifi_storage.h"
 #include "wifi/wifi_config.h"
+#include "wifi/wifi_scan.h"
 #include "network_services.h"
 #include "system_error_codes.h"
 
@@ -34,6 +35,11 @@
 #define APP_WIFI_OPERATION_WATCH_STACK_SIZE 3072U
 #define APP_WIFI_OPERATION_WATCH_PRIORITY 5U
 #define APP_WIFI_OPERATION_TIMEOUT_MS 30000U
+#define APP_WIFI_SCAN_DURATION_MS 40000U
+#define APP_WIFI_SCAN_POLL_MS 250U
+#define APP_WIFI_SCAN_INTERVAL_MS 2500U
+#define APP_WIFI_SCAN_TASK_STACK_SIZE 6144U
+#define APP_WIFI_SCAN_TASK_PRIORITY 5U
 
 extern system_state_t sys_state;
 extern SemaphoreHandle_t sys_state_mutex;
@@ -41,6 +47,9 @@ extern SemaphoreHandle_t sys_state_mutex;
 static SemaphoreHandle_t s_services_mutex;
 static TaskHandle_t s_ota_check_task;
 static TaskHandle_t s_wifi_operation_watch_task;
+static TaskHandle_t s_wifi_scan_task;
+static bool s_wifi_scan_active;
+static bool s_wifi_scan_cancel_requested;
 static char s_manifest_url[APP_OTA_MANIFEST_URL_MAX];
 static app_ota_status_t s_ota_status;
 
@@ -57,6 +66,77 @@ static app_wifi_operation_t s_wifi_operation;
 static char s_wifi_operation_ssid[WIFI_MAX_SSID_LEN + 1U];
 static uint32_t s_wifi_operation_generation;
 static TickType_t s_wifi_operation_started_tick;
+
+static bool app_wifi_scan_cancel_requested(void)
+{
+    bool cancel = true;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        cancel = s_wifi_scan_cancel_requested;
+        xSemaphoreGive(s_services_mutex);
+    }
+    return cancel;
+}
+
+static void app_wifi_scan_task(void *parameter)
+{
+    (void)parameter;
+    const TickType_t started = xTaskGetTickCount();
+    const TickType_t duration = pdMS_TO_TICKS(APP_WIFI_SCAN_DURATION_MS);
+    uint8_t spinner = 0U;
+    wifi_ap_record_t records[WIFI_MAX_SCAN_RESULTS] = {0};
+    char ssids[LCD_WIFI_MAX_AP][LCD_WIFI_SSID_MAX_LEN + 1U] = {{0}};
+    int8_t rssi[LCD_WIFI_MAX_AP] = {0};
+
+    while (!app_wifi_scan_cancel_requested() &&
+           (xTaskGetTickCount() - started) < duration) {
+        uint16_t count = WIFI_MAX_SCAN_RESULTS;
+        const esp_err_t err = wifi_scan_start_records(records, &count);
+        if (err == ESP_OK) {
+            const uint8_t visible = count > LCD_WIFI_MAX_AP ? LCD_WIFI_MAX_AP : (uint8_t)count;
+            memset(ssids, 0, sizeof(ssids));
+            memset(rssi, 0, sizeof(rssi));
+            for (uint8_t i = 0U; i < visible; ++i) {
+                strncpy(ssids[i], (const char *)records[i].ssid, LCD_WIFI_SSID_MAX_LEN);
+                ssids[i][LCD_WIFI_SSID_MAX_LEN] = '\0';
+                rssi[i] = records[i].rssi;
+            }
+            lcd_update_wifi_scan_results(visible, ssids, rssi, spinner++);
+        } else {
+            lcd_update_wifi_scan_spinner(spinner++);
+        }
+
+        const TickType_t wait_until = xTaskGetTickCount() +
+                                      pdMS_TO_TICKS(APP_WIFI_SCAN_INTERVAL_MS);
+        while (!app_wifi_scan_cancel_requested() &&
+               (int32_t)(wait_until - xTaskGetTickCount()) > 0 &&
+               (xTaskGetTickCount() - started) < duration) {
+            vTaskDelay(pdMS_TO_TICKS(APP_WIFI_SCAN_POLL_MS));
+        }
+    }
+
+    if (!app_wifi_scan_cancel_requested()) {
+        uint8_t selected = 0U;
+        uint8_t top = 0U;
+        uint8_t count = 0U;
+        LCD_LOCK();
+        count = sys_lcd.wifi_scan.count;
+        selected = sys_lcd.wifi_scan.selected_index;
+        top = sys_lcd.wifi_scan.top_index;
+        LCD_UNLOCK();
+        if (count > 0U && selected >= count) {
+            selected = count - 1U;
+        }
+        lcd_show_wifi_scan(count, ssids, rssi, selected, top);
+    }
+
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_wifi_scan_active = false;
+    s_wifi_scan_cancel_requested = false;
+    s_wifi_scan_task = NULL;
+    xSemaphoreGive(s_services_mutex);
+    vTaskDelete(NULL);
+}
 
 static void app_wifi_operation_watch_task(void *parameter)
 {
@@ -428,6 +508,9 @@ esp_err_t app_services_init(void)
     s_wifi_operation_ssid[0] = '\0';
     s_wifi_operation_generation = 0U;
     s_wifi_operation_started_tick = 0U;
+    s_wifi_scan_active = false;
+    s_wifi_scan_cancel_requested = false;
+    s_wifi_scan_task = NULL;
     xSemaphoreGive(s_services_mutex);
 
     load_persisted_config();
@@ -549,7 +632,9 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
     if (controller_err == ESP_ERR_INVALID_STATE && enabled) {
         controller_err = wifi_controller_reconnect();
     }
-    if (controller_err == ESP_ERR_INVALID_STATE && !enabled) {
+    if (!enabled && (controller_err == ESP_ERR_INVALID_STATE ||
+                     controller_err == ESP_ERR_WIFI_NOT_INIT ||
+                     controller_err == ESP_ERR_WIFI_NOT_STARTED)) {
         controller_err = ESP_OK;
     }
 
@@ -621,17 +706,129 @@ bool app_services_wifi_is_ap_only(void)
 
 esp_err_t app_services_wifi_scan(void)
 {
-    lcd_flash_message("Scan Disabled", "Use menuconfig", 1600U);
-    return ESP_ERR_NOT_SUPPORTED;
+    if (!sys_state.wifi.enabled) {
+        lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+        lcd_flash_message("Scan Unavailable", "AP mode only", 1400U);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (s_services_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    if (s_wifi_scan_active) {
+        xSemaphoreGive(s_services_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_wifi_scan_active = true;
+    s_wifi_scan_cancel_requested = false;
+    xSemaphoreGive(s_services_mutex);
+
+    lcd_show_wifi_scan_start();
+    if (xTaskCreate(app_wifi_scan_task, "wifi_scan_ui",
+                    APP_WIFI_SCAN_TASK_STACK_SIZE, NULL,
+                    APP_WIFI_SCAN_TASK_PRIORITY, &s_wifi_scan_task) != pdPASS) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_wifi_scan_active = false;
+        s_wifi_scan_cancel_requested = false;
+        s_wifi_scan_task = NULL;
+        xSemaphoreGive(s_services_mutex);
+        lcd_flash_message("Scan Failed", "Try again", 1400U);
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
+esp_err_t app_services_wifi_scan_cancel(void)
+{
+    if (s_services_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    const bool active = s_wifi_scan_active;
+    if (active) {
+        s_wifi_scan_cancel_requested = true;
+    }
+    xSemaphoreGive(s_services_mutex);
+    return active ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
+bool app_services_wifi_scan_is_active(void)
+{
+    bool active = false;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        active = s_wifi_scan_active;
+        xSemaphoreGive(s_services_mutex);
+    }
+    return active;
+}
+
+esp_err_t app_services_wifi_connect_selected(uint8_t selected_index)
+{
+    char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
+    LCD_LOCK();
+    if (sys_lcd.screen != LCD_SCREEN_WIFI_SCAN ||
+        sys_lcd.wifi_scan.stage != LCD_WIFI_SCAN_COMPLETE ||
+        selected_index >= sys_lcd.wifi_scan.count) {
+        LCD_UNLOCK();
+        return ESP_ERR_INVALID_STATE;
+    }
+    strncpy(ssid, sys_lcd.wifi_scan.ssid[selected_index], sizeof(ssid) - 1U);
+    LCD_UNLOCK();
+
+    const char *password = "";
+    if (strncmp(ssid, WIFI_COMPILED_STA_SSID, sizeof(ssid)) == 0) {
+        password = WIFI_COMPILED_STA_PASSWORD;
+    }
+    return app_services_wifi_connect_network(ssid, password);
 }
 
 esp_err_t app_services_wifi_connect_network(const char *ssid,
                                                const char *password)
 {
-    (void)ssid;
-    (void)password;
-    lcd_flash_message("Runtime Connect", "Disabled", 1600U);
-    return ESP_ERR_NOT_SUPPORTED;
+    if (ssid == NULL || ssid[0] == '\0' || password == NULL ||
+        strlen(ssid) > WIFI_MAX_SSID_LEN || strlen(password) > 63U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!sys_state.wifi.enabled) {
+        lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+        lcd_flash_message("AP Mode", "No STA Connect", 1400U);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    wifi_manager_config_t config = {0};
+    esp_err_t err = wifi_manager_get_config(&config);
+    if (err != ESP_OK) {
+        return err;
+    }
+    strncpy(config.ssid, ssid, sizeof(config.ssid) - 1U);
+    strncpy(config.password, password, sizeof(config.password) - 1U);
+    err = wifi_manager_set_config(&config);
+    if (err != ESP_OK) {
+        lcd_flash_message("Network Invalid", "Try again", 1400U);
+        return err;
+    }
+
+    wifi_credentials_t credentials = {0};
+    strncpy(credentials.ssid, ssid, sizeof(credentials.ssid) - 1U);
+    strncpy(credentials.password, password, sizeof(credentials.password) - 1U);
+    (void)wifi_storage_save_credentials(&credentials);
+
+    app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, ssid);
+    lcd_show_wifi_connecting(ssid);
+    err = wifi_controller_reconnect();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+        app_wifi_end_operation();
+        lcd_show_wifi_result(false, true, false, "Connect failed");
+    }
+    return err;
 }
 
 esp_err_t app_services_wifi_connect_saved(void)
@@ -649,12 +846,13 @@ esp_err_t app_services_wifi_reconnect(void)
         lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
         return ESP_ERR_INVALID_STATE;
     }
-    if (WIFI_COMPILED_STA_SSID[0] == '\0') {
-        lcd_flash_message("Wi-Fi Not Config", "Use menuconfig", 1800U);
+    wifi_manager_config_t config = {0};
+    if (wifi_manager_get_config(&config) != ESP_OK || config.ssid[0] == '\0') {
+        lcd_flash_message("Wi-Fi Not Config", "Scan a network", 1800U);
         return ESP_ERR_NOT_FOUND;
     }
-    app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, WIFI_COMPILED_STA_SSID);
-    lcd_show_wifi_connecting(WIFI_COMPILED_STA_SSID);
+    app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, config.ssid);
+    lcd_show_wifi_connecting(config.ssid);
     esp_err_t err = wifi_controller_reconnect();
     if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
         app_wifi_end_operation();

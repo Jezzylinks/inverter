@@ -88,9 +88,10 @@ static const menu_item_t diagnostic_items[] = {
     {"Uptime", MENU_DIAGNOSTIC},
     {"Memory Usage", MENU_DIAGNOSTIC}};
 
-// Wi-Fi credentials are compiled through menuconfig; no runtime provisioning UI.
+// Wi-Fi can be scanned from the panel; station credentials remain optional compile-time defaults.
 static const menu_item_t wifi_items[] = {
     {"WiFi On / Off", MENU_WIFI_CONFIG},
+    {"Scan Networks", MENU_WIFI_CONFIG},
     {"WiFi Status", MENU_WIFI_CONFIG},
     {"Connect", MENU_WIFI_CONFIG},
     {"AP Clients", MENU_WIFI_CONFIG}};
@@ -115,9 +116,9 @@ static const char *wifi_menu_label(int index)
     switch (index) {
     case 0:
         return app_services_wifi_enabled() ? "WiFi: ON" : "WiFi: OFF";
-    case 2:
-        return app_services_wifi_connect_action_label();
     case 3:
+        return app_services_wifi_connect_action_label();
+    case 4:
         return app_services_wifi_secondary_action_label();
     default:
         return wifi_items[index].label;

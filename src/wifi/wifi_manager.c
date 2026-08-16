@@ -133,8 +133,8 @@ static void wifi_manager_load_network_config(void)
     s_config.ap_max_connection = WIFI_AP_MAX_CONNECTION;
     s_config.ap_authmode = net_cfg.ap_authmode;
 
-    /* Credentials and AP identity are compile-time configuration. NVS keeps
-     * only operational network settings such as DHCP and reconnect policy. */
+    /* Compile-time credentials remain the default, while a network selected
+     * from the panel scan can override the station credentials from NVS. */
     strncpy(s_config.ssid, WIFI_COMPILED_STA_SSID, sizeof(s_config.ssid) - 1U);
     s_config.ssid[sizeof(s_config.ssid) - 1U] = '\0';
     strncpy(s_config.password, WIFI_COMPILED_STA_PASSWORD, sizeof(s_config.password) - 1U);
@@ -146,6 +146,16 @@ static void wifi_manager_load_network_config(void)
     s_config.ap_password[sizeof(s_config.ap_password) - 1U] = '\0';
     s_config.ap_channel = WIFI_COMPILED_AP_CHANNEL;
     s_config.ap_authmode = INVERTER_WIFI_AUTH_MODE;
+
+    wifi_credentials_t stored_credentials = {0};
+    if (wifi_storage_load_credentials(&stored_credentials) == ESP_OK &&
+        stored_credentials.ssid[0] != '\0') {
+        strncpy(s_config.ssid, stored_credentials.ssid, sizeof(s_config.ssid) - 1U);
+        s_config.ssid[sizeof(s_config.ssid) - 1U] = '\0';
+        strncpy(s_config.password, stored_credentials.password,
+                sizeof(s_config.password) - 1U);
+        s_config.password[sizeof(s_config.password) - 1U] = '\0';
+    }
 }
 
 /*----------------------------------------------------------
@@ -498,18 +508,6 @@ esp_err_t wifi_manager_connect(void)
     {
         return ESP_ERR_INVALID_STATE;
     }
-
-#if WIFI_RUNTIME_PROVISIONING_ENABLED
-    wifi_credentials_t runtime_credentials = {0};
-    if (wifi_storage_load_credentials(&runtime_credentials) == ESP_OK &&
-        runtime_credentials.ssid[0] != '\0') {
-        strncpy(s_config.ssid, runtime_credentials.ssid, sizeof(s_config.ssid) - 1U);
-        s_config.ssid[sizeof(s_config.ssid) - 1U] = '\0';
-        strncpy(s_config.password, runtime_credentials.password,
-                sizeof(s_config.password) - 1U);
-        s_config.password[sizeof(s_config.password) - 1U] = '\0';
-    }
-#endif
 
     if (s_config.mode == WIFI_MODE_AP) {
         ESP_LOGW(TAG, "Station connect is unavailable in AP-only mode");

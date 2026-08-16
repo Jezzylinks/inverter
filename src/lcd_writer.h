@@ -93,6 +93,12 @@ void lcd_show_factory_progress();
 void lcd_show_factory_done(void);
 
 /* ── Wi-Fi ───────────────────────────────────────────────────────────────── */
+void lcd_show_wifi_scan_start(void);
+void lcd_update_wifi_scan_results(uint8_t count,
+                                  const char ssids[][LCD_WIFI_SSID_MAX_LEN + 1U],
+                                  const int8_t rssi[],
+                                  uint8_t spinner_frame);
+void lcd_update_wifi_scan_spinner(uint8_t spinner_frame);
 void lcd_show_wifi_scan(uint8_t count,
                         const char ssids[][LCD_WIFI_SSID_MAX_LEN + 1U],
                         const int8_t rssi[], uint8_t selected, uint8_t top);

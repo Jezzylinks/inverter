@@ -99,14 +99,13 @@ esp_err_t wifi_controller_init(void)
     }
 #endif
 
-#if WIFI_RUNTIME_PROVISIONING_ENABLED
-    /* Initialize WiFi scan only for opt-in runtime provisioning. */
+    /* Scanning is a normal panel operation in STA and APSTA modes; it is
+     * no longer coupled to the optional captive-portal provisioning feature. */
     err = wifi_scan_init();
     if (err != ESP_OK)
     {
         goto rollback_manager;
     }
-#endif
 
     /* Initialize WiFi monitor */
     err = wifi_monitor_init();
@@ -137,16 +136,12 @@ rollback_monitor:
     wifi_monitor_deinit();
 #endif
 rollback_scan:
-#if WIFI_RUNTIME_PROVISIONING_ENABLED
     (void)wifi_scan_deinit();
-#endif
-#if WIFI_RUNTIME_PROVISIONING_ENABLED
 rollback_manager:
+#if WIFI_RUNTIME_PROVISIONING_ENABLED
     (void)wifi_provision_deinit();
-    wifi_manager_deinit();
-#else
-    wifi_manager_deinit();
 #endif
+    wifi_manager_deinit();
 rollback_storage:
     /* No wifi_storage_deinit available */
 rollback:
@@ -188,8 +183,8 @@ esp_err_t wifi_controller_deinit(void)
         ESP_LOGW(TAG, "Manager stop failed: %s", esp_err_to_name(err));
     }
 
-#if WIFI_RUNTIME_PROVISIONING_ENABLED
     (void)wifi_scan_deinit();
+#if WIFI_RUNTIME_PROVISIONING_ENABLED
     (void)wifi_provision_deinit();
 #endif
 
