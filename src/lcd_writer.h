@@ -1,4 +1,7 @@
 #pragma once
+#ifndef LCD_WRITER_H
+#define LCD_WRITER_H
+
 /*==============================================================================
   lcd_writer.h
   Public API for every task that needs to change what is on the LCD.
@@ -6,9 +9,19 @@
   None of them touch lcd hardware — they only write to lcd_render_state_t
   and set sys_state_mutex where needed.
 ==============================================================================*/
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "lcd_state.h"
 #include <stdint.h>
 #include <stdbool.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* The render-state instance and its protecting mutex are owned by main.c. */
+extern lcd_render_state_t sys_lcd;
+extern SemaphoreHandle_t sys_state_mutex;
 
 /* Helper: take mutex, guaranteed short hold */
 #define LCD_LOCK() xSemaphoreTake(sys_state_mutex, portMAX_DELAY)
@@ -106,3 +119,9 @@ void lcd_flash_cancelled(void);
 /* ── Standby ─────────────────────────────────────────────────────────────── */
 void lcd_show_standby(float bat_v, uint8_t bat_pct, bool ac_connected);
 void lcd_standby_next_page(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* LCD_WRITER_H */
