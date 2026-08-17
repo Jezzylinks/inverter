@@ -143,7 +143,7 @@ static const char *ota_menu_label(int index)
             return "Retry";
         }
         if (status.update_available && status.available_version[0] != '\0') {
-            snprintf(label, sizeof(label), "Install %.12s", status.available_version);
+            snprintf(label, sizeof(label), "Install %.8s", status.available_version);
             return label;
         }
         return "Install";
