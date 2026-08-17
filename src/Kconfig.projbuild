@@ -91,4 +91,12 @@ config INVERTER_WIFI_RUNTIME_PROVISIONING
         credential REST/BLE paths. This is disabled by default because the
         normal firmware uses compile-time menuconfig credentials.
 
+config INVERTER_OTA_MANIFEST_URL
+    string "Default OTA manifest URL"
+    default "https://github.com/Jezzylinks/inverter/releases/latest/download/inverter.csv"
+    help
+        HTTPS CSV manifest URL used when no runtime OTA URL has been stored.
+        Keep this endpoint under trusted release control. Runtime storage still
+        validates the URL before every check and install.
+
 endmenu

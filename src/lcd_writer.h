@@ -45,6 +45,12 @@ bool lcd_is_startup_active(void);
 /* Release boot-only event filtering after the power-on self-test completes. */
 void lcd_startup_release(void);
 
+/* ── OTA status ───────────────────────────────────────────────────────────── */
+void lcd_show_ota_status(lcd_ota_view_state_t state, uint8_t progress_pct,
+                         const char *current_version,
+                         const char *available_version,
+                         const char *detail, bool retry_available);
+
 /* ── Normal operating screen ─────────────────────────────────────────────── */
 /* Call from adc_task every cycle — lcd_task reads and decides sub-page      */
 void lcd_update_main_data(float bat_v, float out_v, float out_a,

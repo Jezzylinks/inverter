@@ -48,6 +48,7 @@ extern "C"
         LCD_SHOW_BAT_VOLTAGE,
         LCD_DISPLAY_BATTERY_SETTINGS,
         LCD_SCREEN_LOADING,
+        LCD_SCREEN_OTA,
         LCD_SCREEN_SECURITY,
         LCD_SCREEN_PROTECTION,
         LCD_SCREEN_SYSTEM_EVENT,
@@ -119,6 +120,31 @@ extern "C"
         char row0[LCD_LINE_SIZE];
         char row1[LCD_LINE_SIZE];
     } lcd_two_line_t; /* reused for confirm, saved, and other two-line screens */
+
+    typedef enum
+    {
+        LCD_OTA_VIEW_CHECKING = 0,
+        LCD_OTA_VIEW_PREPARING,
+        LCD_OTA_VIEW_DOWNLOADING,
+        LCD_OTA_VIEW_VERIFYING,
+        LCD_OTA_VIEW_CANCELLING,
+        LCD_OTA_VIEW_AVAILABLE,
+        LCD_OTA_VIEW_CURRENT,
+        LCD_OTA_VIEW_ERROR,
+        LCD_OTA_VIEW_CANCELLED,
+        LCD_OTA_VIEW_COMPLETE,
+    } lcd_ota_view_state_t;
+
+    typedef struct
+    {
+        lcd_ota_view_state_t state;
+        uint8_t progress_pct;
+        char current_version[LCD_LINE_SIZE];
+        char available_version[LCD_LINE_SIZE];
+        char detail[LCD_LINE_SIZE];
+        bool retry_available;
+        uint32_t entered_ms;
+    } lcd_ota_data_t;
 
     typedef struct
     {
@@ -317,6 +343,7 @@ extern "C"
         lcd_flash_data_t flash;
         lcd_standby_data_t standby;
         lcd_loading_data_t loading;
+        lcd_ota_data_t ota;
 
         /* ✅ Activity tracking for sub-page cycling */
         bool should_cycle_subpages;

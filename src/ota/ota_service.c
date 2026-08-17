@@ -32,19 +32,73 @@ static TaskHandle_t s_ota_task;
 static SemaphoreHandle_t s_ota_mutex;
 static bool s_in_progress;
 static bool s_cancel_requested;
+static bool s_rollback_notification_pending;
 
 typedef struct {
     char url[OTA_MAX_URL_LENGTH];
     char expected_version[OTA_MAX_VERSION_LENGTH];
     char expected_sha256[OTA_MAX_SHA256_LENGTH];
     uint32_t expected_size;
+    bool from_manifest;
 } ota_job_t;
 
+static esp_err_t http_read_bounded(const char *url, char *buffer, size_t capacity,
+                                   size_t *out_len);
 static int compare_release_versions(const char *candidate, const char *installed);
 
 static bool is_https_url(const char *url)
 {
     return url && strncasecmp(url, "https://", 8) == 0 && strlen(url) < OTA_MAX_URL_LENGTH;
+}
+
+static bool parse_release_version(const char *text, uint32_t components[4],
+                                  size_t *component_count)
+{
+    if (!text || !components || !component_count || text[0] == '\0') {
+        return false;
+    }
+    const char *cursor = text;
+    if (*cursor == 'v' || *cursor == 'V') {
+        ++cursor;
+    }
+    size_t count = 0U;
+    while (*cursor != '\0' && count < 4U) {
+        if (!isdigit((unsigned char)*cursor)) {
+            return false;
+        }
+        uint32_t value = 0U;
+        do {
+            const uint32_t digit = (uint32_t)(*cursor - '0');
+            if (value > (UINT32_MAX - digit) / 10U) {
+                return false;
+            }
+            value = value * 10U + digit;
+            ++cursor;
+        } while (isdigit((unsigned char)*cursor));
+        components[count++] = value;
+        if (*cursor == '\0') {
+            break;
+        }
+        if (*cursor != '.') {
+            return false;
+        }
+        ++cursor;
+        if (*cursor == '\0') {
+            return false;
+        }
+    }
+    if (*cursor != '\0' || (count != 3U && count != 4U)) {
+        return false;
+    }
+    *component_count = count;
+    return true;
+}
+
+static bool is_valid_release_version(const char *text)
+{
+    uint32_t components[4] = {0};
+    size_t count = 0U;
+    return parse_release_version(text, components, &count);
 }
 
 static char *trim(char *text)
@@ -134,6 +188,7 @@ esp_err_t ota_manifest_parse_csv(const char *csv, size_t csv_len,
             strlen(fields[0]) >= OTA_MAX_VERSION_LENGTH ||
             strlen(fields[1]) >= OTA_MAX_URL_LENGTH ||
             !is_https_url(fields[1]) ||
+            !is_valid_release_version(fields[0]) ||
             !is_sha256(fields[2]) || fields[2][0] == '\0') {
             free(copy);
             return ESP_ERR_INVALID_ARG;
@@ -251,6 +306,10 @@ static esp_err_t ota_download_verified(const ota_job_t *job)
         esp_http_client_cleanup(client);
         return result;
     }
+    if (cancel_requested()) {
+        result = ESP_ERR_INVALID_STATE;
+        goto cleanup;
+    }
 
     const int64_t content_length = esp_http_client_fetch_headers(client);
     if (esp_http_client_get_status_code(client) != 200 ||
@@ -264,6 +323,10 @@ static esp_err_t ota_download_verified(const ota_job_t *job)
         goto cleanup;
     }
     ota_started = true;
+    if (cancel_requested()) {
+        result = ESP_ERR_INVALID_STATE;
+        goto cleanup;
+    }
 
     mbedtls_sha256_context sha;
     mbedtls_sha256_init(&sha);
@@ -280,7 +343,6 @@ static esp_err_t ota_download_verified(const ota_job_t *job)
         task_watchdog_feed();
         if (cancel_requested()) {
             result = ESP_ERR_INVALID_STATE;
-            notify_status(OTA_STATUS_CANCELLED, 0);
             mbedtls_sha256_free(&sha);
             goto cleanup;
         }
@@ -307,6 +369,13 @@ static esp_err_t ota_download_verified(const ota_job_t *job)
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
+    notify_status(OTA_STATUS_VERIFYING, 100);
+    if (cancel_requested()) {
+        result = ESP_ERR_INVALID_STATE;
+        mbedtls_sha256_free(&sha);
+        goto cleanup;
+    }
+
     unsigned char digest[32] = {0};
     if (mbedtls_sha256_finish(&sha, digest) != 0 ||
         !ota_digest_matches(digest, job->expected_sha256)) {
@@ -317,6 +386,10 @@ static esp_err_t ota_download_verified(const ota_job_t *job)
     }
     mbedtls_sha256_free(&sha);
 
+    if (cancel_requested()) {
+        result = ESP_ERR_INVALID_STATE;
+        goto cleanup;
+    }
     result = esp_ota_end(ota_handle);
     ota_started = false;
     if (result == ESP_OK) {
@@ -343,11 +416,48 @@ static void ota_task(void *parameter)
     }
 
     notify_status(OTA_STATUS_STARTED, 0);
-    notify_status(OTA_STATUS_VERIFYING, 0);
-    const esp_err_t result = ota_download_verified(job);
+    esp_err_t result = ESP_OK;
+    if (job->from_manifest) {
+        char manifest[OTA_MAX_MANIFEST_BYTES + 1U] = {0};
+        size_t manifest_len = 0U;
+        ota_manifest_entry_t entry = {0};
+        result = http_read_bounded(job->url, manifest, sizeof(manifest), &manifest_len);
+        if (result == ESP_OK && cancel_requested()) {
+            result = ESP_ERR_INVALID_STATE;
+        }
+        if (result == ESP_OK) {
+            result = ota_manifest_parse_csv(manifest, manifest_len, &entry);
+        }
+        if (result == ESP_OK) {
+            char current_version[OTA_MAX_VERSION_LENGTH] = {0};
+            result = ota_service_get_current_version(current_version,
+                                                     sizeof(current_version));
+            if (result == ESP_OK &&
+                compare_release_versions(entry.version, current_version) <= 0) {
+                ESP_LOGW(TAG, "Rejecting OTA version %s; current version is %s",
+                         entry.version, current_version);
+                result = ESP_ERR_INVALID_VERSION;
+            }
+        }
+        if (result == ESP_OK) {
+            strncpy(job->url, entry.url, sizeof(job->url) - 1U);
+            strncpy(job->expected_version, entry.version,
+                    sizeof(job->expected_version) - 1U);
+            strncpy(job->expected_sha256, entry.sha256,
+                    sizeof(job->expected_sha256) - 1U);
+            job->expected_size = entry.image_size;
+            job->from_manifest = false;
+        }
+    }
+    if (result == ESP_OK) {
+        ESP_LOGI(TAG, "OTA download started for version %s", job->expected_version);
+        result = ota_download_verified(job);
+    }
     if (result != ESP_OK) {
         ESP_LOGE(TAG, "Verified OTA failed: %s", esp_err_to_name(result));
-        if (result != ESP_ERR_INVALID_STATE) {
+        if (result == ESP_ERR_INVALID_STATE) {
+            notify_status(OTA_STATUS_CANCELLED, 0);
+        } else {
             notify_status(OTA_STATUS_FAILED, 0);
         }
         secure_zero(job, sizeof(*job));
@@ -377,7 +487,63 @@ esp_err_t ota_service_init(void)
     }
     const esp_partition_t *running = esp_ota_get_running_partition();
     ESP_LOGI(TAG, "Running partition: %s", running ? running->label : "unknown");
+#if CONFIG_APP_ROLLBACK_ENABLE
+    if (esp_ota_get_last_invalid_partition() != NULL) {
+        s_rollback_notification_pending = true;
+        ESP_LOGW(TAG, "Previous OTA image was rolled back");
+    }
+#endif
     return ESP_OK;
+}
+
+esp_err_t ota_service_validate_running_app(bool healthy)
+{
+#if CONFIG_APP_ROLLBACK_ENABLE
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
+    const esp_err_t state_err = running
+                                    ? esp_ota_get_state_partition(running, &state)
+                                    : ESP_ERR_NOT_FOUND;
+    const bool pending_verify = state_err == ESP_OK &&
+                                state == ESP_OTA_IMG_PENDING_VERIFY;
+    if (!healthy) {
+        if (pending_verify) {
+            ESP_LOGE(TAG, "Startup health validation failed; requesting rollback");
+            return esp_ota_mark_app_invalid_rollback_and_reboot();
+        }
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (pending_verify) {
+        const esp_err_t mark_err = esp_ota_mark_app_valid_cancel_rollback();
+        if (mark_err != ESP_OK) {
+            ESP_LOGE(TAG, "Could not mark running firmware valid: %s",
+                     esp_err_to_name(mark_err));
+            return mark_err;
+        }
+        ESP_LOGI(TAG, "Startup health validation passed; firmware marked valid");
+    }
+    if (s_rollback_notification_pending) {
+        (void)esp_ota_erase_last_boot_app_partition();
+    }
+    return ESP_OK;
+#else
+    (void)healthy;
+    return ESP_ERR_NOT_SUPPORTED;
+#endif
+}
+
+bool ota_service_rollback_notification_pending(void)
+{
+    bool pending = false;
+    if (s_ota_mutex && xSemaphoreTake(s_ota_mutex, portMAX_DELAY) == pdTRUE) {
+        pending = s_rollback_notification_pending;
+        s_rollback_notification_pending = false;
+        xSemaphoreGive(s_ota_mutex);
+    } else {
+        pending = s_rollback_notification_pending;
+        s_rollback_notification_pending = false;
+    }
+    return pending;
 }
 
 static esp_err_t start_job(const char *url,
@@ -465,7 +631,12 @@ static esp_err_t http_read_bounded(const char *url, char *buffer, size_t capacit
         } else if (esp_http_client_get_status_code(client) != 200) {
             err = ESP_FAIL;
         } else {
+            bool reached_eof = false;
             while (*out_len < capacity - 1U) {
+                if (cancel_requested()) {
+                    err = ESP_ERR_INVALID_STATE;
+                    break;
+                }
                 const int read_len = esp_http_client_read(client, buffer + *out_len,
                                                           capacity - 1U - *out_len);
                 if (read_len < 0) {
@@ -473,9 +644,13 @@ static esp_err_t http_read_bounded(const char *url, char *buffer, size_t capacit
                     break;
                 }
                 if (read_len == 0) {
+                    reached_eof = true;
                     break;
                 }
                 *out_len += (size_t)read_len;
+            }
+            if (err == ESP_OK && !reached_eof && *out_len >= capacity - 1U) {
+                err = ESP_ERR_INVALID_SIZE;
             }
             buffer[*out_len] = '\0';
         }
@@ -487,68 +662,64 @@ static esp_err_t http_read_bounded(const char *url, char *buffer, size_t capacit
 
 esp_err_t ota_service_start_from_csv(const char *csv_url)
 {
-    char manifest[OTA_MAX_MANIFEST_BYTES + 1U] = {0};
-    size_t manifest_len = 0U;
-    esp_err_t err = http_read_bounded(csv_url, manifest, sizeof(manifest), &manifest_len);
-    if (err != ESP_OK) {
-        return err;
+    if (!is_https_url(csv_url)) {
+        return ESP_ERR_INVALID_ARG;
     }
-    ota_manifest_entry_t entry;
-    err = ota_manifest_parse_csv(manifest, manifest_len, &entry);
-    if (err != ESP_OK) {
-        return err;
+    if (!s_ota_mutex) {
+        const esp_err_t init_err = ota_service_init();
+        if (init_err != ESP_OK) {
+            return init_err;
+        }
     }
-
-    char current_version[OTA_MAX_VERSION_LENGTH] = {0};
-    err = ota_service_get_current_version(current_version,
-                                          sizeof(current_version));
-    if (err != ESP_OK ||
-        compare_release_versions(entry.version, current_version) <= 0) {
-        ESP_LOGW(TAG, "Rejecting OTA version %s; current version is %s",
-                 entry.version, current_version);
-        return ESP_ERR_INVALID_VERSION;
+    if (xSemaphoreTake(s_ota_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
     }
-    return start_job(entry.url, entry.version, entry.sha256, entry.image_size);
+    if (s_in_progress) {
+        xSemaphoreGive(s_ota_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
+    ota_job_t *job = calloc(1, sizeof(*job));
+    if (!job) {
+        xSemaphoreGive(s_ota_mutex);
+        return ESP_ERR_NO_MEM;
+    }
+    strncpy(job->url, csv_url, sizeof(job->url) - 1U);
+    job->from_manifest = true;
+    s_cancel_requested = false;
+    s_in_progress = true;
+    const BaseType_t created = xTaskCreate(ota_task, "ota_task", OTA_TASK_STACK_SIZE,
+                                           job, OTA_TASK_PRIORITY, &s_ota_task);
+    if (created != pdPASS) {
+        secure_zero(job, sizeof(*job));
+        free(job);
+        s_in_progress = false;
+        xSemaphoreGive(s_ota_mutex);
+        return ESP_ERR_NO_MEM;
+    }
+    xSemaphoreGive(s_ota_mutex);
+    return ESP_OK;
 }
 
 static int compare_release_versions(const char *candidate, const char *installed)
 {
-    if (!candidate || !installed) {
+    uint32_t candidate_parts[4] = {0};
+    uint32_t installed_parts[4] = {0};
+    size_t candidate_count = 0U;
+    size_t installed_count = 0U;
+    if (!parse_release_version(candidate, candidate_parts, &candidate_count) ||
+        !parse_release_version(installed, installed_parts, &installed_count)) {
         return 0;
     }
-    while (*candidate == 'v' || *candidate == 'V') {
-        ++candidate;
-    }
-    while (*installed == 'v' || *installed == 'V') {
-        ++installed;
-    }
 
-    for (unsigned component = 0U; component < 4U; ++component) {
-        unsigned long candidate_value = 0U;
-        unsigned long installed_value = 0U;
-        bool candidate_digit = false;
-        bool installed_digit = false;
-        while (*candidate >= '0' && *candidate <= '9') {
-            candidate_digit = true;
-            candidate_value = candidate_value * 10U + (unsigned long)(*candidate - '0');
-            ++candidate;
-        }
-        while (*installed >= '0' && *installed <= '9') {
-            installed_digit = true;
-            installed_value = installed_value * 10U + (unsigned long)(*installed - '0');
-            ++installed;
-        }
+    const size_t count = candidate_count > installed_count
+                             ? candidate_count : installed_count;
+    for (size_t index = 0U; index < count; ++index) {
+        const uint32_t candidate_value = index < candidate_count
+                                             ? candidate_parts[index] : 0U;
+        const uint32_t installed_value = index < installed_count
+                                             ? installed_parts[index] : 0U;
         if (candidate_value != installed_value) {
             return candidate_value > installed_value ? 1 : -1;
-        }
-        if ((!candidate_digit && *candidate != '.') || (!installed_digit && *installed != '.')) {
-            break;
-        }
-        if (*candidate == '.') {
-            ++candidate;
-        }
-        if (*installed == '.') {
-            ++installed;
         }
     }
     return 0;

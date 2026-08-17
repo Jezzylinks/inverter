@@ -334,16 +334,24 @@ static void handle_ota_menu_action(uint8_t selection)
         (void)app_services_check_for_update(true);
         break;
     case 1:
+    {
         s_ota_feedback_active = true;
+        app_ota_status_t ota_status;
+        app_services_get_ota_status(&ota_status);
+        if (ota_status.state == APP_OTA_ERROR) {
+            (void)app_services_check_for_update(true);
+            break;
+        }
         if (sys_state.security.enabled) {
             begin_ota_auth(selection);
         } else {
             (void)app_services_request_update_confirmation();
         }
         break;
+    }
     case 2:
         s_ota_feedback_active = true;
-        (void)app_services_cancel_update();
+        (void)app_services_request_cancel_update();
         break;
     default:
         break;
@@ -675,6 +683,11 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         (void)app_services_confirm_update();
         return;
     }
+    if (event_info->event == BUTTON_EVENT_CLICK &&
+        app_services_ota_cancel_confirmation_pending()) {
+        (void)app_services_confirm_cancel_update();
+        return;
+    }
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
         app_services_wifi_forget_confirmation_pending()) {
@@ -822,6 +835,30 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             page = sys_lcd.wifi_status.page;
             LCD_UNLOCK();
             lcd_update_wifi_status_page((uint8_t)(page + 1U));
+        }
+        return;
+    }
+
+    if (sys_lcd.screen == LCD_SCREEN_OTA) {
+        if (event_info->event != BUTTON_EVENT_CLICK) {
+            return;
+        }
+        lcd_ota_view_state_t ota_view;
+        LCD_LOCK();
+        ota_view = sys_lcd.ota.state;
+        LCD_UNLOCK();
+        if (ota_view == LCD_OTA_VIEW_AVAILABLE) {
+            if (sys_state.security.enabled) {
+                begin_ota_auth(1U);
+            } else {
+                (void)app_services_request_update_confirmation();
+            }
+        } else if (ota_view == LCD_OTA_VIEW_ERROR) {
+            (void)app_services_check_for_update(true);
+        } else if (ota_view == LCD_OTA_VIEW_CURRENT ||
+                   ota_view == LCD_OTA_VIEW_CANCELLED) {
+            s_ota_feedback_active = false;
+            show_menu_screen(MENU_OTA, sys_state.menu_selection);
         }
         return;
     }
@@ -1858,6 +1895,12 @@ void handle_back_button_event(button_event_info_t *event_info,
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
         return;
     }
+    if (event_info->event == BUTTON_EVENT_CLICK &&
+        app_services_ota_cancel_confirmation_pending()) {
+        app_services_cancel_cancel_update();
+        show_menu_screen(MENU_OTA, sys_state.menu_selection);
+        return;
+    }
 
     // User is in Security mode
 
@@ -1913,7 +1956,8 @@ void handle_back_button_event(button_event_info_t *event_info,
     if (event_info->event == BUTTON_EVENT_CLICK &&
         sys_state.menu_state == MENU_OTA &&
         s_ota_feedback_active &&
-        sys_lcd.screen == LCD_SCREEN_FLASH_MSG) {
+        (sys_lcd.screen == LCD_SCREEN_FLASH_MSG ||
+         sys_lcd.screen == LCD_SCREEN_OTA)) {
         s_ota_feedback_active = false;
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
         return;

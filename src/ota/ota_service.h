@@ -16,7 +16,8 @@ extern "C" {
 
 #define OTA_TASK_STACK_SIZE 8192U
 #define OTA_TASK_PRIORITY 5U
-#define OTA_HTTP_TIMEOUT_MS 30000
+/* Keep cancellation responsive while retaining bounded HTTPS operations. */
+#define OTA_HTTP_TIMEOUT_MS 10000
 #define OTA_MAX_URL_LENGTH 256U
 #define OTA_MAX_VERSION_LENGTH 32U
 #define OTA_MAX_SHA256_LENGTH 65U
@@ -58,6 +59,10 @@ esp_err_t ota_manifest_parse_csv(const char *csv, size_t csv_len,
                                   ota_manifest_entry_t *entry);
 
 esp_err_t ota_service_init(void);
+/** Validate the running image after startup checks when rollback is enabled. */
+esp_err_t ota_service_validate_running_app(bool healthy);
+/** True when a previous OTA image was rolled back and needs one notification. */
+bool ota_service_rollback_notification_pending(void);
 esp_err_t ota_service_start(const char *url);
 esp_err_t ota_service_start_from_csv(const char *csv_url);
 

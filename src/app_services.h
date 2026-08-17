@@ -27,19 +27,24 @@ typedef enum {
     APP_OTA_CHECKING,
     APP_OTA_AVAILABLE,
     APP_OTA_CONFIRMING,
+    APP_OTA_PREPARING,
     APP_OTA_DOWNLOADING,
+    APP_OTA_VERIFYING,
     APP_OTA_COMPLETE,
     APP_OTA_ERROR,
+    APP_OTA_CANCELLED,
 } app_ota_state_t;
 
 typedef struct {
     app_ota_state_t state;
     char installed_version[OTA_MAX_VERSION_LENGTH];
     char available_version[OTA_MAX_VERSION_LENGTH];
+    char error_detail[OTA_MAX_VERSION_LENGTH];
     int progress_percent;
     bool auto_check_enabled;
     bool update_available;
     bool confirmation_pending;
+    bool cancel_confirmation_pending;
 } app_ota_status_t;
 
 /** Initialize Wi-Fi and OTA application coordination after system settings load. */
@@ -97,7 +102,7 @@ esp_err_t app_services_disconnect_ap_client_at(uint8_t index);
 esp_err_t app_services_set_ota_manifest_url(const char *url);
 esp_err_t app_services_get_ota_manifest_url(char *buffer, size_t buffer_len);
 
-/** Check the configured CSV manifest without downloading an image. */
+/** Start an asynchronous check of the configured CSV manifest. */
 esp_err_t app_services_check_for_update(bool user_initiated);
 
 /** Move an available update into a user-confirmation prompt. */
@@ -106,7 +111,13 @@ esp_err_t app_services_request_update_confirmation(void);
 /** Start the CSV-based update only after the explicit confirmation action. */
 esp_err_t app_services_confirm_update(void);
 
-/** Cancel a confirmation prompt or an in-progress OTA transaction. */
+/** Request, confirm, or cancel an OTA cancellation prompt. */
+esp_err_t app_services_request_cancel_update(void);
+esp_err_t app_services_confirm_cancel_update(void);
+void app_services_cancel_cancel_update(void);
+bool app_services_ota_cancel_confirmation_pending(void);
+
+/** Cancel an in-progress OTA transaction or install confirmation. */
 esp_err_t app_services_cancel_update(void);
 
 /** Copy menu-visible update state. */

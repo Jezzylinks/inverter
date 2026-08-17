@@ -7051,6 +7051,9 @@ esp_err_t nvs_set_float(const char *key, float value)
 ==============================================================================*/
 void app_main(void)
 {
+    bool lcd_event_ready = true;
+    bool post_completed = false;
+    post_result_t startup_post = {0};
     init_watchdog(true, true);
 
     system_events_init();
@@ -7134,6 +7137,7 @@ void app_main(void)
     xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
     if (lcd_event_receiver_start() != ESP_OK)
     {
+        lcd_event_ready = false;
         ESP_LOGE(APP_TAG, "Failed to start LCD event receiver");
     }
     xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, 1);
@@ -7165,18 +7169,32 @@ void app_main(void)
     }
     if (adc_bits & EVT_ADC_READY)
     {
-        post_result_t post_result = post_run_all();
-        post_show_result_and_notify(post_result);
+        startup_post = post_run_all();
+        post_completed = true;
+        post_show_result_and_notify(startup_post);
     }
     else
     {
         ESP_LOGW(APP_TAG, "ADC did not warm up in time; skipping POST");
     }
 
+    const bool startup_healthy = nvs_initialized && lcd_event_ready &&
+                                 post_completed && startup_post.all_passed;
+    const esp_err_t rollback_err = ota_service_validate_running_app(startup_healthy);
+    if (rollback_err != ESP_OK && rollback_err != ESP_ERR_INVALID_STATE &&
+        rollback_err != ESP_ERR_NOT_SUPPORTED) {
+        ESP_LOGE(APP_TAG, "OTA startup validation failed: %s",
+                 esp_err_to_name(rollback_err));
+    }
+
     /* Boot presentation is complete only after POST has reported. This keeps
      * ordinary AC/battery protection events out of the startup UI without
      * disabling the underlying protection or event dispatch paths. */
     lcd_startup_release();
+    if (ota_service_rollback_notification_pending()) {
+        lcd_flash_info_to("Firmware Update", "Previous restored", 3500U,
+                          LCD_SCREEN_MAIN);
+    }
     lcd_watchdog_init(lcd_task_handle);
     task_watchdog_register("app_main");
     task_watchdog_feed();

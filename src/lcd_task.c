@@ -611,6 +611,152 @@ static void format_loading_bar(char *row, size_t row_len, uint8_t pct)
     row[lcd_geometry_cols()] = '\0';
 }
 
+static void format_ota_progress_bar(char *row, size_t row_len, uint8_t pct)
+{
+    if (!row || row_len == 0U) {
+        return;
+    }
+    const uint8_t cols = lcd_geometry_cols();
+    const uint8_t slots = cols > 2U ? (uint8_t)(cols - 2U) : 0U;
+    const uint8_t blocks = (uint8_t)((pct > 100U ? 100U : pct) * slots / 100U);
+    memset(row, ' ', row_len);
+    if (cols >= 2U && row_len > cols) {
+        row[0] = '[';
+        for (uint8_t i = 0U; i < slots; ++i) {
+            row[i + 1U] = i < blocks ? '#' : '-';
+        }
+        row[cols - 1U] = ']';
+        row[cols] = '\0';
+    } else {
+        row[0] = '\0';
+    }
+}
+
+static void draw_ota(const lcd_ota_data_t *d)
+{
+    const uint8_t pct = d->progress_pct > 100U ? 100U : d->progress_pct;
+    if (lcd_geometry_is_20x4()) {
+        char bar[LCD_LINE_SIZE];
+        char rows[4][LCD_LINE_SIZE] = {{0}};
+        format_ota_progress_bar(bar, sizeof(bar), pct);
+        switch (d->state) {
+        case LCD_OTA_VIEW_CHECKING:
+            snprintf(rows[0], LCD_LINE_SIZE, "FIRMWARE UPDATE");
+            snprintf(rows[1], LCD_LINE_SIZE, "CHECKING UPDATE");
+            snprintf(rows[2], LCD_LINE_SIZE, "PLEASE WAIT...");
+            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            break;
+        case LCD_OTA_VIEW_PREPARING:
+            snprintf(rows[0], LCD_LINE_SIZE, "FIRMWARE UPDATE");
+            snprintf(rows[1], LCD_LINE_SIZE, "CONNECTING SERVER");
+            snprintf(rows[2], LCD_LINE_SIZE, "PREPARING UPDATE");
+            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            break;
+        case LCD_OTA_VIEW_DOWNLOADING:
+            snprintf(rows[0], LCD_LINE_SIZE, "UPDATING FIRMWARE");
+            snprintf(rows[1], LCD_LINE_SIZE, "%3u%% COMPLETE", (unsigned)pct);
+            snprintf(rows[2], LCD_LINE_SIZE, "%s", bar);
+            snprintf(rows[3], LCD_LINE_SIZE, "MENU: CANCEL");
+            break;
+        case LCD_OTA_VIEW_VERIFYING:
+            snprintf(rows[0], LCD_LINE_SIZE, "VERIFYING UPDATE");
+            snprintf(rows[1], LCD_LINE_SIZE, "CHECKING SHA-256");
+            snprintf(rows[2], LCD_LINE_SIZE, "PLEASE WAIT...");
+            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            break;
+        case LCD_OTA_VIEW_CANCELLING:
+            snprintf(rows[0], LCD_LINE_SIZE, "CANCELLING UPDATE");
+            snprintf(rows[1], LCD_LINE_SIZE, "PLEASE WAIT...");
+            snprintf(rows[2], LCD_LINE_SIZE, "ABORTING SAFELY");
+            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            break;
+        case LCD_OTA_VIEW_AVAILABLE:
+            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE AVAILABLE");
+            snprintf(rows[1], LCD_LINE_SIZE, "%.8s -> %.8s",
+                     d->current_version, d->available_version);
+            snprintf(rows[2], LCD_LINE_SIZE, "ENTER=INSTALL");
+            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            break;
+        case LCD_OTA_VIEW_CURRENT:
+            snprintf(rows[0], LCD_LINE_SIZE, "FIRMWARE CURRENT");
+            snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", d->current_version);
+            snprintf(rows[2], LCD_LINE_SIZE, "NO UPDATE");
+            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            break;
+        case LCD_OTA_VIEW_CANCELLED:
+            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE CANCELLED");
+            snprintf(rows[1], LCD_LINE_SIZE, "CURRENT KEPT");
+            snprintf(rows[2], LCD_LINE_SIZE, "ENTER=MENU");
+            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            break;
+        case LCD_OTA_VIEW_COMPLETE:
+            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE COMPLETE");
+            snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", d->available_version);
+            snprintf(rows[2], LCD_LINE_SIZE, "RESTARTING...");
+            snprintf(rows[3], LCD_LINE_SIZE, "PLEASE WAIT");
+            break;
+        case LCD_OTA_VIEW_ERROR:
+        default:
+            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE FAILED");
+            snprintf(rows[1], LCD_LINE_SIZE, "%.20s", d->detail[0] ? d->detail : "TRY AGAIN");
+            snprintf(rows[2], LCD_LINE_SIZE, "ENTER=RETRY");
+            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            break;
+        }
+        draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
+        return;
+    }
+
+    char row0[LCD_LINE_SIZE];
+    char row1[LCD_LINE_SIZE];
+    char bar[LCD_LINE_SIZE];
+    format_ota_progress_bar(bar, sizeof(bar), pct);
+    switch (d->state) {
+    case LCD_OTA_VIEW_CHECKING:
+        snprintf(row0, LCD_LINE_SIZE, "CHECKING UPDATE");
+        snprintf(row1, LCD_LINE_SIZE, "PLEASE WAIT");
+        break;
+    case LCD_OTA_VIEW_PREPARING:
+        snprintf(row0, LCD_LINE_SIZE, "CONNECTING...");
+        snprintf(row1, LCD_LINE_SIZE, "PREPARING...");
+        break;
+    case LCD_OTA_VIEW_DOWNLOADING:
+        snprintf(row0, LCD_LINE_SIZE, "UPDATING %3u%%", (unsigned)pct);
+        snprintf(row1, LCD_LINE_SIZE, "%s", bar);
+        break;
+    case LCD_OTA_VIEW_VERIFYING:
+        snprintf(row0, LCD_LINE_SIZE, "VERIFYING...");
+        snprintf(row1, LCD_LINE_SIZE, "SHA-256");
+        break;
+    case LCD_OTA_VIEW_CANCELLING:
+        snprintf(row0, LCD_LINE_SIZE, "CANCELLING...");
+        snprintf(row1, LCD_LINE_SIZE, "PLEASE WAIT");
+        break;
+    case LCD_OTA_VIEW_AVAILABLE:
+        snprintf(row0, LCD_LINE_SIZE, "UPDATE READY");
+        snprintf(row1, LCD_LINE_SIZE, "%.7s>%.7s", d->current_version, d->available_version);
+        break;
+    case LCD_OTA_VIEW_CURRENT:
+        snprintf(row0, LCD_LINE_SIZE, "FIRMWARE CURRENT");
+        snprintf(row1, LCD_LINE_SIZE, "%.12s", d->current_version);
+        break;
+    case LCD_OTA_VIEW_CANCELLED:
+        snprintf(row0, LCD_LINE_SIZE, "UPDATE CANCELLED");
+        snprintf(row1, LCD_LINE_SIZE, "CURRENT KEPT");
+        break;
+    case LCD_OTA_VIEW_COMPLETE:
+        snprintf(row0, LCD_LINE_SIZE, "UPDATE COMPLETE");
+        snprintf(row1, LCD_LINE_SIZE, "RESTARTING...");
+        break;
+    case LCD_OTA_VIEW_ERROR:
+    default:
+        snprintf(row0, LCD_LINE_SIZE, "UPDATE FAILED");
+        snprintf(row1, LCD_LINE_SIZE, "ENTER=RETRY");
+        break;
+    }
+    draw_commit(row0, row1);
+}
+
 static const char *startup_stage_label(uint8_t pct)
 {
     if (pct < 30U)
@@ -1674,6 +1820,10 @@ void lcd_task(void *arg)
             }
             break;
         }
+
+        case LCD_SCREEN_OTA:
+            draw_ota(&snap.ota);
+            break;
 
         /* ================================================================
            LCD_SCREEN_SECURITY

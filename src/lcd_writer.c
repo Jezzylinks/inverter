@@ -660,3 +660,35 @@ void lcd_startup_release(void)
 {
     s_startup_released = true;
 }
+
+void lcd_show_ota_status(lcd_ota_view_state_t state, uint8_t progress_pct,
+                         const char *current_version,
+                         const char *available_version,
+                         const char *detail, bool retry_available)
+{
+    LCD_LOCK();
+    sys_lcd.screen = LCD_SCREEN_OTA;
+    lcd_ota_data_t *ota = &sys_lcd.ota;
+    const uint8_t clamped = progress_pct > 100U ? 100U : progress_pct;
+    if (ota->state == state && ota->progress_pct == clamped &&
+        ota->retry_available == retry_available &&
+        strncmp(ota->current_version, current_version ? current_version : "",
+                sizeof(ota->current_version)) == 0 &&
+        strncmp(ota->available_version, available_version ? available_version : "",
+                sizeof(ota->available_version)) == 0 &&
+        strncmp(ota->detail, detail ? detail : "", sizeof(ota->detail)) == 0) {
+        LCD_UNLOCK();
+        return;
+    }
+    ota->state = state;
+    ota->progress_pct = clamped;
+    snprintf(ota->current_version, sizeof(ota->current_version), "%s",
+             current_version ? current_version : "");
+    snprintf(ota->available_version, sizeof(ota->available_version), "%s",
+             available_version ? available_version : "");
+    snprintf(ota->detail, sizeof(ota->detail), "%s", detail ? detail : "");
+    ota->retry_available = retry_available;
+    ota->entered_ms = _lcd_get_time_ms();
+    LCD_UNLOCK();
+    lcd_request_refresh();
+}

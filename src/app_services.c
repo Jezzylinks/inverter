@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -26,13 +27,20 @@
 
 #include "task_watchdog.h"
 #define APP_SERVICES_TAG "APP_SERVICES"
+#ifdef CONFIG_INVERTER_OTA_MANIFEST_URL
+#define APP_OTA_DEFAULT_MANIFEST_URL CONFIG_INVERTER_OTA_MANIFEST_URL
+#else
+#define APP_OTA_DEFAULT_MANIFEST_URL \
+    "https://github.com/Jezzylinks/inverter/releases/latest/download/inverter.csv"
+#endif
 #define APP_SERVICES_NVS_NAMESPACE NVS_NS_SYSTEM
 #define APP_WIFI_ENABLED_KEY "wifi_enabled"
 #define APP_OTA_MANIFEST_KEY "ota_manifest"
 #define APP_OTA_AUTOCHECK_KEY "ota_auto"
 #define APP_OTA_CHECK_INTERVAL_MS (6U * 60U * 60U * 1000U)
 #define APP_OTA_TASK_STACK_SIZE 4096U
-#define APP_OTA_TASK_PRIORITY 3U
+#define APP_OTA_CHECK_TASK_STACK_SIZE 6144U
+#define APP_OTA_CHECK_TASK_PRIORITY 5U
 #define APP_WIFI_OPERATION_WATCH_STACK_SIZE 3072U
 #define APP_WIFI_OPERATION_WATCH_PRIORITY 5U
 #define APP_WIFI_OPERATION_TIMEOUT_MS 30000U
@@ -47,10 +55,14 @@ extern SemaphoreHandle_t sys_state_mutex;
 
 static SemaphoreHandle_t s_services_mutex;
 static TaskHandle_t s_ota_check_task;
+static TaskHandle_t s_ota_manifest_check_task;
+static bool s_ota_manifest_check_active;
 static TaskHandle_t s_wifi_operation_watch_task;
 static TaskHandle_t s_wifi_scan_task;
 static bool s_wifi_forget_pending;
 static bool s_wifi_disconnect_pending;
+static bool s_ota_check_cancel_requested;
+static bool s_ota_cancel_confirmation_pending;
 static bool s_wifi_scan_active;
 static bool s_wifi_scan_cancel_requested;
 static char s_manifest_url[APP_OTA_MANIFEST_URL_MAX];
@@ -70,6 +82,13 @@ static char s_wifi_operation_ssid[WIFI_MAX_SSID_LEN + 1U];
 static uint32_t s_wifi_operation_generation;
 static TickType_t s_wifi_operation_started_tick;
 static int8_t s_wifi_operation_rssi = -127;
+
+static bool app_manifest_url_is_valid(const char *url)
+{
+    return url != NULL && url[0] != '\0' &&
+           strncmp(url, "https://", 8U) == 0 &&
+           strlen(url) < APP_OTA_MANIFEST_URL_MAX;
+}
 
 static bool app_wifi_scan_cancel_requested(void)
 {
@@ -394,6 +413,10 @@ static void load_persisted_config(void)
     {
         s_manifest_url[0] = '\0';
     }
+    if (s_manifest_url[0] != '\0' && !app_manifest_url_is_valid(s_manifest_url)) {
+        ESP_LOGW(APP_SERVICES_TAG, "Persisted OTA manifest URL rejected");
+        s_manifest_url[0] = '\0';
+    }
 
     sys_state.wifi.enabled = wifi_enabled != 0U;
     sys_state.inverter.wifi_enabled = sys_state.wifi.enabled;
@@ -421,67 +444,93 @@ static const char *wifi_state_text(wifi_controller_state_t state)
     }
 }
 
+static void app_services_show_ota_lcd(const app_ota_status_t *status)
+{
+    if (!status) {
+        return;
+    }
+    lcd_ota_view_state_t view = LCD_OTA_VIEW_ERROR;
+    switch (status->state) {
+    case APP_OTA_CHECKING: view = LCD_OTA_VIEW_CHECKING; break;
+    case APP_OTA_PREPARING: view = LCD_OTA_VIEW_PREPARING; break;
+    case APP_OTA_DOWNLOADING: view = LCD_OTA_VIEW_DOWNLOADING; break;
+    case APP_OTA_VERIFYING: view = LCD_OTA_VIEW_VERIFYING; break;
+    case APP_OTA_AVAILABLE: view = LCD_OTA_VIEW_AVAILABLE; break;
+    case APP_OTA_COMPLETE: view = LCD_OTA_VIEW_COMPLETE; break;
+    case APP_OTA_CANCELLED: view = LCD_OTA_VIEW_CANCELLED; break;
+    case APP_OTA_IDLE: view = LCD_OTA_VIEW_CURRENT; break;
+    case APP_OTA_ERROR: view = LCD_OTA_VIEW_ERROR; break;
+    case APP_OTA_CONFIRMING:
+    default:
+        return;
+    }
+    const char *detail = status->state == APP_OTA_ERROR ? "Try again" :
+                         status->state == APP_OTA_CANCELLED ? "Current kept" :
+                         status->state == APP_OTA_IDLE ? "No update" : "";
+    lcd_show_ota_status(view, (uint8_t)(status->progress_percent < 0 ? 0 :
+                                       status->progress_percent),
+                        status->installed_version, status->available_version,
+                        detail, status->state == APP_OTA_ERROR ||
+                                  status->state == APP_OTA_CANCELLED);
+}
+
 static void ota_progress_callback(int percent)
 {
-    if (!s_services_mutex)
-    {
+    if (!s_services_mutex) {
         return;
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_ota_status.state = APP_OTA_DOWNLOADING;
-    s_ota_status.progress_percent = percent;
+    s_ota_status.progress_percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+    app_ota_status_t snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
+    app_services_show_ota_lcd(&snapshot);
 }
 
 static void ota_status_callback(ota_status_t status, int percent)
 {
-    if (!s_services_mutex)
-    {
+    if (!s_services_mutex) {
         return;
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    s_ota_status.progress_percent = percent;
-    switch (status)
-    {
+    s_ota_status.progress_percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+    switch (status) {
     case OTA_STATUS_STARTED:
+        s_ota_status.state = APP_OTA_PREPARING;
+        s_ota_status.error_detail[0] = '\0';
+        break;
     case OTA_STATUS_DOWNLOADING:
-    case OTA_STATUS_VERIFYING:
         s_ota_status.state = APP_OTA_DOWNLOADING;
+        break;
+    case OTA_STATUS_VERIFYING:
+        s_ota_status.state = APP_OTA_VERIFYING;
         break;
     case OTA_STATUS_SUCCESS:
         s_ota_status.state = APP_OTA_COMPLETE;
+        s_ota_status.error_detail[0] = '\0';
+        s_ota_status.confirmation_pending = false;
+        s_ota_status.cancel_confirmation_pending = false;
         break;
     case OTA_STATUS_CANCELLED:
-        s_ota_status.state = APP_OTA_IDLE;
+        s_ota_status.state = APP_OTA_CANCELLED;
         s_ota_status.confirmation_pending = false;
+        s_ota_status.cancel_confirmation_pending = false;
         break;
     case OTA_STATUS_FAILED:
         s_ota_status.state = APP_OTA_ERROR;
+        snprintf(s_ota_status.error_detail, sizeof(s_ota_status.error_detail),
+                 "ERR:IMAGE");
         s_ota_status.confirmation_pending = false;
+        s_ota_status.cancel_confirmation_pending = false;
         break;
     case OTA_STATUS_IDLE:
     default:
         break;
     }
+    app_ota_status_t snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
-
-    if (status == OTA_STATUS_VERIFYING)
-    {
-        lcd_flash_message("Verifying Update", "Please wait", 1200U);
-    }
-    else if (status == OTA_STATUS_FAILED)
-    {
-        lcd_flash_message("Update Failed", "Current kept", 1800U);
-    }
-    else if (status == OTA_STATUS_CANCELLED)
-    {
-        lcd_flash_message("Update Cancelled", "Current kept", 1200U);
-    }
-    else if (status == OTA_STATUS_SUCCESS)
-    {
-        lcd_flash_message("Update Complete", "Restarting", 800U);
-    }
+    app_services_show_ota_lcd(&snapshot);
 }
 
 static void ota_auto_check_task(void *parameter)
@@ -503,7 +552,9 @@ static void ota_auto_check_task(void *parameter)
         app_ota_status_t status;
         app_services_get_ota_status(&status);
         if (status.auto_check_enabled &&
+            status.state != APP_OTA_PREPARING &&
             status.state != APP_OTA_DOWNLOADING &&
+            status.state != APP_OTA_VERIFYING &&
             status.state != APP_OTA_CHECKING &&
             wifi_controller_is_connected())
         {
@@ -534,6 +585,10 @@ esp_err_t app_services_init(void)
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     memset(&s_ota_status, 0, sizeof(s_ota_status));
     s_ota_status.state = APP_OTA_IDLE;
+    s_ota_manifest_check_task = NULL;
+    s_ota_manifest_check_active = false;
+    s_ota_check_cancel_requested = false;
+    s_ota_cancel_confirmation_pending = false;
     s_wifi_operation = APP_WIFI_OPERATION_NONE;
     s_wifi_operation_ssid[0] = '\0';
     s_wifi_operation_generation = 0U;
@@ -549,8 +604,7 @@ esp_err_t app_services_init(void)
 
     if (s_manifest_url[0] == '\0')
     {
-        const char *bootstrap_manifest_url =
-            "https://github.com/Jezzylinks/inverter/releases/latest/download/inverter.csv";
+        const char *bootstrap_manifest_url = APP_OTA_DEFAULT_MANIFEST_URL;
         const esp_err_t manifest_err =
             app_services_set_ota_manifest_url(bootstrap_manifest_url);
         if (manifest_err != ESP_OK)
@@ -621,7 +675,7 @@ esp_err_t app_services_init(void)
     if (!s_ota_check_task)
     {
         if (xTaskCreate(ota_auto_check_task, "ota_check", APP_OTA_TASK_STACK_SIZE,
-                        NULL, APP_OTA_TASK_PRIORITY, &s_ota_check_task) != pdPASS)
+                        NULL, APP_OTA_CHECK_TASK_PRIORITY, &s_ota_check_task) != pdPASS)
         {
             s_ota_check_task = NULL;
             ESP_LOGW(APP_SERVICES_TAG, "Could not create OTA availability task");
@@ -1224,7 +1278,7 @@ void app_services_show_ap_clients(void)
 esp_err_t app_services_set_ota_manifest_url(const char *url)
 {
     if (!url || strlen(url) >= sizeof(s_manifest_url) ||
-        (url[0] != '\0' && strncmp(url, "https://", 8U) != 0))
+        (url[0] != '\0' && !app_manifest_url_is_valid(url)))
     {
         return ESP_ERR_INVALID_ARG;
     }
@@ -1256,13 +1310,71 @@ esp_err_t app_services_get_ota_manifest_url(char *buffer, size_t buffer_len)
     return ESP_OK;
 }
 
+typedef struct {
+    char manifest_url[APP_OTA_MANIFEST_URL_MAX];
+    bool user_initiated;
+} ota_manifest_check_job_t;
+
+static void ota_manifest_check_task(void *parameter)
+{
+    ota_manifest_check_job_t *job = (ota_manifest_check_job_t *)parameter;
+    if (!job) {
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ota_manifest_entry_t entry = {0};
+    bool update_available = false;
+    const esp_err_t err = ota_service_check_csv_manifest(job->manifest_url,
+                                                         &entry,
+                                                         &update_available);
+    bool cancelled = false;
+    app_ota_status_t snapshot;
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    cancelled = s_ota_check_cancel_requested;
+    s_ota_check_cancel_requested = false;
+    if (cancelled) {
+        s_ota_status.state = APP_OTA_CANCELLED;
+        s_ota_status.progress_percent = 0;
+    } else if (err == ESP_OK && update_available) {
+        s_ota_status.state = APP_OTA_AVAILABLE;
+        s_ota_status.error_detail[0] = '\0';
+        s_ota_status.update_available = true;
+        strncpy(s_ota_status.available_version, entry.version,
+                sizeof(s_ota_status.available_version) - 1U);
+    } else if (err == ESP_OK) {
+        s_ota_status.state = APP_OTA_IDLE;
+        s_ota_status.error_detail[0] = '\0';
+        s_ota_status.update_available = false;
+        s_ota_status.available_version[0] = '\0';
+    } else {
+        s_ota_status.state = APP_OTA_ERROR;
+        snprintf(s_ota_status.error_detail, sizeof(s_ota_status.error_detail),
+                 "ERR:%s", esp_err_to_name(err));
+        /* Preserve a previously valid available manifest so Install/Retry can
+         * still begin a clean, freshly downloaded OTA transaction. */
+    }
+    snapshot = s_ota_status;
+    s_ota_manifest_check_task = NULL;
+    s_ota_manifest_check_active = false;
+    xSemaphoreGive(s_services_mutex);
+
+    if (err != ESP_OK && !cancelled) {
+        ESP_LOGW(APP_SERVICES_TAG, "OTA check failed: %s", esp_err_to_name(err));
+    }
+    if (job->user_initiated || update_available || cancelled) {
+        app_services_show_ota_lcd(&snapshot);
+    }
+    memset(job, 0, sizeof(*job));
+    free(job);
+    vTaskDelete(NULL);
+}
+
 esp_err_t app_services_check_for_update(bool user_initiated)
 {
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
-    if (!wifi_controller_is_connected())
-    {
-        if (user_initiated)
-        {
+    if (!wifi_controller_is_connected()) {
+        if (user_initiated) {
             const bool enabled = app_services_wifi_enabled();
             lcd_flash_warning_to(enabled ? "Wi-Fi ON" : "Wi-Fi OFF",
                                  enabled ? "Connect first" : "Turn Wi-Fi ON",
@@ -1271,88 +1383,77 @@ esp_err_t app_services_check_for_update(bool user_initiated)
         ESP_LOGW(APP_SERVICES_TAG, "Update check skipped: station is not connected");
         return ESP_ERR_INVALID_STATE;
     }
-    if (!wifi_monitor_is_online())
-    {
-        if (user_initiated)
-        {
+    if (!wifi_monitor_is_online()) {
+        if (user_initiated) {
             lcd_flash_warning_to("Wi-Fi Connected", "Internet OFF",
                                  1800U, LCD_SCREEN_MENU);
         }
         ESP_LOGW(APP_SERVICES_TAG, "Internet Not Available; OTA check skipped");
         return ESP_ERR_INVALID_STATE;
     }
-
-    (void)app_services_get_ota_manifest_url(manifest_url, sizeof(manifest_url));
-    if (manifest_url[0] == '\0')
-    {
-        if (user_initiated)
-        {
-            lcd_flash_warning_to("OTA Not Set", "Configure URL",
+    if (app_services_get_ota_manifest_url(manifest_url, sizeof(manifest_url)) != ESP_OK ||
+        strncmp(manifest_url, "https://", 8U) != 0 ||
+        strlen(manifest_url) >= sizeof(manifest_url)) {
+        if (user_initiated) {
+            lcd_flash_warning_to("OTA URL Invalid", "HTTPS required",
                                  1500U, LCD_SCREEN_MENU);
         }
-        return ESP_ERR_NOT_FOUND;
+        return ESP_ERR_INVALID_ARG;
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    if (s_ota_status.state == APP_OTA_DOWNLOADING || s_ota_status.state == APP_OTA_CHECKING)
-    {
+    const bool busy = s_ota_manifest_check_active ||
+                      s_ota_status.state == APP_OTA_PREPARING ||
+                      s_ota_status.state == APP_OTA_DOWNLOADING ||
+                      s_ota_status.state == APP_OTA_VERIFYING ||
+                      s_ota_status.state == APP_OTA_CHECKING;
+    if (busy) {
         xSemaphoreGive(s_services_mutex);
         return ESP_ERR_INVALID_STATE;
     }
+    ota_manifest_check_job_t *job = calloc(1, sizeof(*job));
+    if (!job) {
+        xSemaphoreGive(s_services_mutex);
+        return ESP_ERR_NO_MEM;
+    }
+    strncpy(job->manifest_url, manifest_url, sizeof(job->manifest_url) - 1U);
+    job->user_initiated = user_initiated;
+    s_ota_check_cancel_requested = false;
     s_ota_status.state = APP_OTA_CHECKING;
-    s_ota_status.update_available = false;
+    s_ota_status.progress_percent = 0;
+    s_ota_manifest_check_active = true;
     xSemaphoreGive(s_services_mutex);
 
-    ota_manifest_entry_t entry = {0};
-    bool update_available = false;
-    const esp_err_t err = ota_service_check_csv_manifest(manifest_url, &entry, &update_available);
-
+    if (xTaskCreate(ota_manifest_check_task, "ota_manifest_check",
+                    APP_OTA_CHECK_TASK_STACK_SIZE, job,
+                    APP_OTA_CHECK_TASK_PRIORITY, &s_ota_manifest_check_task) != pdPASS) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_ota_manifest_check_task = NULL;
+        s_ota_manifest_check_active = false;
+        s_ota_status.state = APP_OTA_ERROR;
+        xSemaphoreGive(s_services_mutex);
+        memset(job, 0, sizeof(*job));
+        free(job);
+        return ESP_ERR_NO_MEM;
+    }
+    app_ota_status_t snapshot;
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    if (err == ESP_OK && update_available)
-    {
-        s_ota_status.state = APP_OTA_AVAILABLE;
-        s_ota_status.update_available = true;
-        strncpy(s_ota_status.available_version, entry.version,
-                sizeof(s_ota_status.available_version) - 1U);
-    }
-    else
-    {
-        s_ota_status.state = err == ESP_OK ? APP_OTA_IDLE : APP_OTA_ERROR;
-        s_ota_status.update_available = false;
-        s_ota_status.available_version[0] = '\0';
-    }
+    snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
-
-    if (err != ESP_OK)
-    {
-        ESP_LOGW(APP_SERVICES_TAG, "OTA check failed: %s", esp_err_to_name(err));
-        if (user_initiated)
-        {
-            char error_line[LCD_LINE_SIZE];
-            snprintf(error_line, sizeof(error_line), "ERR:%s",
-                     esp_err_to_name(err));
-            lcd_flash_warning_to("OTA Check Failed", error_line,
-                                 2000U, LCD_SCREEN_MENU);
-        }
+    if (user_initiated) {
+        app_services_show_ota_lcd(&snapshot);
     }
-    else if (update_available)
-    {
-        char line[LCD_LINE_SIZE];
-        snprintf(line, sizeof(line), "Version %.8s", entry.version);
-        lcd_flash_info_to("Update Available", line, 1800U, LCD_SCREEN_MENU);
-    }
-    else if (user_initiated)
-    {
-        lcd_flash_info_to("Firmware Current", "No update", 1400U, LCD_SCREEN_MENU);
-    }
-    return err;
+    return ESP_OK;
 }
 
 esp_err_t app_services_request_update_confirmation(void)
 {
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool available = s_ota_status.update_available;
-    const bool busy = s_ota_status.state == APP_OTA_DOWNLOADING;
+    const bool busy = s_ota_status.state == APP_OTA_PREPARING ||
+                      s_ota_status.state == APP_OTA_DOWNLOADING ||
+                      s_ota_status.state == APP_OTA_VERIFYING ||
+                      s_ota_status.state == APP_OTA_CHECKING;
     if (available && !busy)
     {
         s_ota_status.state = APP_OTA_CONFIRMING;
@@ -1372,15 +1473,18 @@ esp_err_t app_services_request_update_confirmation(void)
 esp_err_t app_services_confirm_update(void)
 {
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
+    app_ota_status_t snapshot = {0};
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool confirmed = s_ota_status.confirmation_pending;
     if (confirmed)
     {
         s_ota_status.confirmation_pending = false;
-        s_ota_status.state = APP_OTA_DOWNLOADING;
+        s_ota_status.cancel_confirmation_pending = false;
+        s_ota_status.state = APP_OTA_PREPARING;
         s_ota_status.progress_percent = 0;
     }
     strncpy(manifest_url, s_manifest_url, sizeof(manifest_url) - 1U);
+    snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
 
     if (!confirmed || manifest_url[0] == '\0')
@@ -1402,33 +1506,90 @@ esp_err_t app_services_confirm_update(void)
     {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_ota_status.state = APP_OTA_ERROR;
+        snprintf(s_ota_status.error_detail, sizeof(s_ota_status.error_detail),
+                 "ERR:%s", esp_err_to_name(err));
+        snapshot = s_ota_status;
         xSemaphoreGive(s_services_mutex);
-        lcd_flash_warning_to("Update Start Fail", "Current kept",
-                             1500U, LCD_SCREEN_MENU);
+        app_services_show_ota_lcd(&snapshot);
         return err;
     }
-    lcd_flash_message("Updating", "Do not power off", 1500U);
+    lcd_show_ota_status(LCD_OTA_VIEW_PREPARING, 0U,
+                        snapshot.installed_version, snapshot.available_version,
+                        "", false);
     return ESP_OK;
+}
+
+esp_err_t app_services_request_cancel_update(void)
+{
+    const bool service_busy = ota_service_in_progress();
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    const bool check_busy = s_ota_manifest_check_active;
+    if (service_busy || check_busy) {
+        s_ota_cancel_confirmation_pending = true;
+    }
+    xSemaphoreGive(s_services_mutex);
+    if (!service_busy && !check_busy) {
+        lcd_flash_message("No Update Running", "Current kept", 1200U);
+        return ESP_ERR_INVALID_STATE;
+    }
+    lcd_show_confirm("Cancel update?", "ENTER=Yes BACK=No");
+    return ESP_OK;
+}
+
+esp_err_t app_services_confirm_cancel_update(void)
+{
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    const bool pending = s_ota_cancel_confirmation_pending;
+    s_ota_cancel_confirmation_pending = false;
+    xSemaphoreGive(s_services_mutex);
+    if (!pending) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return app_services_cancel_update();
+}
+
+void app_services_cancel_cancel_update(void)
+{
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_ota_cancel_confirmation_pending = false;
+    xSemaphoreGive(s_services_mutex);
+}
+
+bool app_services_ota_cancel_confirmation_pending(void)
+{
+    bool pending = false;
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    pending = s_ota_cancel_confirmation_pending;
+    xSemaphoreGive(s_services_mutex);
+    return pending;
 }
 
 esp_err_t app_services_cancel_update(void)
 {
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool pending = s_ota_status.confirmation_pending;
+    const bool checking = s_ota_manifest_check_active;
     s_ota_status.confirmation_pending = false;
-    if (pending)
-    {
+    s_ota_cancel_confirmation_pending = false;
+    if (pending) {
         s_ota_status.state = APP_OTA_AVAILABLE;
+    }
+    if (checking) {
+        s_ota_check_cancel_requested = true;
+        s_ota_status.state = APP_OTA_CANCELLED;
     }
     xSemaphoreGive(s_services_mutex);
 
-    if (ota_service_in_progress())
-    {
+    if (ota_service_in_progress()) {
+        lcd_show_ota_status(LCD_OTA_VIEW_CANCELLING, 0U, "", "",
+                            "Please wait", false);
         return ota_service_cancel();
     }
-    if (pending)
-    {
+    if (pending) {
         lcd_flash_message("Update Deferred", "Current kept", 1200U);
+    } else if (checking) {
+        lcd_show_ota_status(LCD_OTA_VIEW_CANCELLED, 0U, "", "",
+                            "Current kept", false);
     }
     return ESP_OK;
 }

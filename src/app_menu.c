@@ -130,6 +130,32 @@ static const char *wifi_menu_label(int index)
     }
 }
 
+static const char *ota_menu_label(int index)
+{
+    static char label[LCD_LINE_SIZE];
+    app_ota_status_t status;
+    app_services_get_ota_status(&status);
+    switch (index) {
+    case 0:
+        return status.state == APP_OTA_CHECKING ? "Checking..." : "Check for Update";
+    case 1:
+        if (status.state == APP_OTA_ERROR) {
+            return "Retry";
+        }
+        if (status.update_available && status.available_version[0] != '\0') {
+            snprintf(label, sizeof(label), "Install %.12s", status.available_version);
+            return label;
+        }
+        return "Install";
+    case 2:
+        return status.state == APP_OTA_PREPARING ||
+               status.state == APP_OTA_DOWNLOADING ||
+               status.state == APP_OTA_VERIFYING ? "Cancel Update" : "Back";
+    default:
+        return ota_items[index].label;
+    }
+}
+
 static const char *wifi_settings_menu_label(int index)
 {
     switch (index) {
@@ -261,7 +287,9 @@ if (lcd_geometry_is_20x4())
                                 ? wifi_menu_label(item_index)
                                 : menu_st == MENU_WIFI_SETTINGS
                                     ? wifi_settings_menu_label(item_index)
-                                    : items[item_index].label;
+                                    : menu_st == MENU_OTA
+                                        ? ota_menu_label(item_index)
+                                        : items[item_index].label;
         int label_width = cols - 1;
         if (row == visible_rows - 1)
         {
@@ -289,7 +317,9 @@ else
                                      ? wifi_menu_label(selection)
                                      : menu_st == MENU_WIFI_SETTINGS
                                          ? wifi_settings_menu_label(selection)
-                                         : items[selection].label;
+                                         : menu_st == MENU_OTA
+                                             ? ota_menu_label(selection)
+                                             : items[selection].label;
     snprintf(r0, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_ARROW,
              cols - 1, cols - 1, selected_label);
 
@@ -306,7 +336,9 @@ else
                                      ? wifi_menu_label(next)
                                      : menu_st == MENU_WIFI_SETTINGS
                                          ? wifi_settings_menu_label(next)
-                                         : items[next].label;
+                                         : menu_st == MENU_OTA
+                                             ? ota_menu_label(next)
+                                             : items[next].label;
         snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s%s",
                  APP_MENU_INDENT, label_w, label_w,
                  next_label, ind);
@@ -317,7 +349,9 @@ else
                                      ? wifi_menu_label(next)
                                      : menu_st == MENU_WIFI_SETTINGS
                                          ? wifi_settings_menu_label(next)
-                                         : items[next].label;
+                                         : menu_st == MENU_OTA
+                                             ? ota_menu_label(next)
+                                             : items[next].label;
         snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_INDENT,
                  cols - 1, cols - 1, next_label);
     }
