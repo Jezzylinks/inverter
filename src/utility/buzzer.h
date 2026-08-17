@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "esp_err.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -16,7 +17,7 @@ extern "C"
      * for protection, system and button events is handled here.
      */
     void buzzer_event_task(void *pvParameters);
-    void buzzer_init(void);
+    esp_err_t buzzer_init(void);
     void post_buzzer_event(bool success);
     void buzzer_button_click(void);
     void post_buzzer_limit_event(void);

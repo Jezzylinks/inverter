@@ -12,7 +12,9 @@
 #include "task_watchdog.h"
 extern system_state_t sys_state;
 
+static const char *TAG = "BUZZER";
 static volatile bool s_critical_preempt_pending = false;
+static volatile bool s_buzzer_initialized = false;
 static TaskHandle_t s_buzzer_task = NULL;
 static volatile uint32_t s_pending_button_clicks = 0U;
 
@@ -21,8 +23,12 @@ static volatile uint32_t s_pending_button_clicks = 0U;
 #define BUZZER_LEDC_CHANNEL LEDC_CHANNEL_0
 #define BUZZER_LEDC_RES LEDC_TIMER_10_BIT
 
-void buzzer_init(void)
+esp_err_t buzzer_init(void)
 {
+    if (s_buzzer_initialized) {
+        return ESP_OK;
+    }
+
     ledc_timer_config_t timer = {
         .speed_mode = BUZZER_LEDC_MODE,
         .timer_num = BUZZER_LEDC_TIMER,
@@ -31,7 +37,11 @@ void buzzer_init(void)
         .clk_cfg = LEDC_AUTO_CLK,
     };
 
-    ESP_ERROR_CHECK(ledc_timer_config(&timer));
+    esp_err_t err = ledc_timer_config(&timer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "LEDC timer initialization failed: %s", esp_err_to_name(err));
+        return err;
+    }
 
     ledc_channel_config_t channel = {
         .gpio_num = GPIO_BUZZER,
@@ -44,17 +54,35 @@ void buzzer_init(void)
         .flags.output_invert = 0,
     };
 
-    ESP_ERROR_CHECK(ledc_channel_config(&channel));
+    err = ledc_channel_config(&channel);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "LEDC channel initialization failed on GPIO %d: %s",
+                 GPIO_BUZZER, esp_err_to_name(err));
+        return err;
+    }
+
+    s_buzzer_initialized = true;
+    ESP_LOGI(TAG, "Buzzer initialized on GPIO %d (timer %d/channel %d)",
+             GPIO_BUZZER, BUZZER_LEDC_TIMER, BUZZER_LEDC_CHANNEL);
+    return ESP_OK;
 }
 
 static void buzzer_stop(void)
 {
+    if (!s_buzzer_initialized) {
+        return;
+    }
     ESP_ERROR_CHECK(ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0));
     ESP_ERROR_CHECK(ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL));
 }
 
 void buzzer_beep(uint32_t frequency, uint8_t duty_percent, uint32_t duration_ms)
 {
+    if (!s_buzzer_initialized) {
+        vTaskDelay(pdMS_TO_TICKS(duration_ms));
+        return;
+    }
+
     if (s_critical_preempt_pending) {
         buzzer_stop();
         return;
@@ -115,7 +143,8 @@ void buzzer_request_critical_preemption(void)
 
 void update_buzzer(uint16_t freq_hz, uint8_t volume_percent)
 {
-    if (!sys_state.sound_enabled || quiet_hours_is_active() || freq_hz == 0 || volume_percent == 0)
+    if (!s_buzzer_initialized || !sys_state.sound_enabled ||
+        quiet_hours_is_active() || freq_hz == 0 || volume_percent == 0)
     {
         buzzer_stop();
         return;
@@ -264,6 +293,7 @@ void buzzer_event_task(void *pv)
 {
     task_watchdog_register("buzzer_event_task");
     s_buzzer_task = xTaskGetCurrentTaskHandle();
+    ESP_LOGI(TAG, "Buzzer event task started");
     if (s_pending_button_clicks > 0U) {
         s_pending_button_clicks = 0U;
         (void)xTaskNotifyGive(s_buzzer_task);
@@ -351,6 +381,7 @@ void buzzer_event_task(void *pv)
         case EVENT_CATEGORY_BUTTON:
             if (evt.action == EVENT_ACTION_PRESSED)
             {
+                ESP_LOGD(TAG, "Button press event received; triggering click");
                 beep_click();
             }
             else if (evt.action == EVENT_ACTION_ERROR)

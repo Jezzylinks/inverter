@@ -1558,7 +1558,11 @@ void init_hardware(void)
         battery.soh = battery.storage.soh;
     }
 
-    buzzer_init();
+    const esp_err_t buzzer_err = buzzer_init();
+    if (buzzer_err != ESP_OK) {
+        ESP_LOGE(APP_TAG, "Buzzer unavailable; continuing without audio: %s",
+                 esp_err_to_name(buzzer_err));
+    }
 
     // ==========================================================
     // Initialize System State
@@ -3986,13 +3990,11 @@ void post_button_click_event(void)
     evt.priority = EVENT_PRIORITY_LOW;
     evt.timestamp = xTaskGetTickCount();
 
-    /* Use the same subscriber pipeline as the other button events. The
-     * direct notification remains a fallback for a temporarily unavailable
-     * or full buzzer queue, so a click can never be silently discarded. */
-    if (!event_dispatcher_send(EVENT_SUB_BUZZER, &evt)) {
-        buzzer_button_click();
+    if (!system_event_post(&evt)) {
+        ESP_LOGW(APP_TAG, "Failed to post button press event to dispatcher");
+    } else {
+        ESP_LOGD(APP_TAG, "Button press event posted to dispatcher");
     }
-    (void)event_dispatcher_send(EVENT_SUB_LCD, &evt);
 }
 
 static void post_inverter_power_event(bool powered_on)
@@ -7117,15 +7119,6 @@ void app_main(void)
     restore_from_deep_sleep();
     log_all_error_flags(sys_state.error.error_flags);
     task_watchdog_feed();
-    esp_err_t ret = app_buttons_init();
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(APP_TAG, "FATAL: button init");
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        esp_restart();
-        return;
-    }
-
     vTaskDelay(pdMS_TO_TICKS(2000));
     task_watchdog_feed();
     lcd_power_init();
@@ -7151,6 +7144,18 @@ void app_main(void)
     xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 4096, NULL, 5, NULL, 0);
     xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, 0);
     xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 4096, NULL, 9, NULL, 0);
+
+    /* Button callbacks post into the central event queue. Start all consumers
+     * before enabling physical inputs so no press can race task creation. */
+    esp_err_t ret = app_buttons_init();
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(APP_TAG, "FATAL: button init");
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        esp_restart();
+        return;
+    }
+
     if (!task_watchdog_start_supervisor()) {
         ESP_LOGE(APP_TAG, "Failed to start watchdog health supervisor");
     }
