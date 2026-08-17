@@ -926,37 +926,67 @@ static void draw_wifi_network_details(const lcd_wifi_network_detail_data_t *d)
     }
 }
 
+static char wifi_password_display_char(char current)
+{
+    /* A visible placeholder keeps the initial space character distinguishable
+     * on a monochrome LCD; the actual selected character is shown in the C:
+     * field on the second row. */
+    return current == ' ' ? '_' : (current ? current : '_');
+}
+
+static void format_wifi_password_positions(char *out, size_t out_len,
+                                           const lcd_wifi_password_data_t *d)
+{
+    const size_t field_width = LCD_COLS > 2U ? LCD_COLS - 2U : 1U;
+    const size_t cursor = d->length;
+    const size_t start = cursor >= field_width ? cursor - field_width + 1U : 0U;
+    const char current = wifi_password_display_char(d->current_char);
+
+    if (out_len == 0U) {
+        return;
+    }
+    memset(out, '.', out_len);
+    out[0] = '[';
+    if (out_len > 1U) {
+        const size_t drawable = out_len - 2U < field_width ? out_len - 2U : field_width;
+        for (size_t column = 0U; column < drawable; ++column) {
+            const size_t position = start + column;
+            if (position < d->length) {
+                out[column + 1U] = '*';
+            } else if (position == cursor && position < LCD_WIFI_PASSWORD_MAX_LEN) {
+                out[column + 1U] = current;
+            } else {
+                out[column + 1U] = '.';
+            }
+        }
+        out[drawable + 1U] = ']';
+        out[drawable + 2U] = '\0';
+    } else {
+        out[1] = '\0';
+    }
+}
+
 static void draw_wifi_password(const lcd_wifi_password_data_t *d)
 {
-    char masked[LCD_WIFI_PASSWORD_MAX_LEN + 1U] = {0};
-    const uint8_t visible = d->length < LCD_WIFI_PASSWORD_MAX_LEN
-                                ? d->length : LCD_WIFI_PASSWORD_MAX_LEN;
-    for (uint8_t i = 0U; i < visible; ++i) {
-        masked[i] = '*';
-    }
-    masked[visible] = '\0';
+    char positions[LCD_LINE_SIZE] = {0};
+    format_wifi_password_positions(positions, sizeof(positions), d);
+    const unsigned position = d->length < LCD_WIFI_PASSWORD_MAX_LEN
+                                  ? (unsigned)d->length + 1U
+                                  : (unsigned)LCD_WIFI_PASSWORD_MAX_LEN;
+    const char current = wifi_password_display_char(d->current_char);
 
     if (lcd_geometry_is_20x4()) {
         char rows[4][LCD_LINE_SIZE];
-        snprintf(rows[0], LCD_LINE_SIZE, "WI-FI PASSWORD");
-        snprintf(rows[1], LCD_LINE_SIZE, "SSID: %-14.14s", d->ssid);
-        snprintf(rows[2], LCD_LINE_SIZE, "Pass:%-10.10s [%c]", masked,
-                 d->current_char ? d->current_char : ' ');
-        snprintf(rows[3], LCD_LINE_SIZE, "UP/DN CHAR 2X=GO");
+        snprintf(rows[0], LCD_LINE_SIZE, "%-20.20s", positions);
+        snprintf(rows[1], LCD_LINE_SIZE, "P:%02u C:%c HOLD=GO", position, current);
+        snprintf(rows[2], LCD_LINE_SIZE, "SSID:%-15.15s", d->ssid);
+        snprintf(rows[3], LCD_LINE_SIZE, "UP/DN CHAR HOLD=GO");
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
         draw_commit_rows(row_ptrs);
     } else {
-        char row0[LCD_LINE_SIZE];
         char row1[LCD_LINE_SIZE];
-        const unsigned password_length = d->length > LCD_WIFI_PASSWORD_MAX_LEN
-                                             ? LCD_WIFI_PASSWORD_MAX_LEN
-                                             : d->length;
-        snprintf(row0, LCD_LINE_SIZE, "P:%-14.14s", masked);
-        /* Keep the 16-column password prompt within the row buffer while
-         * making the double-click submit gesture visible. */
-        snprintf(row1, LCD_LINE_SIZE, "[%c] %02u/63 2X=GO",
-                 d->current_char ? d->current_char : ' ', password_length);
-        draw_commit(row0, row1);
+        snprintf(row1, LCD_LINE_SIZE, "P:%02u C:%c HOLD=GO", position, current);
+        draw_commit(positions, row1);
     }
 }
 

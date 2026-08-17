@@ -886,68 +886,9 @@ void app_services_show_wifi_network_details(uint8_t selected_index)
     lcd_show_wifi_network_details(ssid, rssi, channel, authmode);
 }
 
-esp_err_t app_services_wifi_connect_selected(uint8_t selected_index)
-{
-    char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
-    int8_t selected_rssi = -127;
-    LCD_LOCK();
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS) {
-        strncpy(ssid, sys_lcd.wifi_network_detail.ssid, sizeof(ssid) - 1U);
-        selected_rssi = sys_lcd.wifi_network_detail.rssi;
-    } else if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN &&
-               sys_lcd.wifi_scan.stage == LCD_WIFI_SCAN_COMPLETE &&
-               selected_index < sys_lcd.wifi_scan.count) {
-        strncpy(ssid, sys_lcd.wifi_scan.ssid[selected_index], sizeof(ssid) - 1U);
-        selected_rssi = sys_lcd.wifi_scan.rssi[selected_index];
-    } else {
-        LCD_UNLOCK();
-        return ESP_ERR_INVALID_STATE;
-    }
-    LCD_UNLOCK();
-
-    const char *password = NULL;
-    wifi_credentials_t saved = {0};
-    if (WIFI_COMPILED_STA_SSID[0] != '\0' &&
-        strncmp(ssid, WIFI_COMPILED_STA_SSID, sizeof(ssid)) == 0) {
-        password = WIFI_COMPILED_STA_PASSWORD;
-    } else if (wifi_storage_load_credentials(&saved) == ESP_OK &&
-               strncmp(ssid, saved.ssid, sizeof(ssid)) == 0) {
-        password = saved.password;
-    }
-
-    if (password == NULL) {
-        lcd_show_wifi_password(ssid, selected_rssi);
-        return ESP_ERR_INVALID_STATE;
-    }
-    return app_services_wifi_connect_network_with_rssi(ssid, password, selected_rssi);
-}
-
-esp_err_t app_services_wifi_submit_password(void)
-{
-    char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
-    char password[LCD_WIFI_PASSWORD_MAX_LEN + 1U] = {0};
-    int8_t rssi = -127;
-    LCD_LOCK();
-    if (sys_lcd.screen != LCD_SCREEN_WIFI_PASSWORD) {
-        LCD_UNLOCK();
-        return ESP_ERR_INVALID_STATE;
-    }
-    strncpy(ssid, sys_lcd.wifi_password.ssid, sizeof(ssid) - 1U);
-    strncpy(password, sys_lcd.wifi_password.password, sizeof(password) - 1U);
-    rssi = sys_lcd.wifi_password.rssi;
-    LCD_UNLOCK();
-    return app_services_wifi_connect_network_with_rssi(ssid, password, rssi);
-}
-
-esp_err_t app_services_wifi_connect_network(const char *ssid,
-                                               const char *password)
-{
-    return app_services_wifi_connect_network_with_rssi(ssid, password, -127);
-}
-
-esp_err_t app_services_wifi_connect_network_with_rssi(const char *ssid,
-                                                      const char *password,
-                                                      int8_t rssi)
+static esp_err_t app_services_wifi_connect_network_with_authmode(
+    const char *ssid, const char *password, int8_t rssi,
+    wifi_auth_mode_t authmode)
 {
     if (ssid == NULL || ssid[0] == '\0' || password == NULL ||
         strlen(ssid) > WIFI_MAX_SSID_LEN || strlen(password) > 63U) {
@@ -969,6 +910,7 @@ esp_err_t app_services_wifi_connect_network_with_rssi(const char *ssid,
     }
     strncpy(config.ssid, ssid, sizeof(config.ssid) - 1U);
     strncpy(config.password, password, sizeof(config.password) - 1U);
+    config.authmode = authmode;
     err = wifi_manager_set_config(&config);
     if (err != ESP_OK) {
         lcd_flash_message("Network Invalid", "Try again", 1400U);
@@ -988,6 +930,77 @@ esp_err_t app_services_wifi_connect_network_with_rssi(const char *ssid,
         lcd_show_wifi_result(false, true, false, ssid, rssi, "Connect failed");
     }
     return err;
+}
+
+esp_err_t app_services_wifi_connect_selected(uint8_t selected_index)
+{
+    char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
+    int8_t selected_rssi = -127;
+    uint8_t authmode = (uint8_t)WIFI_AUTH_OPEN;
+    LCD_LOCK();
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS) {
+        strncpy(ssid, sys_lcd.wifi_network_detail.ssid, sizeof(ssid) - 1U);
+        selected_rssi = sys_lcd.wifi_network_detail.rssi;
+        authmode = sys_lcd.wifi_network_detail.authmode;
+    } else if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN &&
+               sys_lcd.wifi_scan.stage == LCD_WIFI_SCAN_COMPLETE &&
+               selected_index < sys_lcd.wifi_scan.count) {
+        strncpy(ssid, sys_lcd.wifi_scan.ssid[selected_index], sizeof(ssid) - 1U);
+        selected_rssi = sys_lcd.wifi_scan.rssi[selected_index];
+        authmode = sys_lcd.wifi_scan.authmode[selected_index];
+    } else {
+        LCD_UNLOCK();
+        return ESP_ERR_INVALID_STATE;
+    }
+    LCD_UNLOCK();
+
+    if ((wifi_auth_mode_t)authmode == WIFI_AUTH_OPEN) {
+        return app_services_wifi_connect_network_with_authmode(
+            ssid, "", selected_rssi, WIFI_AUTH_OPEN);
+    }
+
+    lcd_show_wifi_password(ssid, selected_rssi, authmode);
+    return ESP_ERR_INVALID_STATE;
+}
+
+esp_err_t app_services_wifi_submit_password(void)
+{
+    char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
+    char password[LCD_WIFI_PASSWORD_MAX_LEN + 1U] = {0};
+    int8_t rssi = -127;
+    uint8_t authmode = (uint8_t)WIFI_AUTH_OPEN;
+    LCD_LOCK();
+    if (sys_lcd.screen != LCD_SCREEN_WIFI_PASSWORD) {
+        LCD_UNLOCK();
+        return ESP_ERR_INVALID_STATE;
+    }
+    strncpy(ssid, sys_lcd.wifi_password.ssid, sizeof(ssid) - 1U);
+    strncpy(password, sys_lcd.wifi_password.password, sizeof(password) - 1U);
+    rssi = sys_lcd.wifi_password.rssi;
+    authmode = sys_lcd.wifi_password.authmode;
+    LCD_UNLOCK();
+
+    if (password[0] == '\0') {
+        lcd_flash_message("ENTER PASSWORD", "Hold=submit", 1200U);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    return app_services_wifi_connect_network_with_authmode(
+        ssid, password, rssi, (wifi_auth_mode_t)authmode);
+}
+
+esp_err_t app_services_wifi_connect_network(const char *ssid,
+                                               const char *password)
+{
+    return app_services_wifi_connect_network_with_rssi(ssid, password, -127);
+}
+
+esp_err_t app_services_wifi_connect_network_with_rssi(const char *ssid,
+                                                      const char *password,
+                                                      int8_t rssi)
+{
+    return app_services_wifi_connect_network_with_authmode(
+        ssid, password, rssi, INVERTER_WIFI_AUTH_MODE);
 }
 
 esp_err_t app_services_wifi_connect_saved(void)

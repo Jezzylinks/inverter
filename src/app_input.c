@@ -248,7 +248,7 @@ static void handle_wifi_password_append(void)
 static void handle_wifi_password_submit(void)
 {
     const esp_err_t err = app_services_wifi_submit_password();
-    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN && err != ESP_ERR_INVALID_STATE) {
         lcd_flash_message("Connect failed", "Try again", 1200U);
     }
 }
@@ -774,7 +774,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
     if (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD) {
         if (event_info->event == BUTTON_EVENT_CLICK) {
             handle_wifi_password_append();
-        } else if (event_info->event == BUTTON_EVENT_DOUBLE_CLICK) {
+        } else if (event_info->event == BUTTON_EVENT_LONG_PRESS) {
             handle_wifi_password_submit();
         }
         return;
