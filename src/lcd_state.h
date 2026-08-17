@@ -31,6 +31,7 @@ extern "C"
         LCD_SCREEN_DIAGNOSTIC,
         LCD_SCREEN_SETTINGS_VIEW,
         LCD_SCREEN_STARTUP_SEQ,
+        LCD_SCREEN_STARTUP_STATUS,
         LCD_SCREEN_SHUTDOWN_SEQ,
         LCD_SCREEN_FAULT,
         LCD_SCREEN_FACTORY_RESET,
@@ -71,6 +72,7 @@ extern "C"
         MAIN_SUB_OUTPUT = 0,
         MAIN_SUB_BATTERY,
         MAIN_SUB_SYSTEM,
+        MAIN_SUB_NETWORK,
         MAIN_SUB_COUNT
     } main_sub_page_t;
 
@@ -174,6 +176,28 @@ extern "C"
     {
         uint8_t progress_pct;
     } lcd_startup_data_t;
+
+    typedef enum
+    {
+        LCD_STARTUP_STAGE_HARDWARE = 0,
+        LCD_STARTUP_STAGE_POWER,
+        LCD_STARTUP_STAGE_NETWORK,
+        LCD_STARTUP_STAGE_SERVICES,
+        LCD_STARTUP_STAGE_SELF_CHECK,
+        LCD_STARTUP_STAGE_READY,
+        LCD_STARTUP_STAGE_COUNT,
+    } lcd_startup_stage_t;
+
+    typedef struct
+    {
+        lcd_startup_stage_t stage;
+        uint32_t stage_started_ms;
+        bool post_complete;
+        bool post_passed;
+        bool lcd_ok;
+        bool adc_ok;
+        bool fan_ok;
+    } lcd_startup_status_data_t;
 
     typedef struct
     {
@@ -330,6 +354,7 @@ extern "C"
         lcd_detail_data_t diagnostic;
         lcd_detail_data_t settings_view;
         lcd_startup_data_t startup;
+        lcd_startup_status_data_t startup_status;
         lcd_shutdown_data_t shutdown;
         lcd_fault_data_t fault;
         factory_reset_ctx_t factory_reset;

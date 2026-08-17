@@ -114,6 +114,7 @@ void lcd_main_next_page(void)
     if (sys_lcd.screen == LCD_SCREEN_MAIN) {
         sys_lcd.main.sub_page =
             (main_sub_page_t)((sys_lcd.main.sub_page + 1U) % MAIN_SUB_COUNT);
+        sys_lcd.main.sub_page_last_change_ms = _lcd_get_time_ms();
     }
     LCD_UNLOCK();
 }
@@ -207,6 +208,28 @@ void lcd_show_startup_progress(uint8_t pct)
     LCD_LOCK();
     sys_lcd.screen = LCD_SCREEN_STARTUP_SEQ;
     sys_lcd.startup.progress_pct = pct;
+    LCD_UNLOCK();
+}
+
+void lcd_show_startup_status(lcd_startup_stage_t stage, bool post_complete,
+                             bool post_passed, bool lcd_ok, bool adc_ok,
+                             bool fan_ok)
+{
+    LCD_LOCK();
+    lcd_startup_status_data_t *status = &sys_lcd.startup_status;
+    const uint32_t now = _lcd_get_time_ms();
+    if (status->stage != stage) {
+        status->stage_started_ms = now;
+    } else if (status->stage_started_ms == 0U) {
+        status->stage_started_ms = now;
+    }
+    status->stage = stage;
+    status->post_complete = post_complete;
+    status->post_passed = post_passed;
+    status->lcd_ok = lcd_ok;
+    status->adc_ok = adc_ok;
+    status->fan_ok = fan_ok;
+    sys_lcd.screen = LCD_SCREEN_STARTUP_STATUS;
     LCD_UNLOCK();
 }
 
@@ -653,7 +676,8 @@ bool lcd_is_startup_active(void)
              sys_lcd.screen == LCD_SCREEN_BOOT_BRAND ||
              sys_lcd.screen == LCD_SCREEN_BOOT_INIT ||
              sys_lcd.screen == LCD_SCREEN_LOADING ||
-             sys_lcd.screen == LCD_SCREEN_STARTUP_SEQ;
+             sys_lcd.screen == LCD_SCREEN_STARTUP_SEQ ||
+             sys_lcd.screen == LCD_SCREEN_STARTUP_STATUS;
     LCD_UNLOCK();
     return active;
 }

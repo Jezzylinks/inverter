@@ -84,6 +84,9 @@ void lcd_show_settings_view_detail(const char *label, const char *value_str);
 
 /* ── Inverter sequences ──────────────────────────────────────────────────── */
 void lcd_show_startup_progress(uint8_t pct);
+void lcd_show_startup_status(lcd_startup_stage_t stage, bool post_complete,
+                             bool post_passed, bool lcd_ok, bool adc_ok,
+                             bool fan_ok);
 void lcd_show_shutdown_progress(uint8_t pct, bool load_warn, float load_a);
 
 /* ── Faults ──────────────────────────────────────────────────────────────── */

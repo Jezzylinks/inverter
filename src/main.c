@@ -4038,7 +4038,8 @@ static void post_show_result_and_notify(post_result_t result)
 {
     if (result.all_passed)
     {
-        lcd_flash_info("Self-Test OK    ", "                ", 1500);
+        lcd_show_startup_status(LCD_STARTUP_STAGE_HARDWARE, true, true,
+                                result.lcd_ok, result.adc_ok, result.fan_ok);
         return;
     }
 

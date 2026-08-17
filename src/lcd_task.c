@@ -16,6 +16,9 @@
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "esp_system.h"
+#include "esp_random.h"
+#include "esp_netif.h"
 #include "lcd.h"
 #include <string.h>
 #include <stdio.h>
@@ -30,6 +33,8 @@
 #include "utility/led.h"
 #include "events/event_dispatcher.h"
 #include "hardware_config.h"
+#include "wifi/wifi_monitor.h"
+#include "server/network_services.h"
 
 #define BOOT_TOTAL_STEPS 3
 
@@ -52,8 +57,15 @@ extern led_pattern_t pattern;
 #define LCD_BLINK_INTERVAL_MS 500
 #define LCD_FLASH_QUEUE_DEPTH 4
 #define SYSTEM_STARTUP_DISPLAY_DURATION_MS 1500U
+#define LCD_STARTUP_IDENTITY_DURATION_MS 1200U
+#define LCD_STARTUP_LOADING_MIN_MS 1800U
+#define LCD_STARTUP_LOADING_MAX_MS 3600U
+#define LCD_STARTUP_STAGE_DURATION_MS 850U
+#define LCD_STARTUP_READY_DURATION_MS 1100U
 
 static uint8_t loading_progress(uint32_t elapsed, uint32_t duration);
+static uint32_t s_loading_duration_ms;
+static uint32_t s_identity_started_ms;
 
 static const char *TAG = "LCD_TASK";
 
@@ -114,7 +126,7 @@ static void draw_commit(const char *r0, const char *r1)
     draw_commit_rows(rows);
 }
 
-static void draw_row(uint8_t row, const char *text)
+static void __attribute__((unused)) draw_row(uint8_t row, const char *text)
 {
     if (row >= lcd_geometry_rows())
         return;
@@ -299,19 +311,14 @@ static void draw_main(lcd_main_data_t *m)
         }
         else
         {
-            snprintf(rows[0], LCD_LINE_SIZE, "INV 5.0kW %-3s %.5s", state, wifi);
-            snprintf(rows[1], LCD_LINE_SIZE, "PV:%4.2fkW BAT:%3u%%",
+            snprintf(rows[0], LCD_LINE_SIZE, "PV %4.2fkW BAT %3u%%",
                      m->pv_power_kw, (unsigned)m->battery_pct);
-            snprintf(rows[2], LCD_LINE_SIZE, "LD:%4.2fkW GR:%4.2fkW",
-                     m->load_power_kw, m->grid_power_kw);
-            /* Keep battery telemetry on the default home page. The voltage
-             * is already scaled by the selected 12/24/48 V system before it
-             * reaches this renderer. */
-            char remaining[12];
-            format_battery_time(remaining, sizeof(remaining),
-                                m->battery_remaining_minutes);
-            snprintf(rows[3], LCD_LINE_SIZE, "BAT:%4.1fV T:%5.5s",
-                     m->battery_voltage, remaining);
+            snprintf(rows[1], LCD_LINE_SIZE, "BAT %4.1fV LOAD %4.2f",
+                     m->battery_voltage, m->load_power_kw);
+            snprintf(rows[2], LCD_LINE_SIZE, "AC %3uV %2.0fHz %-3.3s",
+                     ac_voltage, m->output_frequency, state);
+            snprintf(rows[3], LCD_LINE_SIZE, "WIFI %-4.4s %4ddBm",
+                     m->wifi_connected ? "ON" : "OFF", (int)m->wifi_rssi);
         }
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
         draw_commit_rows(row_ptrs);
@@ -342,6 +349,22 @@ static void draw_main(lcd_main_data_t *m)
             break;
         }
         case MAIN_SUB_SYSTEM:
+            snprintf(r0, LCD_LINE_SIZE, "INV:%-3s T:%3.0fC",
+                     m->inverter_active ? "ON" : "OFF",
+                     m->battery_temperature);
+            snprintf(r1, LCD_LINE_SIZE, "AC:%3.0fV %2.0fHz",
+                     m->ac_voltage, m->output_frequency);
+            break;
+        case MAIN_SUB_NETWORK:
+            snprintf(r0, LCD_LINE_SIZE, "WIFI %-6.6s %-.4s",
+                     m->wifi_connected ? "ONLINE" : "OFF",
+                     m->wifi_connected ? wifi + 1 : "-");
+            if (m->wifi_connected && m->wifi_rssi > -127) {
+                snprintf(r1, LCD_LINE_SIZE, "RSSI %4ddBm", (int)m->wifi_rssi);
+            } else {
+                snprintf(r1, LCD_LINE_SIZE, "RSSI       --");
+            }
+            break;
         default:
             snprintf(r0, LCD_LINE_SIZE, "INV:%s AC:%s  ",
                      m->inverter_active ? "ON " : "OFF",
@@ -756,6 +779,162 @@ static void draw_ota(const lcd_ota_data_t *d)
         break;
     }
     draw_commit(row0, row1);
+}
+
+static void draw_startup_identity(void)
+{
+    if (lcd_geometry_is_20x4()) {
+        draw_commit_rows((const char *[]){"", "   JEZZYLINKS", " SOLAR INVERTER", ""});
+    } else {
+        draw_commit("   JEZZYLINKS", " SOLAR INVERTER");
+    }
+}
+
+static const char *startup_result_label(bool complete, bool ok)
+{
+    if (!complete) {
+        return "WAIT";
+    }
+    return ok ? "OK" : "FAIL";
+}
+
+static void format_startup_ip(char *out, size_t out_len,
+                              const wifi_monitor_status_t *wifi)
+{
+    if (!out || out_len == 0U) {
+        return;
+    }
+    if (!wifi || !wifi->got_ip) {
+        snprintf(out, out_len, "WAIT");
+        return;
+    }
+    snprintf(out, out_len, IPSTR, IP2STR(&wifi->ip));
+}
+
+static void draw_startup_status(const lcd_render_state_t *snap)
+{
+    const lcd_startup_status_data_t *d = &snap->startup_status;
+    const uint32_t elapsed = _lcd_get_time_ms() - d->stage_started_ms;
+    const wifi_monitor_status_t *wifi = wifi_monitor_get_status();
+    char ip[20] = {0};
+    format_startup_ip(ip, sizeof(ip), wifi);
+
+    if (d->stage == LCD_STARTUP_STAGE_HARDWARE) {
+        const char *lcd_result = startup_result_label(d->post_complete, d->lcd_ok);
+        const char *sensor_result = startup_result_label(
+            d->post_complete, d->adc_ok && d->fan_ok);
+        if (lcd_geometry_is_20x4()) {
+            char rows[4][LCD_LINE_SIZE];
+            snprintf(rows[0], LCD_LINE_SIZE, "HARDWARE CHECK");
+            snprintf(rows[1], LCD_LINE_SIZE, "MCU       ESP32 OK");
+            snprintf(rows[2], LCD_LINE_SIZE, "LCD        %-4.4s", lcd_result);
+            snprintf(rows[3], LCD_LINE_SIZE, "SENSORS    %-4.4s", sensor_result);
+            draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
+        } else if ((elapsed / 600U) % 2U == 0U) {
+            draw_commit("HARDWARE CHECK", "MCU ESP32   OK");
+        } else {
+            char row[ LCD_LINE_SIZE ];
+            snprintf(row, sizeof(row), "LCD %-4.4s F%-4.4s",
+                     lcd_result, d->fan_ok ? "OK" : (d->post_complete ? "FAIL" : "WAIT"));
+            draw_commit("HARDWARE CHECK", row);
+        }
+        return;
+    }
+
+    if (d->stage == LCD_STARTUP_STAGE_POWER) {
+        const bool battery_valid = snap->main.battery_voltage > 0.1f;
+        const unsigned pct = snap->main.battery_pct;
+        const char *inv = snap->main.inverter_active ? "ON" : "READY";
+        if (lcd_geometry_is_20x4()) {
+            char rows[4][LCD_LINE_SIZE];
+            snprintf(rows[0], LCD_LINE_SIZE, "POWER SYSTEM");
+            snprintf(rows[1], LCD_LINE_SIZE, "BAT %s",
+                     battery_valid ? "MEASURED" : "WAITING");
+            if (battery_valid) {
+                snprintf(rows[1], LCD_LINE_SIZE, "BAT %4.1fV %3u%%",
+                         snap->main.battery_voltage, pct);
+            }
+            snprintf(rows[2], LCD_LINE_SIZE, "INV       %-6.6s", inv);
+            snprintf(rows[3], LCD_LINE_SIZE, "OUTPUT    %-6.6s",
+                     snap->main.inverter_active ? "ON" : "OFF");
+            draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
+        } else {
+            char row[ LCD_LINE_SIZE ];
+            if (battery_valid) {
+                snprintf(row, sizeof(row), "BAT %4.1fV %3u%%",
+                         snap->main.battery_voltage, pct);
+            } else {
+                snprintf(row, sizeof(row), "BAT WAIT INV %-.3s", inv);
+            }
+            draw_commit("POWER SYSTEM", row);
+        }
+        return;
+    }
+
+    if (d->stage == LCD_STARTUP_STAGE_NETWORK) {
+        const bool connected = wifi && wifi->connected;
+        const char *state = connected ? "CONNECTED" :
+                            (wifi && wifi->got_ip ? "ONLINE" : "WAITING");
+        const int rssi = wifi ? (int)wifi->rssi : -127;
+        const char *bars = connected ? rssi_bars((int8_t)rssi) : "-";
+        if (lcd_geometry_is_20x4()) {
+            char rows[4][LCD_LINE_SIZE];
+            snprintf(rows[0], LCD_LINE_SIZE, "NETWORK");
+            snprintf(rows[1], LCD_LINE_SIZE, "WiFi %-9.9s %s", state, bars);
+            snprintf(rows[2], LCD_LINE_SIZE, "RSSI %4d dBm", rssi);
+            snprintf(rows[3], LCD_LINE_SIZE, "IP %-16.16s", ip);
+            draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
+        } else if ((elapsed / 700U) % 2U == 0U) {
+            char row[ LCD_LINE_SIZE ];
+            snprintf(row, sizeof(row), "WiFi %-9.9s %s", state, bars);
+            draw_commit("NETWORK", row);
+        } else {
+            draw_commit("WiFi IP", ip);
+        }
+        return;
+    }
+
+    if (d->stage == LCD_STARTUP_STAGE_SERVICES) {
+        network_services_status_t services = {0};
+        network_services_get_status(&services);
+        if (lcd_geometry_is_20x4()) {
+            char rows[4][LCD_LINE_SIZE];
+            snprintf(rows[0], LCD_LINE_SIZE, "SERVICES");
+            snprintf(rows[1], LCD_LINE_SIZE, "HTTP       %-6.6s", services.http_running ? "ONLINE" : "WAIT");
+            snprintf(rows[2], LCD_LINE_SIZE, "WebSocket  %-6.6s", services.websocket_running ? "ONLINE" : "WAIT");
+            snprintf(rows[3], LCD_LINE_SIZE, "mDNS %-4.4s MQTT %-4.4s",
+                     services.mdns_running ? "OK" : "WAIT",
+                     services.mqtt_connected ? "OK" : (services.mqtt_configured ? "WAIT" : "OFF"));
+            draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
+        } else if ((elapsed / 700U) % 2U == 0U) {
+            draw_commit("SERVICES", services.http_running ? "HTTP       OK" : "HTTP      WAIT");
+        } else {
+            char row[ LCD_LINE_SIZE ];
+            snprintf(row, sizeof(row), "M:%-4.4s D:%-4.4s",
+                     services.mqtt_connected ? "OK" : (services.mqtt_configured ? "WAIT" : "OFF"),
+                     services.mdns_running ? "OK" : "WAIT");
+            draw_commit("SERVICES", row);
+        }
+        return;
+    }
+
+    if (d->stage == LCD_STARTUP_STAGE_SELF_CHECK) {
+        const char *result = d->post_complete ? (d->post_passed ? "OK" : "FAIL") : "WAIT";
+        if (lcd_geometry_is_20x4()) {
+            draw_commit_rows((const char *[]){"SYSTEM SELF-CHECK", "POWER      OK", "CONTROL    OK", result});
+        } else if ((elapsed / 650U) % 2U == 0U) {
+            draw_commit("SYSTEM CHECK", "POWER      OK");
+        } else {
+            draw_commit("SYSTEM CHECK", result);
+        }
+        return;
+    }
+
+    if (lcd_geometry_is_20x4()) {
+        draw_commit_rows((const char *[]){"", "  SYSTEM READY OK", "", "  INVERTER ONLINE"});
+    } else {
+        draw_commit("SYSTEM READY OK", "INVERTER ONLINE");
+    }
 }
 
 static const char *startup_stage_label(uint8_t pct)
@@ -1688,8 +1867,21 @@ void lcd_task(void *arg)
             snap.screen = LCD_SCREEN_FLASH_MSG;
 
         /* ====== STEP 5: MAIN PAGE ROTATION ======
-         * Deliberately disabled. The Enter button owns page changes so the
-         * operator can read a stable dashboard without timed scrolling. */
+         * The compact 16×2 dashboard rotates slowly because it cannot show
+         * all important measurements at once. The richer 20×4 dashboard stays
+         * stable and remains manually pageable with Enter. */
+        if (!lcd_geometry_is_20x4() && snap.screen == LCD_SCREEN_MAIN) {
+            const uint32_t now = _lcd_get_time_ms();
+            if (snap.main.sub_page_last_change_ms == 0U) {
+                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+                sys_lcd.main.sub_page_last_change_ms = now;
+                xSemaphoreGive(sys_state_mutex);
+            } else if (now - snap.main.sub_page_last_change_ms >=
+                       (snap.main.sub_page_interval_ms ?
+                        snap.main.sub_page_interval_ms : 6000U)) {
+                lcd_main_next_page();
+            }
+        }
         /* ====== STEP 6: SCREEN CHANGE DETECTION ====== */
         if (snap.screen != last_screen)
         {
@@ -1708,10 +1900,22 @@ void lcd_task(void *arg)
         switch (snap.screen)
         {
         case LCD_SCREEN_BOOT_BRAND:
-            /* No splash logo: move directly into functional startup status. */
-            lcd_show_loading("System Starting",
-                             SYSTEM_STARTUP_DISPLAY_DURATION_MS,
-                             LCD_SCREEN_MAIN);
+            if (s_identity_started_ms == 0U) {
+                s_identity_started_ms = _lcd_get_time_ms();
+            }
+            draw_startup_identity();
+            if (_lcd_get_time_ms() - s_identity_started_ms >= LCD_STARTUP_IDENTITY_DURATION_MS) {
+                if (s_loading_duration_ms == 0U) {
+                    const uint32_t span = LCD_STARTUP_LOADING_MAX_MS -
+                                          LCD_STARTUP_LOADING_MIN_MS + 1U;
+                    s_loading_duration_ms = LCD_STARTUP_LOADING_MIN_MS +
+                                            (esp_random() % span);
+                }
+                /* Preserve the existing loading renderer and animation; only
+                 * the selected minimum display duration varies per boot. */
+                lcd_show_loading("System Starting", s_loading_duration_ms,
+                                 LCD_SCREEN_STARTUP_STATUS);
+            }
             break;
 
         case LCD_SCREEN_MAIN:
@@ -1741,6 +1945,35 @@ void lcd_task(void *arg)
         case LCD_SCREEN_STARTUP_SEQ:
             draw_startup(&snap.startup);
             break;
+
+        case LCD_SCREEN_STARTUP_STATUS:
+        {
+            draw_startup_status(&snap);
+            const lcd_startup_stage_t stage = snap.startup_status.stage;
+            const uint32_t elapsed = _lcd_get_time_ms() -
+                                     snap.startup_status.stage_started_ms;
+            const bool post_ready = snap.startup_status.post_complete;
+            const bool can_advance = post_ready ||
+                                     (stage != LCD_STARTUP_STAGE_HARDWARE &&
+                                      stage != LCD_STARTUP_STAGE_SELF_CHECK);
+            const uint32_t duration = stage == LCD_STARTUP_STAGE_READY
+                                           ? LCD_STARTUP_READY_DURATION_MS
+                                           : LCD_STARTUP_STAGE_DURATION_MS;
+            if (can_advance && elapsed >= duration) {
+                if (stage == LCD_STARTUP_STAGE_READY) {
+                    lcd_boot_complete();
+                } else {
+                    lcd_show_startup_status(
+                        (lcd_startup_stage_t)((stage + 1U) % LCD_STARTUP_STAGE_COUNT),
+                        snap.startup_status.post_complete,
+                        snap.startup_status.post_passed,
+                        snap.startup_status.lcd_ok,
+                        snap.startup_status.adc_ok,
+                        snap.startup_status.fan_ok);
+                }
+            }
+            break;
+        }
 
         case LCD_SCREEN_SHUTDOWN_SEQ:
             draw_shutdown(&snap.shutdown);
@@ -1833,7 +2066,18 @@ void lcd_task(void *arg)
                     ESP_LOGI(TAG, "Flash updated: '%s' / '%s'",
                              flash.line0, flash.line1);
                 }
-                draw_commit(flash.line0, flash.line1);
+                if (flash.priority == FLASH_PRI_WARNING) {
+                    if (lcd_geometry_is_20x4()) {
+                        draw_commit_rows((const char *[]){"SYSTEM WARNING",
+                                                           flash.line0,
+                                                           flash.line1,
+                                                           "CHECK SYSTEM"});
+                    } else {
+                        draw_commit("SYSTEM WARNING", flash.line1);
+                    }
+                } else {
+                    draw_commit(flash.line0, flash.line1);
+                }
             }
             break;
         }
