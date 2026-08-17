@@ -86,17 +86,16 @@ static void ws_remove_client(int fd)
     }
 }
 
-/*----------------------------------------------------------
- * Broadcast status to all connected clients
- *---------------------------------------------------------*/
-void websocket_broadcast_status(const wifi_status_t *status)
+static cJSON *status_json_create(const wifi_status_t *status)
 {
-    if (!s_initialized || status == NULL || s_server == NULL)
-    {
-        return;
+    if (status == NULL) {
+        return NULL;
     }
 
     cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        return NULL;
+    }
     cJSON_AddStringToObject(root, "type", "status");
 
     const char *state_str = "unknown";
@@ -134,10 +133,22 @@ void websocket_broadcast_status(const wifi_status_t *status)
     char ip_str[16];
     snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&status->ip));
     cJSON_AddStringToObject(root, "ip", ip_str);
+    return root;
+}
 
-    char *json_str = cJSON_PrintUnformatted(root);
+/*----------------------------------------------------------
+ * Broadcast status to all connected clients
+ *---------------------------------------------------------*/
+void websocket_broadcast_status(const wifi_status_t *status)
+{
+    if (!s_initialized || status == NULL || s_server == NULL)
+    {
+        return;
+    }
+
+    cJSON *root = status_json_create(status);
+    char *json_str = root ? cJSON_PrintUnformatted(root) : NULL;
     cJSON_Delete(root);
-
     if (json_str == NULL)
     {
         return;
@@ -365,11 +376,11 @@ static esp_err_t ws_handler(httpd_req_t *req)
                     }
                     else if (strcmp(cmd_str, "get_status") == 0)
                     {
-                        /* Send current status immediately */
+                        /* Request/response: reply only to the requesting client. */
                         wifi_status_t status;
                         if (wifi_events_get_status_copy(&status) == ESP_OK)
                         {
-                            websocket_broadcast_status(&status);
+                            (void)ws_send_json(fd, status_json_create(&status));
                         }
                     }
                     else if (strcmp(cmd_str, "subscribe") == 0)

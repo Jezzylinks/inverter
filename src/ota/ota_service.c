@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "esp_app_desc.h"
+#include "firmware_version.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
@@ -388,11 +388,7 @@ esp_err_t ota_service_get_current_version(char *buffer, size_t len)
     if (!buffer || len == 0U) {
         return ESP_ERR_INVALID_ARG;
     }
-    const esp_app_desc_t *app_desc = esp_app_get_description();
-    if (!app_desc) {
-        return ESP_FAIL;
-    }
-    strncpy(buffer, app_desc->version, len - 1U);
+    strncpy(buffer, INVERTER_FIRMWARE_VERSION, len - 1U);
     buffer[len - 1U] = '\0';
     return ESP_OK;
 }

@@ -10,25 +10,7 @@ extern "C" {
 #include <stdint.h>
 
 #include "esp_err.h"
-
-#define NETWORK_MQTT_BROKER_MAX 192U
-#define NETWORK_MQTT_CLIENT_ID_MAX 64U
-#define NETWORK_MQTT_USERNAME_MAX 64U
-#define NETWORK_MQTT_PASSWORD_MAX 128U
-#define NETWORK_MQTT_TOPIC_MAX 128U
-
-typedef struct {
-    bool enabled;
-    char broker_url[NETWORK_MQTT_BROKER_MAX];
-    char client_id[NETWORK_MQTT_CLIENT_ID_MAX];
-    char username[NETWORK_MQTT_USERNAME_MAX];
-    char password[NETWORK_MQTT_PASSWORD_MAX];
-    char publish_topic[NETWORK_MQTT_TOPIC_MAX];
-    char subscribe_topic[NETWORK_MQTT_TOPIC_MAX];
-    int keepalive_sec;
-    int qos;
-    bool retain;
-} network_mqtt_config_t;
+#include "mqtt/mqtt_config.h"
 
 typedef struct {
     bool http_running;

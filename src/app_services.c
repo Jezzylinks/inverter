@@ -22,7 +22,7 @@
 #include "wifi/wifi_storage.h"
 #include "wifi/wifi_config.h"
 #include "wifi/wifi_scan.h"
-#include "network_services.h"
+#include "server/network_services.h"
 #include "system_error_codes.h"
 
 #include "task_watchdog.h"

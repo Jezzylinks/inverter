@@ -4,6 +4,7 @@
  */
 
 #include "mdns_service.h"
+#include "firmware_version.h"
 #include <string.h>
 #include "mdns.h"
 #include "esp_log.h"
@@ -59,7 +60,7 @@ esp_err_t mdns_service_init(const char *hostname)
     /* Advertise inverter-specific service */
     mdns_txt_item_t inverter_txt[] = {
         {"model", "solar-inverter-v1"},
-        {"version", "1.0.0"},
+        {"version", INVERTER_FIRMWARE_VERSION},
         {"vendor", "Jezzylinks"},
     };
 

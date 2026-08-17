@@ -86,6 +86,7 @@
 #include "wifi/wifi_scan.h"
 #include "wifi/wifi_storage.h"
 #include "ota/ota_service.h"
+#include "firmware_version.h"
 #include "app_buttons.h"
 #include "app_menu.h"
 #include "app_services.h"
@@ -95,7 +96,7 @@
 #define WEATHER_API_KEY "YOUR_OPEN_WEATHER_API_KEY"
 #define CITY_NAME "Lagos"
 #define WEATHER_CHECK_INTERNAL_MS 60000
-#define FIRMWARE_VERSION "v1.0.3"
+#define FIRMWARE_VERSION INVERTER_FIRMWARE_VERSION
 #define LCD_ADDR 0x27
 #define SCROLL_DELAY_MS 300
 #define ANIM_DELAY_MS 80
