@@ -157,6 +157,33 @@ static const char *rssi_bars(int8_t rssi)
     return " ";
 }
 
+static void format_wifi_scan_row(char *out, size_t out_len, char marker,
+                                 const char *ssid, int8_t rssi)
+{
+    if (out == NULL || out_len == 0U)
+        return;
+
+    char signal[9] = {0};
+    if (rssi <= -127) {
+        snprintf(signal, sizeof(signal), "--");
+    } else if (lcd_geometry_is_20x4()) {
+        snprintf(signal, sizeof(signal), "%ddBm", (int)rssi);
+    } else {
+        /* The 16x2 layout intentionally reserves the rightmost columns for
+         * the numeric RSSI while keeping the SSID readable. */
+        snprintf(signal, sizeof(signal), "%d", (int)rssi);
+    }
+
+    const size_t cols = lcd_geometry_cols();
+    const size_t signal_width = strlen(signal);
+    const size_t ssid_width = cols > signal_width + 2U
+                                  ? cols - signal_width - 2U
+                                  : 1U;
+    snprintf(out, out_len, "%c%-*.*s %*s", marker,
+             (int)ssid_width, (int)ssid_width,
+             ssid ? ssid : "", (int)signal_width, signal);
+}
+
 /*==============================================================================
   Per-screen draw functions
 ==============================================================================*/
@@ -636,27 +663,32 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
                 for (uint8_t line = 0U; line < 2U; ++line) {
                     const uint8_t idx = d->top_index + line;
                     if (idx < d->count) {
-                        snprintf(rows[line + 1U], LCD_LINE_SIZE, "%c%-12.12s %4s",
-                                 idx == d->selected_index ? marker : ' ',
-                                 d->ssid[idx], rssi_bars(d->rssi[idx]));
+                        format_wifi_scan_row(rows[line + 1U], LCD_LINE_SIZE,
+                                             idx == d->selected_index ? marker : ' ',
+                                             d->ssid[idx], d->rssi[idx]);
                     } else {
                         snprintf(rows[line + 1U], LCD_LINE_SIZE, "%-20s", "");
                     }
                 }
             }
-            snprintf(rows[3], LCD_LINE_SIZE, "CENTER=STOP       ");
+            snprintf(rows[3], LCD_LINE_SIZE, "ENTER=STOP       ");
+        } else if (d->stage == LCD_WIFI_SCAN_FAILED) {
+            const char *failed_rows[] = {"WI-FI SCAN FAILED", "ENTER=RETRY",
+                                         "BACK=EXIT", ""};
+            draw_commit_rows(failed_rows);
+            return;
         } else if (d->count == 0U) {
-            const char *done_rows[] = {"WI-FI SCAN DONE", "NO NETWORKS FOUND",
-                                       "UP/DN RETRY", "BACK TO RETURN"};
+            const char *done_rows[] = {"NO NETWORKS FOUND", "ENTER=RETRY",
+                                       "BACK=EXIT", ""};
             draw_commit_rows(done_rows);
             return;
         } else {
             for (uint8_t line = 0U; line < 4U; ++line) {
                 const uint8_t idx = d->top_index + line;
                 if (idx < d->count) {
-                    snprintf(rows[line], LCD_LINE_SIZE, "%c%-12.12s %4s",
-                             idx == d->selected_index ? marker : ' ',
-                             d->ssid[idx], rssi_bars(d->rssi[idx]));
+                    format_wifi_scan_row(rows[line], LCD_LINE_SIZE,
+                                         idx == d->selected_index ? marker : ' ',
+                                         d->ssid[idx], d->rssi[idx]);
                 } else {
                     snprintf(rows[line], LCD_LINE_SIZE, "%-20s", "");
                 }
@@ -669,23 +701,25 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
         char row1[LCD_LINE_SIZE];
         snprintf(row0, LCD_LINE_SIZE, "SCAN %c FOUND:%02u", spin, d->count);
         if (d->count == 0U) {
-            snprintf(row1, LCD_LINE_SIZE, "ENTER STOP");
+            snprintf(row1, LCD_LINE_SIZE, "ENTER=STOP");
         } else {
             const uint8_t idx = d->selected_index < d->count ? d->selected_index : 0U;
-            snprintf(row1, LCD_LINE_SIZE, "%c%-8.8s %4.4s",
-                     marker, d->ssid[idx], rssi_bars(d->rssi[idx]));
+            format_wifi_scan_row(row1, LCD_LINE_SIZE, marker,
+                                 d->ssid[idx], d->rssi[idx]);
         }
         draw_commit(row0, row1);
+    } else if (d->stage == LCD_WIFI_SCAN_FAILED) {
+        draw_commit("SCAN FAILED", "ENTER=RETRY");
     } else if (d->count == 0U) {
-        draw_commit("SCAN DONE       ", "NO NETWORKS     ");
+        draw_commit("NO NETWORKS", "ENTER=RETRY");
     } else {
         const uint8_t idx = d->selected_index < d->count ? d->selected_index : 0U;
         char row0[LCD_LINE_SIZE];
         char row1[LCD_LINE_SIZE];
         snprintf(row0, LCD_LINE_SIZE, "NET%02u/%02u",
                  (unsigned)(idx + 1U), (unsigned)d->count);
-        snprintf(row1, LCD_LINE_SIZE, "%c%-8.8s %4.4s",
-                 marker, d->ssid[idx], rssi_bars(d->rssi[idx]));
+        format_wifi_scan_row(row1, LCD_LINE_SIZE, marker,
+                             d->ssid[idx], d->rssi[idx]);
         draw_commit(row0, row1);
     }
 }

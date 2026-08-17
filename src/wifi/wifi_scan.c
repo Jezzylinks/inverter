@@ -13,6 +13,7 @@
 #define WIFI_SCAN_TAG "WIFI_SCAN"
 
 static bool s_initialized;
+static volatile bool s_scan_active;
 static SemaphoreHandle_t s_scan_mutex;
 
 static int compare_ap_by_rssi(const void *a, const void *b)
@@ -72,6 +73,7 @@ esp_err_t wifi_scan_deinit(void)
         vSemaphoreDelete(s_scan_mutex);
         s_scan_mutex = NULL;
     }
+    s_scan_active = false;
     s_initialized = false;
     return ESP_OK;
 }
@@ -94,8 +96,10 @@ esp_err_t wifi_scan_start_records(wifi_ap_record_t *records, uint16_t *count)
         .scan_type = WIFI_SCAN_TYPE_ACTIVE,
     };
 
+    s_scan_active = true;
     esp_err_t err = esp_wifi_scan_start(&config, true);
     if (err != ESP_OK) {
+        s_scan_active = false;
         xSemaphoreGive(s_scan_mutex);
         ESP_LOGW(WIFI_SCAN_TAG, "Scan start failed: %s", esp_err_to_name(err));
         return err;
@@ -137,11 +141,29 @@ esp_err_t wifi_scan_start_records(wifi_ap_record_t *records, uint16_t *count)
     } else {
         *count = 0U;
     }
+    s_scan_active = false;
     xSemaphoreGive(s_scan_mutex);
 
     if (err == ESP_OK) {
         ESP_LOGI(WIFI_SCAN_TAG, "Found %u access points", (unsigned)*count);
     }
+    return err;
+}
+
+esp_err_t wifi_scan_cancel(void)
+{
+    if (!s_initialized || s_scan_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!s_scan_active) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const esp_err_t err = esp_wifi_scan_stop();
+    if (err == ESP_OK || err == ESP_ERR_WIFI_STATE) {
+        return ESP_OK;
+    }
+    ESP_LOGW(WIFI_SCAN_TAG, "Scan stop failed: %s", esp_err_to_name(err));
     return err;
 }
 

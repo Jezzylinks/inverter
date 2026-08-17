@@ -312,6 +312,17 @@ void lcd_show_wifi_scan_start(void)
     lcd_request_refresh();
 }
 
+void lcd_show_wifi_scan_failed(void)
+{
+    LCD_LOCK();
+    sys_lcd.screen = LCD_SCREEN_WIFI_SCAN;
+    memset(&sys_lcd.wifi_scan, 0, sizeof(sys_lcd.wifi_scan));
+    sys_lcd.wifi_scan.stage = LCD_WIFI_SCAN_FAILED;
+    sys_lcd.wifi_scan.entered_ms = _lcd_get_time_ms();
+    LCD_UNLOCK();
+    lcd_request_refresh();
+}
+
 void lcd_update_wifi_scan_results(uint8_t count,
                                   const char ssids[][LCD_WIFI_SSID_MAX_LEN + 1U],
                                   const int8_t rssi[],
@@ -370,8 +381,9 @@ void lcd_show_wifi_scan(uint8_t count,
     lcd_wifi_scan_data_t *w = &sys_lcd.wifi_scan;
     uint8_t n = count < LCD_WIFI_MAX_AP ? count : LCD_WIFI_MAX_AP;
     w->count = n;
-    w->selected_index = selected < n ? selected : 0U;
-    w->top_index = top;
+    /* A completed or cancelled scan always starts at its first result. */
+    w->selected_index = n > 0U && selected < n ? selected : 0U;
+    w->top_index = n > 0U && top < n ? top : 0U;
     w->spinner_frame = 0U;
     w->stage = LCD_WIFI_SCAN_COMPLETE;
     w->entered_ms = _lcd_get_time_ms();
@@ -384,6 +396,7 @@ void lcd_show_wifi_scan(uint8_t count,
         w->authmode[i] = authmode ? authmode[i] : 0U;
     }
     LCD_UNLOCK();
+    lcd_request_refresh();
 }
 
 void lcd_update_wifi_selection(uint8_t selected, uint8_t top)

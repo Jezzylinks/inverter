@@ -17,6 +17,8 @@ extern "C" {
 esp_err_t wifi_scan_init(void);
 esp_err_t wifi_scan_deinit(void);
 esp_err_t wifi_scan_start_records(wifi_ap_record_t *records, uint16_t *count);
+/** Stop an in-progress scan and allow the caller to consume completed results. */
+esp_err_t wifi_scan_cancel(void);
 esp_err_t wifi_scan_start(char *output, size_t max_len);
 
 #ifdef __cplusplus

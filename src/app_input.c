@@ -786,17 +786,22 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         if (event_info->event == BUTTON_EVENT_CLICK) {
             lcd_wifi_scan_stage_t stage;
             uint8_t selected;
+            uint8_t count;
             LCD_LOCK();
             stage = sys_lcd.wifi_scan.stage;
             selected = sys_lcd.wifi_scan.selected_index;
+            count = sys_lcd.wifi_scan.count;
             LCD_UNLOCK();
             if (stage == LCD_WIFI_SCAN_SCANNING) {
+                /* ENTER stops the worker/lower-level scan. The worker then
+                 * publishes the latest valid results and resets selection to 0. */
                 (void)app_services_wifi_scan_cancel();
-                show_menu_screen(MENU_WIFI_CONFIG, 1U);
+            } else if (stage == LCD_WIFI_SCAN_FAILED || count == 0U) {
+                (void)app_services_wifi_scan();
             } else {
-                /* Selecting a found network starts the connection flow. The
-                 * connection screen owns the RSSI, animation, timeout, and
-                 * terminal result instead of returning to Networks. */
+                /* Selecting a found network starts the existing credential /
+                 * connection flow. The connection screen owns the RSSI,
+                 * animation, timeout, and terminal result. */
                 (void)app_services_wifi_connect_selected(selected);
             }
         }

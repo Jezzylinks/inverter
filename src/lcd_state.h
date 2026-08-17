@@ -187,7 +187,8 @@ extern "C"
         _Atomic uint8_t menu_selection;
     } lcd_security_data_t;
 
-#define LCD_WIFI_MAX_AP 10
+/* Match the existing Wi-Fi scan capacity so every discovered result remains selectable. */
+#define LCD_WIFI_MAX_AP 20
 #define LCD_WIFI_SSID_MAX_LEN 32U
 #define LCD_WIFI_PASSWORD_MAX_LEN 63U
 
@@ -195,6 +196,7 @@ extern "C"
     {
         LCD_WIFI_SCAN_SCANNING = 0,
         LCD_WIFI_SCAN_COMPLETE,
+        LCD_WIFI_SCAN_FAILED,
     } lcd_wifi_scan_stage_t;
 
     typedef struct

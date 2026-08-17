@@ -93,13 +93,19 @@ static void app_wifi_scan_task(void *parameter)
     int8_t rssi[LCD_WIFI_MAX_AP] = {0};
     uint8_t channel[LCD_WIFI_MAX_AP] = {0};
     uint8_t authmode[LCD_WIFI_MAX_AP] = {0};
+    uint8_t last_count = 0U;
+    bool had_successful_scan = false;
+    esp_err_t last_scan_error = ESP_OK;
 
     while (!app_wifi_scan_cancel_requested() &&
            (xTaskGetTickCount() - started) < duration) {
         uint16_t count = WIFI_MAX_SCAN_RESULTS;
         const esp_err_t err = wifi_scan_start_records(records, &count);
+        last_scan_error = err;
         if (err == ESP_OK) {
             const uint8_t visible = count > LCD_WIFI_MAX_AP ? LCD_WIFI_MAX_AP : (uint8_t)count;
+            last_count = visible;
+            had_successful_scan = true;
             memset(ssids, 0, sizeof(ssids));
             memset(rssi, 0, sizeof(rssi));
             for (uint8_t i = 0U; i < visible; ++i) {
@@ -110,7 +116,7 @@ static void app_wifi_scan_task(void *parameter)
                 authmode[i] = (uint8_t)records[i].authmode;
             }
             lcd_update_wifi_scan_results(visible, ssids, rssi, channel, authmode, spinner++);
-        } else {
+        } else if (!app_wifi_scan_cancel_requested()) {
             lcd_update_wifi_scan_spinner(spinner++);
         }
 
@@ -123,19 +129,19 @@ static void app_wifi_scan_task(void *parameter)
         }
     }
 
-    if (!app_wifi_scan_cancel_requested()) {
-        uint8_t selected = 0U;
-        uint8_t top = 0U;
-        uint8_t count = 0U;
-        LCD_LOCK();
-        count = sys_lcd.wifi_scan.count;
-        selected = sys_lcd.wifi_scan.selected_index;
-        top = sys_lcd.wifi_scan.top_index;
-        LCD_UNLOCK();
-        if (count > 0U && selected >= count) {
-            selected = count - 1U;
+    bool keep_scan_screen = false;
+    LCD_LOCK();
+    keep_scan_screen = sys_lcd.screen == LCD_SCREEN_WIFI_SCAN;
+    LCD_UNLOCK();
+    if (keep_scan_screen) {
+        if (!had_successful_scan && !app_wifi_scan_cancel_requested() &&
+            last_scan_error != ESP_OK) {
+            lcd_show_wifi_scan_failed();
+        } else {
+            /* Natural completion and ENTER cancellation both expose the latest
+             * valid result set and reset selection to the first network. */
+            lcd_show_wifi_scan(last_count, ssids, rssi, channel, authmode, 0U, 0U);
         }
-        lcd_show_wifi_scan(count, ssids, rssi, channel, authmode, selected, top);
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
@@ -779,7 +785,18 @@ esp_err_t app_services_wifi_scan_cancel(void)
         s_wifi_scan_cancel_requested = true;
     }
     xSemaphoreGive(s_services_mutex);
-    return active ? ESP_OK : ESP_ERR_INVALID_STATE;
+
+    if (!active) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* Stop the lower-level ESP-IDF scan immediately when one is in progress;
+     * the worker task will then publish any results the scan API retained. */
+    const esp_err_t err = wifi_scan_cancel();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        return err;
+    }
+    return ESP_OK;
 }
 
 bool app_services_wifi_scan_is_active(void)

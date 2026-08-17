@@ -94,6 +94,7 @@ void lcd_show_factory_done(void);
 
 /* ── Wi-Fi ───────────────────────────────────────────────────────────────── */
 void lcd_show_wifi_scan_start(void);
+void lcd_show_wifi_scan_failed(void);
 void lcd_update_wifi_scan_results(uint8_t count,
                                   const char ssids[][LCD_WIFI_SSID_MAX_LEN + 1U],
                                   const int8_t rssi[],
