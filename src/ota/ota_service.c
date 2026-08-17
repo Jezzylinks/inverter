@@ -1,21 +1,18 @@
 #include "ota_service.h"
 
-#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 
 #include "esp_app_desc.h"
-#include "esp_crt_bundle.h"
-#include "esp_http_client.h"
-#include "esp_ota_ops.h"
 #include "esp_log.h"
-#include "mbedtls/sha256.h"
+#include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-
+#include "ota_download.h"
+#include "ota_manifest.h"
 #include "task_watchdog.h"
+
 static const char *TAG = "OTA_SERVICE";
 
 static void secure_zero(void *ptr, size_t len)
@@ -41,177 +38,6 @@ typedef struct {
     uint32_t expected_size;
     bool from_manifest;
 } ota_job_t;
-
-static esp_err_t http_read_bounded(const char *url, char *buffer, size_t capacity,
-                                   size_t *out_len);
-static int compare_release_versions(const char *candidate, const char *installed);
-
-static bool is_https_url(const char *url)
-{
-    return url && strncasecmp(url, "https://", 8) == 0 && strlen(url) < OTA_MAX_URL_LENGTH;
-}
-
-static bool parse_release_version(const char *text, uint32_t components[4],
-                                  size_t *component_count)
-{
-    if (!text || !components || !component_count || text[0] == '\0') {
-        return false;
-    }
-    const char *cursor = text;
-    if (*cursor == 'v' || *cursor == 'V') {
-        ++cursor;
-    }
-    size_t count = 0U;
-    while (*cursor != '\0' && count < 4U) {
-        if (!isdigit((unsigned char)*cursor)) {
-            return false;
-        }
-        uint32_t value = 0U;
-        do {
-            const uint32_t digit = (uint32_t)(*cursor - '0');
-            if (value > (UINT32_MAX - digit) / 10U) {
-                return false;
-            }
-            value = value * 10U + digit;
-            ++cursor;
-        } while (isdigit((unsigned char)*cursor));
-        components[count++] = value;
-        if (*cursor == '\0') {
-            break;
-        }
-        if (*cursor != '.') {
-            return false;
-        }
-        ++cursor;
-        if (*cursor == '\0') {
-            return false;
-        }
-    }
-    if (*cursor != '\0' || (count != 3U && count != 4U)) {
-        return false;
-    }
-    *component_count = count;
-    return true;
-}
-
-static bool is_valid_release_version(const char *text)
-{
-    uint32_t components[4] = {0};
-    size_t count = 0U;
-    return parse_release_version(text, components, &count);
-}
-
-static char *trim(char *text)
-{
-    while (*text && isspace((unsigned char)*text)) {
-        ++text;
-    }
-    char *end = text + strlen(text);
-    while (end > text && isspace((unsigned char)end[-1])) {
-        --end;
-    }
-    *end = '\0';
-    return text;
-}
-
-static bool parse_u32(const char *text, uint32_t *value)
-{
-    if (!text || !*text || !value) {
-        return false;
-    }
-    char *end = NULL;
-    const unsigned long parsed = strtoul(text, &end, 10);
-    if (end == text || *trim(end) != '\0' || parsed > UINT32_MAX) {
-        return false;
-    }
-    *value = (uint32_t)parsed;
-    return true;
-}
-
-static bool is_sha256(const char *text)
-{
-    if (!text || !*text) {
-        return true;
-    }
-    if (strlen(text) != 64U) {
-        return false;
-    }
-    for (size_t i = 0; i < 64U; ++i) {
-        if (!isxdigit((unsigned char)text[i])) {
-            return false;
-        }
-    }
-    return true;
-}
-
-esp_err_t ota_manifest_parse_csv(const char *csv, size_t csv_len,
-                                 ota_manifest_entry_t *entry)
-{
-    if (!csv || csv_len == 0U || csv_len > OTA_MAX_MANIFEST_BYTES || !entry) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    memset(entry, 0, sizeof(*entry));
-
-    char *copy = calloc(1, csv_len + 1U);
-    if (!copy) {
-        return ESP_ERR_NO_MEM;
-    }
-    memcpy(copy, csv, csv_len);
-    copy[csv_len] = '\0';
-
-    char *save_line = NULL;
-    char *line = strtok_r(copy, "\n", &save_line);
-    while (line) {
-        char *current = trim(line);
-        if (*current == '\0' || *current == '#') {
-            line = strtok_r(NULL, "\n", &save_line);
-            continue;
-        }
-
-        char *fields[4] = {0};
-        char *save_field = NULL;
-        size_t field_count = 0;
-        char *field = strtok_r(current, ",", &save_field);
-        while (field && field_count < 4U) {
-            fields[field_count++] = trim(field);
-            field = strtok_r(NULL, ",", &save_field);
-        }
-        if (field != NULL || field_count < 2U) {
-            free(copy);
-            return ESP_ERR_INVALID_SIZE;
-        }
-        if (strcasecmp(fields[0], "version") == 0) {
-            line = strtok_r(NULL, "\n", &save_line);
-            continue;
-        }
-        if (field_count < 4U ||
-            strlen(fields[0]) >= OTA_MAX_VERSION_LENGTH ||
-            strlen(fields[1]) >= OTA_MAX_URL_LENGTH ||
-            !is_https_url(fields[1]) ||
-            !is_valid_release_version(fields[0]) ||
-            !is_sha256(fields[2]) || fields[2][0] == '\0') {
-            free(copy);
-            return ESP_ERR_INVALID_ARG;
-        }
-
-        strncpy(entry->version, fields[0], sizeof(entry->version) - 1U);
-        strncpy(entry->url, fields[1], sizeof(entry->url) - 1U);
-        if (field_count >= 3U && fields[2][0] != '\0') {
-            strncpy(entry->sha256, fields[2], sizeof(entry->sha256) - 1U);
-        }
-        if (fields[3][0] == '\0' ||
-            !parse_u32(fields[3], &entry->image_size) ||
-            entry->image_size == 0U) {
-            free(copy);
-            return ESP_ERR_INVALID_ARG;
-        }
-        free(copy);
-        return ESP_OK;
-    }
-
-    free(copy);
-    return ESP_ERR_NOT_FOUND;
-}
 
 static void notify_status(ota_status_t status, int percent)
 {
@@ -253,6 +79,12 @@ static bool cancel_requested(void)
     return requested;
 }
 
+static bool cancel_callback(void *context)
+{
+    (void)context;
+    return cancel_requested();
+}
+
 static void set_job_finished(void)
 {
     if (s_ota_mutex && xSemaphoreTake(s_ota_mutex, portMAX_DELAY) == pdTRUE) {
@@ -265,144 +97,19 @@ static void set_job_finished(void)
     }
 }
 
-static bool ota_digest_matches(const unsigned char digest[32],
-                               const char *expected_hex)
+static void download_progress_callback(int percent, void *context)
 {
-    char actual[OTA_MAX_SHA256_LENGTH] = {0};
-    for (size_t i = 0U; i < 32U; ++i) {
-        snprintf(&actual[i * 2U], 3U, "%02x", digest[i]);
+    (void)context;
+    if (percent == 0) {
+        notify_status(OTA_STATUS_DOWNLOADING, 0);
     }
-    return strcasecmp(actual, expected_hex) == 0;
+    notify_progress(percent);
 }
 
-static esp_err_t ota_download_verified(const ota_job_t *job)
+static void download_verifying_callback(void *context)
 {
-    if (!job || job->expected_size == 0U ||
-        !is_sha256(job->expected_sha256)) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    const esp_partition_t *update_partition =
-        esp_ota_get_next_update_partition(NULL);
-    if (!update_partition || job->expected_size > update_partition->size) {
-        return ESP_ERR_INVALID_SIZE;
-    }
-
-    esp_http_client_config_t config = {
-        .url = job->url,
-        .timeout_ms = OTA_HTTP_TIMEOUT_MS,
-        .keep_alive_enable = true,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) {
-        return ESP_ERR_NO_MEM;
-    }
-
-    esp_ota_handle_t ota_handle = 0;
-    bool ota_started = false;
-    esp_err_t result = esp_http_client_open(client, 0);
-    if (result != ESP_OK) {
-        esp_http_client_cleanup(client);
-        return result;
-    }
-    if (cancel_requested()) {
-        result = ESP_ERR_INVALID_STATE;
-        goto cleanup;
-    }
-
-    const int64_t content_length = esp_http_client_fetch_headers(client);
-    if (esp_http_client_get_status_code(client) != 200 ||
-        content_length != (int64_t)job->expected_size) {
-        result = ESP_ERR_INVALID_SIZE;
-        goto cleanup;
-    }
-
-    result = esp_ota_begin(update_partition, job->expected_size, &ota_handle);
-    if (result != ESP_OK) {
-        goto cleanup;
-    }
-    ota_started = true;
-    if (cancel_requested()) {
-        result = ESP_ERR_INVALID_STATE;
-        goto cleanup;
-    }
-
-    mbedtls_sha256_context sha;
-    mbedtls_sha256_init(&sha);
-    if (mbedtls_sha256_starts(&sha, 0) != 0) {
-        result = ESP_FAIL;
-        mbedtls_sha256_free(&sha);
-        goto cleanup;
-    }
-
-    uint8_t buffer[1024];
-    uint32_t received = 0U;
-    notify_status(OTA_STATUS_DOWNLOADING, 0);
-    while (received < job->expected_size) {
-        task_watchdog_feed();
-        if (cancel_requested()) {
-            result = ESP_ERR_INVALID_STATE;
-            mbedtls_sha256_free(&sha);
-            goto cleanup;
-        }
-
-        const int read_len = esp_http_client_read(
-            client, (char *)buffer,
-            (int)((job->expected_size - received) > sizeof(buffer)
-                      ? sizeof(buffer)
-                      : (job->expected_size - received)));
-        if (read_len <= 0) {
-            result = read_len == 0 ? ESP_ERR_INVALID_SIZE : ESP_FAIL;
-            mbedtls_sha256_free(&sha);
-            goto cleanup;
-        }
-        result = esp_ota_write(ota_handle, buffer, (size_t)read_len);
-        if (result != ESP_OK ||
-            mbedtls_sha256_update(&sha, buffer, (size_t)read_len) != 0) {
-            result = result == ESP_OK ? ESP_FAIL : result;
-            mbedtls_sha256_free(&sha);
-            goto cleanup;
-        }
-        received += (uint32_t)read_len;
-        notify_progress((int)((received * 100U) / job->expected_size));
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-
+    (void)context;
     notify_status(OTA_STATUS_VERIFYING, 100);
-    if (cancel_requested()) {
-        result = ESP_ERR_INVALID_STATE;
-        mbedtls_sha256_free(&sha);
-        goto cleanup;
-    }
-
-    unsigned char digest[32] = {0};
-    if (mbedtls_sha256_finish(&sha, digest) != 0 ||
-        !ota_digest_matches(digest, job->expected_sha256)) {
-        ESP_LOGE(TAG, "OTA SHA-256 mismatch");
-        result = ESP_ERR_INVALID_CRC;
-        mbedtls_sha256_free(&sha);
-        goto cleanup;
-    }
-    mbedtls_sha256_free(&sha);
-
-    if (cancel_requested()) {
-        result = ESP_ERR_INVALID_STATE;
-        goto cleanup;
-    }
-    result = esp_ota_end(ota_handle);
-    ota_started = false;
-    if (result == ESP_OK) {
-        result = esp_ota_set_boot_partition(update_partition);
-    }
-
-cleanup:
-    if (ota_started) {
-        esp_ota_abort(ota_handle);
-    }
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
-    return result;
 }
 
 static void ota_task(void *parameter)
@@ -418,22 +125,15 @@ static void ota_task(void *parameter)
     notify_status(OTA_STATUS_STARTED, 0);
     esp_err_t result = ESP_OK;
     if (job->from_manifest) {
-        char manifest[OTA_MAX_MANIFEST_BYTES + 1U] = {0};
-        size_t manifest_len = 0U;
         ota_manifest_entry_t entry = {0};
-        result = http_read_bounded(job->url, manifest, sizeof(manifest), &manifest_len);
-        if (result == ESP_OK && cancel_requested()) {
-            result = ESP_ERR_INVALID_STATE;
-        }
-        if (result == ESP_OK) {
-            result = ota_manifest_parse_csv(manifest, manifest_len, &entry);
-        }
+        result = ota_manifest_fetch_and_parse(job->url, &entry,
+                                              cancel_callback, NULL);
         if (result == ESP_OK) {
             char current_version[OTA_MAX_VERSION_LENGTH] = {0};
             result = ota_service_get_current_version(current_version,
                                                      sizeof(current_version));
             if (result == ESP_OK &&
-                compare_release_versions(entry.version, current_version) <= 0) {
+                ota_manifest_compare_versions(entry.version, current_version) <= 0) {
                 ESP_LOGW(TAG, "Rejecting OTA version %s; current version is %s",
                          entry.version, current_version);
                 result = ESP_ERR_INVALID_VERSION;
@@ -451,7 +151,10 @@ static void ota_task(void *parameter)
     }
     if (result == ESP_OK) {
         ESP_LOGI(TAG, "OTA download started for version %s", job->expected_version);
-        result = ota_download_verified(job);
+        result = ota_download_firmware(job->url, job->expected_sha256,
+                                       job->expected_size, cancel_callback,
+                                       download_progress_callback,
+                                       download_verifying_callback, NULL);
     }
     if (result != ESP_OK) {
         ESP_LOGE(TAG, "Verified OTA failed: %s", esp_err_to_name(result));
@@ -475,6 +178,45 @@ static void ota_task(void *parameter)
     set_job_finished();
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
+}
+
+static esp_err_t queue_job(ota_job_t *job)
+{
+    if (!job) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_ota_mutex) {
+        const esp_err_t init_err = ota_service_init();
+        if (init_err != ESP_OK) {
+            secure_zero(job, sizeof(*job));
+            free(job);
+            return init_err;
+        }
+    }
+    if (xSemaphoreTake(s_ota_mutex, portMAX_DELAY) != pdTRUE) {
+        secure_zero(job, sizeof(*job));
+        free(job);
+        return ESP_ERR_TIMEOUT;
+    }
+    if (s_in_progress) {
+        secure_zero(job, sizeof(*job));
+        free(job);
+        xSemaphoreGive(s_ota_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_cancel_requested = false;
+    s_in_progress = true;
+    const BaseType_t created = xTaskCreate(ota_task, "ota_task", OTA_TASK_STACK_SIZE,
+                                           job, OTA_TASK_PRIORITY, &s_ota_task);
+    if (created != pdPASS) {
+        secure_zero(job, sizeof(*job));
+        free(job);
+        s_in_progress = false;
+        xSemaphoreGive(s_ota_mutex);
+        return ESP_ERR_NO_MEM;
+    }
+    xSemaphoreGive(s_ota_mutex);
+    return ESP_OK;
 }
 
 esp_err_t ota_service_init(void)
@@ -546,58 +288,6 @@ bool ota_service_rollback_notification_pending(void)
     return pending;
 }
 
-static esp_err_t start_job(const char *url,
-                           const char *expected_version,
-                           const char *expected_sha256,
-                           uint32_t expected_size)
-{
-    if (!is_https_url(url) || !expected_sha256 ||
-        !is_sha256(expected_sha256) || expected_sha256[0] == '\0' ||
-        expected_size == 0U) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (!s_ota_mutex) {
-        esp_err_t init_err = ota_service_init();
-        if (init_err != ESP_OK) {
-            return init_err;
-        }
-    }
-
-    if (xSemaphoreTake(s_ota_mutex, portMAX_DELAY) != pdTRUE) {
-        return ESP_ERR_TIMEOUT;
-    }
-    if (s_in_progress) {
-        xSemaphoreGive(s_ota_mutex);
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    ota_job_t *job = calloc(1, sizeof(*job));
-    if (!job) {
-        xSemaphoreGive(s_ota_mutex);
-        return ESP_ERR_NO_MEM;
-    }
-    strncpy(job->url, url, sizeof(job->url) - 1U);
-    if (expected_version) {
-        strncpy(job->expected_version, expected_version, sizeof(job->expected_version) - 1U);
-    }
-    strncpy(job->expected_sha256, expected_sha256,
-            sizeof(job->expected_sha256) - 1U);
-    job->expected_size = expected_size;
-    s_cancel_requested = false;
-    s_in_progress = true;
-    const BaseType_t created = xTaskCreate(ota_task, "ota_task", OTA_TASK_STACK_SIZE,
-                                           job, OTA_TASK_PRIORITY, &s_ota_task);
-    if (created != pdPASS) {
-        secure_zero(job, sizeof(*job));
-        free(job);
-        s_in_progress = false;
-        xSemaphoreGive(s_ota_mutex);
-        return ESP_ERR_NO_MEM;
-    }
-    xSemaphoreGive(s_ota_mutex);
-    return ESP_OK;
-}
-
 esp_err_t ota_service_start(const char *url)
 {
     /* Direct URL updates are intentionally disabled: verified manifest
@@ -606,123 +296,18 @@ esp_err_t ota_service_start(const char *url)
     return ESP_ERR_NOT_SUPPORTED;
 }
 
-static esp_err_t http_read_bounded(const char *url, char *buffer, size_t capacity,
-                                   size_t *out_len)
-{
-    if (!is_https_url(url) || !buffer || capacity < 2U || !out_len) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    *out_len = 0U;
-    esp_http_client_config_t config = {
-        .url = url,
-        .timeout_ms = OTA_HTTP_TIMEOUT_MS,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) {
-        return ESP_ERR_NO_MEM;
-    }
-
-    esp_err_t err = esp_http_client_open(client, 0);
-    if (err == ESP_OK) {
-        const int64_t content_length = esp_http_client_fetch_headers(client);
-        if (content_length > (int64_t)(capacity - 1U)) {
-            err = ESP_ERR_INVALID_SIZE;
-        } else if (esp_http_client_get_status_code(client) != 200) {
-            err = ESP_FAIL;
-        } else {
-            bool reached_eof = false;
-            while (*out_len < capacity - 1U) {
-                if (cancel_requested()) {
-                    err = ESP_ERR_INVALID_STATE;
-                    break;
-                }
-                const int read_len = esp_http_client_read(client, buffer + *out_len,
-                                                          capacity - 1U - *out_len);
-                if (read_len < 0) {
-                    err = ESP_FAIL;
-                    break;
-                }
-                if (read_len == 0) {
-                    reached_eof = true;
-                    break;
-                }
-                *out_len += (size_t)read_len;
-            }
-            if (err == ESP_OK && !reached_eof && *out_len >= capacity - 1U) {
-                err = ESP_ERR_INVALID_SIZE;
-            }
-            buffer[*out_len] = '\0';
-        }
-        esp_http_client_close(client);
-    }
-    esp_http_client_cleanup(client);
-    return err;
-}
-
 esp_err_t ota_service_start_from_csv(const char *csv_url)
 {
-    if (!is_https_url(csv_url)) {
+    if (!ota_manifest_is_https_url(csv_url)) {
         return ESP_ERR_INVALID_ARG;
-    }
-    if (!s_ota_mutex) {
-        const esp_err_t init_err = ota_service_init();
-        if (init_err != ESP_OK) {
-            return init_err;
-        }
-    }
-    if (xSemaphoreTake(s_ota_mutex, portMAX_DELAY) != pdTRUE) {
-        return ESP_ERR_TIMEOUT;
-    }
-    if (s_in_progress) {
-        xSemaphoreGive(s_ota_mutex);
-        return ESP_ERR_INVALID_STATE;
     }
     ota_job_t *job = calloc(1, sizeof(*job));
     if (!job) {
-        xSemaphoreGive(s_ota_mutex);
         return ESP_ERR_NO_MEM;
     }
     strncpy(job->url, csv_url, sizeof(job->url) - 1U);
     job->from_manifest = true;
-    s_cancel_requested = false;
-    s_in_progress = true;
-    const BaseType_t created = xTaskCreate(ota_task, "ota_task", OTA_TASK_STACK_SIZE,
-                                           job, OTA_TASK_PRIORITY, &s_ota_task);
-    if (created != pdPASS) {
-        secure_zero(job, sizeof(*job));
-        free(job);
-        s_in_progress = false;
-        xSemaphoreGive(s_ota_mutex);
-        return ESP_ERR_NO_MEM;
-    }
-    xSemaphoreGive(s_ota_mutex);
-    return ESP_OK;
-}
-
-static int compare_release_versions(const char *candidate, const char *installed)
-{
-    uint32_t candidate_parts[4] = {0};
-    uint32_t installed_parts[4] = {0};
-    size_t candidate_count = 0U;
-    size_t installed_count = 0U;
-    if (!parse_release_version(candidate, candidate_parts, &candidate_count) ||
-        !parse_release_version(installed, installed_parts, &installed_count)) {
-        return 0;
-    }
-
-    const size_t count = candidate_count > installed_count
-                             ? candidate_count : installed_count;
-    for (size_t index = 0U; index < count; ++index) {
-        const uint32_t candidate_value = index < candidate_count
-                                             ? candidate_parts[index] : 0U;
-        const uint32_t installed_value = index < installed_count
-                                             ? installed_parts[index] : 0U;
-        if (candidate_value != installed_value) {
-            return candidate_value > installed_value ? 1 : -1;
-        }
-    }
-    return 0;
+    return queue_job(job);
 }
 
 esp_err_t ota_service_check_csv_manifest(const char *csv_url,
@@ -733,13 +318,7 @@ esp_err_t ota_service_check_csv_manifest(const char *csv_url,
         return ESP_ERR_INVALID_ARG;
     }
     *update_available = false;
-    char manifest[OTA_MAX_MANIFEST_BYTES + 1U] = {0};
-    size_t manifest_len = 0U;
-    esp_err_t err = http_read_bounded(csv_url, manifest, sizeof(manifest), &manifest_len);
-    if (err != ESP_OK) {
-        return err;
-    }
-    err = ota_manifest_parse_csv(manifest, manifest_len, entry);
+    esp_err_t err = ota_manifest_fetch_and_parse(csv_url, entry, NULL, NULL);
     if (err != ESP_OK) {
         return err;
     }
@@ -749,7 +328,8 @@ esp_err_t ota_service_check_csv_manifest(const char *csv_url,
     if (err != ESP_OK) {
         return err;
     }
-    *update_available = compare_release_versions(entry->version, current_version) > 0;
+    *update_available = ota_manifest_compare_versions(entry->version,
+                                                      current_version) > 0;
     return ESP_OK;
 }
 
@@ -768,14 +348,16 @@ esp_err_t ota_service_cancel(void)
     return ESP_OK;
 }
 
-esp_err_t ota_service_check_version(const char *version_url, char *new_version, size_t version_len)
+esp_err_t ota_service_check_version(const char *version_url, char *new_version,
+                                    size_t version_len)
 {
     if (!new_version || version_len == 0U) {
         return ESP_ERR_INVALID_ARG;
     }
     char response[OTA_MAX_MANIFEST_BYTES + 1U] = {0};
     size_t response_len = 0U;
-    esp_err_t err = http_read_bounded(version_url, response, sizeof(response), &response_len);
+    esp_err_t err = ota_manifest_fetch_text(version_url, response, sizeof(response),
+                                            &response_len, NULL, NULL);
     if (err != ESP_OK) {
         return err;
     }
@@ -793,7 +375,7 @@ esp_err_t ota_service_check_version(const char *version_url, char *new_version, 
         return ESP_OK;
     }
 
-    char *version = trim(response);
+    char *version = ota_manifest_trim(response);
     if (*version == '\0' || strlen(version) >= version_len) {
         return ESP_ERR_INVALID_SIZE;
     }

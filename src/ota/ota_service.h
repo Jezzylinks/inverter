@@ -10,6 +10,7 @@ extern "C" {
 #endif
 
 #include "esp_err.h"
+#include "ota_manifest.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -17,11 +18,6 @@ extern "C" {
 #define OTA_TASK_STACK_SIZE 8192U
 #define OTA_TASK_PRIORITY 5U
 /* Keep cancellation responsive while retaining bounded HTTPS operations. */
-#define OTA_HTTP_TIMEOUT_MS 10000
-#define OTA_MAX_URL_LENGTH 256U
-#define OTA_MAX_VERSION_LENGTH 32U
-#define OTA_MAX_SHA256_LENGTH 65U
-#define OTA_MAX_MANIFEST_BYTES 4096U
 
 typedef enum {
     OTA_STATUS_IDLE = 0,
@@ -35,13 +31,6 @@ typedef enum {
 
 typedef void (*ota_progress_callback_t)(int percent);
 typedef void (*ota_status_callback_t)(ota_status_t status, int percent);
-
-typedef struct {
-    char version[OTA_MAX_VERSION_LENGTH];
-    char url[OTA_MAX_URL_LENGTH];
-    char sha256[OTA_MAX_SHA256_LENGTH];
-    uint32_t image_size;
-} ota_manifest_entry_t;
 
 /**
  * CSV format accepted by ota_service_start_from_csv():
