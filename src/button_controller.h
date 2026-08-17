@@ -10,6 +10,7 @@
 #define BUTTON_CONTROLLER_H
 
 #include "driver/gpio.h"
+#include "hardware_config.h"
 #include "esp_err.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -35,12 +36,6 @@ extern "C" {
 #define BUTTON_TASK_PRIORITY 5U
 #define BUTTON_TASK_POLL_INTERVAL_MS 10U
 #define BUTTON_TAG "BUTTON"
-
-#define GPIO_BUTTON_POWER GPIO_NUM_16
-#define GPIO_BUTTON_ENTER_MENU GPIO_NUM_19
-#define GPIO_BUTTON_UP GPIO_NUM_17
-#define GPIO_BUTTON_DOWN GPIO_NUM_5
-#define GPIO_BUTTON_BACK GPIO_NUM_18
 
 typedef enum {
     BUTTON_EVENT_NONE = 0,

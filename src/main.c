@@ -44,6 +44,7 @@
 #include "utils.h" // Added MIN & MAX
 #include <stdbool.h>
 #include "button_controller.h"
+#include "hardware_config.h"
 #include "post/post_fan.h"
 #include "post/fan_tach.h"
 
@@ -100,8 +101,8 @@
 #define LCD_ADDR 0x27
 #define SCROLL_DELAY_MS 300
 #define ANIM_DELAY_MS 80
-#define SDA_PIN 21
-#define SCL_PIN 22
+#define SDA_PIN GPIO_I2C_SDA
+#define SCL_PIN GPIO_I2C_SCL
 #define CONFIG_USE_ADC 1
 #define CONFIG_USE_BUTTONS 1
 #define CONFIG_USE_LCD 1
@@ -157,11 +158,10 @@
 #define SYS_STATE_MUTEX_TIMEOUT_MS 100
 #define DISPLAY_TIMEOUT 300
 #define SLEEP_TIMEOUT 1800
-#define LCD_PWR_GPIO GPIO_NUM_27
-#define LCD_BL_GPIO GPIO_NUM_13
-#define LCD_PWM_CHANNEL LEDC_CHANNEL_0
 #define LCD_PWM_FREQ 5000
 #define LCD_PWM_RES LEDC_TIMER_8_BIT
+#define LCD_BACKLIGHT_LEDC_TIMER LEDC_TIMER_1
+#define LCD_BACKLIGHT_LEDC_CHANNEL LEDC_CHANNEL_3
 #define ALERT_TONE_FREQ 500
 #define ALERT_TONE_VOLUME 200
 #define WAKEUP_BUTTON_1 GPIO_BTN_ENTER
@@ -6359,7 +6359,7 @@ void lcd_power_init()
 {
     // Configure power control GPIO
     gpio_config_t pwr_conf = {
-        .pin_bit_mask = (1ULL << LCD_PWR_GPIO),
+        .pin_bit_mask = (1ULL << GPIO_LCD_POWER),
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE};
@@ -6369,15 +6369,15 @@ void lcd_power_init()
     ledc_timer_config_t timer_conf = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .duty_resolution = LCD_PWM_RES,
-        .timer_num = LEDC_TIMER_0,
+        .timer_num = LCD_BACKLIGHT_LEDC_TIMER,
         .freq_hz = LCD_PWM_FREQ};
     ledc_timer_config(&timer_conf);
 
     ledc_channel_config_t ch_conf = {
-        .gpio_num = LCD_BL_GPIO,
+        .gpio_num = GPIO_LCD_BACKLIGHT,
         .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = LCD_PWM_CHANNEL,
-        .timer_sel = LEDC_TIMER_0};
+        .channel = LCD_BACKLIGHT_LEDC_CHANNEL,
+        .timer_sel = LCD_BACKLIGHT_LEDC_TIMER};
     ledc_channel_config(&ch_conf);
 }
 
@@ -6387,26 +6387,26 @@ void LCD_power(bool enable)
     if (enable)
     {
         // Power sequence: Enable LCD first, then backlight
-        gpio_set_level(LCD_PWR_GPIO, 1);
+        gpio_set_level(GPIO_LCD_POWER, 1);
         vTaskDelay(pdMS_TO_TICKS(10));                            // Short delay for LCD to stabilize
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LCD_PWM_CHANNEL, 128); // 50% brightness
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_PWM_CHANNEL);
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LCD_BACKLIGHT_LEDC_CHANNEL, 128); // 50% brightness
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_BACKLIGHT_LEDC_CHANNEL);
     }
     else
     {
         // Power sequence: Disable backlight first, then LCD
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LCD_PWM_CHANNEL, 0);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_PWM_CHANNEL);
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LCD_BACKLIGHT_LEDC_CHANNEL, 0);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_BACKLIGHT_LEDC_CHANNEL);
         vTaskDelay(pdMS_TO_TICKS(10));
-        gpio_set_level(LCD_PWR_GPIO, 0);
+        gpio_set_level(GPIO_LCD_POWER, 0);
     }
 }
 
 // Optional: Set backlight brightness (0-255)
 void lcd_set_brightness(uint8_t brightness)
 {
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, LCD_PWM_CHANNEL, brightness);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_PWM_CHANNEL);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LCD_BACKLIGHT_LEDC_CHANNEL, brightness);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_BACKLIGHT_LEDC_CHANNEL);
 }
 
 static bool is_valid_error_code(uint8_t error)
@@ -7142,7 +7142,11 @@ void app_main(void)
         ESP_LOGE(APP_TAG, "Failed to start LCD event receiver");
     }
     xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, 1);
-    xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, 1);
+    const BaseType_t buzzer_task_status =
+        xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, 1);
+    if (buzzer_task_status != pdPASS) {
+        ESP_LOGE(APP_TAG, "FATAL: failed to create buzzer event task");
+    }
     xTaskCreatePinnedToCore(led_event_task, "led_evt", 2048, NULL, 7, NULL, 1);
     xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 4096, NULL, 5, NULL, 0);
     xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, 0);

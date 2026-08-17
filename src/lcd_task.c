@@ -29,6 +29,7 @@
 #include "security/pin_entry.h"
 #include "utility/led.h"
 #include "events/event_dispatcher.h"
+#include "hardware_config.h"
 
 #define BOOT_TOTAL_STEPS 3
 
@@ -46,8 +47,8 @@ extern led_pattern_t pattern;
 
 /* lcd.h hardware config */
 #define LCD_ADDR 0x27
-#define SDA_PIN 21
-#define SCL_PIN 22
+#define SDA_PIN GPIO_I2C_SDA
+#define SCL_PIN GPIO_I2C_SCL
 #define LCD_BLINK_INTERVAL_MS 500
 #define LCD_FLASH_QUEUE_DEPTH 4
 #define SYSTEM_STARTUP_DISPLAY_DURATION_MS 1500U

@@ -179,6 +179,33 @@ Install the physical LCD that matches the value compiled in `src/menu_config.h`.
 
 The 20×4 driver uses the standard HD44780 DDRAM offsets `{0x00, 0x40, 0x14, 0x54}`. For Wokwi, the diagram component must also match the compiled choice: use `wokwi-lcd1602` for a 16×2 simulation and `wokwi-lcd2004` for a 20×4 simulation. Wokwi project configuration details are documented in the [Wokwi project configuration guide](https://docs.wokwi.com/vscode/project-config) and the [Wokwi 20×4 LCD reference](https://docs.wokwi.com/parts/wokwi-lcd2004).
 
+#### Hardware GPIO assignment
+
+The following table is the authoritative wiring reference for the firmware. **GPIO13 belongs exclusively to the buzzer. Do not connect the LCD backlight to GPIO13.** Move the physical LCD-backlight PWM wire to **GPIO25**.
+
+| Hardware function | GPIO | Firmware definition / note |
+|---|---:|---|
+| Buzzer | **13** | `GPIO_BUZZER`; passive-piezo PWM output; unchanged and exclusive |
+| LCD backlight PWM | **25** | `GPIO_LCD_BACKLIGHT`; LEDC low-speed timer 1, channel 3 |
+| LCD power enable | 27 | `GPIO_LCD_POWER` |
+| LCD I2C SDA | 21 | `GPIO_I2C_SDA` |
+| LCD I2C SCL | 22 | `GPIO_I2C_SCL`; current `GPIO_NEPA_INPUT` alias also uses this pin |
+| Power button | 16 | `GPIO_BUTTON_POWER` |
+| Enter/Menu button | 19 | `GPIO_BUTTON_ENTER_MENU` |
+| Up button | 17 | `GPIO_BUTTON_UP` |
+| Down button | 5 | `GPIO_BUTTON_DOWN` |
+| Back button | 18 | `GPIO_BUTTON_BACK` |
+| Status LED | 14 | `GPIO_STATUS_LED` |
+| Error LED | 26 | `GPIO_ERROR_LED` |
+| Power relay | 12 | `GPIO_POWER_RELAY` |
+| Fan PWM | 33 | `GPIO_FAN`; also used by the configured fan ADC channel |
+| Fan tachometer | 35 | `GPIO_FAN_TACH`; input-only tachometer signal |
+| Low-battery ADC | 34 | ADC input; input-only |
+| Over/under-voltage ADC | 36 | ADC input; input-only |
+| Inverter-output-voltage ADC | 32 | ADC input |
+
+The active LEDC ownership is intentionally separated: the buzzer retains low-speed **timer 0, channel 0** on GPIO13; the status and error LEDs use timer 0, channels 1 and 2; and the LCD backlight uses low-speed **timer 1, channel 3** on GPIO25. The generic fan controller is configurable and has no active initialization call site in the current firmware. The Wokwi diagram follows the buzzer and status-LED assignments; its I2C LCD model does not expose a separate external backlight pin, so the GPIO25 change applies to the physical hardware wiring.
+
 ## Security notes
 
 Panel security is enabled by default for new installations. The initial default PIN is `0000`, provisioned only as a salted hash and marked as requiring a change. If the settings namespace or PIN material is missing or corrupt, the firmware safely reprovisions `0000` and again requires a change. Factory reset and firmware installation both verify this same persisted security PIN; they cannot use a separate or stale factory PIN. Each protected option allows five incorrect attempts, then applies its own 30-second lockout. The LCD counts down from 30 seconds to 0, and Back cancels the current option and returns to its parent page. Successful verification resets that option’s timer. Remote API clients must provide the PIN as four decimal digits in the `X-Inverter-PIN` header, and disabling panel security is an explicit configuration choice rather than a startup side effect.
