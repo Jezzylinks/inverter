@@ -54,11 +54,11 @@
         </article>
       </section>
 
-      <section class="metric-grid" aria-label="Inverter metrics">
-        <article class="metric-card accent-green"><div class="metric-icon">↯</div><div><p class="metric-label">Inverter</p><strong id="inverterState">Unknown</strong><span id="inverterDetail" class="metric-detail">Waiting for telemetry</span></div></article>
-        <article class="metric-card accent-amber"><div class="metric-icon">▣</div><div><p class="metric-label">Battery</p><strong id="batteryMetric">—</strong><span id="batteryDetail" class="metric-detail">Telemetry unavailable</span></div></article>
-        <article class="metric-card accent-cyan"><div class="metric-icon">☼</div><div><p class="metric-label">Solar / PV</p><strong id="solarMetric">—</strong><span id="solarDetail" class="metric-detail">Telemetry unavailable</span></div></article>
-        <article class="metric-card accent-green"><div class="metric-icon">⌂</div><div><p class="metric-label">Load</p><strong id="loadMetric">—</strong><span id="loadDetail" class="metric-detail">Telemetry unavailable</span></div></article>
+      <section class="metric-grid telemetry-grid" aria-label="Inverter metrics">
+        <article class="metric-card accent-green"><div class="metric-icon" aria-hidden="true">↯</div><div><p class="metric-label">Inverter</p><strong id="inverterState" aria-live="polite">Unknown</strong><span id="inverterDetail" class="metric-detail">Waiting for telemetry</span></div></article>
+        <article class="metric-card accent-amber"><div class="metric-icon" aria-hidden="true">▣</div><div><p class="metric-label">Battery</p><strong id="batteryMetric" aria-live="polite">—</strong><span id="batteryDetail" class="metric-detail">Telemetry unavailable</span></div></article>
+        <article class="metric-card accent-cyan"><div class="metric-icon" aria-hidden="true">☼</div><div><p class="metric-label">Solar / PV</p><strong id="solarMetric" aria-live="polite">—</strong><span id="solarDetail" class="metric-detail">Telemetry unavailable</span></div></article>
+        <article class="metric-card accent-green"><div class="metric-icon" aria-hidden="true">⌂</div><div><p class="metric-label">Load</p><strong id="loadMetric" aria-live="polite">—</strong><span id="loadDetail" class="metric-detail">Telemetry unavailable</span></div></article>
       </section>
 
       <section class="content-grid">
@@ -104,7 +104,7 @@
         </article>
 
         <article class="panel panel-wide">
-          <div class="panel-heading"><div><p class="eyebrow">FIRMWARE</p><h3>OTA update</h3></div><span id="otaState" class="service-state">Idle</span></div>
+          <div class="panel-heading"><div><p class="eyebrow">FIRMWARE</p><h3>OTA update</h3></div><span id="otaState" class="service-state" role="status" aria-live="polite">Idle</span></div>
           <div class="service-list">
             <div class="service-row"><span class="service-name">Installed</span><span id="otaInstalled" class="service-state">—</span></div>
             <div class="service-row"><span class="service-name">Available</span><span id="otaAvailable" class="service-state">—</span></div>
