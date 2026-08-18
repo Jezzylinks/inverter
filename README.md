@@ -52,6 +52,25 @@ All versioned API routes are served from the shared HTTP server and require the 
 
 The WebSocket endpoint is `/ws`. A client authenticates with `{"cmd":"authenticate","pin":"0000"}`, subscribes with `{"cmd":"subscribe"}`, and requests a one-client response with `{"cmd":"get_status"}`. The server sends Wi-Fi `status` events, typed `device` events with inverter/battery/solar/load telemetry, and typed `ota` events with state and progress. Only authenticated clients that explicitly subscribed receive asynchronous broadcasts; request/response messages are sent only to the requesting socket.
 
+### REST and WebSocket verification
+
+The repository includes `tools/verify_api.py`, a dependency-free, read-only verification client. It checks the protected REST authentication gate, validates the JSON contracts for status, system, inverter, battery, solar, load, grid, Wi-Fi, services, and OTA endpoints, then performs a raw WebSocket RFC 6455 handshake and verifies authentication, subscription, one-client status delivery, and `get_status` request/response behavior. It does not scan networks, mutate Wi-Fi credentials, publish MQTT messages, or start/cancel OTA operations.
+
+Run the local hardware-independent self-test with:
+
+```bash
+python3 tools/verify_api.py --self-test
+```
+
+For a flashed device on the local network, supply the device URL and panel PIN either as arguments or environment variables:
+
+```bash
+python3 tools/verify_api.py --base-url http://192.168.4.1 --pin 1234
+INVERTER_URL=http://inverter.local INVERTER_PIN=1234 python3 tools/verify_api.py
+```
+
+Use `--rest-only` or `--ws-only` to isolate a failing layer. The full suite requires the device’s HTTP server and WebSocket server to be running, valid panel authentication, and network reachability from the test host. A missing PIN intentionally verifies the HTTP 401 gate and exits nonzero with instructions for the full authenticated run.
+
 
 ## OTA CSV manifest
 
