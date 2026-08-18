@@ -91,6 +91,7 @@
 #include "app_buttons.h"
 #include "app_menu.h"
 #include "app_services.h"
+#include "server/websocket/websocket_server.h"
 #include "inverter_errors.h"
 
 /* ── All original #defines─────────────────────────────── */
@@ -2615,6 +2616,7 @@ void adc_task(void *arg)
     bool first_sample = true;
     bool telemetry_shutdown_latched = false;
     uint8_t sample_count = 0;
+    uint32_t last_ws_publish_ms = 0U;
     const uint8_t SAMPLES_BEFORE_ERROR_CHECK = 10;
 
     ESP_LOGI(TAG_ADC, "Starting ADC sampling and LCD updates");
@@ -2664,8 +2666,10 @@ void adc_task(void *arg)
         }
 
         /* Update main screen data for lcd_task */
-        const uint8_t battery_pct =
-            (uint8_t)clamp_float(battery_estimator_get_soc(&bat_estimate), 0.0f, 100.0f);
+        const float battery_soc =
+            clamp_float(battery_estimator_get_soc(&bat_estimate), 0.0f, 100.0f);
+        const uint8_t battery_pct = (uint8_t)battery_soc;
+        sys_state.inverter.battery.battery_soc = battery_soc;
         lcd_update_main_data(
             sys_state.inverter.battery.voltage,
             sys_state.inverter.output_voltage,
@@ -2720,6 +2724,10 @@ void adc_task(void *arg)
                               sys_state.inverter.operating_mode);
         lcd_update_wifi_status(wifi_monitor_is_online(),
                                wifi_monitor_get_rssi());
+        if ((uint32_t)(sample_time_ms - last_ws_publish_ms) >= 1000U) {
+            last_ws_publish_ms = sample_time_ms;
+            websocket_broadcast_device_status();
+        }
 
         if (sys_lcd.screen == LCD_SCREEN_STANDBY)
         {

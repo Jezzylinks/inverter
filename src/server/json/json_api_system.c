@@ -37,6 +37,8 @@ static esp_err_t api_services_handler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "dashboard", status.dashboard_running);
     cJSON_AddBoolToObject(root, "websocket", status.websocket_running);
     cJSON_AddBoolToObject(root, "mdns", status.mdns_running);
+    cJSON_AddBoolToObject(root, "ntp", status.ntp_running);
+    cJSON_AddBoolToObject(root, "ntp_time_set", status.ntp_time_set);
     cJSON_AddBoolToObject(root, "mqtt_configured", status.mqtt_configured);
     cJSON_AddBoolToObject(root, "mqtt_connected", status.mqtt_connected);
     api_add_mqtt_config(root, &config);

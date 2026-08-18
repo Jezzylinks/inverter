@@ -17,6 +17,8 @@ typedef struct {
     bool dashboard_running;
     bool websocket_running;
     bool mdns_running;
+    bool ntp_running;
+    bool ntp_time_set;
     bool mqtt_configured;
     bool mqtt_connected;
 } network_services_status_t;

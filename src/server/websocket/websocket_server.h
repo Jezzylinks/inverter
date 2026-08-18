@@ -47,6 +47,14 @@ extern "C"
      */
     void websocket_broadcast_status(const wifi_status_t *status);
 
+    /** Broadcast the current inverter/battery/solar/load data to subscribers. */
+    void websocket_broadcast_device_status(void);
+
+    /** Broadcast OTA state/progress to authenticated subscribers. */
+    void websocket_broadcast_ota_status(const char *state, int progress_percent,
+                                        const char *available_version,
+                                        const char *error_detail);
+
 #ifdef __cplusplus
 }
 #endif

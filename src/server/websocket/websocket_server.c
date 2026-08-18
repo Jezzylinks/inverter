@@ -15,6 +15,7 @@
 #include "freertos/semphr.h"
 
 #include "esp_err.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "cJSON.h"
@@ -36,6 +37,7 @@ typedef struct
     int fd;
     bool active;
     bool authenticated;
+    bool subscribed;
 } ws_client_t;
 
 static ws_client_t s_clients[WS_MAX_CLIENTS];
@@ -68,6 +70,7 @@ static int ws_alloc_client(httpd_handle_t server, int fd)
             s_clients[i].fd = fd;
             s_clients[i].active = true;
             s_clients[i].authenticated = !sys_state.security.enabled;
+            s_clients[i].subscribed = false;
             return i;
         }
     }
@@ -83,6 +86,7 @@ static void ws_remove_client(int fd)
         s_clients[idx].active = false;
         s_clients[idx].fd = -1;
         s_clients[idx].authenticated = false;
+        s_clients[idx].subscribed = false;
     }
 }
 
@@ -136,63 +140,133 @@ static cJSON *status_json_create(const wifi_status_t *status)
     return root;
 }
 
+static void websocket_broadcast_json(cJSON *root, bool require_subscription)
+{
+    if (!s_initialized || root == NULL || s_server == NULL) {
+        cJSON_Delete(root);
+        return;
+    }
+    char *json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json_str == NULL) {
+        return;
+    }
+
+    if (s_mutex != NULL) {
+        xSemaphoreTake(s_mutex, portMAX_DELAY);
+    }
+    for (int i = 0; i < WS_MAX_CLIENTS; ++i) {
+        if (!s_clients[i].active || !s_clients[i].authenticated ||
+            (require_subscription && !s_clients[i].subscribed)) {
+            continue;
+        }
+        httpd_ws_frame_t ws_pkt = {
+            .final = true,
+            .fragmented = false,
+            .type = HTTPD_WS_TYPE_TEXT,
+            .payload = (uint8_t *)json_str,
+            .len = strlen(json_str),
+        };
+        const esp_err_t err = httpd_ws_send_frame_async(s_server,
+                                                        s_clients[i].fd,
+                                                        &ws_pkt);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "WS send failed for fd %d: %s",
+                     s_clients[i].fd, esp_err_to_name(err));
+            s_clients[i].active = false;
+            s_clients[i].authenticated = false;
+            s_clients[i].subscribed = false;
+        }
+    }
+    if (s_mutex != NULL) {
+        xSemaphoreGive(s_mutex);
+    }
+    free(json_str);
+}
+
 /*----------------------------------------------------------
- * Broadcast status to all connected clients
+ * Broadcast status to authenticated subscribers.
  *---------------------------------------------------------*/
 void websocket_broadcast_status(const wifi_status_t *status)
 {
-    if (!s_initialized || status == NULL || s_server == NULL)
-    {
+    websocket_broadcast_json(status_json_create(status), true);
+}
+
+void websocket_broadcast_device_status(void)
+{
+    extern SemaphoreHandle_t sys_state_mutex;
+    system_state_t snapshot = {0};
+    if (sys_state_mutex != NULL) {
+        xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+        memcpy(&snapshot, &sys_state, sizeof(snapshot));
+        xSemaphoreGive(sys_state_mutex);
+    } else {
+        memcpy(&snapshot, &sys_state, sizeof(snapshot));
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON *data = cJSON_CreateObject();
+    if (root == NULL || data == NULL) {
+        cJSON_Delete(root);
+        cJSON_Delete(data);
         return;
     }
+    const bool valid = snapshot.adc_data_valid;
+    cJSON_AddStringToObject(root, "type", "device");
+    cJSON_AddStringToObject(root, "event", "status");
+    cJSON_AddStringToObject(data, "inverter_state",
+                            snapshot.inverter.inverter_state == INVERTER_ON ? "on" :
+                            snapshot.inverter.inverter_state == INVERTER_STARTING ? "starting" :
+                            snapshot.inverter.inverter_state == INVERTER_STANDBY ? "standby" :
+                            snapshot.inverter.inverter_state == INVERTER_FAULT ? "fault" : "off");
+    cJSON_AddBoolToObject(data, "inverter_active", snapshot.inverter.inverter_active);
+    cJSON_AddBoolToObject(data, "output_enabled", snapshot.output_enabled);
+    cJSON_AddNumberToObject(data, "operating_mode", snapshot.inverter.operating_mode);
+    cJSON_AddNumberToObject(data, "load_percentage", snapshot.inverter.load_percentage);
+    cJSON_AddNumberToObject(data, "fault_flags", (double)snapshot.error.error_flags);
+    if (valid) {
+        cJSON_AddNumberToObject(data, "battery_voltage", snapshot.inverter.battery.voltage);
+        cJSON_AddNumberToObject(data, "battery_soc",
+                                snapshot.inverter.battery.battery_soc);
+        cJSON_AddNumberToObject(data, "output_voltage", snapshot.inverter.output_voltage);
+        cJSON_AddNumberToObject(data, "output_current", snapshot.inverter.output_current);
+        cJSON_AddNumberToObject(data, "output_frequency", snapshot.inverter.output_frequency);
+        cJSON_AddNumberToObject(data, "solar_voltage", snapshot.dc_input_voltage);
+        cJSON_AddNumberToObject(data, "solar_current", snapshot.dc_input_current);
+    } else {
+        cJSON_AddNullToObject(data, "battery_voltage");
+        cJSON_AddNullToObject(data, "battery_soc");
+        cJSON_AddNullToObject(data, "output_voltage");
+        cJSON_AddNullToObject(data, "output_current");
+        cJSON_AddNullToObject(data, "output_frequency");
+        cJSON_AddNullToObject(data, "solar_voltage");
+        cJSON_AddNullToObject(data, "solar_current");
+    }
+    cJSON_AddBoolToObject(data, "telemetry_valid", valid);
+    cJSON_AddItemToObject(root, "data", data);
+    websocket_broadcast_json(root, true);
+}
 
-    cJSON *root = status_json_create(status);
-    char *json_str = root ? cJSON_PrintUnformatted(root) : NULL;
-    cJSON_Delete(root);
-    if (json_str == NULL)
-    {
+void websocket_broadcast_ota_status(const char *state, int progress_percent,
+                                    const char *available_version,
+                                    const char *error_detail)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON *data = cJSON_CreateObject();
+    if (root == NULL || data == NULL) {
+        cJSON_Delete(root);
+        cJSON_Delete(data);
         return;
     }
-
-    if (s_mutex)
-    {
-        xSemaphoreTake(s_mutex, portMAX_DELAY);
-    }
-    for (int i = 0; i < WS_MAX_CLIENTS; i++)
-    {
-        if (s_clients[i].active && s_clients[i].authenticated)
-        {
-            httpd_ws_frame_t ws_pkt = {
-                .final = true,
-                .fragmented = false,
-                .type = HTTPD_WS_TYPE_TEXT,
-                .payload = (uint8_t *)json_str,
-                .len = strlen(json_str),
-            };
-
-            esp_err_t err = httpd_ws_send_frame_async(
-                s_server,
-                s_clients[i].fd,
-                &ws_pkt);
-
-            if (err != ESP_OK)
-            {
-                ESP_LOGW(TAG,
-                         "WS send failed for fd %d: %s",
-                         s_clients[i].fd,
-                         esp_err_to_name(err));
-
-                s_clients[i].active = false;
-            }
-        }
-    }
-
-    if (s_mutex)
-    {
-        xSemaphoreGive(s_mutex);
-    }
-
-    free(json_str);
+    cJSON_AddStringToObject(root, "type", "ota");
+    cJSON_AddStringToObject(root, "event", "status");
+    cJSON_AddStringToObject(data, "state", state ? state : "unknown");
+    cJSON_AddNumberToObject(data, "progress_percent", progress_percent);
+    cJSON_AddStringToObject(data, "available_version",
+                            available_version ? available_version : "");
+    cJSON_AddStringToObject(data, "error", error_detail ? error_detail : "");
+    cJSON_AddItemToObject(root, "data", data);
+    websocket_broadcast_json(root, true);
 }
 
 /*----------------------------------------------------------
@@ -355,6 +429,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
                         }
                         if (client_idx >= 0) {
                             s_clients[client_idx].authenticated = valid;
+                            s_clients[client_idx].subscribed = false;
                         }
                         if (client_idx >= 0 && s_mutex) {
                             xSemaphoreGive(s_mutex);
@@ -390,9 +465,12 @@ static esp_err_t ws_handler(httpd_req_t *req)
                         {
                             xSemaphoreTake(s_mutex, portMAX_DELAY);
                         }
-                        if (ws_find_client(fd) < 0)
-                        {
-                            ws_alloc_client(req->handle, fd);
+                        int subscribed_idx = ws_find_client(fd);
+                        if (subscribed_idx < 0) {
+                            subscribed_idx = ws_alloc_client(req->handle, fd);
+                        }
+                        if (subscribed_idx >= 0) {
+                            s_clients[subscribed_idx].subscribed = true;
                             ESP_LOGI(TAG, "Client fd %d subscribed", fd);
                         }
                         if (s_mutex)
@@ -400,11 +478,13 @@ static esp_err_t ws_handler(httpd_req_t *req)
                             xSemaphoreGive(s_mutex);
                         }
 
-                        /* Send immediate status */
+                        /* One-time subscription acknowledgement/status is sent
+                         * only to the requesting client. Future device events
+                         * use the broadcast path. */
                         wifi_status_t status;
                         if (wifi_events_get_status_copy(&status) == ESP_OK)
                         {
-                            websocket_broadcast_status(&status);
+                            (void)ws_send_json(fd, status_json_create(&status));
                         }
                     }
                 }

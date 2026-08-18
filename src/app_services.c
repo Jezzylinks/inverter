@@ -23,6 +23,7 @@
 #include "wifi/wifi_config.h"
 #include "wifi/wifi_scan.h"
 #include "server/network_services.h"
+#include "server/websocket/websocket_server.h"
 #include "system_error_codes.h"
 
 #include "task_watchdog.h"
@@ -474,6 +475,23 @@ static void app_services_show_ota_lcd(const app_ota_status_t *status)
                                   status->state == APP_OTA_CANCELLED);
 }
 
+static const char *app_ota_state_text(app_ota_state_t state)
+{
+    switch (state) {
+    case APP_OTA_IDLE: return "idle";
+    case APP_OTA_CHECKING: return "checking";
+    case APP_OTA_AVAILABLE: return "available";
+    case APP_OTA_CONFIRMING: return "confirming";
+    case APP_OTA_PREPARING: return "preparing";
+    case APP_OTA_DOWNLOADING: return "downloading";
+    case APP_OTA_VERIFYING: return "verifying";
+    case APP_OTA_COMPLETE: return "complete";
+    case APP_OTA_ERROR: return "error";
+    case APP_OTA_CANCELLED: return "cancelled";
+    default: return "unknown";
+    }
+}
+
 static void ota_progress_callback(int percent)
 {
     if (!s_services_mutex) {
@@ -484,6 +502,10 @@ static void ota_progress_callback(int percent)
     s_ota_status.progress_percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
     app_ota_status_t snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
+    websocket_broadcast_ota_status(app_ota_state_text(snapshot.state),
+                                   snapshot.progress_percent,
+                                   snapshot.available_version,
+                                   snapshot.error_detail);
     app_services_show_ota_lcd(&snapshot);
 }
 
@@ -530,6 +552,10 @@ static void ota_status_callback(ota_status_t status, int percent)
     }
     app_ota_status_t snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
+    websocket_broadcast_ota_status(app_ota_state_text(snapshot.state),
+                                   snapshot.progress_percent,
+                                   snapshot.available_version,
+                                   snapshot.error_detail);
     app_services_show_ota_lcd(&snapshot);
 }
 
@@ -1049,8 +1075,16 @@ esp_err_t app_services_wifi_disconnect(void)
 
 esp_err_t app_services_wifi_start_provisioning(void)
 {
+#if WIFI_RUNTIME_PROVISIONING_ENABLED
+    /* The captive portal owns port 80 only while the normal dashboard/API
+     * server is stopped. The Wi-Fi controller remains the owner of the
+     * provisioning radio and captive-DNS lifecycle. */
+    (void)network_services_stop();
+    return wifi_controller_start_provisioning();
+#else
     lcd_flash_message("Setup AP Disabled", "Use menuconfig", 1800U);
     return ESP_ERR_NOT_SUPPORTED;
+#endif
 }
 
 void app_services_show_wifi_status(void)

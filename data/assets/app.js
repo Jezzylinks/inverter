@@ -19,10 +19,13 @@
     heroTitle: $('heroTitle'), heroSubtitle: $('heroSubtitle'), signalLabel: $('signalLabel'), signalBars: document.querySelector('.signal-bars'),
     wifiState: $('wifiState'), wifiSsid: $('wifiSsid'), deviceIp: $('deviceIp'), deviceHost: $('deviceHost'), internetState: $('internetState'), lastUpdate: $('lastUpdate'),
     scanButton: $('scanButton'), disconnectButton: $('disconnectButton'), refreshButton: $('refreshButton'), networkNotice: $('networkNotice'), networkList: $('networkList'),
-    serviceHttp: $('serviceHttp'), serviceWs: $('serviceWs'), serviceMdns: $('serviceMdns'), serviceMqtt: $('serviceMqtt'), servicePulse: $('servicePulse'),
+    serviceHttp: $('serviceHttp'), serviceWs: $('serviceWs'), serviceMdns: $('serviceMdns'), serviceNtp: $('serviceNtp'), serviceMqtt: $('serviceMqtt'), servicePulse: $('servicePulse'),
     mqttToggleButton: $('mqttToggleButton'), mqttPanel: $('mqttPanel'), mqttCloseButton: $('mqttCloseButton'), mqttForm: $('mqttForm'), mqttConnectButton: $('mqttConnectButton'),
     mqttEnabled: $('mqttEnabled'), mqttBroker: $('mqttBroker'), mqttClientId: $('mqttClientId'), mqttUsername: $('mqttUsername'), mqttPassword: $('mqttPassword'), mqttPublishTopic: $('mqttPublishTopic'), mqttSubscribeTopic: $('mqttSubscribeTopic'),
     eventLog: $('eventLog'), clearLogButton: $('clearLogButton'), toastRegion: $('toastRegion'),
+    inverterState: $('inverterState'), inverterDetail: $('inverterDetail'), batteryMetric: $('batteryMetric'), batteryDetail: $('batteryDetail'),
+    solarMetric: $('solarMetric'), solarDetail: $('solarDetail'), loadMetric: $('loadMetric'), loadDetail: $('loadDetail'),
+    otaState: $('otaState'), otaInstalled: $('otaInstalled'), otaAvailable: $('otaAvailable'), otaProgress: $('otaProgress'), otaCheckButton: $('otaCheckButton'), otaStartButton: $('otaStartButton'), otaCancelButton: $('otaCancelButton'),
     pinDialog: $('pinDialog'), pinForm: $('pinForm'), pinInput: $('pinInput'), pinError: $('pinError'), pinCloseButton: $('pinCloseButton'),
     passwordDialog: $('passwordDialog'), passwordForm: $('passwordForm'), passwordTitle: $('passwordTitle'), passwordCopy: $('passwordCopy'), selectedSsid: $('selectedSsid'), networkPassword: $('networkPassword'), passwordError: $('passwordError'), passwordCloseButton: $('passwordCloseButton')
   };
@@ -122,6 +125,46 @@
     }
   }
 
+  function formatValue(value, suffix = '') {
+    return value === null || value === undefined || Number.isNaN(Number(value)) ? '—' : `${value}${suffix}`;
+  }
+
+  function renderDeviceData(payloads) {
+    const inverter = payloads.inverter || {};
+    const battery = payloads.battery || {};
+    const solar = payloads.solar || {};
+    const load = payloads.load || {};
+    const inverterValid = inverter.telemetry_valid !== false;
+    els.inverterState.textContent = inverter.state || 'Unknown';
+    els.inverterDetail.textContent = inverterValid ? `${formatValue(inverter.voltage, ' V')} · ${formatValue(inverter.frequency, ' Hz')}` : 'Telemetry unavailable';
+    els.batteryMetric.textContent = formatValue(battery.state_of_charge, '%');
+    els.batteryDetail.textContent = battery.telemetry_valid === false ? 'Telemetry unavailable' : `${formatValue(battery.voltage, ' V')} · ${battery.charging ? 'Charging' : 'Discharging / idle'}`;
+    els.solarMetric.textContent = formatValue(solar.power_kw, ' kW');
+    els.solarDetail.textContent = solar.telemetry_valid === false ? 'Telemetry unavailable' : `${formatValue(solar.voltage, ' V')} · ${formatValue(solar.current, ' A')}`;
+    els.loadMetric.textContent = formatValue(load.power_kw, ' kW');
+    els.loadDetail.textContent = load.telemetry_valid === false ? 'Telemetry unavailable' : `${formatValue(load.percentage, '%')} · ${load.active ? 'Active' : 'Idle'}`;
+  }
+
+  function renderOta(payload) {
+    if (!payload) return;
+    els.otaState.textContent = payload.state || 'Unknown';
+    els.otaInstalled.textContent = payload.installed_version || '—';
+    els.otaAvailable.textContent = payload.available_version || '—';
+    els.otaProgress.textContent = payload.in_progress || ['downloading', 'verifying', 'preparing'].includes(payload.state) ? `${payload.progress_percent ?? 0}%` : '—';
+    els.otaStartButton.disabled = !payload.update_available || payload.in_progress;
+    els.otaCancelButton.disabled = !payload.in_progress && !payload.confirmation_pending;
+  }
+
+  function renderDeviceSocket(message) {
+    const data = message.data || {};
+    renderDeviceData({
+      inverter: { state: data.inverter_state, telemetry_valid: data.telemetry_valid, voltage: data.output_voltage, frequency: data.output_frequency },
+      battery: { state_of_charge: data.battery_soc, telemetry_valid: data.telemetry_valid, voltage: data.battery_voltage, charging: false },
+      solar: { power_kw: data.solar_voltage !== null && data.solar_current !== null ? (data.solar_voltage * data.solar_current) / 1000 : null, telemetry_valid: data.telemetry_valid, voltage: data.solar_voltage, current: data.solar_current },
+      load: { power_kw: data.output_voltage !== null && data.output_current !== null ? (data.output_voltage * data.output_current) / 1000 : null, telemetry_valid: data.telemetry_valid, percentage: data.load_percentage, active: data.output_enabled }
+    });
+  }
+
   function renderServiceState(element, active, label = 'Offline') {
     element.textContent = active ? 'Online' : label;
     element.className = `service-state ${active ? 'online' : 'offline'}`;
@@ -133,6 +176,7 @@
     renderServiceState(els.serviceHttp, payload.http);
     renderServiceState(els.serviceWs, payload.websocket);
     renderServiceState(els.serviceMdns, payload.mdns);
+    renderServiceState(els.serviceNtp, payload.ntp_time_set, payload.ntp ? 'Waiting for sync' : 'Offline');
     renderServiceState(els.serviceMqtt, payload.mqtt_connected, payload.mqtt_configured ? 'Ready' : 'Not set');
     els.servicePulse.classList.toggle('active', Boolean(payload.http && payload.websocket));
     if (payload.mqtt) {
@@ -148,8 +192,8 @@
 
   async function loadStatus(showLog = false) {
     try {
-      const payload = await request('/api/v1/status');
-      renderStatus(payload);
+      const [status, wifi] = await Promise.all([request('/api/v1/status'), request('/api/v1/wifi')]);
+      renderStatus({ ...status, ...wifi });
       if (showLog) log('Device status refreshed', 'good');
     } catch (error) {
       if (error.message !== 'Security PIN required') {
@@ -157,6 +201,20 @@
         if (showLog) log(error.message, 'error');
       }
     }
+  }
+
+  async function loadDeviceData() {
+    const endpoints = ['inverter', 'battery', 'solar', 'load'];
+    const values = await Promise.all(endpoints.map(async (name) => {
+      try { return [name, await request(`/api/v1/${name}`)]; }
+      catch (error) { if (error.message !== 'Security PIN required') log(`${name} data unavailable`, 'warn'); return [name, {}]; }
+    }));
+    renderDeviceData(Object.fromEntries(values));
+  }
+
+  async function loadOta() {
+    try { renderOta(await request('/api/v1/ota')); }
+    catch (error) { if (error.message !== 'Security PIN required') log(`OTA status unavailable: ${error.message}`, 'warn'); }
   }
 
   async function loadServices() {
@@ -195,6 +253,10 @@
         }
       } else if (message.type === 'status') {
         renderStatus({ ...state.status, ...message, connected: message.connected, got_ip: message.got_ip, internet: message.internet, rssi: message.rssi, ip: message.ip, state: message.state });
+      } else if (message.type === 'device') {
+        renderDeviceSocket(message);
+      } else if (message.type === 'ota') {
+        renderOta({ ...(message.data || {}), in_progress: ['preparing', 'downloading', 'verifying'].includes(message.data?.state) });
       } else if (message.type === 'error') {
         log(message.error || 'Live update error', 'error');
       }
@@ -237,7 +299,7 @@
 
   async function scanNetworks() {
     setBusy(els.scanButton, true); setNotice('Scanning nearby networks…');
-    try { const payload = await request('/api/v1/scan'); renderNetworks(payload.networks); setNotice(`${payload.count || 0} network${payload.count === 1 ? '' : 's'} found.`, 'good'); log(`Network scan complete: ${payload.count || 0} found`, 'good'); }
+    try { const payload = await request('/api/v1/wifi/scan'); renderNetworks(payload.networks); setNotice(`${payload.count || 0} network${payload.count === 1 ? '' : 's'} found.`, 'good'); log(`Network scan complete: ${payload.count || 0} found`, 'good'); }
     catch (error) { setNotice(error.message, 'error'); log(`Network scan failed: ${error.message}`, 'error'); }
     finally { setBusy(els.scanButton, false); }
   }
@@ -256,7 +318,7 @@
 
   async function connectNetwork(ssid, password) {
     try {
-      const payload = await request('/api/v1/connect', { method: 'POST', body: JSON.stringify({ ssid, password }) });
+      const payload = await request('/api/v1/wifi/connect', { method: 'POST', body: JSON.stringify({ ssid, password }) });
       setNotice(payload.message || 'Connection request accepted.', 'good');
       toast('Connection request accepted', 'good'); log(`Connecting to ${ssid}`, 'good');
       els.passwordDialog.close();
@@ -266,7 +328,7 @@
 
   async function disconnect() {
     setBusy(els.disconnectButton, true);
-    try { await request('/api/v1/disconnect', { method: 'POST', body: '{}' }); toast('Wi‑Fi disconnected', 'good'); log('Wi‑Fi disconnected', 'warn'); await loadStatus(); }
+    try { await request('/api/v1/wifi/disconnect', { method: 'POST', body: '{}' }); toast('Wi‑Fi disconnected', 'good'); log('Wi‑Fi disconnected', 'warn'); await loadStatus(); }
     catch (error) { toast(error.message, 'error'); log(error.message, 'error'); }
     finally { setBusy(els.disconnectButton, false); }
   }
@@ -286,30 +348,48 @@
     finally { setBusy(els.mqttConnectButton, false); }
   }
 
+  async function otaAction(path, message) {
+    try {
+      const result = await request(path, { method: 'POST', body: '{}' });
+      toast(result.message || message, 'good');
+      log(result.message || message, 'good');
+      await loadOta();
+    } catch (error) {
+      toast(error.message, 'error');
+      log(`OTA action failed: ${error.message}`, 'error');
+      await loadOta();
+    }
+  }
+
   function bind() {
     els.pinButton.addEventListener('click', requestPin);
     els.pinCloseButton.addEventListener('click', () => els.pinDialog.close());
     els.passwordCloseButton.addEventListener('click', () => els.passwordDialog.close());
-    els.pinForm.addEventListener('submit', async (event) => { event.preventDefault(); state.pin = els.pinInput.value.trim(); sessionStorage.setItem('inverterPin', state.pin); els.pinDialog.close(); await loadStatus(true); await loadServices(); if (state.socket) state.socket.close(); connectSocket(); });
+    els.pinForm.addEventListener('submit', async (event) => { event.preventDefault(); state.pin = els.pinInput.value.trim(); sessionStorage.setItem('inverterPin', state.pin); els.pinDialog.close(); await loadStatus(true); await loadDeviceData(); await loadServices(); await loadOta(); if (state.socket) state.socket.close(); connectSocket(); });
     els.passwordForm.addEventListener('submit', (event) => { event.preventDefault(); connectNetwork(state.selectedSsid, els.networkPassword.value); });
     els.scanButton.addEventListener('click', scanNetworks);
     els.disconnectButton.addEventListener('click', disconnect);
-    els.refreshButton.addEventListener('click', async () => { await loadStatus(true); await loadServices(); });
+    els.refreshButton.addEventListener('click', async () => { await loadStatus(true); await loadDeviceData(); await loadServices(); await loadOta(); });
     els.mqttToggleButton.addEventListener('click', () => { els.mqttPanel.hidden = !els.mqttPanel.hidden; });
     els.mqttCloseButton.addEventListener('click', () => { els.mqttPanel.hidden = true; });
     els.mqttForm.addEventListener('submit', saveMqtt);
     els.mqttConnectButton.addEventListener('click', connectMqtt);
+    els.otaCheckButton.addEventListener('click', () => otaAction('/api/v1/ota/check', 'OTA check started'));
+    els.otaStartButton.addEventListener('click', () => otaAction('/api/v1/ota/start', 'OTA update started'));
+    els.otaCancelButton.addEventListener('click', () => otaAction('/api/v1/ota/cancel', 'OTA operation cancelled'));
     els.clearLogButton.addEventListener('click', () => { els.eventLog.innerHTML = '<div class="log-empty">No events yet.</div>'; });
-    window.addEventListener('online', () => { log('Browser network available', 'good'); loadStatus(); connectSocket(); });
+    window.addEventListener('online', () => { log('Browser network available', 'good'); loadStatus(); loadDeviceData(); loadOta(); connectSocket(); });
   }
 
   async function start() {
     bind();
     log('Dashboard loaded');
     await loadStatus();
+    await loadDeviceData();
     await loadServices();
+    await loadOta();
     connectSocket();
-    state.statusTimer = window.setInterval(() => { loadStatus(); loadServices(); }, 15000);
+    state.statusTimer = window.setInterval(() => { loadStatus(); loadDeviceData(); loadServices(); loadOta(); }, 15000);
   }
 
   start();

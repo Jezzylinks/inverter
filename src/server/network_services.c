@@ -9,18 +9,20 @@
 
 #include "server/json/json_api_server.h"
 #include "server/mdns/mdns_service.h"
+#include "server/ntp/ntp_client.h"
 #include "server/mqtt/mqtt_client_manager.h"
 #include "server/websocket/websocket_server.h"
 #include "server/web/web_dashboard_server.h"
 #include "wifi/wifi_config.h"
 #include "wifi/wifi_events.h"
+#include "wifi/wifi_controller.h"
 #include "wifi/wifi_manager.h"
 
 #define NETWORK_SERVICES_TAG "NET_SERVICES"
 #define NETWORK_HTTP_PORT 80U
 #define NETWORK_HTTP_STACK_SIZE 8192U
 #define NETWORK_SYNC_TASK_STACK_SIZE 8192U
-#define NETWORK_HTTP_MAX_URI_HANDLERS 32U
+#define NETWORK_HTTP_MAX_URI_HANDLERS 64U
 
 static SemaphoreHandle_t s_mutex;
 static httpd_handle_t s_http_server;
@@ -28,6 +30,7 @@ static network_mqtt_config_t s_mqtt_config;
 static bool s_initialized;
 static bool s_running;
 static bool s_mdns_running;
+static bool s_ntp_running;
 static bool s_websocket_running;
 static bool s_dashboard_running;
 static bool s_station_ready;
@@ -88,9 +91,11 @@ static void network_wifi_status_callback(const wifi_status_t *status)
     }
     const wifi_mode_t mode = wifi_manager_get_mode();
     const bool station_ready = status->state == WIFI_STATE_CONNECTED && status->got_ip;
-    const bool ap_ready = (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) &&
+    const bool provisioning = wifi_controller_get_state() == WIFI_CONTROLLER_PROVISIONING;
+    const bool ap_ready = !provisioning &&
+                          (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) &&
                           status->state == WIFI_STATE_AP_ACTIVE;
-    const bool ready = station_ready || ap_ready;
+    const bool ready = !provisioning && (station_ready || ap_ready);
     bool mdns_running = false;
     services_lock();
     mdns_running = s_mdns_running;
@@ -188,6 +193,7 @@ esp_err_t network_services_init(void)
     s_http_server = NULL;
     s_running = false;
     s_mdns_running = false;
+    s_ntp_running = false;
     s_websocket_running = false;
     s_dashboard_running = false;
     s_station_ready = false;
@@ -279,6 +285,15 @@ esp_err_t network_services_start(void)
         ESP_LOGW(NETWORK_SERVICES_TAG, "mDNS startup failed: %s", esp_err_to_name(err));
     }
 
+    const esp_err_t ntp_err = ntp_client_init(NULL);
+    if (ntp_err == ESP_OK) {
+        s_ntp_running = true;
+    } else {
+        ESP_LOGW(NETWORK_SERVICES_TAG,
+                 "NTP startup failed; local services continue: %s",
+                 esp_err_to_name(ntp_err));
+    }
+
     services_lock();
     s_running = true;
     services_unlock();
@@ -297,7 +312,9 @@ esp_err_t network_services_stop(void)
     const bool was_running = s_running;
     s_running = false;
     const bool mdns_running = s_mdns_running;
+    const bool ntp_running = s_ntp_running;
     s_mdns_running = false;
+    s_ntp_running = false;
     s_websocket_running = false;
     services_unlock();
     if (!was_running) {
@@ -308,6 +325,9 @@ esp_err_t network_services_stop(void)
     (void)mqtt_client_deinit();
     if (mdns_running) {
         (void)mdns_service_deinit();
+    }
+    if (ntp_running) {
+        (void)ntp_client_deinit();
     }
     cleanup_http_services();
     ESP_LOGI(NETWORK_SERVICES_TAG, "%s network services stopped",
@@ -337,6 +357,8 @@ void network_services_get_status(network_services_status_t *status)
     status->dashboard_running = s_dashboard_running;
     status->websocket_running = s_websocket_running;
     status->mdns_running = s_mdns_running;
+    status->ntp_running = s_ntp_running;
+    status->ntp_time_set = s_ntp_running && ntp_client_time_is_set();
     status->mqtt_configured = s_mqtt_config.enabled && s_mqtt_config.broker_url[0] != '\0';
     services_unlock();
     status->mqtt_connected = mqtt_client_is_connected();

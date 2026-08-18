@@ -19,11 +19,31 @@
 #include "inverter_errors.h"
 #include "server/network_services.h"
 
+static const char *wifi_mode_name(wifi_mode_t mode)
+{
+    switch (mode) {
+    case WIFI_MODE_STA: return "sta";
+    case WIFI_MODE_AP: return "ap";
+    case WIFI_MODE_APSTA: return "apsta";
+    default: return "unknown";
+    }
+}
+
 static esp_err_t api_status_handler(httpd_req_t *req)
 {
     esp_err_t auth_err = json_api_require_pin(req);
     if (auth_err != ESP_OK) return auth_err;
     cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    cJSON_AddStringToObject(root, "mode", wifi_mode_name(wifi_manager_get_mode()));
+    cJSON_AddBoolToObject(root, "runtime_provisioning_enabled",
+                          WIFI_RUNTIME_PROVISIONING_ENABLED != 0);
+    wifi_manager_config_t config = {0};
+    if (wifi_controller_get_config(&config) == ESP_OK) {
+        cJSON_AddStringToObject(root, "ssid", config.ssid);
+    }
 
     wifi_status_t status_copy = {0};
     const bool have_status = wifi_events_get_status_copy(&status_copy) == ESP_OK;
@@ -388,7 +408,19 @@ static esp_err_t api_config_handler(httpd_req_t *req)
 }
 
 static const httpd_uri_t s_wifi_uris[] = {
-    {.uri = "/api/v1/status", .method = HTTP_GET, .handler = api_status_handler},
+    {.uri = "/api/v1/wifi", .method = HTTP_GET, .handler = api_status_handler},
+    {.uri = "/api/v1/wifi/scan", .method = HTTP_GET, .handler = api_scan_handler},
+    {.uri = "/api/v1/wifi/connect", .method = HTTP_POST, .handler = api_connect_handler},
+    {.uri = "/api/v1/wifi/disconnect", .method = HTTP_POST, .handler = api_disconnect_handler},
+    {.uri = "/api/v1/wifi/reset", .method = HTTP_POST, .handler = api_reset_handler},
+    {.uri = "/api/v1/wifi/config", .method = HTTP_GET, .handler = api_config_handler},
+    {.uri = "/api/v1/wifi", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
+    {.uri = "/api/v1/wifi/scan", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
+    {.uri = "/api/v1/wifi/connect", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
+    {.uri = "/api/v1/wifi/disconnect", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
+    {.uri = "/api/v1/wifi/reset", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
+    {.uri = "/api/v1/wifi/config", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
+    /* Compatibility aliases retained for existing local clients. */
     {.uri = "/api/v1/scan", .method = HTTP_GET, .handler = api_scan_handler},
     {.uri = "/api/v1/connect", .method = HTTP_POST, .handler = api_connect_handler},
     {.uri = "/api/v1/disconnect", .method = HTTP_POST, .handler = api_disconnect_handler},
