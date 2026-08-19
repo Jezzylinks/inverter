@@ -24,6 +24,7 @@
 #include "wifi/wifi_monitor.h"
 #include "security/security.h"
 #include "system_state.h"
+#include "inverter_power_status.h"
 
 static const char *TAG = "WS_SERVER";
 
@@ -221,6 +222,17 @@ void websocket_broadcast_device_status(void)
                             snapshot.inverter.inverter_state == INVERTER_FAULT ? "fault" : "off");
     cJSON_AddBoolToObject(data, "inverter_active", snapshot.inverter.inverter_active);
     cJSON_AddBoolToObject(data, "output_enabled", snapshot.output_enabled);
+    inverter_power_status_t power_status = {0};
+    inverter_power_status_from_snapshot(&snapshot, &power_status);
+    cJSON *power = cJSON_CreateObject();
+    if (power != NULL) {
+        cJSON_AddBoolToObject(power, "relay_commanded", power_status.relay_commanded);
+        cJSON_AddBoolToObject(power, "physical_feedback_supported", power_status.physical_feedback_supported);
+        cJSON_AddBoolToObject(power, "physical_feedback_active", power_status.physical_feedback_active);
+        cJSON_AddBoolToObject(power, "interlocks_ready", power_status.interlocks_ready);
+        cJSON_AddStringToObject(power, "interlock_reason", power_status.interlock_reason);
+        cJSON_AddItemToObject(data, "power_control", power);
+    }
     cJSON_AddNumberToObject(data, "operating_mode", snapshot.inverter.operating_mode);
     cJSON_AddNumberToObject(data, "load_percentage", snapshot.inverter.load_percentage);
     cJSON_AddNumberToObject(data, "fault_flags", (double)snapshot.error.error_flags);

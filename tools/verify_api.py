@@ -90,6 +90,17 @@ def validate_contract(path: str, payload: Any) -> None:
     data = require_object(path, payload)
     if path == "/api/v1/status":
         required = ("system_ready", "inverter_state", "wifi")
+        power = data.get("power_control")
+        if not isinstance(power, dict):
+            raise VerificationError(f"{path}: missing power_control status object")
+        power_required = ("relay_commanded", "physical_feedback_supported",
+                          "physical_feedback_active", "interlocks_ready",
+                          "interlock_reason")
+        power_missing = [key for key in power_required if key not in power]
+        if power_missing:
+            raise VerificationError(f"{path}: power_control missing fields: {', '.join(power_missing)}")
+        if power.get("physical_feedback_supported") is False and power.get("physical_feedback_active") is True:
+            raise VerificationError(f"{path}: unsupported physical feedback cannot be active")
     elif path == "/api/v1/system":
         required = ("firmware_version", "hardware", "uptime_seconds", "lcd_columns", "lcd_rows")
     elif path == "/api/v1/inverter":
@@ -325,6 +336,12 @@ def run_websocket_checks(base_url: str, pin: str, timeout: float) -> int:
 def self_test() -> int:
     payload = {"state": "connected", "connected": True, "got_ip": True, "rssi": -42}
     validate_contract("/api/v1/wifi", {"mode": "sta", **payload, "internet": "available"})
+    validate_contract("/api/v1/status", {
+        "system_ready": True, "inverter_state": "off", "wifi": {},
+        "power_control": {"relay_commanded": False, "physical_feedback_supported": False,
+                          "physical_feedback_active": False, "interlocks_ready": True,
+                          "interlock_reason": "Preflight interlocks are ready"},
+    })
     validate_contract("/api/v1/wifi/config", {
         "mode": "sta", "dhcp": True, "auto_reconnect": True,
         "reconnect_interval_ms": 5000, "ip": "0.0.0.0", "gateway": "0.0.0.0",

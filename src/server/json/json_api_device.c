@@ -15,6 +15,7 @@
 
 #include "firmware_version.h"
 #include "hardware_config.h"
+#include "inverter_power_status.h"
 #include "inverter_errors.h"
 #include "lcd_config.h"
 #include "server/network_services.h"
@@ -116,6 +117,20 @@ static void add_wifi_summary(cJSON *root, const wifi_status_t *status,
     cJSON_AddItemToObject(root, "wifi", wifi);
 }
 
+static void add_power_control_status(cJSON *root, const system_state_t *state)
+{
+    inverter_power_status_t status = {0};
+    inverter_power_status_from_snapshot(state, &status);
+    cJSON *power = cJSON_CreateObject();
+    if (power == NULL) return;
+    cJSON_AddBoolToObject(power, "relay_commanded", status.relay_commanded);
+    cJSON_AddBoolToObject(power, "physical_feedback_supported", status.physical_feedback_supported);
+    cJSON_AddBoolToObject(power, "physical_feedback_active", status.physical_feedback_active);
+    cJSON_AddBoolToObject(power, "interlocks_ready", status.interlocks_ready);
+    cJSON_AddStringToObject(power, "interlock_reason", status.interlock_reason);
+    cJSON_AddItemToObject(root, "power_control", power);
+}
+
 static esp_err_t api_status_handler(httpd_req_t *req)
 {
     const esp_err_t auth_err = json_api_require_pin(req);
@@ -147,6 +162,7 @@ static esp_err_t api_status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "uptime_seconds",
                             (double)(esp_timer_get_time() / 1000000ULL));
     add_wifi_summary(root, &wifi, have_wifi);
+    add_power_control_status(root, &state);
     /* Compatibility fields for clients that previously consumed the Wi-Fi
      * status endpoint at /api/v1/status. The canonical data is now nested
      * under wifi and is also available at /api/v1/wifi. */
@@ -249,6 +265,7 @@ static esp_err_t api_inverter_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "load_percentage", state.inverter.load_percentage);
     cJSON_AddBoolToObject(root, "active", state.inverter.inverter_active);
     cJSON_AddBoolToObject(root, "telemetry_valid", valid);
+    add_power_control_status(root, &state);
     return json_api_send(req, root, 200);
 }
 
@@ -289,6 +306,19 @@ static esp_err_t api_inverter_control_handler(httpd_req_t *req)
 
     system_state_t before;
     snapshot_system_state(&before);
+    inverter_power_status_t power_status = {0};
+    inverter_power_status_from_snapshot(&before, &power_status);
+    if (!power_status.physical_feedback_supported || !power_status.interlocks_ready) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddBoolToObject(error, "success", false);
+        cJSON_AddStringToObject(error, "error", !power_status.physical_feedback_supported
+                                             ? "Physical output feedback is not configured; remote power control is disabled"
+                                             : power_status.interlock_reason);
+        cJSON_AddBoolToObject(error, "physical_feedback_supported", power_status.physical_feedback_supported);
+        cJSON_AddBoolToObject(error, "interlocks_ready", power_status.interlocks_ready);
+        cJSON_AddStringToObject(error, "interlock_reason", power_status.interlock_reason);
+        return json_api_send(req, error, 423);
+    }
     if (turn_on && before.inverter.inverter_state == INVERTER_STARTING) {
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Inverter startup is already in progress");
@@ -311,6 +341,7 @@ static esp_err_t api_inverter_control_handler(httpd_req_t *req)
     cJSON_AddStringToObject(result, "state", inverter_state_name(after.inverter.inverter_state));
     cJSON_AddBoolToObject(result, "active", after.inverter.inverter_active);
     cJSON_AddBoolToObject(result, "output_enabled", after.output_enabled);
+    add_power_control_status(result, &after);
     if (reached_target) {
         cJSON_AddStringToObject(result, "message", turn_on ? "Inverter is on" : "Inverter is off");
         return json_api_send(req, result, 200);
