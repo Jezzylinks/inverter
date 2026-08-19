@@ -38,6 +38,7 @@ READ_ENDPOINTS = (
     "/api/v1/load",
     "/api/v1/grid",
     "/api/v1/wifi",
+    "/api/v1/wifi/config",
     "/api/v1/services",
     "/api/v1/ota",
 )
@@ -105,6 +106,13 @@ def validate_contract(path: str, payload: Any) -> None:
             raise VerificationError(f"{path}: unavailable grid data must include reason")
     elif path == "/api/v1/wifi":
         required = ("mode", "state", "connected", "got_ip", "internet")
+    elif path == "/api/v1/wifi/config":
+        required = ("mode", "dhcp", "auto_reconnect", "reconnect_interval_ms", "ip",
+                    "gateway", "netmask", "dns", "ap_ssid", "ap_channel",
+                    "ap_max_connection", "requires_restart")
+        for secret_key in ("password", "ap_password"):
+            if secret_key in data:
+                raise VerificationError(f"{path}: must not return {secret_key}")
     elif path == "/api/v1/services":
         required = ("http", "dashboard", "websocket", "mdns", "ntp", "mqtt_connected")
     elif path == "/api/v1/ota":
@@ -317,6 +325,12 @@ def run_websocket_checks(base_url: str, pin: str, timeout: float) -> int:
 def self_test() -> int:
     payload = {"state": "connected", "connected": True, "got_ip": True, "rssi": -42}
     validate_contract("/api/v1/wifi", {"mode": "sta", **payload, "internet": "available"})
+    validate_contract("/api/v1/wifi/config", {
+        "mode": "sta", "dhcp": True, "auto_reconnect": True,
+        "reconnect_interval_ms": 5000, "ip": "0.0.0.0", "gateway": "0.0.0.0",
+        "netmask": "0.0.0.0", "dns": "0.0.0.0", "ap_ssid": "Inverter",
+        "ap_channel": 6, "ap_max_connection": 4, "requires_restart": True,
+    })
     frame_payload = b"test-frame"
     mask = b"abcd"
     masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(frame_payload))
@@ -372,4 +386,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

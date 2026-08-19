@@ -27,6 +27,8 @@
 
 extern system_state_t sys_state;
 extern SemaphoreHandle_t sys_state_mutex;
+extern void inverter_power_on(void);
+extern void shutdown_inverter(void);
 
 static const char *inverter_state_name(inverter_state_t state)
 {
@@ -250,6 +252,74 @@ static esp_err_t api_inverter_handler(httpd_req_t *req)
     return json_api_send(req, root, 200);
 }
 
+/* POST /api/v1/inverter/control
+ * Body: {"action":"on"} or {"action":"off"}. The handler intentionally
+ * delegates to the existing inverter state machine so all current protection
+ * checks, startup sequencing, ramp-down, relay handling and fault reporting
+ * remain authoritative on the ESP32. */
+static esp_err_t api_inverter_control_handler(httpd_req_t *req)
+{
+    const esp_err_t auth_err = json_api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
+    if (req->content_len == 0 || req->content_len > 96) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Invalid inverter control payload");
+        return json_api_send(req, error, 400);
+    }
+
+    char body[97] = {0};
+    const int received = httpd_req_recv(req, body, req->content_len);
+    if (received <= 0) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Could not read inverter control payload");
+        return json_api_send(req, error, 400);
+    }
+    cJSON *input = cJSON_Parse(body);
+    const cJSON *action = input != NULL ? cJSON_GetObjectItem(input, "action") : NULL;
+    const bool turn_on = action != NULL && cJSON_IsString(action) &&
+                         action->valuestring != NULL && strcmp(action->valuestring, "on") == 0;
+    const bool turn_off = action != NULL && cJSON_IsString(action) &&
+                          action->valuestring != NULL && strcmp(action->valuestring, "off") == 0;
+    cJSON_Delete(input);
+    if (!turn_on && !turn_off) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Action must be 'on' or 'off'");
+        return json_api_send(req, error, 400);
+    }
+
+    system_state_t before;
+    snapshot_system_state(&before);
+    if (turn_on && before.inverter.inverter_state == INVERTER_STARTING) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Inverter startup is already in progress");
+        return json_api_send(req, error, 409);
+    }
+
+    if (turn_on && before.inverter.inverter_state == INVERTER_OFF) {
+        inverter_power_on();
+    } else if (turn_off && before.inverter.inverter_state != INVERTER_OFF) {
+        shutdown_inverter();
+    }
+
+    system_state_t after;
+    snapshot_system_state(&after);
+    const bool reached_target = turn_on ? after.inverter.inverter_state == INVERTER_ON
+                                        : after.inverter.inverter_state == INVERTER_OFF;
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddBoolToObject(result, "success", reached_target);
+    cJSON_AddStringToObject(result, "action", turn_on ? "on" : "off");
+    cJSON_AddStringToObject(result, "state", inverter_state_name(after.inverter.inverter_state));
+    cJSON_AddBoolToObject(result, "active", after.inverter.inverter_active);
+    cJSON_AddBoolToObject(result, "output_enabled", after.output_enabled);
+    if (reached_target) {
+        cJSON_AddStringToObject(result, "message", turn_on ? "Inverter is on" : "Inverter is off");
+        return json_api_send(req, result, 200);
+    }
+    cJSON_AddStringToObject(result, "error", turn_on ? inverter_get_last_start_error_reason()
+                                                       : "The inverter did not reach the requested off state");
+    return json_api_send(req, result, 409);
+}
+
 static esp_err_t api_battery_handler(httpd_req_t *req)
 {
     const esp_err_t auth_err = json_api_require_pin(req);
@@ -361,6 +431,7 @@ static const httpd_uri_t s_device_uris[] = {
     {.uri = "/api/v1/status", .method = HTTP_GET, .handler = api_status_handler},
     {.uri = "/api/v1/system", .method = HTTP_GET, .handler = api_system_handler},
     {.uri = "/api/v1/inverter", .method = HTTP_GET, .handler = api_inverter_handler},
+    {.uri = "/api/v1/inverter/control", .method = HTTP_POST, .handler = api_inverter_control_handler},
     {.uri = "/api/v1/battery", .method = HTTP_GET, .handler = api_battery_handler},
     {.uri = "/api/v1/solar", .method = HTTP_GET, .handler = api_solar_handler},
     {.uri = "/api/v1/load", .method = HTTP_GET, .handler = api_load_handler},
@@ -368,6 +439,7 @@ static const httpd_uri_t s_device_uris[] = {
     {.uri = "/api/v1/status", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
     {.uri = "/api/v1/system", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
     {.uri = "/api/v1/inverter", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
+    {.uri = "/api/v1/inverter/control", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
     {.uri = "/api/v1/battery", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
     {.uri = "/api/v1/solar", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
     {.uri = "/api/v1/load", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
@@ -381,4 +453,3 @@ const httpd_uri_t *json_api_device_uris(size_t *count)
     }
     return s_device_uris;
 }
-

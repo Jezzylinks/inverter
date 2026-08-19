@@ -6,6 +6,7 @@
 
 #include "esp_log.h"
 #include "esp_http_server.h"
+#include "esp_netif.h"
 #include "esp_wifi.h"
 #include "cJSON.h"
 
@@ -27,6 +28,100 @@ static const char *wifi_mode_name(wifi_mode_t mode)
     case WIFI_MODE_APSTA: return "apsta";
     default: return "unknown";
     }
+}
+
+static const char *wifi_auth_name(wifi_auth_mode_t authmode)
+{
+    switch (authmode) {
+    case WIFI_AUTH_OPEN: return "open";
+    case WIFI_AUTH_WPA2_PSK: return "wpa2";
+    case WIFI_AUTH_WPA3_PSK: return "wpa3";
+    default: return "other";
+    }
+}
+
+static bool parse_wifi_mode(const char *value, wifi_mode_t *mode)
+{
+    if (value == NULL || mode == NULL) return false;
+    if (strcmp(value, "sta") == 0) *mode = WIFI_MODE_STA;
+    else if (strcmp(value, "ap") == 0) *mode = WIFI_MODE_AP;
+    else if (strcmp(value, "apsta") == 0) *mode = WIFI_MODE_APSTA;
+    else return false;
+    return true;
+}
+
+static bool parse_wifi_auth(const char *value, wifi_auth_mode_t *authmode)
+{
+    if (value == NULL || authmode == NULL) return false;
+    if (strcmp(value, "open") == 0) *authmode = WIFI_AUTH_OPEN;
+    else if (strcmp(value, "wpa2") == 0) *authmode = WIFI_AUTH_WPA2_PSK;
+    else if (strcmp(value, "wpa3") == 0) *authmode = WIFI_AUTH_WPA3_PSK;
+    else return false;
+    return true;
+}
+
+static bool parse_ipv4_field(const cJSON *root, const char *name, esp_ip4_addr_t *target)
+{
+    const cJSON *item = cJSON_GetObjectItem(root, name);
+    if (item == NULL) return true;
+    return cJSON_IsString(item) && item->valuestring != NULL &&
+           esp_netif_str_to_ip4(item->valuestring, target) == ESP_OK;
+}
+
+static void add_ipv4_field(cJSON *root, const char *name, const esp_ip4_addr_t *value)
+{
+    char text[16] = {0};
+    snprintf(text, sizeof(text), IPSTR, IP2STR(value));
+    cJSON_AddStringToObject(root, name, text);
+}
+
+static void add_config_json(cJSON *root, const wifi_manager_config_t *config)
+{
+    cJSON_AddStringToObject(root, "mode", wifi_mode_name(config->mode));
+    cJSON_AddStringToObject(root, "ssid", config->ssid);
+    cJSON_AddStringToObject(root, "auth", wifi_auth_name(config->authmode));
+    cJSON_AddBoolToObject(root, "dhcp", config->dhcp);
+    cJSON_AddBoolToObject(root, "auto_reconnect", config->auto_reconnect);
+    cJSON_AddNumberToObject(root, "reconnect_interval_ms", config->reconnect_interval_ms);
+    add_ipv4_field(root, "ip", &config->ip_info.ip);
+    add_ipv4_field(root, "gateway", &config->ip_info.gw);
+    add_ipv4_field(root, "netmask", &config->ip_info.netmask);
+    add_ipv4_field(root, "dns", &config->dns);
+    cJSON_AddStringToObject(root, "ap_ssid", config->ap_ssid);
+    cJSON_AddStringToObject(root, "ap_auth", wifi_auth_name(config->ap_authmode));
+    cJSON_AddNumberToObject(root, "ap_channel", config->ap_channel);
+    cJSON_AddNumberToObject(root, "ap_max_connection", config->ap_max_connection);
+    cJSON_AddStringToObject(root, "hostname", WIFI_HOSTNAME);
+    cJSON_AddBoolToObject(root, "requires_restart", true);
+}
+
+static bool apply_string_field(const cJSON *root, const char *name, char *target, size_t target_size)
+{
+    const cJSON *item = cJSON_GetObjectItem(root, name);
+    if (item == NULL) return true;
+    if (!cJSON_IsString(item) || item->valuestring == NULL || strlen(item->valuestring) >= target_size) return false;
+    memset(target, 0, target_size);
+    strncpy(target, item->valuestring, target_size - 1U);
+    return true;
+}
+
+static bool apply_bool_field(const cJSON *root, const char *name, bool *target)
+{
+    const cJSON *item = cJSON_GetObjectItem(root, name);
+    if (item == NULL) return true;
+    if (!cJSON_IsBool(item)) return false;
+    *target = cJSON_IsTrue(item);
+    return true;
+}
+
+static bool apply_uint_field(const cJSON *root, const char *name, uint32_t *target, uint32_t min, uint32_t max)
+{
+    const cJSON *item = cJSON_GetObjectItem(root, name);
+    if (item == NULL) return true;
+    if (!cJSON_IsNumber(item) || item->valuedouble < min || item->valuedouble > max ||
+        (uint32_t)item->valuedouble != item->valuedouble) return false;
+    *target = (uint32_t)item->valuedouble;
+    return true;
 }
 
 static esp_err_t api_status_handler(httpd_req_t *req)
@@ -397,14 +492,100 @@ static esp_err_t api_config_handler(httpd_req_t *req)
     }
 
     cJSON *root = cJSON_CreateObject();
-    cJSON_AddBoolToObject(root, "dhcp", config.dhcp);
-    cJSON_AddBoolToObject(root, "auto_reconnect", config.auto_reconnect);
-    cJSON_AddNumberToObject(root, "reconnect_interval_ms", config.reconnect_interval_ms);
-    cJSON_AddNumberToObject(root, "ap_channel", config.ap_channel);
-    cJSON_AddNumberToObject(root, "ap_max_connection", config.ap_max_connection);
-    cJSON_AddStringToObject(root, "hostname", WIFI_HOSTNAME);
+    if (root == NULL) return ESP_ERR_NO_MEM;
+    add_config_json(root, &config);
 
     return json_api_send(req, root, 200);
+}
+
+/* POST /api/v1/wifi/config persists supported non-credential settings.
+ * Station credentials remain on the existing /wifi/connect workflow and are
+ * deliberately never included in configuration responses. */
+static esp_err_t api_config_update_handler(httpd_req_t *req)
+{
+    const esp_err_t auth_err = json_api_require_pin(req);
+    if (auth_err != ESP_OK) return auth_err;
+    if (req->content_len == 0 || req->content_len > 768) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Invalid configuration payload length");
+        return json_api_send(req, error, 400);
+    }
+
+    char *body = calloc(1U, req->content_len + 1U);
+    if (body == NULL) return ESP_ERR_NO_MEM;
+    const int received = httpd_req_recv(req, body, req->content_len);
+    if (received <= 0) {
+        free(body);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Could not read configuration payload");
+        return json_api_send(req, error, 400);
+    }
+    cJSON *input = cJSON_Parse(body);
+    free(body);
+    if (input == NULL || !cJSON_IsObject(input)) {
+        cJSON_Delete(input);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Configuration payload must be a JSON object");
+        return json_api_send(req, error, 400);
+    }
+
+    wifi_manager_config_t config = {0};
+    esp_err_t err = wifi_controller_get_config(&config);
+    bool valid = err == ESP_OK;
+    const cJSON *mode = cJSON_GetObjectItem(input, "mode");
+    const cJSON *ap_auth = cJSON_GetObjectItem(input, "ap_auth");
+    uint32_t ap_channel = config.ap_channel;
+    uint32_t ap_max_connection = config.ap_max_connection;
+    valid = valid && (mode == NULL || (cJSON_IsString(mode) && parse_wifi_mode(mode->valuestring, &config.mode)));
+    valid = valid && (ap_auth == NULL || (cJSON_IsString(ap_auth) && parse_wifi_auth(ap_auth->valuestring, &config.ap_authmode)));
+    valid = valid && apply_bool_field(input, "dhcp", &config.dhcp);
+    valid = valid && apply_bool_field(input, "auto_reconnect", &config.auto_reconnect);
+    valid = valid && apply_uint_field(input, "reconnect_interval_ms", &config.reconnect_interval_ms, 250U, 60000U);
+    valid = valid && apply_uint_field(input, "ap_channel", &ap_channel, 1U, 13U);
+    valid = valid && apply_uint_field(input, "ap_max_connection", &ap_max_connection, 1U, 10U);
+    config.ap_channel = (uint8_t)ap_channel;
+    config.ap_max_connection = (uint8_t)ap_max_connection;
+    valid = valid && apply_string_field(input, "ap_ssid", config.ap_ssid, sizeof(config.ap_ssid));
+    valid = valid && apply_string_field(input, "ap_password", config.ap_password, sizeof(config.ap_password));
+    valid = valid && parse_ipv4_field(input, "ip", &config.ip_info.ip);
+    valid = valid && parse_ipv4_field(input, "gateway", &config.ip_info.gw);
+    valid = valid && parse_ipv4_field(input, "netmask", &config.ip_info.netmask);
+    valid = valid && parse_ipv4_field(input, "dns", &config.dns);
+    cJSON_Delete(input);
+    if (!valid) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Invalid or unsupported Wi-Fi configuration value");
+        return json_api_send(req, error, 400);
+    }
+
+    err = wifi_controller_set_config(&config);
+    if (err == ESP_OK) {
+        wifi_network_config_t stored = {0};
+        stored.mode = config.mode;
+        stored.auto_reconnect = config.auto_reconnect;
+        stored.reconnect_interval_ms = config.reconnect_interval_ms;
+        stored.dhcp = config.dhcp;
+        stored.ip_info = config.ip_info;
+        stored.dns = config.dns;
+        stored.ap_channel = config.ap_channel;
+        stored.ap_max_connection = config.ap_max_connection;
+        stored.ap_authmode = config.ap_authmode;
+        strncpy(stored.ap_ssid, config.ap_ssid, sizeof(stored.ap_ssid) - 1U);
+        strncpy(stored.ap_password, config.ap_password, sizeof(stored.ap_password) - 1U);
+        err = wifi_storage_save_network_config(&stored);
+    }
+    if (err != ESP_OK) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", esp_err_to_name(err));
+        return json_api_send(req, error, 500);
+    }
+
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddBoolToObject(result, "success", true);
+    cJSON_AddStringToObject(result, "status", "requires_restart");
+    cJSON_AddStringToObject(result, "message", "Wi-Fi settings saved. Restart or reconnect the inverter to apply mode and IP changes.");
+    add_config_json(result, &config);
+    return json_api_send(req, result, 202);
 }
 
 static const httpd_uri_t s_wifi_uris[] = {
@@ -414,6 +595,7 @@ static const httpd_uri_t s_wifi_uris[] = {
     {.uri = "/api/v1/wifi/disconnect", .method = HTTP_POST, .handler = api_disconnect_handler},
     {.uri = "/api/v1/wifi/reset", .method = HTTP_POST, .handler = api_reset_handler},
     {.uri = "/api/v1/wifi/config", .method = HTTP_GET, .handler = api_config_handler},
+    {.uri = "/api/v1/wifi/config", .method = HTTP_POST, .handler = api_config_update_handler},
     {.uri = "/api/v1/wifi", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
     {.uri = "/api/v1/wifi/scan", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
     {.uri = "/api/v1/wifi/connect", .method = HTTP_OPTIONS, .handler = json_api_options_handler},
