@@ -92,6 +92,7 @@
 #include "app_menu.h"
 #include "app_services.h"
 #include "server/websocket/websocket_server.h"
+#include "cloud/cloud_reporting.h"
 #include "inverter_errors.h"
 
 /* ── All original #defines─────────────────────────────── */
@@ -2727,6 +2728,8 @@ void adc_task(void *arg)
         if ((uint32_t)(sample_time_ms - last_ws_publish_ms) >= 1000U) {
             last_ws_publish_ms = sample_time_ms;
             websocket_broadcast_device_status();
+            cloud_reporting_publish(&sys_state, pv_kw, load_kw,
+                                    wifi_monitor_get_rssi());
         }
 
         if (sys_lcd.screen == LCD_SCREEN_STANDBY)
@@ -7120,6 +7123,10 @@ void app_main(void)
     if (app_services_init() != ESP_OK)
     {
         ESP_LOGW(APP_TAG, "Network/update services unavailable; continuing offline");
+    }
+    if (cloud_reporting_init() != ESP_OK)
+    {
+        ESP_LOGW(APP_TAG, "Cloud reporting unavailable; continuing with local operation");
     }
 
     /* Hardware-dependent battery/LCD peripherals use the validated profile. */

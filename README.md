@@ -49,8 +49,13 @@ All versioned API routes are served from the shared HTTP server and require the 
 | Services | `GET /api/v1/services` | HTTP, dashboard, WebSocket, mDNS, NTP/time-sync, and MQTT state. |
 | MQTT | `/api/v1/mqtt/config`, `/api/v1/mqtt/connect`, `/api/v1/mqtt/disconnect`, `/api/v1/mqtt/publish`, `/api/v1/mqtt/subscribe` | Existing authenticated MQTT configuration and control operations. |
 | OTA | `GET /api/v1/ota`, `POST /api/v1/ota/check`, `/api/v1/ota/start`, `/api/v1/ota/confirm`, `/api/v1/ota/cancel` | Read OTA state, request an asynchronous manifest check, start an explicitly requested update, or cancel a pending/running operation through `app_services`. |
+| Cloud reporting | `GET /api/v1/cloud`, `POST /api/v1/cloud/config` | PIN-protected direct HTTPS reporting configuration and non-secret enrollment/reporting status. |
 
 The WebSocket endpoint is `/ws`. A client authenticates with `{"cmd":"authenticate","pin":"0000"}`, subscribes with `{"cmd":"subscribe"}`, and requests a one-client response with `{"cmd":"get_status"}`. The server sends Wi-Fi `status` events, typed `device` events with inverter/battery/solar/load telemetry, and typed `ota` events with state and progress. Only authenticated clients that explicitly subscribed receive asynchronous broadcasts; request/response messages are sent only to the requesting socket.
+
+### Direct HTTPS cloud reporting
+
+The firmware can be enrolled to report a bounded telemetry snapshot directly to the cloud backend over HTTPS, avoiding an always-on MQTT gateway. The local PIN-protected configuration endpoint stores the cloud origin, device hardware ID, one-time enrollment code, and reporting period in NVS; the enrollment code is exchanged for a device-only reporting token, which is never returned by local API responses. See [`docs/cloud_https_reporting.md`](docs/cloud_https_reporting.md) for the enrollment flow, payload, alert boundary, and safe remote-control requirements.
 
 ### REST and WebSocket verification
 

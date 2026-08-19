@@ -8,6 +8,7 @@
 #include "system_state.h"
 
 #include "json_api_device.h"
+#include "json_api_cloud.h"
 #include "json_api_mqtt.h"
 #include "json_api_ota.h"
 #include "json_api_system.h"
@@ -159,16 +160,19 @@ esp_err_t json_api_server_start(httpd_handle_t server)
     size_t mqtt_count = 0U;
     size_t ota_count = 0U;
     size_t system_count = 0U;
+    size_t cloud_count = 0U;
     const httpd_uri_t *device_uris = json_api_device_uris(&device_count);
     const httpd_uri_t *wifi_uris = json_api_wifi_uris(&wifi_count);
     const httpd_uri_t *mqtt_uris = json_api_mqtt_uris(&mqtt_count);
     const httpd_uri_t *ota_uris = json_api_ota_uris(&ota_count);
     const httpd_uri_t *system_uris = json_api_system_uris(&system_count);
+    const httpd_uri_t *cloud_uris = json_api_cloud_uris(&cloud_count);
     register_uri_group(device_uris, device_count);
     register_uri_group(wifi_uris, wifi_count);
     register_uri_group(mqtt_uris, mqtt_count);
     register_uri_group(ota_uris, ota_count);
     register_uri_group(system_uris, system_count);
+    register_uri_group(cloud_uris, cloud_count);
 
     ESP_LOGI(TAG, "JSON API server registered");
     return ESP_OK;
@@ -186,11 +190,13 @@ esp_err_t json_api_server_stop(void)
     size_t mqtt_count = 0U;
     size_t ota_count = 0U;
     size_t system_count = 0U;
+    size_t cloud_count = 0U;
     unregister_uri_group(json_api_device_uris(&device_count), device_count);
     unregister_uri_group(json_api_wifi_uris(&wifi_count), wifi_count);
     unregister_uri_group(json_api_mqtt_uris(&mqtt_count), mqtt_count);
     unregister_uri_group(json_api_ota_uris(&ota_count), ota_count);
     unregister_uri_group(json_api_system_uris(&system_count), system_count);
+    unregister_uri_group(json_api_cloud_uris(&cloud_count), cloud_count);
     s_server = NULL;
     return ESP_OK;
 }
