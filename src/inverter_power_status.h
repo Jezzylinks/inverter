@@ -9,6 +9,7 @@ typedef struct {
     bool relay_commanded;
     bool physical_feedback_supported;
     bool physical_feedback_active;
+    bool physical_feedback_mocked;
     bool interlocks_ready;
     const char *interlock_reason;
 } inverter_power_status_t;

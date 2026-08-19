@@ -229,6 +229,7 @@ void websocket_broadcast_device_status(void)
         cJSON_AddBoolToObject(power, "relay_commanded", power_status.relay_commanded);
         cJSON_AddBoolToObject(power, "physical_feedback_supported", power_status.physical_feedback_supported);
         cJSON_AddBoolToObject(power, "physical_feedback_active", power_status.physical_feedback_active);
+        cJSON_AddBoolToObject(power, "physical_feedback_mocked", power_status.physical_feedback_mocked);
         cJSON_AddBoolToObject(power, "interlocks_ready", power_status.interlocks_ready);
         cJSON_AddStringToObject(power, "interlock_reason", power_status.interlock_reason);
         cJSON_AddItemToObject(data, "power_control", power);

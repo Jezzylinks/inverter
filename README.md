@@ -18,6 +18,17 @@ pio device monitor
 
 The 4 MiB setting is intentional. Verify the physical module before flashing; do not use this partition table on a 2 MiB device. The build output reports the application size and partition budget so oversized releases are rejected before upload.
 
+### Mock-feedback UI test build
+
+For mobile UI integration testing before a dedicated inverter-output feedback GPIO is installed, build the explicitly named **test-only** profile:
+
+```bash
+pio run -e esp32dev-ui-mock
+pio run -e esp32dev-ui-mock --target upload
+```
+
+This profile sets `physical_feedback_supported=true` and mirrors the relay command into `physical_feedback_active`, allowing the authenticated mobile control flow to be exercised when preflight interlocks are ready. Every REST and WebSocket payload also sets `physical_feedback_mocked=true`; both mobile clients display this as mock feedback rather than electrical confirmation. It does **not** bypass the existing PIN check, startup/shutdown state machine, interlocks, or fault protections. Because it is not a measurement, do not treat the profile as a production safety build and return to `pio run` before normal deployment.
+
 ## Runtime architecture
 
 | Subsystem | Refactor and safety behavior |

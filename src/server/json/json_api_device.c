@@ -126,6 +126,7 @@ static void add_power_control_status(cJSON *root, const system_state_t *state)
     cJSON_AddBoolToObject(power, "relay_commanded", status.relay_commanded);
     cJSON_AddBoolToObject(power, "physical_feedback_supported", status.physical_feedback_supported);
     cJSON_AddBoolToObject(power, "physical_feedback_active", status.physical_feedback_active);
+    cJSON_AddBoolToObject(power, "physical_feedback_mocked", status.physical_feedback_mocked);
     cJSON_AddBoolToObject(power, "interlocks_ready", status.interlocks_ready);
     cJSON_AddStringToObject(power, "interlock_reason", status.interlock_reason);
     cJSON_AddItemToObject(root, "power_control", power);

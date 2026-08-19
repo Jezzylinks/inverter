@@ -2,6 +2,10 @@
 
 #include <string.h>
 
+#ifndef INVERTER_ENABLE_MOCK_PHYSICAL_FEEDBACK
+#define INVERTER_ENABLE_MOCK_PHYSICAL_FEEDBACK 0
+#endif
+
 void inverter_power_status_from_snapshot(const system_state_t *state,
                                          inverter_power_status_t *status)
 {
@@ -10,12 +14,23 @@ void inverter_power_status_from_snapshot(const system_state_t *state,
     status->interlock_reason = "System state is unavailable";
     if (state == NULL) return;
 
-    /* GPIO_POWER_RELAY is an output command, not a physical readback. No
-     * dedicated inverter-output feedback input is configured in this board
-     * profile, so clients must not label this value as measured feedback. */
+    /* GPIO_POWER_RELAY is an output command, not a physical readback. */
     status->relay_commanded = state->output_enabled;
+#if INVERTER_ENABLE_MOCK_PHYSICAL_FEEDBACK
+    /* TEST ONLY: this build profile mirrors the relay command so mobile UI
+     * flows can be exercised before a feedback GPIO exists. The REST and
+     * WebSocket contract exposes physical_feedback_mocked so this must never
+     * be mistaken for a measured electrical output. */
+    status->physical_feedback_supported = true;
+    status->physical_feedback_active = state->output_enabled;
+    status->physical_feedback_mocked = true;
+#else
+    /* No dedicated inverter-output feedback input is configured in the
+     * production board profile, so clients must not label this as measured
+     * feedback or permit remote toggles from this signal alone. */
     status->physical_feedback_supported = false;
     status->physical_feedback_active = false;
+#endif
 
     if (!state->system_ready) {
         status->interlock_reason = "System initialization is not complete";
