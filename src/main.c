@@ -7201,7 +7201,23 @@ void app_main(void)
     }
     else
     {
-        ESP_LOGW(APP_TAG, "ADC did not warm up in time; skipping POST");
+        /* The LCD startup renderer intentionally waits for a completed POST
+         * before it advances beyond HARDWARE CHECK. Previously, an ADC task
+         * that failed before publishing EVT_ADC_READY took this branch without
+         * publishing a terminal startup result, leaving the LCD at
+         * "SENSORS WAIT" indefinitely. Treat the bounded 10-second warmup
+         * deadline as a failed POST instead: keep inverter output inhibited,
+         * preserve a failed startup result for OTA validation, and give the
+         * installer an actionable display instead of a permanent wait state. */
+        ESP_LOGE(APP_TAG, "ADC did not warm up within 10 seconds; inhibiting inverter output");
+        startup_post.lcd_ok = true; /* The active startup display proves the LCD path is usable. */
+        startup_post.adc_ok = false;
+        startup_post.fan_ok = false;
+        startup_post.failure_mask = POST_FAILURE_ADC;
+        startup_post.all_passed = false;
+        post_completed = true;
+        inverter_emergency_shutdown();
+        lcd_show_fault("SENSOR STARTUP ", "ADC TIMEOUT     ");
     }
 
     const bool startup_healthy = nvs_initialized && lcd_event_ready &&

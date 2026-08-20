@@ -81,6 +81,21 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("SYSTEM_ERROR_WIFI_INTERNET_UNAVAILABLE", text)
         self.assertIn("SYSTEM_ERROR_PROTECTION_INVALID_TELEMETRY", text)
 
+    def test_adc_warmup_timeout_inhibits_output_and_reports_a_terminal_fault(self):
+        text = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        timeout_branch = re.search(
+            r'ADC did not warm up within 10 seconds; inhibiting inverter output(.*?)\n    }\n\n    const bool startup_healthy',
+            text,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(timeout_branch)
+        assert timeout_branch is not None
+        self.assertIn("startup_post.failure_mask = POST_FAILURE_ADC", timeout_branch.group(1))
+        self.assertIn("startup_post.all_passed = false", timeout_branch.group(1))
+        self.assertIn("post_completed = true", timeout_branch.group(1))
+        self.assertIn("inverter_emergency_shutdown()", timeout_branch.group(1))
+        self.assertIn('lcd_show_fault("SENSOR STARTUP ", "ADC TIMEOUT     ")', timeout_branch.group(1))
+
 
 if __name__ == "__main__":
     unittest.main()
