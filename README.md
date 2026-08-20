@@ -18,6 +18,20 @@ pio device monitor
 
 The 4 MiB setting is intentional. Verify the physical module before flashing; do not use this partition table on a 2 MiB device. The build output reports the application size and partition budget so oversized releases are rejected before upload.
 
+### Windows PlatformIO clean-build recovery
+
+The `src/idf_component.yml` manifest declares the ESP-IDF mDNS dependency. PlatformIO's ESP-IDF component manager downloads and generates its `managed_components/` working directory from that manifest and the tracked `dependencies.lock` file. This generated directory is deliberately not versioned, so every developer receives component-manager output that matches the local PlatformIO and ESP-IDF installation.
+
+If a Windows build reports a missing `component_requires.temp.cmake` file, close any active PlatformIO/ESP-IDF build terminals, open a terminal at the repository root, and remove the generated build and dependency directories before rebuilding:
+
+```powershell
+Remove-Item -Recurse -Force .pio, managed_components -ErrorAction SilentlyContinue
+pio pkg update -e esp32dev
+pio run -e esp32dev
+```
+
+Do not create or commit `component_requires.temp.cmake`; it is an internal CMake configuration file that PlatformIO regenerates. Run the command from the repository root, not from `.pio` or a copied source subdirectory. If the error remains after this clean build, update PlatformIO Core and retry with the pinned `espressif32@6.8.1` project configuration.
+
 ### Mock-feedback UI test build
 
 For mobile UI integration testing before a dedicated inverter-output feedback GPIO is installed, build the explicitly named **test-only** profile:
