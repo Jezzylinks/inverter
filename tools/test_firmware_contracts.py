@@ -96,6 +96,19 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("inverter_emergency_shutdown()", timeout_branch.group(1))
         self.assertIn('lcd_show_fault("SENSOR STARTUP ", "ADC TIMEOUT     ")', timeout_branch.group(1))
 
+    def test_loading_expiry_preserves_completed_post_screen(self):
+        text = Path(__file__).parents[1].joinpath("src", "lcd_task.c").read_text()
+        loading_expiry = re.search(
+            r'if \(elapsed >= snap\.loading\.duration_ms\)(.*?)\n            }\n            break;',
+            text,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(loading_expiry)
+        assert loading_expiry is not None
+        self.assertIn("sys_lcd.screen == LCD_SCREEN_LOADING", loading_expiry.group(1))
+        self.assertIn("sys_lcd.loading.start_ms == snap.loading.start_ms", loading_expiry.group(1))
+        self.assertIn("sys_lcd.screen = sys_lcd.loading.next_screen", loading_expiry.group(1))
+
 
 if __name__ == "__main__":
     unittest.main()

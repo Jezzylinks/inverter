@@ -2089,8 +2089,19 @@ void lcd_task(void *arg)
             if (elapsed >= snap.loading.duration_ms)
             {
                 xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
-                sys_lcd.loading.active = false;
-                sys_lcd.screen = sys_lcd.loading.next_screen;
+                /* POST can complete while the branded loading screen is
+                 * still visible. It may replace the loading screen with a
+                 * terminal POST fault or a fully populated startup-status
+                 * state. Do not let this stale render snapshot overwrite that
+                 * newer result with an empty STARTUP_STATUS payload; doing so
+                 * leaves first boot at HARDWARE CHECK / SENSORS WAIT until a
+                 * user button happens to navigate away. */
+                if (sys_lcd.screen == LCD_SCREEN_LOADING &&
+                    sys_lcd.loading.start_ms == snap.loading.start_ms)
+                {
+                    sys_lcd.loading.active = false;
+                    sys_lcd.screen = sys_lcd.loading.next_screen;
+                }
                 xSemaphoreGive(sys_state_mutex);
             }
             break;
