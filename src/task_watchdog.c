@@ -102,10 +102,13 @@ static void update_health_heartbeat(TaskHandle_t current)
     taskEXIT_CRITICAL(&s_lock);
 }
 
-void task_watchdog_unregister(void)
+void task_watchdog_unregister_task(TaskHandle_t task_handle)
 {
-    const TaskHandle_t current = xTaskGetCurrentTaskHandle();
-    const esp_err_t err = esp_task_wdt_delete(NULL);
+    if (task_handle == NULL) {
+        return;
+    }
+
+    const esp_err_t err = esp_task_wdt_delete(task_handle);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE &&
         err != ESP_ERR_NOT_FOUND) {
         ESP_LOGW(TAG, "Task watchdog unregister failed: %s",
@@ -113,11 +116,16 @@ void task_watchdog_unregister(void)
     }
 
     taskENTER_CRITICAL(&s_lock);
-    const int index = find_record(current);
+    const int index = find_record(task_handle);
     if (index >= 0) {
         memset(&s_records[index], 0, sizeof(s_records[index]));
     }
     taskEXIT_CRITICAL(&s_lock);
+}
+
+void task_watchdog_unregister(void)
+{
+    task_watchdog_unregister_task(xTaskGetCurrentTaskHandle());
 }
 
 void task_watchdog_feed(void)

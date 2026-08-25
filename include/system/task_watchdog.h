@@ -5,6 +5,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,6 +29,9 @@ void task_watchdog_register(const char *task_name);
 
 /* Register only in the health registry; do not subscribe the task to ESP TWDT. */
 void task_watchdog_register_health_only(const char *task_name);
+
+/* Unregister a task before it is externally deleted or permanently stopped. */
+void task_watchdog_unregister_task(TaskHandle_t task_handle);
 
 /* Unregister the calling task before it self-deletes or is permanently stopped. */
 void task_watchdog_unregister(void);

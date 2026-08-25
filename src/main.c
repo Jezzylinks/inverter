@@ -298,4 +298,5 @@ void app_main(void)
     ESP_LOGW(APP_TAG, "Main loop ended");
     (void)lcd_event_receiver_stop();
     app_buttons_deinit();
+    task_watchdog_unregister();
 }

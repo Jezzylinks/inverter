@@ -467,6 +467,7 @@ esp_err_t button_controller_deinit(void)
     if (g_button_task) {
         TaskHandle_t task = g_button_task;
         g_button_task = NULL;
+        task_watchdog_unregister_task(task);
         vTaskDelete(task);
     }
     if (g_edge_queue) {
