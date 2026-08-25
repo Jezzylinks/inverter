@@ -38,7 +38,6 @@ void restore_from_deep_sleep(void);
 void lcd_power_init(void);
 void LCD_power(bool enable);
 void lcd_set_brightness(uint8_t brightness);
-void adc_task(void *arg);
 void lcd_task(void *arg);
 void inverter_emergency_shutdown(void);
 void log_all_error_flags(uint32_t flags);

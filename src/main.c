@@ -11,6 +11,7 @@
 
 #include "app/app_buttons.h"
 #include "app/app_runtime.h"
+#include "adc/inverter_adc.h"
 #include "app/app_services.h"
 #include "cloud/cloud_reporting.h"
 #include "diagnostics/system_diagnostics.h"

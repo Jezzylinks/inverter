@@ -19,7 +19,7 @@ The driver depends only on ESP-IDF and the C standard types:
 #include "esp_adc/adc_oneshot.h"
 ```
 
-It does not depend on `system_state_t`, inverter settings, LCD code, telemetry-health code, battery filters, Wi-Fi, or any application-specific error flags. Those policies remain in `src/app_runtime.c` in this repository and consume the driver through `include/adc/adc.h`.
+It does not depend on `system_state_t`, inverter settings, LCD code, telemetry-health code, battery filters, Wi-Fi, or any application-specific error flags. Those policies live in the inverter adapter at `src/adc/inverter_adc.c` and consume the driver through `include/adc/adc.h`.
 
 ## Public API
 
@@ -86,7 +86,9 @@ Calibrated reads use the voltage returned by ESP-IDF’s calibration scheme and 
 
 ## Repository integration
 
-The inverter application retains its existing `adc_task()` as an application-level wrapper. It owns channel definitions, voltage-divider ratios, battery-system scaling, telemetry-health recording, filtering, LCD updates, and inverter safety actions. Its hardware primitives now call the reusable driver functions from `adc/adc.h`.
+The inverter application’s complete ADC task and application adapter are in `src/adc/inverter_adc.c`, with the task declaration in `include/adc/inverter_adc.h`. The adapter owns channel definitions, voltage-divider ratios, battery-system scaling, telemetry-health recording, filtering, LCD updates, and inverter safety actions. Its hardware primitives call the reusable driver functions from `adc/adc.h`.
+
+For a subsequent project, copy only `src/adc/adc.c` and `include/adc/adc.h` when you need the portable driver. Copy `src/adc/inverter_adc.c` and `include/adc/inverter_adc.h` only when you also want this inverter’s application-specific policy and are prepared to provide its state, telemetry, display, and safety dependencies.
 
 The ESP-IDF component exposes the reusable headers through `src/CMakeLists.txt`:
 

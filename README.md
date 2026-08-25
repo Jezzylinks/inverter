@@ -158,7 +158,7 @@ The Wi-Fi and network-service paths are intentionally excluded from the shared t
 
 ## Reusable ADC driver
 
-The ESP-IDF ADC unit, calibration, multisampling, and resource-cleanup primitives are available as a standalone module in [`src/adc/adc.c`](src/adc/adc.c) with its public interface in [`include/adc/adc.h`](include/adc/adc.h). The inverter-specific `adc_task()` remains separate and owns channel mapping, divider scaling, telemetry health, filtering, and safety policy. See [`docs/adc_driver.md`](docs/adc_driver.md) for copy-and-integrate instructions for subsequent ESP32 projects.
+The ESP-IDF ADC unit, calibration, multisampling, and resource-cleanup primitives are available as a standalone module in [`src/adc/adc.c`](src/adc/adc.c) with its public interface in [`include/adc/adc.h`](include/adc/adc.h). The inverter-specific `adc_task()`, channel mapping, divider scaling, telemetry health, filtering, and safety policy are isolated in [`src/adc/inverter_adc.c`](src/adc/inverter_adc.c), declared by [`include/adc/inverter_adc.h`](include/adc/inverter_adc.h). See [`docs/adc_driver.md`](docs/adc_driver.md) for copy-and-integrate instructions for subsequent ESP32 projects.
 
 ## Wokwi simulation
 
