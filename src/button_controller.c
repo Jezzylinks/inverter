@@ -6,6 +6,7 @@
 
 #include "app/button_controller.h"
 
+#include "sdkconfig.h"
 #include "esp_attr.h"
 #include "esp_log.h"
 #include "freertos/portmacro.h"
@@ -38,6 +39,8 @@ typedef struct button_controller_t {
     bool long_press_triggered;
 
     button_stats_t stats;
+    button_raw_event_type_t last_event;
+    int64_t last_event_timestamp_us;
     button_event_callback_t event_callback;
     button_error_callback_t error_callback;
     void *user_data;
@@ -101,6 +104,8 @@ static void emit_event(button_controller_t *button,
     };
 
     atomic_fetch_add(&button->stats.total_events, 1);
+    button->last_event = type;
+    button->last_event_timestamp_us = timestamp_us;
     if (type == BUTTON_EVENT_CLICK) {
         atomic_fetch_add(&button->stats.short_presses, 1);
     } else if (type == BUTTON_EVENT_DOUBLE_CLICK) {
@@ -115,6 +120,14 @@ static void emit_event(button_controller_t *button,
         atomic_fetch_add(&button->stats.hold_repeats, 1);
     }
 
+#if defined(CONFIG_INVERTER_BUTTON_DIAGNOSTICS) && CONFIG_INVERTER_BUTTON_DIAGNOSTICS
+    ESP_LOGI(BUTTON_TAG, "EVENT %s button=%s gpio=%d clicks=%u duration_ms=%lu",
+             button_event_to_string(type),
+             button->config.controller_name,
+             button->config.gpio_pin,
+             (unsigned)click_count,
+             (unsigned long)duration_ms);
+#endif
     if (button->event_callback) {
         button->event_callback(&event, button->user_data);
     }
@@ -284,6 +297,34 @@ static void button_task(void *arg)
         }
 
         const int64_t now_us = esp_timer_get_time();
+#if defined(CONFIG_INVERTER_BUTTON_DIAGNOSTICS) && CONFIG_INVERTER_BUTTON_DIAGNOSTICS
+        static int64_t next_diagnostic_us;
+        if (now_us >= next_diagnostic_us) {
+            next_diagnostic_us = now_us + 1000000LL;
+            for (size_t diagnostic_index = 0U;
+                 diagnostic_index < BUTTON_MAX_CONTROLLERS;
+                 ++diagnostic_index) {
+                button_handle_t diagnostic_button =
+                    &g_button_controllers[diagnostic_index];
+                if (!diagnostic_button->in_use) {
+                    continue;
+                }
+                ESP_LOGI(BUTTON_TAG,
+                         "DIAG %s gpio=%d raw=%d stable=%d pressed=%d state=%s isr=%lu queue_full=%lu events=%lu last=%s last_us=%lld",
+                         diagnostic_button->config.controller_name,
+                         diagnostic_button->config.gpio_pin,
+                         diagnostic_button->last_raw_level,
+                         diagnostic_button->stable_level,
+                         atomic_load(&diagnostic_button->is_pressed),
+                         button_state_to_string(atomic_load(&diagnostic_button->current_state)),
+                         (unsigned long)atomic_load(&diagnostic_button->stats.isr_calls),
+                         (unsigned long)atomic_load(&diagnostic_button->stats.isr_queue_full),
+                         (unsigned long)atomic_load(&diagnostic_button->stats.total_events),
+                         button_event_to_string(diagnostic_button->last_event),
+                         (long long)diagnostic_button->last_event_timestamp_us);
+            }
+        }
+#endif
         for (size_t i = 0; i < BUTTON_MAX_CONTROLLERS; ++i) {
             button_handle_t button = &g_button_controllers[i];
             if (!button->in_use || !atomic_load(&button->is_running)) {
@@ -397,6 +438,8 @@ static void reset_controller(button_handle_t button)
     button->press_start_us = 0;
     button->last_release_us = 0;
     button->last_click_duration_ms = 0;
+    button->last_event = BUTTON_EVENT_NONE;
+    button->last_event_timestamp_us = 0;
     button->repeat_count = 0;
     button->click_count = 0;
     button->long_press_triggered = false;
@@ -633,6 +676,26 @@ esp_err_t button_controller_get_stats(button_handle_t handle, button_stats_t *st
     stats->hold_repeats = atomic_load(&handle->stats.hold_repeats);
     stats->isr_calls = atomic_load(&handle->stats.isr_calls);
     stats->isr_queue_full = atomic_load(&handle->stats.isr_queue_full);
+    return ESP_OK;
+}
+
+esp_err_t button_controller_get_diagnostic(button_handle_t handle,
+                                            button_diagnostic_t *diagnostic)
+{
+    if (!handle || !diagnostic || !handle->in_use) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    diagnostic->gpio_pin = handle->config.gpio_pin;
+    diagnostic->button_id = handle->config.button_id;
+    diagnostic->raw_level = handle->last_raw_level;
+    diagnostic->stable_level = handle->stable_level;
+    diagnostic->is_pressed = atomic_load(&handle->is_pressed);
+    diagnostic->state = atomic_load(&handle->current_state);
+    diagnostic->isr_calls = atomic_load(&handle->stats.isr_calls);
+    diagnostic->isr_queue_full = atomic_load(&handle->stats.isr_queue_full);
+    diagnostic->total_events = atomic_load(&handle->stats.total_events);
+    diagnostic->last_event = handle->last_event;
+    diagnostic->last_event_timestamp_us = handle->last_event_timestamp_us;
     return ESP_OK;
 }
 

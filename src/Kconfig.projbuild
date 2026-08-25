@@ -31,6 +31,15 @@ config INVERTER_LCD_20X4
 
 endchoice
 
+config INVERTER_BUTTON_DIAGNOSTICS
+    bool "Enable physical button diagnostics"
+    default n
+    help
+        Log one bounded diagnostic line per button approximately once per second.
+        Diagnostics include GPIO level, stable level, pressed state, controller
+        state, ISR calls, queue overflows, and emitted events. Leave disabled for
+        normal operation.
+
 endmenu
 
 menu "Inverter Wi-Fi Configuration"

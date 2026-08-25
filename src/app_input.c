@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "app/app_menu.h"
+#include "sdkconfig.h"
 #include "app/app_services.h"
 #include "battery/battery_estimator.h"
 #include "events/system_events.h"
@@ -27,6 +28,23 @@
 
 #define APP_INPUT_TAG "APP_INPUT"
 #define APP_SEQUENCE_TIMEOUT_MS 3000U
+
+static void log_button_callback(const char *name,
+                                const button_event_info_t *event_info,
+                                bool system_ready)
+{
+#if defined(CONFIG_INVERTER_BUTTON_DIAGNOSTICS) && CONFIG_INVERTER_BUTTON_DIAGNOSTICS
+    if (event_info != NULL) {
+        ESP_LOGI(APP_INPUT_TAG, "CALLBACK %s event=%s ready=%d",
+                 name, button_event_to_string(event_info->event),
+                 system_ready);
+    }
+#else
+    (void)name;
+    (void)event_info;
+    (void)system_ready;
+#endif
+}
 
 extern system_state_t sys_state;
 extern lcd_render_state_t sys_lcd;
@@ -362,6 +380,7 @@ static void handle_ota_menu_action(uint8_t selection)
 void handle_power_button_event(button_event_info_t *event_info,
                                void *user_data)
 {
+    log_button_callback("Power", event_info, sys_state.system_ready);
     if (!sys_state.system_ready)
         return;
 
@@ -665,7 +684,7 @@ menu_state_t display_menu_state(void)
 void handle_enter_menu_button_event(button_event_info_t *event_info,
                                     void *user_data)
 {
-
+    log_button_callback("Enter/Menu", event_info, sys_state.system_ready);
     if (!sys_state.system_ready)
         return;
 
@@ -1359,6 +1378,7 @@ static void get_accel_step(int64_t hold_duration_ms, bool *fast, bool *big)
 void handle_up_button_event(button_event_info_t *event_info,
                             void *user_data)
 {
+    log_button_callback("Up", event_info, sys_state.system_ready);
     if (!sys_state.system_ready)
         return;
 
@@ -1611,6 +1631,7 @@ void handle_up_button_event(button_event_info_t *event_info,
 void handle_down_button_event(button_event_info_t *event_info,
                               void *user_data)
 {
+    log_button_callback("Down", event_info, sys_state.system_ready);
     if (!sys_state.system_ready)
         return;
 
@@ -1882,6 +1903,7 @@ void handle_down_button_event(button_event_info_t *event_info,
 void handle_back_button_event(button_event_info_t *event_info,
                               void *user_data)
 {
+    log_button_callback("Back", event_info, sys_state.system_ready);
     if (!sys_state.system_ready)
         return;
 

@@ -10,6 +10,20 @@
 #define GPIO_BUTTON_DOWN GPIO_NUM_5
 #define GPIO_BUTTON_BACK GPIO_NUM_18
 
+_Static_assert(GPIO_BUTTON_POWER != GPIO_BUTTON_ENTER_MENU &&
+               GPIO_BUTTON_POWER != GPIO_BUTTON_UP &&
+               GPIO_BUTTON_POWER != GPIO_BUTTON_DOWN &&
+               GPIO_BUTTON_POWER != GPIO_BUTTON_BACK,
+               "Power button GPIO must be unique");
+_Static_assert(GPIO_BUTTON_ENTER_MENU != GPIO_BUTTON_UP &&
+               GPIO_BUTTON_ENTER_MENU != GPIO_BUTTON_DOWN &&
+               GPIO_BUTTON_ENTER_MENU != GPIO_BUTTON_BACK,
+               "Enter/Menu button GPIO must be unique");
+_Static_assert(GPIO_BUTTON_UP != GPIO_BUTTON_DOWN &&
+               GPIO_BUTTON_UP != GPIO_BUTTON_BACK &&
+               GPIO_BUTTON_DOWN != GPIO_BUTTON_BACK,
+               "Navigation button GPIOs must be unique");
+
 /* Backward-compatible aliases used by the deep-sleep cleanup code. */
 #define GPIO_PWR_BTN GPIO_BUTTON_POWER
 #define GPIO_BTN_UP GPIO_BUTTON_UP

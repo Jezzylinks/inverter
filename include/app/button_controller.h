@@ -109,6 +109,20 @@ typedef struct {
     _Atomic uint32_t isr_queue_full;
 } button_stats_t;
 
+typedef struct {
+    gpio_num_t gpio_pin;
+    button_id_t button_id;
+    int raw_level;
+    int stable_level;
+    bool is_pressed;
+    button_state_t state;
+    uint32_t isr_calls;
+    uint32_t isr_queue_full;
+    uint32_t total_events;
+    button_raw_event_type_t last_event;
+    int64_t last_event_timestamp_us;
+} button_diagnostic_t;
+
 typedef struct button_controller_t *button_handle_t;
 typedef void (*button_event_callback_t)(button_event_info_t *event_info, void *user_data);
 typedef void (*button_error_callback_t)(esp_err_t error_code, const char *error_msg, void *user_data);
@@ -126,6 +140,8 @@ esp_err_t button_controller_register_error_callback(button_handle_t handle,
                                                        button_error_callback_t callback,
                                                        void *user_data);
 esp_err_t button_controller_get_stats(button_handle_t handle, button_stats_t *stats);
+esp_err_t button_controller_get_diagnostic(button_handle_t handle,
+                                            button_diagnostic_t *diagnostic);
 esp_err_t button_controller_reset_stats(button_handle_t handle);
 esp_err_t button_controller_get_state(button_handle_t handle, button_state_t *state);
 esp_err_t button_controller_is_pressed(button_handle_t handle, bool *is_pressed);

@@ -159,6 +159,22 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("task_watchdog_unregister();\n    vTaskDelete(NULL);", lcd_events)
         self.assertIn("task_watchdog_unregister();\n        vTaskDelete(NULL);", ota)
 
+    def test_button_diagnostics_are_opt_in_and_cover_signal_path(self):
+        root = Path(__file__).parents[1]
+        kconfig = root.joinpath("src", "Kconfig.projbuild").read_text()
+        controller_header = root.joinpath("include", "app", "button_controller.h").read_text()
+        controller = root.joinpath("src", "button_controller.c").read_text()
+        app_input = root.joinpath("src", "app_input.c").read_text()
+        self.assertIn("config INVERTER_BUTTON_DIAGNOSTICS", kconfig)
+        self.assertIn("default n", kconfig)
+        self.assertIn("button_diagnostic_t", controller_header)
+        self.assertIn("button_controller_get_diagnostic", controller_header)
+        self.assertIn("isr_queue_full", controller)
+        self.assertIn('"DIAG %s gpio=', controller)
+        self.assertIn('"EVENT %s button=', controller)
+        self.assertIn('"CALLBACK %s event=', app_input)
+        self.assertIn("if (!sys_state.system_ready)", app_input)
+
     def test_progress_bars_use_filled_lcd_blocks(self):
         root = Path(__file__).parents[1]
         lcd_task = root.joinpath("src", "lcd_task.c").read_text()
