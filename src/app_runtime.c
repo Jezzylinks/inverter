@@ -5697,14 +5697,22 @@ void init_watchdog(bool enable_task_wdt, bool panic_on_hang)
     if (enable_task_wdt)
     {
         esp_task_wdt_config_t twdt_config = {
-            .timeout_ms = 15000,                             // 5-second timeout
+            .timeout_ms = 15000,                             // 15-second timeout
             .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // Monitor all available cores
             .trigger_panic = panic_on_hang};
 
         esp_err_t err = esp_task_wdt_init(&twdt_config);
-        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+        if (err == ESP_ERR_INVALID_STATE)
         {
-            ESP_LOGE("WDT", "Failed to init task watchdog: %s", esp_err_to_name(err));
+            /* ESP-IDF may auto-initialize TWDT from sdkconfig before app_main.
+             * Reconfigure it here so the application’s explicit timeout and
+             * idle-core mask are not silently replaced by menuconfig defaults. */
+            err = esp_task_wdt_reconfigure(&twdt_config);
+        }
+        if (err != ESP_OK)
+        {
+            ESP_LOGE("WDT", "Failed to configure task watchdog: %s",
+                     esp_err_to_name(err));
         }
 
         // Subscribe current task to the watchdog
