@@ -117,6 +117,7 @@ static void lcd_event_receiver_task(void *arg)
     }
 
     s_task = NULL;
+    task_watchdog_unregister();
     vTaskDelete(NULL);
 }
 

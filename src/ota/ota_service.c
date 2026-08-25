@@ -118,6 +118,7 @@ static void ota_task(void *parameter)
     ota_job_t *job = (ota_job_t *)parameter;
     if (!job) {
         set_job_finished();
+        task_watchdog_unregister();
         vTaskDelete(NULL);
         return;
     }
@@ -166,6 +167,7 @@ static void ota_task(void *parameter)
         secure_zero(job, sizeof(*job));
         free(job);
         set_job_finished();
+        task_watchdog_unregister();
         vTaskDelete(NULL);
         return;
     }

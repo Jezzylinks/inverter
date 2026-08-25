@@ -135,6 +135,19 @@ class FirmwareContracts(unittest.TestCase):
         self.assertNotIn("esp32dev-continuous-16x2", platformio)
         self.assertNotIn("-DINVERTER_ADC_MODE=", platformio)
 
+    def test_watchdog_registered_self_deletes_unregister_first(self):
+        root = Path(__file__).parents[1]
+        watchdog = root.joinpath("src", "task_watchdog.c").read_text()
+        header = root.joinpath("include", "system", "task_watchdog.h").read_text()
+        adc = root.joinpath("src", "adc", "inverter_adc.c").read_text()
+        lcd_events = root.joinpath("src", "lcd_event_receiver.c").read_text()
+        ota = root.joinpath("src", "ota", "ota_service.c").read_text()
+        self.assertIn("void task_watchdog_unregister(void)", watchdog)
+        self.assertIn("void task_watchdog_unregister(void);", header)
+        self.assertIn("adc_signal_failed(esp_err_to_name(init_result));\n        task_watchdog_unregister();\n        vTaskDelete(NULL);", adc)
+        self.assertIn("task_watchdog_unregister();\n    vTaskDelete(NULL);", lcd_events)
+        self.assertIn("task_watchdog_unregister();\n        vTaskDelete(NULL);", ota)
+
     def test_progress_bars_use_filled_lcd_blocks(self):
         root = Path(__file__).parents[1]
         lcd_task = root.joinpath("src", "lcd_task.c").read_text()

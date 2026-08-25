@@ -27,6 +27,9 @@ void task_watchdog_register(const char *task_name);
 /* Register only in the health registry; do not subscribe the task to ESP TWDT. */
 void task_watchdog_register_health_only(const char *task_name);
 
+/* Unregister the calling task before it self-deletes or is permanently stopped. */
+void task_watchdog_unregister(void);
+
 /* Feed the real ESP task watchdog and update the task-health heartbeat. */
 void task_watchdog_feed(void);
 

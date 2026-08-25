@@ -394,6 +394,7 @@ static void adc_task_body(void)
         channels, ADC_CONFIG_COUNT, s_backend_channels, &s_backend_context);
     if (init_result != ESP_OK) {
         adc_signal_failed(esp_err_to_name(init_result));
+        task_watchdog_unregister();
         vTaskDelete(NULL);
         return;
     }
