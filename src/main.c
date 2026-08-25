@@ -142,7 +142,8 @@ void app_main(void)
 
     /* Boot screen starts on LCD_SCREEN_BOOT_BRAND (set by lcd_writer_init). */
     xEventGroupClearBits(sys_event_group,
-                         APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED);
+                         APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED |
+                         APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED);
     const BaseType_t adc_task_status =
         xTaskCreate(adc_task, "adc_task", 4096, NULL, 5, NULL);
     if (adc_task_status != pdPASS)
@@ -150,7 +151,13 @@ void app_main(void)
         ESP_LOGE(APP_TAG, "Failed to create ADC task");
         xEventGroupSetBits(sys_event_group, APP_EVENT_ADC_FAILED);
     }
-    xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
+    const BaseType_t lcd_task_status =
+        xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
+    if (lcd_task_status != pdPASS)
+    {
+        ESP_LOGE(APP_TAG, "Failed to create LCD task");
+        xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
+    }
     if (lcd_event_receiver_start() != ESP_OK)
     {
         lcd_event_ready = false;
@@ -184,26 +191,36 @@ void app_main(void)
         ESP_LOGE(APP_TAG, "Failed to start watchdog health supervisor");
     }
 
-    /* Wait for the ADC task to produce either a first sample or a fatal
-     * startup result. The bounded wait keeps the main task watchdog-fed while
-     * allowing the ADC task to run independently. */
-    EventBits_t adc_bits = 0U;
-    const TickType_t adc_wait_start = xTaskGetTickCount();
-    while ((xTaskGetTickCount() - adc_wait_start) < pdMS_TO_TICKS(10000))
+    /* Wait for the ADC task’s first sample and the LCD task’s completed
+     * initialization before running POST. Every 100 ms timeout feeds the
+     * watchdog while still allowing either task to publish a fatal result. */
+    const EventBits_t startup_wait_mask =
+        APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED |
+        APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED;
+    EventBits_t startup_bits = 0U;
+    const TickType_t startup_wait_start = xTaskGetTickCount();
+    while ((xTaskGetTickCount() - startup_wait_start) < pdMS_TO_TICKS(10000))
     {
-        adc_bits = xEventGroupWaitBits(
+        startup_bits = xEventGroupWaitBits(
             sys_event_group,
-            APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED,
+            startup_wait_mask,
             pdFALSE,
             pdFALSE,
             pdMS_TO_TICKS(100));
-        if (adc_bits & (APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED))
+        const bool adc_ready = (startup_bits & APP_EVENT_ADC_READY) != 0U;
+        const bool lcd_ready = (startup_bits & APP_EVENT_LCD_READY) != 0U;
+        const bool startup_failed =
+            (startup_bits & (APP_EVENT_ADC_FAILED | APP_EVENT_LCD_FAILED)) != 0U;
+        if (startup_failed || (adc_ready && lcd_ready))
         {
             break;
         }
         task_watchdog_feed();
     }
-    if (adc_bits & APP_EVENT_ADC_READY)
+
+    const bool adc_ready = (startup_bits & APP_EVENT_ADC_READY) != 0U;
+    const bool lcd_ready = (startup_bits & APP_EVENT_LCD_READY) != 0U;
+    if (adc_ready && lcd_ready)
     {
         startup_post = post_run_all();
         post_completed = true;
@@ -211,25 +228,30 @@ void app_main(void)
     }
     else
     {
-        const bool adc_failed = (adc_bits & APP_EVENT_ADC_FAILED) != 0U;
-        ESP_LOGE(APP_TAG, "ADC startup %s; inhibiting inverter output",
-                 adc_failed ? "failed" : "timed out");
+        const bool adc_failed = (startup_bits & APP_EVENT_ADC_FAILED) != 0U;
+        const bool lcd_failed = (startup_bits & APP_EVENT_LCD_FAILED) != 0U;
+        ESP_LOGE(APP_TAG, "Startup prerequisite %s; inhibiting inverter output",
+                 (adc_failed || lcd_failed) ? "failed" : "timed out");
         startup_post = (post_result_t){
-            .lcd_ok = lcd_event_ready,
-            .adc_ok = false,
+            .lcd_ok = lcd_ready,
+            .adc_ok = adc_ready,
             .fan_ok = false,
-            .failure_mask = POST_FAILURE_ADC,
+            .failure_mask = (lcd_ready ? 0U : POST_FAILURE_LCD) |
+                            (adc_ready ? 0U : POST_FAILURE_ADC),
             .all_passed = false,
         };
         post_completed = true;
         inverter_emergency_shutdown();
-        if (adc_failed)
+        if (lcd_ready)
         {
-            lcd_show_fault("SENSOR STARTUP ", "ADC INIT FAIL   ");
+            const char *fault = lcd_failed ? "LCD INIT FAIL   " :
+                                (adc_failed ? "ADC INIT FAIL   " :
+                                               "ADC TIMEOUT     ");
+            lcd_show_fault("SENSOR STARTUP ", fault);
         }
         else
         {
-            lcd_show_fault("SENSOR STARTUP ", "ADC TIMEOUT     ");
+            ESP_LOGE(APP_TAG, "LCD task was not ready; cannot display startup fault");
         }
     }
 

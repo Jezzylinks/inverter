@@ -94,18 +94,14 @@ class FirmwareContracts(unittest.TestCase):
         )
         self.assertIsNotNone(failure_branch)
         assert failure_branch is not None
-        self.assertRegex(
-            failure_branch.group(0),
-            r"(?:startup_post\.failure_mask\s*=\s*POST_FAILURE_ADC|\.failure_mask\s*=\s*POST_FAILURE_ADC)",
-        )
-        self.assertRegex(
-            failure_branch.group(0),
-            r"(?:startup_post\.all_passed\s*=\s*false|\.all_passed\s*=\s*false)",
-        )
+        self.assertIn("POST_FAILURE_ADC", failure_branch.group(0))
+        self.assertIn("POST_FAILURE_LCD", failure_branch.group(0))
+        self.assertIn(".all_passed = false", failure_branch.group(0))
         self.assertIn("post_completed = true", failure_branch.group(0))
         self.assertIn("inverter_emergency_shutdown()", failure_branch.group(0))
-        self.assertIn('lcd_show_fault("SENSOR STARTUP ", "ADC INIT FAIL   ")', failure_branch.group(0))
-        self.assertIn('lcd_show_fault("SENSOR STARTUP ", "ADC TIMEOUT     ")', failure_branch.group(0))
+        self.assertIn('"ADC INIT FAIL   "', failure_branch.group(0))
+        self.assertIn('"ADC TIMEOUT     "', failure_branch.group(0))
+        self.assertIn('lcd_show_fault("SENSOR STARTUP ", fault)', failure_branch.group(0))
 
     def test_loading_expiry_preserves_completed_post_screen(self):
         text = Path(__file__).parents[1].joinpath("src", "lcd_task.c").read_text()

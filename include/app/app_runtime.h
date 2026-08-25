@@ -26,6 +26,8 @@ extern system_state_t sys_state;
 /* ADC startup notifications consumed by the startup coordinator. */
 #define APP_EVENT_ADC_READY  (1U << 0)
 #define APP_EVENT_ADC_FAILED (1U << 2)
+#define APP_EVENT_LCD_READY  (1U << 3)
+#define APP_EVENT_LCD_FAILED (1U << 4)
 
 /* Existing lifecycle entry points retained behind one application boundary. */
 void init_watchdog(bool enable_task_wdt, bool panic_on_hang);

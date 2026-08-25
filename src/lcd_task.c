@@ -8,6 +8,7 @@
 ==============================================================================*/
 #include "lcd/lcd_state.h"
 #include "lcd/lcd_watchdog.h"
+#include "app/app_runtime.h"
 #include "system/task_watchdog.h"
 #include "lcd/lcd_integrity.h"
 #include "freertos/FreeRTOS.h"
@@ -1830,8 +1831,11 @@ void lcd_task(void *arg)
     ESP_LOGI(TAG, "lcd_task started (%dx%d)", lcd_geometry_cols(), lcd_geometry_rows());
     lcd_init_cgram();
     lcd_flash_init(xTaskGetCurrentTaskHandle());
-
+    if (sys_event_group != NULL) {
+        xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_READY);
+    }
     while (1)
+
     {
         /* ====== STEP 1: WATCHDOG ====== */
         task_watchdog_feed();
