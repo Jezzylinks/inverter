@@ -223,7 +223,7 @@ static void format_progress_line(char *out, uint8_t pct)
     uint8_t filled = (pct * bar_slots) / 100;
     out[0] = '[';
     for (int i = 0; i < bar_slots; i++)
-        out[i + 1] = (i < filled) ? '#' : '-';
+        out[i + 1] = (i < filled) ? (char)CHAR_PROGRESS_BLOCK : ' ';
     out[bar_slots + 1] = ']';
     out[bar_slots + 2] = ' ';
     memcpy(&out[bar_slots + 3], pct_str, 4);
@@ -631,7 +631,7 @@ static void format_loading_bar(char *row, size_t row_len, uint8_t pct)
     memset(row, ' ', row_len);
     row[0] = '[';
     for (uint8_t i = 0; i < slots; i++)
-        row[i + 1] = (i < blocks) ? '#' : '-';
+        row[i + 1] = (i < blocks) ? (char)CHAR_PROGRESS_BLOCK : ' ';
     row[slots + 1] = ']';
     row[lcd_geometry_cols()] = '\0';
 }
@@ -648,7 +648,7 @@ static void format_ota_progress_bar(char *row, size_t row_len, uint8_t pct)
     if (cols >= 2U && row_len > cols) {
         row[0] = '[';
         for (uint8_t i = 0U; i < slots; ++i) {
-            row[i + 1U] = i < blocks ? '#' : '-';
+            row[i + 1U] = i < blocks ? (char)CHAR_PROGRESS_BLOCK : ' ';
         }
         row[cols - 1U] = ']';
         row[cols] = '\0';

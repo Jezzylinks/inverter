@@ -135,6 +135,18 @@ class FirmwareContracts(unittest.TestCase):
         self.assertNotIn("esp32dev-continuous-16x2", platformio)
         self.assertNotIn("-DINVERTER_ADC_MODE=", platformio)
 
+    def test_progress_bars_use_filled_lcd_blocks(self):
+        root = Path(__file__).parents[1]
+        lcd_task = root.joinpath("src", "lcd_task.c").read_text()
+        lcd_header = root.joinpath("include", "lcd", "lcd.h").read_text()
+        lcd_source = root.joinpath("src", "lcd.c").read_text()
+        self.assertIn("CHAR_PROGRESS_BLOCK", lcd_task)
+        self.assertIn("(char)CHAR_PROGRESS_BLOCK", lcd_task)
+        self.assertNotIn("? '#' : '-'", lcd_task)
+        self.assertIn("#define CHAR_PROGRESS_BLOCK 2", lcd_header)
+        self.assertIn("BAR_2 / PROGRESS_BLOCK", lcd_source)
+        self.assertIn("0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F", lcd_source)
+
     def test_continuous_backend_uses_esp32_supported_sample_rate(self):
         root = Path(__file__).parents[1]
         source = root.joinpath("src", "adc", "adc_continuous.c").read_text()

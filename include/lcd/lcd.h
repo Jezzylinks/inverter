@@ -16,7 +16,8 @@ extern "C"
 // --------------------------------------------------
 #define CHAR_BAR_0 0 /* empty / legacy bar  */
 #define CHAR_BAR_1 1
-#define CHAR_BAR_2 2
+#define CHAR_BAR_2 2 /* legacy slot; also used for the filled progress block */
+#define CHAR_PROGRESS_BLOCK 2
 #define CHAR_BAR_3 3
 #define CHAR_BAR_4 4
 #define CHAR_BAR_5 5 /* full / legacy bar   */
