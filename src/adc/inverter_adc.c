@@ -125,6 +125,13 @@ static void process_adc_reading(const adc_channel_config_t *config,
                                 const adc_channel_state_t *state,
                                 adc_oneshot_unit_handle_t handle);
 
+static void adc_signal_failed(void)
+{
+    if (sys_event_group != NULL) {
+        xEventGroupSetBits(sys_event_group, APP_EVENT_ADC_FAILED);
+    }
+}
+
 
 // ADC channel configurations
 
@@ -206,6 +213,7 @@ void adc_task(void *arg)
     if (adc1_states == NULL)
     {
         ESP_LOGE(INVERTER_ADC_DRIVER_TAG, "Failed to allocate memory for channel states");
+        adc_signal_failed();
         vTaskDelete(NULL);
         return;
     }
@@ -213,6 +221,7 @@ void adc_task(void *arg)
     if (!adc_unit_init(&adc1_handle, ADC_UNIT_1))
     {
         ESP_LOGE(INVERTER_ADC_DRIVER_TAG, "Failed to initialize ADC1");
+        adc_signal_failed();
         free(adc1_states);
         vTaskDelete(NULL);
         return;
@@ -222,6 +231,7 @@ void adc_task(void *arg)
                                 config_count, ADC_UNIT_1))
     {
         ESP_LOGE(INVERTER_ADC_DRIVER_TAG, "Failed to configure ADC channels");
+        adc_signal_failed();
         adc_resources_cleanup(adc1_handle, adc1_states, config_count);
         free(adc1_states);
         vTaskDelete(NULL);
@@ -242,6 +252,7 @@ void adc_task(void *arg)
     if (adc2_states == NULL)
     {
         ESP_LOGE(INVERTER_ADC_DRIVER_TAG, "Failed to allocate memory for ADC2 channel states");
+        adc_signal_failed();
         adc_resources_cleanup(adc1_handle, adc1_states, config_count);
         free(adc1_states);
         vTaskDelete(NULL);
@@ -251,6 +262,7 @@ void adc_task(void *arg)
     if (!adc_unit_init(&adc2_handle, ADC_UNIT_2))
     {
         ESP_LOGE(INVERTER_ADC_DRIVER_TAG, "Failed to initialize ADC2");
+        adc_signal_failed();
         adc_resources_cleanup(adc1_handle, adc1_states, config_count);
         free(adc1_states);
         free(adc2_states);
@@ -262,6 +274,7 @@ void adc_task(void *arg)
                                 config_count, ADC_UNIT_2))
     {
         ESP_LOGE(INVERTER_ADC_DRIVER_TAG, "Failed to configure ADC2 channels");
+        adc_signal_failed();
         adc_resources_cleanup(adc1_handle, adc1_states, config_count);
         adc_resources_cleanup(adc2_handle, adc2_states, config_count);
         free(adc1_states);

@@ -141,7 +141,15 @@ void app_main(void)
     lcd_set_brightness(200);
 
     /* Boot screen starts on LCD_SCREEN_BOOT_BRAND (set by lcd_writer_init). */
-    xTaskCreate(adc_task, "adc_task", 4096, NULL, 5, NULL);
+    xEventGroupClearBits(sys_event_group,
+                         APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED);
+    const BaseType_t adc_task_status =
+        xTaskCreate(adc_task, "adc_task", 4096, NULL, 5, NULL);
+    if (adc_task_status != pdPASS)
+    {
+        ESP_LOGE(APP_TAG, "Failed to create ADC task");
+        xEventGroupSetBits(sys_event_group, APP_EVENT_ADC_FAILED);
+    }
     xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
     if (lcd_event_receiver_start() != ESP_OK)
     {
@@ -176,18 +184,24 @@ void app_main(void)
         ESP_LOGE(APP_TAG, "Failed to start watchdog health supervisor");
     }
 
-    /* Wait for adc_task warm-up without blocking adc_task itself. */
+    /* Wait for the ADC task to produce either a first sample or a fatal
+     * startup result. The bounded wait keeps the main task watchdog-fed while
+     * allowing the ADC task to run independently. */
     EventBits_t adc_bits = 0U;
     const TickType_t adc_wait_start = xTaskGetTickCount();
     while ((xTaskGetTickCount() - adc_wait_start) < pdMS_TO_TICKS(10000))
     {
-        adc_bits = xEventGroupGetBits(sys_event_group);
-        if (adc_bits & APP_EVENT_ADC_READY)
+        adc_bits = xEventGroupWaitBits(
+            sys_event_group,
+            APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED,
+            pdFALSE,
+            pdFALSE,
+            pdMS_TO_TICKS(100));
+        if (adc_bits & (APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED))
         {
             break;
         }
         task_watchdog_feed();
-        vTaskDelay(pdMS_TO_TICKS(100));
     }
     if (adc_bits & APP_EVENT_ADC_READY)
     {
@@ -197,15 +211,19 @@ void app_main(void)
     }
     else
     {
-        ESP_LOGE(APP_TAG, "ADC did not warm up within 10 seconds; inhibiting inverter output");
-        startup_post.lcd_ok = true;
-        startup_post.adc_ok = false;
-        startup_post.fan_ok = false;
-        startup_post.failure_mask = POST_FAILURE_ADC;
-        startup_post.all_passed = false;
+        const bool adc_failed = (adc_bits & APP_EVENT_ADC_FAILED) != 0U;
+        ESP_LOGE(APP_TAG, "ADC startup %s; inhibiting inverter output",
+                 adc_failed ? "failed" : "timed out");
+        startup_post = (post_result_t){
+            .lcd_ok = lcd_event_ready,
+            .adc_ok = false,
+            .fan_ok = false,
+            .failure_mask = POST_FAILURE_ADC,
+            .all_passed = false,
+        };
         post_completed = true;
         inverter_emergency_shutdown();
-        lcd_show_fault("SENSOR STARTUP ", "ADC TIMEOUT     ");
+        post_show_result_and_notify(startup_post);
     }
 
     const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&

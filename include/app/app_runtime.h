@@ -23,8 +23,9 @@ extern SemaphoreHandle_t change_pin_mutex;
 extern TaskHandle_t lcd_task_handle;
 extern system_state_t sys_state;
 
-/* ADC warm-up notification consumed by the startup coordinator. */
-#define APP_EVENT_ADC_READY (1U << 0)
+/* ADC startup notifications consumed by the startup coordinator. */
+#define APP_EVENT_ADC_READY  (1U << 0)
+#define APP_EVENT_ADC_FAILED (1U << 2)
 
 /* Existing lifecycle entry points retained behind one application boundary. */
 void init_watchdog(bool enable_task_wdt, bool panic_on_hang);
