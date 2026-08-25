@@ -113,6 +113,23 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('"ADC TIMEOUT     "', failure_branch.group(0))
         self.assertIn('lcd_show_fault("SENSOR STARTUP ", fault)', failure_branch.group(0))
 
+    def test_post_result_propagates_completion_on_pass_and_failure(self):
+        text = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        result_writer = re.search(
+            r"static void post_show_result_and_notify\(.*?\n}\nvoid app_main",
+            text,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(result_writer)
+        assert result_writer is not None
+        body = result_writer.group(0)
+        self.assertIn(
+            "lcd_show_startup_status(LCD_STARTUP_STAGE_HARDWARE, true,",
+            body,
+        )
+        self.assertIn("result.all_passed", body)
+        self.assertIn("POST result propagated", body)
+
     def test_loading_expiry_preserves_completed_post_screen(self):
         text = Path(__file__).parents[1].joinpath("src", "lcd_task.c").read_text()
         loading_expiry = re.search(

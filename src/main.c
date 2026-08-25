@@ -36,10 +36,17 @@ static const char *APP_TAG = "APP_INIT";
 
 static void post_show_result_and_notify(const post_result_t result)
 {
+    /* Publish the terminal POST state for both pass and fail outcomes. The
+     * LCD state machine must never remain at post_complete=false after POST
+     * has returned, even when the fault screen replaces the status screen. */
+    lcd_show_startup_status(LCD_STARTUP_STAGE_HARDWARE, true,
+                            result.all_passed, result.lcd_ok,
+                            result.adc_ok, result.fan_ok);
+    ESP_LOGI("POST", "POST result propagated: complete=1 passed=%d lcd=%d adc=%d fan=%d",
+             result.all_passed, result.lcd_ok, result.adc_ok, result.fan_ok);
+
     if (result.all_passed)
     {
-        lcd_show_startup_status(LCD_STARTUP_STAGE_HARDWARE, true, true,
-                                result.lcd_ok, result.adc_ok, result.fan_ok);
         return;
     }
 
@@ -241,6 +248,10 @@ void app_main(void)
             .all_passed = false,
         };
         post_completed = true;
+        lcd_show_startup_status(LCD_STARTUP_STAGE_HARDWARE, true, false,
+                                lcd_ready, adc_ready, false);
+        ESP_LOGI("POST", "Startup prerequisite result propagated: complete=1 passed=0 lcd=%d adc=%d",
+                 lcd_ready, adc_ready);
         inverter_emergency_shutdown();
         if (lcd_ready)
         {
