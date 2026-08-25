@@ -1,59 +1,133 @@
-# ADC architecture refactor report
+# ADC architecture improvement report
 
-## Scope
+## Scope and audit conclusion
 
-This change applies the ADC architecture requirements from `pasted_content_3.txt` to the ESP32 PlatformIO/ESP-IDF firmware. The goal was to make ADC establishment a prerequisite for POST, provide a continuous/DMA default with an oneshot fallback, hide acquisition details behind a common interface and snapshot, and preserve the existing electrical scaling, telemetry safety, protection timing, LCD behavior, and terminal POST state propagation.
+This report records the ADC architecture work requested for the ESP32 inverter firmware. The implementation keeps Continuous/DMA as the menuconfig-selected default, retains Oneshot as a legitimate secondary mode and runtime compatibility fallback, and preserves the existing electrical scaling, startup POST, telemetry validation, protection timing, LCD behavior, and emergency shutdown behavior.
 
-## Previous flow and principal defect
+The board evidence supplied during the audit was decisive: every Continuous read returned `ESP_ERR_TIMEOUT`, while the Continuous diagnostics reported `frames=0`, `overflows=0`, and `last_frame=0`. This places the failure before frame parsing; the DMA producer was not delivering a completed conversion frame to the application. ESP-IDF documents `ESP_ERR_TIMEOUT` from `adc_continuous_read()` as no data being available in the internal conversion pool during the requested timeout [1].
 
-The previous application adapter initialized an ESP-IDF oneshot unit inside `adc_task()`, configured channels, and then processed four channels sequentially with ten oneshot reads per channel and a 20 ms delay. `APP_EVENT_ADC_READY` was set after the first loop pass even when the required telemetry-health state was not yet valid. `main.c` did wait for the ADC and LCD events before `post_run_all()`, but the event’s meaning was weaker than the required contract: it could represent task progress rather than a valid, fresh, scaled measurement set safe for POST.
+## Existing architecture
+
+The reusable low-level helper in `src/adc/adc.c` owns ADC1 Oneshot unit creation, per-channel calibration, calibrated/raw conversion, ten-sample averaging, and cleanup. `src/adc/adc_continuous.c` owns the ADC1 digital-controller/DMA backend, while `src/adc/adc_oneshot.c` owns the compile-time Oneshot backend. `src/adc/inverter_adc.c` is the application adapter: it maps measurements to inverter state, applies divider scaling and battery-system multipliers, updates telemetry health, drives the battery filter, publishes LCD/network values, and invokes existing protection and emergency-shutdown paths.
+
+The four configured channels remain ADC1 channels 6, 0, 7, and 4 for Low Battery, AC Voltage, Battery Voltage, and Inverter Voltage. The existing channel-to-GPIO mappings, 12 dB attenuation, 12-bit conversion assumptions, resistor-divider ratios, and application measurement names are unchanged.
+
+The ADC task remains the single acquisition consumer. It processes each configured channel, updates a coherent application snapshot under a critical section, enforces per-channel telemetry freshness, and does not set `APP_EVENT_ADC_READY` until required measurements have been valid and fresh. POST remains downstream of both ADC and LCD readiness and independently verifies the ADC snapshot before evaluating its own plausibility checks.
+
+## Problems actually found
+
+The original Continuous implementation used per-channel blocking reads against a shared DMA stream. That interface was not itself sufficient to explain the board failure, but it made it difficult to distinguish driver-level frame production from parser-level channel filtering. The initial frame-size and sample-rate corrections did not resolve the real hardware symptom.
+
+The board logs then demonstrated a stronger fact: Continuous DMA produced no frame at all. This is not a voltage-divider, calibration-range, or channel-threshold failure. It is also not evidence that the four physical channels independently failed; the four warnings were repeated attempts to read one shared stream.
+
+Before this work, the application-facing ADC snapshot exposed only scaled voltages and coarse validity/freshness flags. It did not expose whether the backend was operating normally, had degraded to Oneshot, or had entered a fault state, nor did it expose per-channel sample count, calibration, saturation, timestamp, and error metadata.
+
+## Changes made
+
+| File | Change and reason |
+| --- | --- |
+| `src/adc/adc_continuous.c` | Preserved Continuous/DMA as the primary backend; aligned frames to the ESP32 DMA conversion stride; masked channel IDs; registered conversion-done and pool-overflow diagnostics; resolved and logged ADC1 GPIO mappings; added a bounded no-frame transition to safe Oneshot operation. |
+| `src/adc/adc_oneshot.c` | Added the matching runtime-status implementation for menuconfig-selected Oneshot mode. |
+| `src/adc/inverter_adc_backend.h` | Added a backend runtime-status contract shared by both backends. |
+| `include/adc/inverter_adc.h` | Added backend states, per-channel measurement metadata, backend health counters, additive snapshot fields, and read-only status/measurement getters. Existing APIs remain available. |
+| `src/adc/inverter_adc.c` | Added coherent measurement caching, per-channel quality metadata, health counters, backend-state refresh, age-based freshness, and read-only getter implementations. Existing validation and protection decisions remain in place. |
+| `tools/test_firmware_contracts.py` | Added source contracts for DMA diagnostics, safe fallback ordering, explicit backend states, measurement metadata, and status APIs. |
+| `docs/adc_zero_frame_investigation.md` | Records the zero-frame evidence and driver investigation. |
 
 ## Resulting architecture
 
-The ADC subsystem now has a portable helper, two mutually exclusive acquisition backends, and a common inverter adapter. `src/adc/adc.c` and `include/adc/adc.h` remain the reusable low-level helper for oneshot unit lifecycle, calibration, and fixed-count calibrated/raw conversion. `src/adc/adc_continuous.c` implements the default ESP-IDF ADC1 digital-controller/DMA backend. `src/adc/adc_oneshot.c` implements the explicit compatibility fallback. `src/adc/inverter_adc.c` owns application mapping and all downstream policy, including filtering, validation, protections, LCD updates, WebSocket/cloud reporting, and emergency behavior.
+```text
+ADC1 inputs
+    |
+    v
+Continuous/DMA primary  <---- menuconfig default
+    |
+    | completed frames and channel demultiplexing
+    v
+Ten-sample calibrated/raw conversion
+    |
+    | no DMA frame for bounded startup grace period
+    v
+Stop + deinitialize Continuous
+    |
+    v
+ADC1 Oneshot fallback  ---- visible FALLBACK/DEGRADED state
+    |
+    v
+Application measurement cache
+    |
+    +--> validity, freshness, calibration, saturation, timestamp, errors
+    |
+    +--> control and protection
+    +--> startup POST
+    +--> LCD, REST, WebSocket, cloud telemetry
+```
 
-The menuconfig selectors are defined in `src/Kconfig.projbuild`. Continuous mode is the default (`CONFIG_INVERTER_ADC_MODE_CONTINUOUS`), and oneshot is the fallback (`CONFIG_INVERTER_ADC_MODE_ONESHOT`). LCD geometry is also a menuconfig choice, defaulting to `CONFIG_INVERTER_LCD_20X4`. The headers `include/adc/inverter_adc_config.h` and `include/lcd/menu_config.h` map the generated `sdkconfig.h` values and reject conflicting or missing selections at compile time. Both backend source files are present in the component source set, but only the selected backend exports the private backend symbols, so the firmware never initializes both acquisition implementations.
+Continuous and Oneshot remain mutually exclusive at compile time. The runtime fallback is not a second simultaneously active ADC unit: Continuous is stopped and deinitialized before the Oneshot unit is created, so ADC1 ownership is not shared between both drivers.
 
-## Common API and readiness contract
+## Backend state and health model
 
-`include/adc/inverter_adc.h` now provides `inverter_adc_start()`, `inverter_adc_get_state()`, `inverter_adc_is_ready()`, `inverter_adc_get_snapshot()`, and `inverter_adc_get_mode()`. The snapshot contains the four scaled application measurements, a sequence number, timestamp, required-data validity, and freshness.
+The public API now distinguishes the following states:
 
-`main.c` starts the ADC subsystem through `inverter_adc_start()` before creating the LCD task and waits for `APP_EVENT_ADC_READY` and `APP_EVENT_LCD_READY`. The ADC adapter sets `APP_EVENT_ADC_READY` only after backend initialization/configuration/calibration has succeeded and the required battery and inverter-output channels have produced finite, physically bounded, fresh values. If initialization or task creation fails, `APP_EVENT_ADC_FAILED` is set and output remains inhibited.
+| State | Meaning |
+| --- | --- |
+| `INVERTER_ADC_BACKEND_UNINITIALIZED` | No backend context is active. |
+| `INVERTER_ADC_BACKEND_CONTINUOUS` | The configured Continuous/DMA backend is active. |
+| `INVERTER_ADC_BACKEND_ONESHOT` | Oneshot was selected directly through menuconfig. |
+| `INVERTER_ADC_BACKEND_FALLBACK` | Continuous produced no frame within the bounded startup grace period and the firmware switched to Oneshot after releasing Continuous resources. |
+| `INVERTER_ADC_BACKEND_FAULT` | Backend initialization or another unrecoverable ADC manager failure occurred. |
 
-`src/post/post_adc.c` is still a consumer-only check. It does not initialize ADC hardware. It now independently requires the common ADC lifecycle to be READY and the common snapshot to be valid and fresh before evaluating its battery plausibility and idle-output conditions. Thus, the event gate in `main.c` and the consumer-side guard both prevent POST from operating on an uninitialized ADC state.
+`inverter_adc_get_backend_status()` exposes frame count, dropped-frame count, pool-overflow count, read errors, invalid samples, saturation count, consecutive success/failure counters, and the last successful sample time. `inverter_adc_get_measurement()` exposes voltage, sample count, timestamp, error count, validity, calibration, freshness, and saturation for each application channel. These are read-only snapshots and do not permit consumers to bypass the common acquisition or safety policy.
 
-## Preserved electrical and safety behavior
+## Measurement quality and safety behavior
 
-The refactor preserves the existing 0.4–3.12 V to 0–3.3 V ADC range mapping, the four ADC1 channels, 12 dB attenuation, all external voltage-divider ratios, and the selected 12/24/48 V battery-system multiplier. It retains ten-sample aggregation in both modes: the oneshot backend uses the existing ten-read helper, while continuous mode accumulates ten matching DMA results for each configured channel before returning a channel sample to the application adapter.
+Every successful sample records ten contributing samples, its timestamp, whether calibration was applied, whether the raw ADC voltage was near the configured measurable ceiling, and whether the converted engineering value passed the existing telemetry range. A failed acquisition records an error and marks that channel invalid and not fresh. Freshness is age-based against the existing one-second telemetry staleness window rather than being a permanent property of a prior successful sample.
 
-Telemetry health continues to reject invalid or out-of-range values and to enforce freshness. The existing battery filter remains in the application adapter. Protection dispatch remains blocked until ten valid warmup cycles have completed. Existing LCD main/fault/standby updates, both 16x2 and 20x4 geometry paths, WebSocket/cloud status updates, channel error flags, stale-data invalidation, and emergency disable behavior remain in the common application layer rather than in a backend.
+The existing protection behavior is intentionally unchanged. Invalid or stale required telemetry prevents ADC readiness, prevents protection dispatch during warmup, clears the ADC-valid interlock, and triggers the existing emergency-disable path when the inverter is active or starting. Runtime fallback does not imply valid telemetry; the firmware must still obtain valid fresh Oneshot values before publishing ADC readiness.
 
-## Continuous backend details
+No electrical limits, resistor-divider calculations, attenuation settings, channel assignments, fan checks, POST checks, or emergency behavior were weakened or bypassed. Saturation is recorded as a diagnostic quality flag; existing range validation remains the authority for deciding whether a converted value is trusted.
 
-The default continuous backend uses ADC1 only, avoiding ADC2/Wi-Fi contention. It configures the ESP-IDF digital controller with a four-channel pattern, type-1 ESP32 conversion results, a nominal aggregate sample frequency of 20 kHz, DMA frame sizing for forty logical conversion results, and an eight-frame internal storage margin. The original 2 kHz setting was below the ESP32 driver’s supported 20 kHz minimum and caused continuous-backend initialization to fail at runtime; it has been corrected. The backend parses channel-tagged conversion results, applies the already-established calibration handles when available, and falls back to the existing raw-count conversion constants when calibration is unavailable. DMA read errors, including pool overflow state, are returned explicitly and the pool is flushed when appropriate.
+## Fallback behavior
 
-The nominal controller rate is approximately 5,000 conversions per channel per second before scheduler and processing overhead. Ten samples per channel therefore represent an approximately 2 ms aggregation window while retaining the previous sample count rather than arbitrarily reducing it. No physical timing or noise measurement is claimed because an ESP32 board was not available in the sandbox.
+In the Continuous build, the backend records conversion-done callbacks and waits only within the existing bounded read cycle. If no frame has been produced after 500 ms from Continuous start, the backend performs the following sequence:
 
-## Build and test matrix
+1. It calls `adc_continuous_stop()`.
+2. It calls `adc_continuous_deinit()` to release Continuous/DMA and I2S0 resources.
+3. It creates a new ADC1 Oneshot unit.
+4. It configures the same channels with the same attenuation and calibration state.
+5. It reports `INVERTER_ADC_BACKEND_FALLBACK` through the common status and snapshot APIs.
+6. It continues through the normal telemetry-validity, freshness, POST, and protection logic.
+
+If the fallback cannot be initialized, the common ADC manager enters its existing failed state and keeps output inhibited. There is no automatic repeated Continuous recovery loop yet; repeatedly disrupting a functioning safety-compatible Oneshot path would require a separate cooldown and hardware validation design.
+
+## Startup and POST
+
+`inverter_adc_start()` still runs before `post_run_all()`. The common ADC task sets `APP_EVENT_ADC_READY` only after required battery and inverter-output telemetry has been valid and fresh. `post_adc.c` independently requires the ADC lifecycle to be ready and the application snapshot to be valid and fresh before applying battery and idle-output plausibility checks. A fallback backend must satisfy the same readiness contract.
+
+## Build and test results
 
 | Check | Result |
 | --- | --- |
-| `python3 tools/test_firmware_contracts.py` | Passed, 15 tests. |
-| `pio run -e esp32dev -t menuconfig` | Menuconfig target is documented and the active build generated the ADC/LCD symbols. |
-| `pio run -e esp32dev` | Passed; default Continuous/DMA + 20x4. |
-| Temporary menuconfig state: Continuous/DMA + 16x2 | Passed; active `sdkconfig` was restored afterward. |
-| Temporary menuconfig state: Oneshot + 20x4 | Passed; active `sdkconfig` was restored afterward. |
-| Temporary menuconfig state: Oneshot + 16x2 | Passed; active `sdkconfig` was restored afterward. |
-| `pio check -e esp32dev` | Passed with 0 high-severity findings, 9 existing medium warnings, and 721 low/style findings across the existing project. The ADC component itself reported 0 high and 0 medium findings. |
+| `python3 tools/test_firmware_contracts.py` | Passed: 18 tests. |
+| Continuous/default build | Passed with ESP-IDF 5.3.0 / PlatformIO espressif32 6.8.1. |
+| Menuconfig Oneshot build | Passed. |
+| Temporary 16x2 LCD configuration | Previously passed and remains menuconfig-backed. |
 | `git diff --check` | Passed. |
-| Repository-wide `ESP_ERROR_CHECK(` scan in `src` and `include` | Passed with no matches. |
+| Repository-wide `ESP_ERROR_CHECK(` scan | Existing contract remains enforced with no user-firmware matches. |
+| Physical hardware validation | Not performed in the sandbox. |
 
-The contract suite now verifies menuconfig-backed default selection, compile-time exclusivity, common snapshot/readiness declarations, POST ordering, the direct POST snapshot guard, and terminal startup fault propagation.
+## Hardware validation status
 
-## Files changed
+The supplied board logs have validated the diagnosis of a zero-frame Continuous producer, but they have not validated the new fallback build. After flashing the resulting commit, the expected diagnostic is:
 
-The principal changes are in `src/adc/inverter_adc.c`, `src/adc/adc_continuous.c`, `src/adc/adc_oneshot.c`, `src/adc/inverter_adc_backend.h`, `include/adc/inverter_adc.h`, `include/adc/inverter_adc_config.h`, `src/main.c`, and `src/post/post_adc.c`. `src/Kconfig.projbuild` now provides the ADC and LCD menuconfig choices; `platformio.ini` documents the menuconfig workflow and retains only the UI-mock testing flag; `include/lcd/menu_config.h`, the contract tests, and `docs/adc_driver.md` were updated; this report records the architecture and verification results.
+```text
+E (...) ADC_CONTINUOUS: No DMA frames after 500 ms; switched safely to ADC1 Oneshot fallback
+```
 
-## Hardware verification limitation
+The decisive follow-up is that the repeated Continuous `DMA read failed` messages stop, the backend status reports `FALLBACK`, and the normal ADC warmup reaches readiness only after valid fresh Oneshot measurements. Continuous operation itself remains unproven on the board and must not be described as hardware-validated until a board log shows nonzero frame production.
 
-The sandbox did not expose an ESP32 serial device or physical board. The available device list did not provide a usable ESP32 `/dev/ttyUSB*` or `/dev/ttyACM*` target. Consequently, this work claims source-level contracts, compilation, static analysis, and host verification only. It does not claim LCD electrical validation, ADC voltage accuracy, DMA timing, noise performance, boot behavior on the actual inverter, or hardware-in-the-loop results.
+## References
+
+[1]: https://docs.espressif.com/projects/esp-idf/en/v5.2/esp32/api-reference/peripherals/adc_continuous.html "ESP-IDF ADC Continuous Mode Driver documentation"
+[2]: https://github.com/espressif/esp-idf/issues/12053 "ESP-IDF issue #12053: adc_continuous_read returning ESP_ERR_TIMEOUT"
+[3]: https://github.com/espressif/esp-idf/issues/10612 "ESP-IDF issue #10612: ESP32 ADC DMA sampling rate behavior"

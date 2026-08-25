@@ -390,4 +390,20 @@ const char *inverter_adc_backend_name(void)
     return "continuous";
 }
 
+esp_err_t inverter_adc_backend_get_runtime(
+    void *backend_context, inverter_adc_backend_runtime_t *out)
+{
+    if (backend_context == NULL || out == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const continuous_context_t *context = backend_context;
+    out->state = context->using_oneshot_fallback
+                     ? INVERTER_ADC_BACKEND_FALLBACK
+                     : INVERTER_ADC_BACKEND_CONTINUOUS;
+    out->frames_received = context->frames_produced;
+    out->frames_dropped = 0U;
+    out->pool_overflows = context->pool_overflows;
+    return ESP_OK;
+}
+
 #endif /* INVERTER_ADC_MODE == INVERTER_ADC_MODE_CONTINUOUS */

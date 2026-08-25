@@ -125,4 +125,17 @@ const char *inverter_adc_backend_name(void)
     return "oneshot";
 }
 
+esp_err_t inverter_adc_backend_get_runtime(
+    void *backend_context, inverter_adc_backend_runtime_t *out)
+{
+    if (backend_context == NULL || out == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    out->state = INVERTER_ADC_BACKEND_ONESHOT;
+    out->frames_received = 0U;
+    out->frames_dropped = 0U;
+    out->pool_overflows = 0U;
+    return ESP_OK;
+}
+
 #endif /* INVERTER_ADC_MODE == INVERTER_ADC_MODE_ONESHOT */

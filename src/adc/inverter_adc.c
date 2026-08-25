@@ -99,6 +99,8 @@ static inverter_adc_snapshot_t s_snapshot;
 static inverter_adc_backend_channel_t s_backend_channels[
     INVERTER_ADC_CHANNEL_COUNT];
 static void *s_backend_context;
+static inverter_adc_backend_status_t s_backend_status;
+static inverter_adc_measurement_t s_measurements[INVERTER_ADC_CHANNEL_COUNT];
 
 static const adc_channel_config_t s_adc_configs[] = {
     {.channel = INVERTER_ADC_LOW_BATTERY,
@@ -195,10 +197,91 @@ static telemetry_channel_t health_channel_for_adc(adc_channel_id_t channel_id)
     }
 }
 
+static void backend_status_refresh(void)
+{
+    inverter_adc_backend_runtime_t runtime = {
+        .state = INVERTER_ADC_BACKEND_UNINITIALIZED,
+    };
+    if (s_backend_context == NULL ||
+        inverter_adc_backend_get_runtime(s_backend_context, &runtime) != ESP_OK) {
+        runtime.state = INVERTER_ADC_BACKEND_FAULT;
+    }
+
+    taskENTER_CRITICAL(&s_state_lock);
+    s_backend_status.state = runtime.state;
+    s_backend_status.frames_received = runtime.frames_received;
+    s_backend_status.frames_dropped = runtime.frames_dropped;
+    s_backend_status.pool_overflows = runtime.pool_overflows;
+    taskEXIT_CRITICAL(&s_state_lock);
+}
+
+static void measurement_record(adc_channel_id_t channel_id,
+                               float voltage,
+                               uint32_t sample_count,
+                               uint32_t timestamp_ms,
+                               bool valid,
+                               bool calibrated,
+                               bool saturated)
+{
+    if (channel_id < 0 || channel_id >= CHANNEL_ID_COUNT) {
+        return;
+    }
+    taskENTER_CRITICAL(&s_state_lock);
+    inverter_adc_measurement_t *measurement = &s_measurements[channel_id];
+    measurement->voltage = voltage;
+    measurement->sample_count = sample_count;
+    measurement->timestamp_ms = timestamp_ms;
+    measurement->valid = valid;
+    measurement->calibrated = calibrated;
+    measurement->fresh = valid;
+    measurement->saturated = saturated;
+    if (valid) {
+        ++s_backend_status.consecutive_successes;
+        s_backend_status.consecutive_failures = 0U;
+        s_backend_status.last_success_ms = timestamp_ms;
+        if (s_backend_status.consecutive_successes == 0U) {
+            s_backend_status.consecutive_successes = UINT32_MAX;
+        }
+    } else {
+        ++measurement->error_count;
+        ++s_backend_status.invalid_samples;
+        ++s_backend_status.consecutive_failures;
+        s_backend_status.consecutive_successes = 0U;
+    }
+    if (saturated) {
+        ++s_backend_status.saturated_samples;
+    }
+    taskEXIT_CRITICAL(&s_state_lock);
+}
+
+static void measurement_record_read_error(adc_channel_id_t channel_id,
+                                          uint32_t timestamp_ms,
+                                          bool calibrated)
+{
+    if (channel_id < 0 || channel_id >= CHANNEL_ID_COUNT) {
+        return;
+    }
+    taskENTER_CRITICAL(&s_state_lock);
+    inverter_adc_measurement_t *measurement = &s_measurements[channel_id];
+    measurement->timestamp_ms = timestamp_ms;
+    measurement->sample_count = 0U;
+    measurement->valid = false;
+    measurement->calibrated = calibrated;
+    measurement->fresh = false;
+    measurement->saturated = false;
+    ++measurement->error_count;
+    ++s_backend_status.read_errors;
+    ++s_backend_status.invalid_samples;
+    ++s_backend_status.consecutive_failures;
+    s_backend_status.consecutive_successes = 0U;
+    taskEXIT_CRITICAL(&s_state_lock);
+}
+
 static void adc_signal_failed(const char *reason)
 {
     taskENTER_CRITICAL(&s_state_lock);
     s_state = INVERTER_ADC_STATE_FAILED;
+    s_backend_status.state = INVERTER_ADC_BACKEND_FAULT;
     taskEXIT_CRITICAL(&s_state_lock);
     sys_state.adc_ready = false;
     sys_state.adc_data_valid = false;
@@ -220,8 +303,20 @@ static void snapshot_update(uint32_t timestamp_ms, bool ready)
         .timestamp_ms = timestamp_ms,
         .required_data_valid = ready,
         .fresh = ready,
+        .backend_state = s_backend_status.state,
+        .backend_degraded = s_backend_status.state == INVERTER_ADC_BACKEND_FALLBACK,
+        .backend_status = s_backend_status,
     };
     taskENTER_CRITICAL(&s_state_lock);
+    memcpy(snapshot.channel, s_measurements, sizeof(s_measurements));
+    for (size_t i = 0U; i < INVERTER_ADC_CHANNEL_COUNT; ++i) {
+        snapshot.channel[i].fresh = snapshot.channel[i].valid &&
+            (uint32_t)(timestamp_ms - snapshot.channel[i].timestamp_ms) <=
+                TELEMETRY_STALE_TIMEOUT_MS;
+    }
+    snapshot.backend_status = s_backend_status;
+    snapshot.backend_state = s_backend_status.state;
+    snapshot.backend_degraded = s_backend_status.state == INVERTER_ADC_BACKEND_FALLBACK;
     s_snapshot = snapshot;
     taskEXIT_CRITICAL(&s_state_lock);
 }
@@ -241,6 +336,8 @@ static bool process_adc_reading(const adc_channel_config_t *config,
     const telemetry_channel_t health_channel =
         health_channel_for_adc(config->channel_id);
     if (read_result != ESP_OK) {
+        measurement_record_read_error(config->channel_id, sample_time_ms,
+                                      backend_state->state.is_calibrated);
         telemetry_health_record_invalid(health_channel, sample_time_ms);
         ESP_LOGW(INVERTER_ADC_DRIVER_TAG,
                  "%s sample acquisition failed: %s",
@@ -253,6 +350,7 @@ static bool process_adc_reading(const adc_channel_config_t *config,
         return false;
     }
 
+    const bool saturated = adc_voltage >= (ADC_MEASURED_MAX * 0.995f);
     adc_voltage = map_adc_to_full_range(adc_voltage);
     float actual_voltage = adc_voltage * config->voltage_divider_ratio;
     float threshold_low = config->threshold_low;
@@ -280,6 +378,10 @@ static bool process_adc_reading(const adc_channel_config_t *config,
         health_channel, actual_voltage, telemetry_min, telemetry_max,
         sample_time_ms);
     *(config->target_value) = actual_voltage;
+    measurement_record(config->channel_id, actual_voltage,
+                       ADC_MULTISAMPLING_COUNT, sample_time_ms,
+                       telemetry_valid, backend_state->state.is_calibrated,
+                       saturated);
 
     const bool error_detected = config->has_high_threshold
                                     ? (actual_voltage < threshold_low ||
@@ -383,6 +485,11 @@ static void adc_task_body(void)
     telemetry_health_init();
     telemetry_health_set_required_mask(ADC_REQUIRED_MASK);
     battery_filter_init(&battery_voltage_filter, 0.20f);
+    taskENTER_CRITICAL(&s_state_lock);
+    memset(&s_backend_status, 0, sizeof(s_backend_status));
+    memset(s_measurements, 0, sizeof(s_measurements));
+    s_backend_status.state = INVERTER_ADC_BACKEND_UNINITIALIZED;
+    taskEXIT_CRITICAL(&s_state_lock);
 
     const adc_channel_t channels[ADC_CONFIG_COUNT] = {
         INVERTER_ADC_LOW_BATTERY,
@@ -390,7 +497,7 @@ static void adc_task_body(void)
         INVERTER_ADC_BATTERY_VOLTAGE,
         INVERTER_ADC_OUTPUT_VOLTAGE,
     };
-    const esp_err_t init_result = inverter_adc_backend_init(
+    const bool init_result = inverter_adc_backend_init(
         channels, ADC_CONFIG_COUNT, s_backend_channels, &s_backend_context);
     if (init_result != ESP_OK) {
         adc_signal_failed(esp_err_to_name(init_result));
@@ -402,6 +509,7 @@ static void adc_task_body(void)
     taskENTER_CRITICAL(&s_state_lock);
     s_state = INVERTER_ADC_STATE_RUNNING;
     taskEXIT_CRITICAL(&s_state_lock);
+    backend_status_refresh();
     ESP_LOGI(INVERTER_ADC_DRIVER_TAG, "ADC %s backend initialized",
              inverter_adc_backend_name());
 
@@ -416,6 +524,7 @@ static void adc_task_body(void)
             (void)process_adc_reading(&s_adc_configs[i], &s_backend_channels[i]);
         }
 
+        backend_status_refresh();
         const uint32_t sample_time_ms =
             (uint32_t)(esp_timer_get_time() / 1000ULL);
         const bool telemetry_ready = telemetry_health_required_ready(
@@ -540,4 +649,31 @@ inverter_adc_mode_t inverter_adc_get_mode(void)
 #else
     return INVERTER_ADC_MODE_ONESHOT_ENUM;
 #endif
+}
+
+esp_err_t inverter_adc_get_backend_status(inverter_adc_backend_status_t *out)
+{
+    if (out == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    taskENTER_CRITICAL(&s_state_lock);
+    *out = s_backend_status;
+    taskEXIT_CRITICAL(&s_state_lock);
+    return ESP_OK;
+}
+
+esp_err_t inverter_adc_get_measurement(inverter_adc_channel_t channel,
+                                       inverter_adc_measurement_t *out)
+{
+    if (out == NULL || channel < 0 || channel >= INVERTER_ADC_CHANNEL_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    taskENTER_CRITICAL(&s_state_lock);
+    *out = s_measurements[channel];
+    out->fresh = out->valid &&
+                 (uint32_t)(now_ms - out->timestamp_ms) <=
+                     TELEMETRY_STALE_TIMEOUT_MS;
+    taskEXIT_CRITICAL(&s_state_lock);
+    return ESP_OK;
 }
