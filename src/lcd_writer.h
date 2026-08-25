@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-/* The render-state instance and its protecting mutex are owned by main.c. */
+/* The render-state instance and its protecting mutex are owned by app_runtime.c. */
 extern lcd_render_state_t sys_lcd;
 extern SemaphoreHandle_t sys_state_mutex;
 
