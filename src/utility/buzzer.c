@@ -2,6 +2,7 @@
 #include "events/event_dispatcher.h"
 #include "events/system_events.h"
 #include "utility/buzzer.h"
+#include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/task.h"
 #include "utility/led.h"
@@ -67,13 +68,37 @@ esp_err_t buzzer_init(void)
     return ESP_OK;
 }
 
+static esp_err_t buzzer_set_tone(uint32_t frequency, uint32_t duty)
+{
+    esp_err_t err = ledc_set_freq(BUZZER_LEDC_MODE, BUZZER_LEDC_TIMER, frequency);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, duty);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    return ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL);
+}
+
 static void buzzer_stop(void)
 {
     if (!s_buzzer_initialized) {
         return;
     }
-    ESP_ERROR_CHECK(ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0));
-    ESP_ERROR_CHECK(ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL));
+
+    esp_err_t err = ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to clear buzzer duty: %s", esp_err_to_name(err));
+        return;
+    }
+
+    err = ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to stop buzzer output: %s", esp_err_to_name(err));
+    }
 }
 
 void buzzer_beep(uint32_t frequency, uint8_t duty_percent, uint32_t duration_ms)
@@ -105,19 +130,13 @@ void buzzer_beep(uint32_t frequency, uint8_t duty_percent, uint32_t duration_ms)
     uint32_t max_duty = (1 << BUZZER_LEDC_RES) - 1;
     uint32_t duty = (max_duty * duty_percent) / 100;
 
-    ESP_ERROR_CHECK(ledc_set_freq(
-        BUZZER_LEDC_MODE,
-        BUZZER_LEDC_TIMER,
-        frequency));
-
-    ESP_ERROR_CHECK(ledc_set_duty(
-        BUZZER_LEDC_MODE,
-        BUZZER_LEDC_CHANNEL,
-        duty));
-
-    ESP_ERROR_CHECK(ledc_update_duty(
-        BUZZER_LEDC_MODE,
-        BUZZER_LEDC_CHANNEL));
+    esp_err_t err = buzzer_set_tone(frequency, duty);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start buzzer tone at %lu Hz: %s",
+                 (unsigned long)frequency, esp_err_to_name(err));
+        buzzer_stop();
+        return;
+    }
 
     uint32_t remaining_ms = duration_ms;
     while (remaining_ms > 0U && !s_critical_preempt_pending) {
@@ -156,9 +175,12 @@ void update_buzzer(uint16_t freq_hz, uint8_t volume_percent)
     uint32_t max_duty = (1 << BUZZER_LEDC_RES) - 1;
     uint32_t duty = (max_duty * volume_percent) / 100;
 
-    ESP_ERROR_CHECK(ledc_set_freq(BUZZER_LEDC_MODE, BUZZER_LEDC_TIMER, freq_hz));
-    ESP_ERROR_CHECK(ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, duty));
-    ESP_ERROR_CHECK(ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL));
+    esp_err_t err = buzzer_set_tone(freq_hz, duty);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update buzzer tone at %u Hz: %s",
+                 (unsigned)freq_hz, esp_err_to_name(err));
+        buzzer_stop();
+    }
 }
 
 void buzzer_off(void)

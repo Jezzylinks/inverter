@@ -132,11 +132,15 @@ esp_err_t fan_controller_deinit(void)
         TAG,
         "Driver not initialized");
 
-    ESP_ERROR_CHECK(
-        ledc_stop(
-            s_ctx.config.speed_mode,
-            s_ctx.config.channel,
-            !s_ctx.config.active_high));
+    esp_err_t err = ledc_stop(
+        s_ctx.config.speed_mode,
+        s_ctx.config.channel,
+        !s_ctx.config.active_high);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to stop fan LEDC output: %s", esp_err_to_name(err));
+        return err;
+    }
 
     memset(&s_ctx, 0, sizeof(s_ctx));
 

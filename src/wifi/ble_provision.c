@@ -297,10 +297,19 @@ esp_err_t ble_provision_init(void)
 
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {
-        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_erase();
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "NVS erase failed: %s", esp_err_to_name(err));
+            return err;
+        }
         err = nvs_flash_init();
     }
-    ESP_ERROR_CHECK(err);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(err));
+        return err;
+    }
 
     err = nimble_port_init();
     if (err != ESP_OK)

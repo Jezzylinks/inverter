@@ -5151,9 +5151,20 @@ void enter_deep_sleep(uint32_t sleep_seconds)
     update_led(LED_STATUS, 0);
     gpio_set_level(GPIO_POWER_RELAY, 0);
 
-    esp_sleep_enable_timer_wakeup(sleep_seconds * 1000000ULL);
-    ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(wakeup_pin_mask,
-                                                 ESP_EXT1_WAKEUP_ALL_LOW));
+    esp_err_t err = esp_sleep_enable_timer_wakeup(sleep_seconds * 1000000ULL);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE("RTC", "Failed to configure timer wakeup: %s", esp_err_to_name(err));
+        return;
+    }
+
+    err = esp_sleep_enable_ext1_wakeup(wakeup_pin_mask,
+                                       ESP_EXT1_WAKEUP_ALL_LOW);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE("RTC", "Failed to configure GPIO wakeup: %s", esp_err_to_name(err));
+        return;
+    }
     gpio_reset_pin(GPIO_PWR_BTN);
     gpio_reset_pin(GPIO_BUZZER);
     gpio_reset_pin(GPIO_STATUS_LED);

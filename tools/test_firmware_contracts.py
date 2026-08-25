@@ -81,6 +81,16 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("SYSTEM_ERROR_WIFI_INTERNET_UNAVAILABLE", text)
         self.assertIn("SYSTEM_ERROR_PROTECTION_INVALID_TELEMETRY", text)
 
+    def test_firmware_uses_explicit_esp_error_handling(self):
+        root = Path(__file__).parents[1]
+        firmware_files = list(root.joinpath("src").rglob("*.c")) + list(root.joinpath("include").rglob("*.h"))
+        offenders = [
+            str(path.relative_to(root))
+            for path in firmware_files
+            if "ESP_ERROR_CHECK(" in path.read_text()
+        ]
+        self.assertEqual(offenders, [])
+
     def test_adc_warmup_timeout_inhibits_output_and_reports_a_terminal_fault(self):
         root = Path(__file__).parents[1]
         startup_source = root.joinpath("src", "app_init.c")

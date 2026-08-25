@@ -258,8 +258,19 @@ esp_err_t lcd_i2c_init(uint8_t sdaPin, uint8_t sclPin)
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
         .master.clk_speed = I2C_FREQ_HZ};
 
-    ESP_ERROR_CHECK(i2c_param_config(I2C_PORT, &cfg));
-    return i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+    esp_err_t err = i2c_param_config(I2C_PORT, &cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "I2C parameter configuration failed: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    err = i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "I2C driver installation failed: %s",
+                 esp_err_to_name(err));
+    }
+    return err;
 }
 
 // --------------------------------------------------
@@ -268,7 +279,11 @@ esp_err_t lcd_i2c_init(uint8_t sdaPin, uint8_t sclPin)
 void lcd_init(uint8_t addr, uint8_t sdaPin, uint8_t sclPin)
 {
     // Initialize I2C first
-    lcd_i2c_init(sdaPin, sclPin);
+    esp_err_t err = lcd_i2c_init(sdaPin, sclPin);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "LCD I2C initialization failed: %s", esp_err_to_name(err));
+        return;
+    }
 
     // If address is 0, auto-scan for LCD
     if (addr == 0)
