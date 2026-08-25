@@ -97,21 +97,57 @@ class FirmwareContracts(unittest.TestCase):
         if not startup_source.exists():
             startup_source = root.joinpath("src", "main.c")
         text = startup_source.read_text()
-        failure_branch = re.search(
-            r'const bool adc_failed = .*?\n    }\n\n    const bool startup_healthy',
-            text,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(failure_branch)
-        assert failure_branch is not None
-        self.assertIn("POST_FAILURE_ADC", failure_branch.group(0))
-        self.assertIn("POST_FAILURE_LCD", failure_branch.group(0))
-        self.assertIn(".all_passed = false", failure_branch.group(0))
-        self.assertIn("post_completed = true", failure_branch.group(0))
-        self.assertIn("inverter_emergency_shutdown()", failure_branch.group(0))
-        self.assertIn('"ADC INIT FAIL   "', failure_branch.group(0))
-        self.assertIn('"ADC TIMEOUT     "', failure_branch.group(0))
-        self.assertIn('lcd_show_fault("SENSOR STARTUP ", fault)', failure_branch.group(0))
+        start = text.index("const bool adc_failed =")
+        end = text.index("const bool startup_healthy", start)
+        failure_branch = text[start:end]
+        self.assertIn("POST_FAILURE_ADC", failure_branch)
+        self.assertIn("POST_FAILURE_LCD", failure_branch)
+        self.assertIn(".all_passed = false", failure_branch)
+        self.assertIn("post_completed = true", failure_branch)
+        self.assertIn("inverter_emergency_shutdown()", failure_branch)
+        self.assertIn('"ADC INIT FAIL   "', failure_branch)
+        self.assertIn('"ADC TIMEOUT     "', failure_branch)
+        self.assertIn('lcd_show_fault("SENSOR STARTUP ", fault)', failure_branch)
+
+    def test_adc_mode_is_compile_time_exclusive_and_defaults_to_continuous(self):
+        root = Path(__file__).parents[1]
+        config = root.joinpath("include", "adc", "inverter_adc_config.h").read_text()
+        self.assertIn("#define INVERTER_ADC_MODE_CONTINUOUS 0", config)
+        self.assertIn("#define INVERTER_ADC_MODE_ONESHOT    1", config)
+        self.assertIn("#define INVERTER_ADC_MODE INVERTER_ADC_MODE_CONTINUOUS", config)
+        self.assertIn("#error", config)
+        self.assertIn("INVERTER_ADC_MODE != INVERTER_ADC_MODE_CONTINUOUS", config)
+        self.assertIn("INVERTER_ADC_MODE != INVERTER_ADC_MODE_ONESHOT", config)
+        platformio = root.joinpath("platformio.ini").read_text()
+        self.assertIn("esp32dev-continuous-16x2", platformio)
+        self.assertIn("esp32dev-oneshot-20x4", platformio)
+        self.assertIn("esp32dev-oneshot-16x2", platformio)
+
+    def test_common_adc_snapshot_and_ready_contract_is_backend_neutral(self):
+        root = Path(__file__).parents[1]
+        header = root.joinpath("include", "adc", "inverter_adc.h").read_text()
+        adapter = root.joinpath("src", "adc", "inverter_adc.c").read_text()
+        self.assertIn("inverter_adc_snapshot_t", header)
+        self.assertIn("inverter_adc_get_snapshot", header)
+        self.assertIn("inverter_adc_is_ready", header)
+        self.assertIn("s_state = INVERTER_ADC_STATE_READY", adapter)
+        self.assertIn("telemetry_health_required_ready", adapter)
+        self.assertIn("APP_EVENT_ADC_READY", adapter)
+
+    def test_post_can_run_only_after_adc_and_lcd_ready_events(self):
+        text = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        wait_end = text.index("if (adc_ready && lcd_ready)")
+        post_call = text.index("startup_post = post_run_all()")
+        self.assertGreater(post_call, wait_end)
+        self.assertIn("inverter_adc_start()", text)
+        self.assertLess(text.index("inverter_adc_start()"), text.index("post_run_all()"))
+
+    def test_post_adc_refuses_unready_or_stale_snapshot(self):
+        text = Path(__file__).parents[1].joinpath("src", "post", "post_adc.c").read_text()
+        self.assertIn("inverter_adc_is_ready()", text)
+        self.assertIn("snapshot.required_data_valid", text)
+        self.assertIn("snapshot.fresh", text)
+        self.assertIn("ADC snapshot is not ready/fresh", text)
 
     def test_post_result_propagates_completion_on_pass_and_failure(self):
         text = Path(__file__).parents[1].joinpath("src", "main.c").read_text()

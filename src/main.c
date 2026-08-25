@@ -151,11 +151,11 @@ void app_main(void)
     xEventGroupClearBits(sys_event_group,
                          APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED |
                          APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED);
-    const BaseType_t adc_task_status =
-        xTaskCreate(adc_task, "adc_task", 4096, NULL, 5, NULL);
-    if (adc_task_status != pdPASS)
+    const esp_err_t adc_start_result = inverter_adc_start();
+    if (adc_start_result != ESP_OK)
     {
-        ESP_LOGE(APP_TAG, "Failed to create ADC task");
+        ESP_LOGE(APP_TAG, "Failed to start ADC subsystem: %s",
+                 esp_err_to_name(adc_start_result));
         xEventGroupSetBits(sys_event_group, APP_EVENT_ADC_FAILED);
     }
     const BaseType_t lcd_task_status =
@@ -198,9 +198,10 @@ void app_main(void)
         ESP_LOGE(APP_TAG, "Failed to start watchdog health supervisor");
     }
 
-    /* Wait for the ADC task’s first sample and the LCD task’s completed
-     * initialization before running POST. Every 100 ms timeout feeds the
-     * watchdog while still allowing either task to publish a fatal result. */
+    /* Wait for the ADC subsystem’s valid/fresh required snapshot and the LCD
+     * task’s completed initialization before running POST. Every 100 ms timeout
+     * feeds the watchdog while still allowing either task to publish a fatal
+     * result. */
     const EventBits_t startup_wait_mask =
         APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED |
         APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED;

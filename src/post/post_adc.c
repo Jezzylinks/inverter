@@ -1,6 +1,7 @@
 #include "post/post_adc.h"
 
 #include "esp_log.h"
+#include "adc/inverter_adc.h"
 #include "system/system_state.h"
 
 extern system_state_t sys_state;
@@ -13,6 +14,13 @@ static const char *TAG = "POST_ADC";
 bool post_adc_test(void)
 {
     bool all_passed = true;
+    inverter_adc_snapshot_t snapshot = {0};
+    if (!inverter_adc_is_ready() ||
+        inverter_adc_get_snapshot(&snapshot) != ESP_OK ||
+        !snapshot.required_data_valid || !snapshot.fresh) {
+        ESP_LOGE(TAG, "ADC snapshot is not ready/fresh; refusing ADC POST");
+        return false;
+    }
 
     /* Battery voltage plausibility -- bounds derived from the active,
      * chemistry+voltage-system-scaled battery profile (NOT a fixed
@@ -21,7 +29,7 @@ bool post_adc_test(void)
      * below cutoff or above the hard overvoltage limit means the sensor
      * is disconnected, shorted, or wildly out of calibration -- not a
      * real battery condition. */
-    float battery_voltage = sys_state.inverter.battery.voltage;
+    float battery_voltage = snapshot.battery_voltage;
     float plausible_min = sys_state.battery_profile.cutoff_voltage_12v * 0.7f;
     float plausible_max = sys_state.battery_profile.overvoltage_protection_12v * 1.1f;
 
@@ -38,7 +46,7 @@ bool post_adc_test(void)
 
     /* Before the inverter has ever been started, there should be
      * essentially no AC output. */
-    float output_voltage = sys_state.inverter.output_voltage;
+    float output_voltage = snapshot.output_voltage;
     if (output_voltage > POST_MAX_OUTPUT_VOLTAGE_IDLE)
     {
         ESP_LOGE(TAG, "Output voltage not idle: %.2fV (expected < %.2fV)",
