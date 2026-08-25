@@ -82,7 +82,11 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("SYSTEM_ERROR_PROTECTION_INVALID_TELEMETRY", text)
 
     def test_adc_warmup_timeout_inhibits_output_and_reports_a_terminal_fault(self):
-        text = Path(__file__).parents[1].joinpath("src", "app_init.c").read_text()
+        root = Path(__file__).parents[1]
+        startup_source = root.joinpath("src", "app_init.c")
+        if not startup_source.exists():
+            startup_source = root.joinpath("src", "main.c")
+        text = startup_source.read_text()
         timeout_branch = re.search(
             r'ADC did not warm up within 10 seconds; inhibiting inverter output(.*?)\n    }\n\n    const bool startup_healthy',
             text,

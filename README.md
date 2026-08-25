@@ -156,6 +156,10 @@ Wi-Fi menu actions are intentionally asynchronous from the user-interface perspe
 
 The Wi-Fi and network-service paths are intentionally excluded from the shared task-watchdog registry because watchdog interaction previously caused harmful resets during startup. They instead use bounded waits, cancellation notifications, timeout screens, and capped reconnect backoff. The shared watchdog remains available to unrelated firmware-owned tasks.
 
+## Reusable ADC driver
+
+The ESP-IDF ADC unit, calibration, multisampling, and resource-cleanup primitives are available as a standalone module in [`src/adc/adc.c`](src/adc/adc.c) with its public interface in [`include/adc/adc.h`](include/adc/adc.h). The inverter-specific `adc_task()` remains separate and owns channel mapping, divider scaling, telemetry health, filtering, and safety policy. See [`docs/adc_driver.md`](docs/adc_driver.md) for copy-and-integrate instructions for subsequent ESP32 projects.
+
 ## Wokwi simulation
 
 The repository contains one shared firmware environment. Wokwi does not compile the firmware itself; the referenced PlatformIO `.bin` and `.elf` files must exist before starting the simulator. From the repository root, run:
