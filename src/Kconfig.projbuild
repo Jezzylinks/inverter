@@ -1,3 +1,38 @@
+menu "Inverter Hardware Configuration"
+
+choice INVERTER_ADC_MODE
+    prompt "ADC acquisition mode"
+    default INVERTER_ADC_MODE_CONTINUOUS
+    help
+        Select the ADC acquisition backend. Continuous/DMA is the default and
+        is recommended for normal operation. Oneshot is the compatibility
+        fallback. Exactly one backend is selected at compile time.
+
+config INVERTER_ADC_MODE_CONTINUOUS
+    bool "Continuous / DMA"
+
+config INVERTER_ADC_MODE_ONESHOT
+    bool "Oneshot fallback"
+
+endchoice
+
+choice INVERTER_LCD_GEOMETRY
+    prompt "Physical LCD geometry"
+    default INVERTER_LCD_20X4
+    help
+        Select the connected character LCD geometry. This changes only the
+        rendering layout; it does not change ADC acquisition or safety policy.
+
+config INVERTER_LCD_16X2
+    bool "16x2 LCD"
+
+config INVERTER_LCD_20X4
+    bool "20x4 LCD"
+
+endchoice
+
+endmenu
+
 menu "Inverter Wi-Fi Configuration"
 
 choice INVERTER_WIFI_OPERATION_MODE

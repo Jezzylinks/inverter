@@ -12,31 +12,40 @@ The firmware now has a three-layer ADC design. The low-level helper remains reus
 
 `src/adc/inverter_adc.c` is the only application-facing ADC implementation. The rest of the firmware uses the common API and the existing `sys_state` values; it does not call ESP-IDF acquisition APIs or select a backend.
 
-## Compile-time mode selection
+## Menuconfig selection
 
-The selector lives in `include/adc/inverter_adc_config.h`:
+ADC mode and LCD geometry are selected through ESP-IDF menuconfig. The Kconfig definitions are in `src/Kconfig.projbuild`; the generated values are mapped by `include/adc/inverter_adc_config.h` and `include/lcd/menu_config.h`.
 
-```c
-#define INVERTER_ADC_MODE_CONTINUOUS 0
-#define INVERTER_ADC_MODE_ONESHOT    1
+From the project root, open the configuration UI with:
 
-#ifndef INVERTER_ADC_MODE
-#define INVERTER_ADC_MODE INVERTER_ADC_MODE_CONTINUOUS
-#endif
+```text
+pio run -e esp32dev -t menuconfig
 ```
 
-Continuous/DMA is the default. The header rejects every value other than the two named modes. The backend source files are compiled together by the project source glob, but preprocessor selection ensures that only one implementation exports `inverter_adc_backend_init()`, `inverter_adc_backend_read_sample()`, and the matching cleanup functions. There is no runtime attempt to initialize both ADC controllers.
+In the menu, select:
 
-The project provides explicit verification environments:
+```text
+Inverter Hardware Configuration
+  ADC acquisition mode
+    Continuous / DMA       (default)
+    Oneshot fallback
+  Physical LCD geometry
+    16x2 LCD
+    20x4 LCD               (default)
+```
 
-| PlatformIO environment | ADC mode | LCD geometry |
-| --- | --- | --- |
-| `esp32dev` | Continuous/DMA | 20x4 default |
-| `esp32dev-continuous-16x2` | Continuous/DMA | 16x2 |
-| `esp32dev-oneshot-20x4` | Oneshot | 20x4 |
-| `esp32dev-oneshot-16x2` | Oneshot | 16x2 |
+Save and exit menuconfig, then build or upload the same environment:
 
-The LCD geometry remains controlled by `MENU_CONFIG_LCD_20X4`; build flags can override it without changing the physical default. These profiles do not alter ADC channels, attenuation, scaling, thresholds, or sampling counts.
+```text
+pio run -e esp32dev
+pio run -e esp32dev -t upload
+```
+
+With the native ESP-IDF command-line workflow, the equivalent command is `idf.py menuconfig`, followed by `idf.py build` and `idf.py flash`. PlatformIO stores the generated configuration in an environment-specific `sdkconfig` file, which is intentionally ignored by Git because it may also contain credentials and machine-specific settings.
+
+Continuous/DMA is the default. The generated configuration is a Kconfig `choice`, and the header adds a compile-time guard against both options being present or neither option being selected. The backend source files are compiled together by the project source glob, but preprocessor selection ensures that only one implementation exports `inverter_adc_backend_init()`, `inverter_adc_backend_read_sample()`, and the matching cleanup functions. There is no runtime attempt to initialize both ADC controllers.
+
+There is now one production environment (`esp32dev`) for all ADC/LCD combinations. Change the menuconfig selection, rebuild, and upload. The `esp32dev-ui-mock` environment extends the same configuration and adds only the test physical-feedback flag; it should not be flashed as a production safety build. These choices do not alter ADC channels, attenuation, scaling, thresholds, or sampling counts.
 
 ## Common lifecycle and snapshot API
 
@@ -97,10 +106,7 @@ From the repository root:
 ```text
 python3 tools/test_firmware_contracts.py
 pio run -e esp32dev
-pio run -e esp32dev-continuous-16x2
-pio run -e esp32dev-oneshot-20x4
-pio run -e esp32dev-oneshot-16x2
 pio check -e esp32dev
 ```
 
-These checks validate the host-side startup/mode contracts, compile the default continuous configuration, compile the alternate LCD geometry, compile both oneshot combinations, and run static analysis. No physical HIL claim is made unless an ESP32 board and serial device are actually available.
+To verify a different menuconfig choice, change the option with `pio run -e esp32dev -t menuconfig`, save it, and repeat the build. Because the selected values live in the local `sdkconfig` file, switch configurations deliberately and record the selected hardware before flashing. No physical HIL claim is made unless an ESP32 board and serial device are actually available.

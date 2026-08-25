@@ -109,19 +109,31 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('"ADC TIMEOUT     "', failure_branch)
         self.assertIn('lcd_show_fault("SENSOR STARTUP ", fault)', failure_branch)
 
-    def test_adc_mode_is_compile_time_exclusive_and_defaults_to_continuous(self):
+    def test_adc_and_lcd_selection_is_menuconfig_backed_and_exclusive(self):
         root = Path(__file__).parents[1]
+        kconfig = root.joinpath("src", "Kconfig.projbuild").read_text()
+        self.assertIn("choice INVERTER_ADC_MODE", kconfig)
+        self.assertIn("default INVERTER_ADC_MODE_CONTINUOUS", kconfig)
+        self.assertIn("config INVERTER_ADC_MODE_ONESHOT", kconfig)
+        self.assertIn("choice INVERTER_LCD_GEOMETRY", kconfig)
+        self.assertIn("default INVERTER_LCD_20X4", kconfig)
+
         config = root.joinpath("include", "adc", "inverter_adc_config.h").read_text()
-        self.assertIn("#define INVERTER_ADC_MODE_CONTINUOUS 0", config)
-        self.assertIn("#define INVERTER_ADC_MODE_ONESHOT    1", config)
-        self.assertIn("#define INVERTER_ADC_MODE INVERTER_ADC_MODE_CONTINUOUS", config)
-        self.assertIn("#error", config)
-        self.assertIn("INVERTER_ADC_MODE != INVERTER_ADC_MODE_CONTINUOUS", config)
-        self.assertIn("INVERTER_ADC_MODE != INVERTER_ADC_MODE_ONESHOT", config)
+        self.assertIn('include "sdkconfig.h"', config)
+        self.assertIn("CONFIG_INVERTER_ADC_MODE_CONTINUOUS", config)
+        self.assertIn("CONFIG_INVERTER_ADC_MODE_ONESHOT", config)
+        self.assertIn("ADC menuconfig selected both acquisition modes", config)
+        self.assertIn("Select an ADC acquisition mode with idf.py menuconfig", config)
+
+        lcd_config = root.joinpath("include", "lcd", "menu_config.h").read_text()
+        self.assertIn('include "sdkconfig.h"', lcd_config)
+        self.assertIn("CONFIG_INVERTER_LCD_16X2", lcd_config)
+        self.assertIn("CONFIG_INVERTER_LCD_20X4", lcd_config)
+
         platformio = root.joinpath("platformio.ini").read_text()
-        self.assertIn("esp32dev-continuous-16x2", platformio)
-        self.assertIn("esp32dev-oneshot-20x4", platformio)
-        self.assertIn("esp32dev-oneshot-16x2", platformio)
+        self.assertIn("-t menuconfig", platformio)
+        self.assertNotIn("esp32dev-continuous-16x2", platformio)
+        self.assertNotIn("-DINVERTER_ADC_MODE=", platformio)
 
     def test_common_adc_snapshot_and_ready_contract_is_backend_neutral(self):
         root = Path(__file__).parents[1]

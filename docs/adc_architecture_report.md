@@ -12,7 +12,7 @@ The previous application adapter initialized an ESP-IDF oneshot unit inside `adc
 
 The ADC subsystem now has a portable helper, two mutually exclusive acquisition backends, and a common inverter adapter. `src/adc/adc.c` and `include/adc/adc.h` remain the reusable low-level helper for oneshot unit lifecycle, calibration, and fixed-count calibrated/raw conversion. `src/adc/adc_continuous.c` implements the default ESP-IDF ADC1 digital-controller/DMA backend. `src/adc/adc_oneshot.c` implements the explicit compatibility fallback. `src/adc/inverter_adc.c` owns application mapping and all downstream policy, including filtering, validation, protections, LCD updates, WebSocket/cloud reporting, and emergency behavior.
 
-The compile-time selector is `include/adc/inverter_adc_config.h`. Continuous mode is the default (`INVERTER_ADC_MODE_CONTINUOUS = 0`), and oneshot is `INVERTER_ADC_MODE_ONESHOT = 1`. A preprocessor validation rejects any other value. Both backend source files are present in the component source set, but only the selected backend exports the private backend symbols, so the firmware never initializes both acquisition implementations.
+The menuconfig selectors are defined in `src/Kconfig.projbuild`. Continuous mode is the default (`CONFIG_INVERTER_ADC_MODE_CONTINUOUS`), and oneshot is the fallback (`CONFIG_INVERTER_ADC_MODE_ONESHOT`). LCD geometry is also a menuconfig choice, defaulting to `CONFIG_INVERTER_LCD_20X4`. The headers `include/adc/inverter_adc_config.h` and `include/lcd/menu_config.h` map the generated `sdkconfig.h` values and reject conflicting or missing selections at compile time. Both backend source files are present in the component source set, but only the selected backend exports the private backend symbols, so the firmware never initializes both acquisition implementations.
 
 ## Common API and readiness contract
 
@@ -39,19 +39,20 @@ The nominal controller rate is approximately 500 conversions per channel per sec
 | Check | Result |
 | --- | --- |
 | `python3 tools/test_firmware_contracts.py` | Passed, 15 tests. |
-| `pio run -e esp32dev` | Passed; default continuous/DMA + 20x4. |
-| `pio run -e esp32dev-continuous-16x2` | Passed; continuous/DMA + 16x2. |
-| `pio run -e esp32dev-oneshot-20x4` | Passed; oneshot + 20x4. |
-| `pio run -e esp32dev-oneshot-16x2` | Passed; oneshot + 16x2. |
+| `pio run -e esp32dev -t menuconfig` | Menuconfig target is documented and the active build generated the ADC/LCD symbols. |
+| `pio run -e esp32dev` | Passed; default Continuous/DMA + 20x4. |
+| Temporary menuconfig state: Continuous/DMA + 16x2 | Passed; active `sdkconfig` was restored afterward. |
+| Temporary menuconfig state: Oneshot + 20x4 | Passed; active `sdkconfig` was restored afterward. |
+| Temporary menuconfig state: Oneshot + 16x2 | Passed; active `sdkconfig` was restored afterward. |
 | `pio check -e esp32dev` | Passed with 0 high-severity findings, 9 existing medium warnings, and 721 low/style findings across the existing project. The ADC component itself reported 0 high and 0 medium findings. |
 | `git diff --check` | Passed. |
 | Repository-wide `ESP_ERROR_CHECK(` scan in `src` and `include` | Passed with no matches. |
 
-The contract suite now verifies default continuous selection, compile-time exclusivity, named ADC/LCD build profiles, common snapshot/readiness declarations, POST ordering, the direct POST snapshot guard, and terminal startup fault propagation.
+The contract suite now verifies menuconfig-backed default selection, compile-time exclusivity, common snapshot/readiness declarations, POST ordering, the direct POST snapshot guard, and terminal startup fault propagation.
 
 ## Files changed
 
-The principal changes are in `src/adc/inverter_adc.c`, `src/adc/adc_continuous.c`, `src/adc/adc_oneshot.c`, `src/adc/inverter_adc_backend.h`, `include/adc/inverter_adc.h`, `include/adc/inverter_adc_config.h`, `src/main.c`, and `src/post/post_adc.c`. PlatformIO profiles were added in `platformio.ini`; LCD geometry became build-flag overrideable in `include/lcd/menu_config.h`; the contract tests and `docs/adc_driver.md` were updated; this report records the architecture and verification results.
+The principal changes are in `src/adc/inverter_adc.c`, `src/adc/adc_continuous.c`, `src/adc/adc_oneshot.c`, `src/adc/inverter_adc_backend.h`, `include/adc/inverter_adc.h`, `include/adc/inverter_adc_config.h`, `src/main.c`, and `src/post/post_adc.c`. `src/Kconfig.projbuild` now provides the ADC and LCD menuconfig choices; `platformio.ini` documents the menuconfig workflow and retains only the UI-mock testing flag; `include/lcd/menu_config.h`, the contract tests, and `docs/adc_driver.md` were updated; this report records the architecture and verification results.
 
 ## Hardware verification limitation
 
