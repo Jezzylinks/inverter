@@ -33,7 +33,7 @@ jobs:
       - name: Build 16x2 firmware
         shell: bash
         run: |
-          cp src/menu_config.h "$RUNNER_TEMP/menu_config.h"
-          trap 'cp "$RUNNER_TEMP/menu_config.h" src/menu_config.h' EXIT
-          sed -i 's/#define MENU_CONFIG_LCD_20X4 1/#define MENU_CONFIG_LCD_20X4 0/' src/menu_config.h
+          cp include/lcd/menu_config.h "$RUNNER_TEMP/menu_config.h"
+          trap 'cp "$RUNNER_TEMP/menu_config.h" include/lcd/menu_config.h' EXIT
+          sed -i 's/#define MENU_CONFIG_LCD_20X4 1/#define MENU_CONFIG_LCD_20X4 0/' include/lcd/menu_config.h
           pio run -e esp32dev
