@@ -14,6 +14,10 @@
 /* ESP32 requires 20 kHz..2 MHz for the digital controller. The rate is the
  * aggregate conversion rate across the four-channel pattern. */
 #define ADC_CONTINUOUS_SAMPLE_FREQ_HZ 20000U
+/* ESP-IDF's ESP32 continuous example uses a 256-byte frame. This is a
+ * multiple of the 4-byte DMA conversion unit and gives the application a
+ * complete, stable batch to inspect instead of very small frame fragments. */
+#define ADC_CONTINUOUS_FRAME_SIZE 256U
 #define ADC_CONTINUOUS_FRAME_COUNT 8U
 #define ADC_CONTINUOUS_TAG "ADC_CONTINUOUS"
 
@@ -44,10 +48,8 @@ esp_err_t inverter_adc_backend_init(const adc_channel_t *channels,
     }
 
     const adc_continuous_handle_cfg_t handle_config = {
-        .max_store_buf_size = channel_count * ADC_CONTINUOUS_SAMPLES *
-                              SOC_ADC_DIGI_RESULT_BYTES * ADC_CONTINUOUS_FRAME_COUNT,
-        .conv_frame_size = channel_count * ADC_CONTINUOUS_SAMPLES *
-                           SOC_ADC_DIGI_RESULT_BYTES,
+        .max_store_buf_size = ADC_CONTINUOUS_FRAME_SIZE * ADC_CONTINUOUS_FRAME_COUNT,
+        .conv_frame_size = ADC_CONTINUOUS_FRAME_SIZE,
         .flags.flush_pool = 1U,
     };
     esp_err_t result = adc_continuous_new_handle(&handle_config,
