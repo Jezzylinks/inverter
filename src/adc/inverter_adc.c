@@ -242,6 +242,9 @@ static bool process_adc_reading(const adc_channel_config_t *config,
         health_channel_for_adc(config->channel_id);
     if (read_result != ESP_OK) {
         telemetry_health_record_invalid(health_channel, sample_time_ms);
+        ESP_LOGW(INVERTER_ADC_DRIVER_TAG,
+                 "%s sample acquisition failed: %s",
+                 config->name, esp_err_to_name(read_result));
         return false;
     }
     if (config->voltage_divider_ratio <= 0.0f || !isfinite(adc_voltage)) {

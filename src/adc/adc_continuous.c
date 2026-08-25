@@ -11,7 +11,10 @@
 
 #define ADC_CONTINUOUS_ATTEN ADC_ATTEN_DB_12
 #define ADC_CONTINUOUS_SAMPLES 10U
-#define ADC_CONTINUOUS_SAMPLE_FREQ_HZ 2000U
+/* ESP32 requires 20 kHz..2 MHz for the digital controller. The rate is the
+ * aggregate conversion rate across the four-channel pattern. */
+#define ADC_CONTINUOUS_SAMPLE_FREQ_HZ 20000U
+#define ADC_CONTINUOUS_FRAME_COUNT 8U
 #define ADC_CONTINUOUS_TAG "ADC_CONTINUOUS"
 
 typedef struct
@@ -42,7 +45,7 @@ esp_err_t inverter_adc_backend_init(const adc_channel_t *channels,
 
     const adc_continuous_handle_cfg_t handle_config = {
         .max_store_buf_size = channel_count * ADC_CONTINUOUS_SAMPLES *
-                              SOC_ADC_DIGI_RESULT_BYTES * 4U,
+                              SOC_ADC_DIGI_RESULT_BYTES * ADC_CONTINUOUS_FRAME_COUNT,
         .conv_frame_size = channel_count * ADC_CONTINUOUS_SAMPLES *
                            SOC_ADC_DIGI_RESULT_BYTES,
         .flags.flush_pool = 1U,

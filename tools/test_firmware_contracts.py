@@ -135,6 +135,13 @@ class FirmwareContracts(unittest.TestCase):
         self.assertNotIn("esp32dev-continuous-16x2", platformio)
         self.assertNotIn("-DINVERTER_ADC_MODE=", platformio)
 
+    def test_continuous_backend_uses_esp32_supported_sample_rate(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("src", "adc", "adc_continuous.c").read_text()
+        self.assertIn("ADC_CONTINUOUS_SAMPLE_FREQ_HZ 20000U", source)
+        self.assertNotIn("ADC_CONTINUOUS_SAMPLE_FREQ_HZ 2000U", source)
+        self.assertIn("ADC_CONTINUOUS_FRAME_COUNT 8U", source)
+
     def test_common_adc_snapshot_and_ready_contract_is_backend_neutral(self):
         root = Path(__file__).parents[1]
         header = root.joinpath("include", "adc", "inverter_adc.h").read_text()
