@@ -6,6 +6,7 @@
 #include "esp_adc/adc_continuous.h"
 #include "esp_attr.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "soc/soc_caps.h"
 
 #if INVERTER_ADC_MODE == INVERTER_ADC_MODE_CONTINUOUS
@@ -21,6 +22,7 @@
 #define ADC_CONTINUOUS_FRAME_SIZE 256U
 #define ADC_CONTINUOUS_FRAME_COUNT 8U
 #define ADC_CONTINUOUS_TAG "ADC_CONTINUOUS"
+#define ADC_CONTINUOUS_STARTUP_GRACE_MS 500U
 
 _Static_assert((ADC_CONTINUOUS_FRAME_SIZE % SOC_ADC_DIGI_DATA_BYTES_PER_CONV) == 0U,
                "ADC DMA frame must contain whole conversion units");
@@ -32,6 +34,10 @@ typedef struct
     volatile uint32_t frames_produced;
     volatile uint32_t pool_overflows;
     volatile uint32_t last_frame_size;
+    int64_t started_at_us;
+    bool using_oneshot_fallback;
+    adc_oneshot_unit_handle_t oneshot_handle;
+    inverter_adc_backend_channel_t *states;
 } continuous_context_t;
 
 static bool IRAM_ATTR continuous_on_conv_done(
@@ -176,7 +182,61 @@ esp_err_t inverter_adc_backend_init(const adc_channel_t *channels,
     }
 
     context->channel_count = channel_count;
+    context->states = states;
+    context->started_at_us = esp_timer_get_time();
     *backend_context = context;
+    return ESP_OK;
+}
+
+static esp_err_t continuous_switch_to_oneshot(continuous_context_t *context)
+{
+    if (context == NULL || context->states == NULL ||
+        context->channel_count == 0U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (context->using_oneshot_fallback) {
+        return ESP_OK;
+    }
+
+    esp_err_t result = adc_continuous_stop(context->handle);
+    if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+        return result;
+    }
+    result = adc_continuous_deinit(context->handle);
+    if (result != ESP_OK) {
+        return result;
+    }
+    context->handle = NULL;
+
+    const adc_oneshot_unit_init_cfg_t unit_config = {
+        .unit_id = ADC_UNIT_1,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+    };
+    result = adc_oneshot_new_unit(&unit_config, &context->oneshot_handle);
+    if (result != ESP_OK) {
+        return result;
+    }
+
+    const adc_oneshot_chan_cfg_t channel_config = {
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+        .atten = ADC_CONTINUOUS_ATTEN,
+    };
+    for (size_t i = 0U; i < context->channel_count; ++i) {
+        result = adc_oneshot_config_channel(
+            context->oneshot_handle,
+            context->states[i].channel,
+            &channel_config);
+        if (result != ESP_OK) {
+            (void)adc_oneshot_del_unit(context->oneshot_handle);
+            context->oneshot_handle = NULL;
+            return result;
+        }
+    }
+
+    context->using_oneshot_fallback = true;
+    ESP_LOGE(ADC_CONTINUOUS_TAG,
+             "No DMA frames after %u ms; switched safely to ADC1 Oneshot fallback",
+             ADC_CONTINUOUS_STARTUP_GRACE_MS);
     return ESP_OK;
 }
 
@@ -190,6 +250,31 @@ esp_err_t inverter_adc_backend_read_sample(
     }
 
     continuous_context_t *context = backend_context;
+    if (context->using_oneshot_fallback) {
+        return adc_read_with_multisampling(
+            context->oneshot_handle, channel_state->channel,
+            channel_state->state.cali_handle,
+            channel_state->state.is_calibrated,
+            out_voltage, ADC_CONTINUOUS_SAMPLES);
+    }
+
+    if (context->frames_produced == 0U &&
+        (esp_timer_get_time() - context->started_at_us) >=
+            ((int64_t)ADC_CONTINUOUS_STARTUP_GRACE_MS * 1000LL)) {
+        const esp_err_t fallback_result = continuous_switch_to_oneshot(context);
+        if (fallback_result != ESP_OK) {
+            ESP_LOGE(ADC_CONTINUOUS_TAG,
+                     "Oneshot fallback initialization failed: %s",
+                     esp_err_to_name(fallback_result));
+            return fallback_result;
+        }
+        return adc_read_with_multisampling(
+            context->oneshot_handle, channel_state->channel,
+            channel_state->state.cali_handle,
+            channel_state->state.is_calibrated,
+            out_voltage, ADC_CONTINUOUS_SAMPLES);
+    }
+
     uint8_t buffer[ADC_CONTINUOUS_FRAME_SIZE];
     uint32_t valid_samples = 0U;
     int64_t sum_voltage_mv = 0;
@@ -202,15 +287,6 @@ esp_err_t inverter_adc_backend_read_sample(
         const esp_err_t result = adc_continuous_read(
             context->handle, buffer, sizeof(buffer), &bytes_read, 100U);
         if (result != ESP_OK) {
-            if (result == ESP_ERR_INVALID_STATE) {
-                const esp_err_t flush_result =
-                    adc_continuous_flush_pool(context->handle);
-                if (flush_result != ESP_OK) {
-                    ESP_LOGW(ADC_CONTINUOUS_TAG,
-                             "DMA pool flush failed after overflow: %s",
-                             esp_err_to_name(flush_result));
-                }
-            }
             if (result != ESP_ERR_TIMEOUT || !timeout_reported) {
                 ESP_LOGW(ADC_CONTINUOUS_TAG,
                          "DMA read failed: %s (frames=%lu overflows=%lu last_frame=%lu)",
@@ -276,6 +352,15 @@ void inverter_adc_backend_deinit(void *backend_context,
         return;
     }
     continuous_context_t *context = backend_context;
+    if (context->oneshot_handle != NULL) {
+        const esp_err_t oneshot_result = adc_oneshot_del_unit(
+            context->oneshot_handle);
+        if (oneshot_result != ESP_OK) {
+            ESP_LOGW(ADC_CONTINUOUS_TAG, "ADC1 Oneshot cleanup failed: %s",
+                     esp_err_to_name(oneshot_result));
+        }
+        context->oneshot_handle = NULL;
+    }
     if (context->handle != NULL) {
         const esp_err_t stop_result = adc_continuous_stop(context->handle);
         if (stop_result != ESP_OK && stop_result != ESP_ERR_INVALID_STATE) {

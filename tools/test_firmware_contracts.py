@@ -181,6 +181,11 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("adc_continuous_register_event_callbacks", source)
         self.assertIn("on_conv_done = continuous_on_conv_done", source)
         self.assertIn("SOC_ADC_DIGI_DATA_BYTES_PER_CONV", source)
+        self.assertIn("ADC_CONTINUOUS_STARTUP_GRACE_MS 500U", source)
+        self.assertIn("continuous_switch_to_oneshot", source)
+        self.assertIn("adc_continuous_deinit(context->handle)", source)
+        self.assertIn("adc_oneshot_new_unit", source)
+        self.assertIn("switched safely to ADC1 Oneshot fallback", source)
 
     def test_common_adc_snapshot_and_ready_contract_is_backend_neutral(self):
         root = Path(__file__).parents[1]
