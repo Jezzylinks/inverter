@@ -177,6 +177,10 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("ADC_CONTINUOUS_SAMPLE_FREQ_HZ 20000U", source)
         self.assertNotIn("ADC_CONTINUOUS_SAMPLE_FREQ_HZ 2000U", source)
         self.assertIn("ADC_CONTINUOUS_FRAME_COUNT 8U", source)
+        self.assertIn(".channel = channels[i] & 0x7U", source)
+        self.assertIn("adc_continuous_register_event_callbacks", source)
+        self.assertIn("on_conv_done = continuous_on_conv_done", source)
+        self.assertIn("SOC_ADC_DIGI_DATA_BYTES_PER_CONV", source)
 
     def test_common_adc_snapshot_and_ready_contract_is_backend_neutral(self):
         root = Path(__file__).parents[1]

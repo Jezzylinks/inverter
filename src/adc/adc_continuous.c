@@ -4,6 +4,7 @@
 
 #include "adc/inverter_adc_config.h"
 #include "esp_adc/adc_continuous.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "soc/soc_caps.h"
 
@@ -21,11 +22,45 @@
 #define ADC_CONTINUOUS_FRAME_COUNT 8U
 #define ADC_CONTINUOUS_TAG "ADC_CONTINUOUS"
 
+_Static_assert((ADC_CONTINUOUS_FRAME_SIZE % SOC_ADC_DIGI_DATA_BYTES_PER_CONV) == 0U,
+               "ADC DMA frame must contain whole conversion units");
+
 typedef struct
 {
     adc_continuous_handle_t handle;
     size_t channel_count;
+    volatile uint32_t frames_produced;
+    volatile uint32_t pool_overflows;
+    volatile uint32_t last_frame_size;
 } continuous_context_t;
+
+static bool IRAM_ATTR continuous_on_conv_done(
+    adc_continuous_handle_t handle,
+    const adc_continuous_evt_data_t *event,
+    void *user_data)
+{
+    (void)handle;
+    continuous_context_t *context = user_data;
+    if (context != NULL && event != NULL) {
+        context->last_frame_size = event->size;
+        context->frames_produced++;
+    }
+    return false;
+}
+
+static bool IRAM_ATTR continuous_on_pool_overflow(
+    adc_continuous_handle_t handle,
+    const adc_continuous_evt_data_t *event,
+    void *user_data)
+{
+    (void)handle;
+    (void)event;
+    continuous_context_t *context = user_data;
+    if (context != NULL) {
+        context->pool_overflows++;
+    }
+    return false;
+}
 
 esp_err_t inverter_adc_backend_init(const adc_channel_t *channels,
                                      size_t channel_count,
@@ -68,10 +103,23 @@ esp_err_t inverter_adc_backend_init(const adc_channel_t *channels,
         states[i].state.is_calibrated = false;
         pattern[i] = (adc_digi_pattern_config_t){
             .atten = ADC_CONTINUOUS_ATTEN,
-            .channel = channels[i],
+            .channel = channels[i] & 0x7U,
             .unit = ADC_UNIT_1,
             .bit_width = ADC_BITWIDTH_12,
         };
+        int gpio_num = -1;
+        const esp_err_t gpio_result = adc_continuous_channel_to_io(
+            ADC_UNIT_1, channels[i], &gpio_num);
+        if (gpio_result == ESP_OK) {
+            ESP_LOGI(ADC_CONTINUOUS_TAG,
+                     "Pattern[%u]: ADC1 channel %u -> GPIO%d",
+                     (unsigned)i, (unsigned)(channels[i] & 0x7U), gpio_num);
+        } else {
+            ESP_LOGW(ADC_CONTINUOUS_TAG,
+                     "Pattern[%u]: ADC1 channel %u has no GPIO mapping: %s",
+                     (unsigned)i, (unsigned)(channels[i] & 0x7U),
+                     esp_err_to_name(gpio_result));
+        }
         states[i].state.is_calibrated = adc_calibration_init(
             ADC_UNIT_1, channels[i], ADC_CONTINUOUS_ATTEN,
             &states[i].state.cali_handle);
@@ -98,6 +146,27 @@ esp_err_t inverter_adc_backend_init(const adc_channel_t *channels,
         return result;
     }
 
+    const adc_continuous_evt_cbs_t callbacks = {
+        .on_conv_done = continuous_on_conv_done,
+        .on_pool_ovf = continuous_on_pool_overflow,
+    };
+    result = adc_continuous_register_event_callbacks(
+        context->handle, &callbacks, context);
+    if (result != ESP_OK) {
+        ESP_LOGE(ADC_CONTINUOUS_TAG,
+                 "Continuous callback registration failed: %s",
+                 esp_err_to_name(result));
+        inverter_adc_backend_deinit(context, states, channel_count);
+        return result;
+    }
+
+    ESP_LOGI(ADC_CONTINUOUS_TAG,
+             "Configured ADC1 DMA: frame=%u bytes, ring=%u bytes, rate=%u Hz, channels=%u",
+             (unsigned)ADC_CONTINUOUS_FRAME_SIZE,
+             (unsigned)(ADC_CONTINUOUS_FRAME_SIZE * ADC_CONTINUOUS_FRAME_COUNT),
+             (unsigned)ADC_CONTINUOUS_SAMPLE_FREQ_HZ,
+             (unsigned)channel_count);
+
     result = adc_continuous_start(context->handle);
     if (result != ESP_OK) {
         ESP_LOGE(ADC_CONTINUOUS_TAG, "Continuous start failed: %s",
@@ -121,11 +190,12 @@ esp_err_t inverter_adc_backend_read_sample(
     }
 
     continuous_context_t *context = backend_context;
-    uint8_t buffer[256];
+    uint8_t buffer[ADC_CONTINUOUS_FRAME_SIZE];
     uint32_t valid_samples = 0U;
     int64_t sum_voltage_mv = 0;
     int64_t sum_raw = 0;
     uint32_t attempts = 0U;
+    bool timeout_reported = false;
 
     while (valid_samples < ADC_CONTINUOUS_SAMPLES && attempts < 4U) {
         uint32_t bytes_read = 0U;
@@ -141,15 +211,24 @@ esp_err_t inverter_adc_backend_read_sample(
                              esp_err_to_name(flush_result));
                 }
             }
+            if (result != ESP_ERR_TIMEOUT || !timeout_reported) {
+                ESP_LOGW(ADC_CONTINUOUS_TAG,
+                         "DMA read failed: %s (frames=%lu overflows=%lu last_frame=%lu)",
+                         esp_err_to_name(result),
+                         (unsigned long)context->frames_produced,
+                         (unsigned long)context->pool_overflows,
+                         (unsigned long)context->last_frame_size);
+                timeout_reported = (result == ESP_ERR_TIMEOUT);
+            }
             return result;
         }
 
         for (uint32_t offset = 0U;
-             offset + SOC_ADC_DIGI_RESULT_BYTES <= bytes_read;
-             offset += SOC_ADC_DIGI_RESULT_BYTES) {
+             offset + SOC_ADC_DIGI_DATA_BYTES_PER_CONV <= bytes_read;
+             offset += SOC_ADC_DIGI_DATA_BYTES_PER_CONV) {
             const adc_digi_output_data_t *sample =
                 (const adc_digi_output_data_t *)(buffer + offset);
-            if (sample->type1.channel != channel_state->channel) {
+            if (sample->type1.channel != (channel_state->channel & 0x7U)) {
                 continue;
             }
 
