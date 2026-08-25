@@ -223,7 +223,14 @@ void app_main(void)
         };
         post_completed = true;
         inverter_emergency_shutdown();
-        post_show_result_and_notify(startup_post);
+        if (adc_failed)
+        {
+            lcd_show_fault("SENSOR STARTUP ", "ADC INIT FAIL   ");
+        }
+        else
+        {
+            lcd_show_fault("SENSOR STARTUP ", "ADC TIMEOUT     ");
+        }
     }
 
     const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&

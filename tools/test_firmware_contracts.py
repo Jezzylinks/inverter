@@ -87,18 +87,25 @@ class FirmwareContracts(unittest.TestCase):
         if not startup_source.exists():
             startup_source = root.joinpath("src", "main.c")
         text = startup_source.read_text()
-        timeout_branch = re.search(
-            r'ADC did not warm up within 10 seconds; inhibiting inverter output(.*?)\n    }\n\n    const bool startup_healthy',
+        failure_branch = re.search(
+            r'const bool adc_failed = .*?\n    }\n\n    const bool startup_healthy',
             text,
             re.DOTALL,
         )
-        self.assertIsNotNone(timeout_branch)
-        assert timeout_branch is not None
-        self.assertIn("startup_post.failure_mask = POST_FAILURE_ADC", timeout_branch.group(1))
-        self.assertIn("startup_post.all_passed = false", timeout_branch.group(1))
-        self.assertIn("post_completed = true", timeout_branch.group(1))
-        self.assertIn("inverter_emergency_shutdown()", timeout_branch.group(1))
-        self.assertIn('lcd_show_fault("SENSOR STARTUP ", "ADC TIMEOUT     ")', timeout_branch.group(1))
+        self.assertIsNotNone(failure_branch)
+        assert failure_branch is not None
+        self.assertRegex(
+            failure_branch.group(0),
+            r"(?:startup_post\.failure_mask\s*=\s*POST_FAILURE_ADC|\.failure_mask\s*=\s*POST_FAILURE_ADC)",
+        )
+        self.assertRegex(
+            failure_branch.group(0),
+            r"(?:startup_post\.all_passed\s*=\s*false|\.all_passed\s*=\s*false)",
+        )
+        self.assertIn("post_completed = true", failure_branch.group(0))
+        self.assertIn("inverter_emergency_shutdown()", failure_branch.group(0))
+        self.assertIn('lcd_show_fault("SENSOR STARTUP ", "ADC INIT FAIL   ")', failure_branch.group(0))
+        self.assertIn('lcd_show_fault("SENSOR STARTUP ", "ADC TIMEOUT     ")', failure_branch.group(0))
 
     def test_loading_expiry_preserves_completed_post_screen(self):
         text = Path(__file__).parents[1].joinpath("src", "lcd_task.c").read_text()
