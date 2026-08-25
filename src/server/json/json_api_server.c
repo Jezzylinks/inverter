@@ -1,18 +1,18 @@
-#include "json_api_server.h"
+#include "server/json/json_api_server.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 #include "esp_log.h"
 #include "security/security.h"
-#include "system_state.h"
+#include "system/system_state.h"
 
-#include "json_api_device.h"
-#include "json_api_cloud.h"
-#include "json_api_mqtt.h"
-#include "json_api_ota.h"
-#include "json_api_system.h"
-#include "json_api_wifi.h"
+#include "server/json/json_api_device.h"
+#include "server/json/json_api_cloud.h"
+#include "server/json/json_api_mqtt.h"
+#include "server/json/json_api_ota.h"
+#include "server/json/json_api_system.h"
+#include "server/json/json_api_wifi.h"
 
 static const char *TAG = "JSON_API";
 static httpd_handle_t s_server = NULL;

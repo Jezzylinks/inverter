@@ -3,7 +3,7 @@
  * @brief Wi-Fi Manager Implementation
  */
 
-#include "wifi_manager.h"
+#include "wifi/wifi_manager.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -17,9 +17,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "wifi_storage.h"
-#include "wifi_events.h"
-#include "wifi_config.h"
+#include "wifi/wifi_storage.h"
+#include "wifi/wifi_events.h"
+#include "wifi/wifi_config.h"
 
 static const char *TAG = "wifi_manager";
 

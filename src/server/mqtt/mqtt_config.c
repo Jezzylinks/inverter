@@ -1,10 +1,10 @@
-#include "mqtt_config.h"
+#include "server/mqtt/mqtt_config.h"
 
 #include <string.h>
 
 #include "esp_log.h"
 #include "nvs.h"
-#include "system_state.h"
+#include "system/system_state.h"
 #include "wifi/wifi_config.h"
 
 #define MQTT_CONFIG_TAG "NET_SERVICES"

@@ -1,4 +1,4 @@
-#include "ota_download.h"
+#include "ota/ota_download.h"
 
 #include <ctype.h>
 #include <string.h>
@@ -9,9 +9,9 @@
 #include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "ota_manifest.h"
-#include "ota_verify.h"
-#include "task_watchdog.h"
+#include "ota/ota_manifest.h"
+#include "ota/ota_verify.h"
+#include "system/task_watchdog.h"
 
 static const char *TAG = "OTA_SERVICE";
 

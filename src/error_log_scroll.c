@@ -2,8 +2,8 @@
   error_log_scroll.c
   Scrollable error history — implementation.
 ==============================================================================*/
-#include "error_log_scroll.h"
-#include "lcd_writer.h"
+#include "lcd/error_log_scroll.h"
+#include "lcd/lcd_writer.h"
 #include <stdio.h>
 #include <string.h>
 

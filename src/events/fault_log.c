@@ -1,4 +1,4 @@
-#include "fault_log.h"
+#include "events/fault_log.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -7,10 +7,10 @@
 #include "esp_log.h"
 #include "esp_crc.h"
 #include "events/system_events.h"
-#include "system_state.h"
+#include "system/system_state.h"
 #include "events/event_dispatcher.h"
 
-#include "task_watchdog.h"
+#include "system/task_watchdog.h"
 static const char *TAG = "fault_log";
 extern system_state_t sys_state;
 static fault_log_entry_t s_entries[FAULT_LOG_CAPACITY];

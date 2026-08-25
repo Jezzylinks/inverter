@@ -1,11 +1,11 @@
-#include "app_input.h"
+#include "app/app_input.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 
-#include "app_menu.h"
-#include "app_services.h"
+#include "app/app_menu.h"
+#include "app/app_services.h"
 #include "battery/battery_estimator.h"
 #include "events/system_events.h"
 #include "esp_log.h"
@@ -13,16 +13,16 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "hardware_config.h"
-#include "lcd.h"
-#include "lcd_flash_queue.h"
-#include "lcd_writer.h"
-#include "utils.h"
+#include "hardware/hardware_config.h"
+#include "lcd/lcd.h"
+#include "lcd/lcd_flash_queue.h"
+#include "lcd/lcd_writer.h"
+#include "system/utils.h"
 #include "wifi/wifi_controller.h"
 #include "security/change_pin_flow.h"
 #include "security/factory_reset.h"
 #include "security/security.h"
-#include "system_state.h"
+#include "system/system_state.h"
 #include "utility/buzzer.h"
 
 #define APP_INPUT_TAG "APP_INPUT"

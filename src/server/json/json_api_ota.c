@@ -1,11 +1,11 @@
-#include "json_api_ota.h"
+#include "server/json/json_api_ota.h"
 
 #include "cJSON.h"
 #include "esp_http_server.h"
 
-#include "app_services.h"
+#include "app/app_services.h"
 #include "ota/ota_service.h"
-#include "json_api_server.h"
+#include "server/json/json_api_server.h"
 
 static const char *ota_state_name(app_ota_state_t state)
 {

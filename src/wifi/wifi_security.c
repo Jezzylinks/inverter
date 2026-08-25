@@ -3,7 +3,7 @@
  * @brief Wi-Fi Security Layer
  */
 
-#include "wifi_security.h"
+#include "wifi/wifi_security.h"
 #include <string.h>
 
 #include "esp_log.h"

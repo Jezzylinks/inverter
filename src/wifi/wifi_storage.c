@@ -3,12 +3,12 @@
  * @brief Wi-Fi NVS Storage
  */
 
-#include "wifi_storage.h"
+#include "wifi/wifi_storage.h"
 #include <string.h>
 #include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
-#include "wifi_config.h"
+#include "wifi/wifi_config.h"
 
 /* Use consistent keys from wifi_config.h */
 #define WIFI_KEY_MODE "mode"

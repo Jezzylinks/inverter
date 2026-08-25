@@ -1,10 +1,10 @@
-#include "system_diagnostics.h"
+#include "diagnostics/system_diagnostics.h"
 
 #include <string.h>
 
 #include "esp_log.h"
 #include "nvs.h"
-#include "system_state.h"
+#include "system/system_state.h"
 
 #define DIAGNOSTICS_NAMESPACE "diagnostics"
 #define DIAGNOSTICS_KEY "snapshot_v1"

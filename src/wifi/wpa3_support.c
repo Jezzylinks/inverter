@@ -3,7 +3,7 @@
  * @brief WPA3/SAE Security Support
  */
 
-#include "wpa3_support.h"
+#include "wifi/wpa3_support.h"
 #include <string.h>
 
 #include "esp_log.h"

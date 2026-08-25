@@ -2,7 +2,7 @@
   lcd_watchdog.c
   Watchdog and heartbeat implementation for lcd_task.
 ==============================================================================*/
-#include "lcd_watchdog.h"
+#include "lcd/lcd_watchdog.h"
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "esp_log.h"

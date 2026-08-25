@@ -1,4 +1,4 @@
-#include "security.h"
+#include "security/security.h"
 
 #include <string.h>
 
@@ -9,7 +9,7 @@
 #include "freertos/semphr.h"
 #include "mbedtls/sha256.h"
 #include "nvs.h"
-#include "system_state.h"
+#include "system/system_state.h"
 
 static const char *TAG = "security";
 extern system_state_t sys_state;

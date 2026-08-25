@@ -1,5 +1,5 @@
-#include "json_api_wifi.h"
-#include "json_api_server.h"
+#include "server/json/json_api_wifi.h"
+#include "server/json/json_api_server.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +17,7 @@
 #include "wifi/wifi_monitor.h"
 #include "wifi/wifi_controller.h"
 #include "wifi/wifi_config.h"
-#include "inverter_errors.h"
+#include "system/inverter_errors.h"
 #include "server/network_services.h"
 
 static const char *wifi_mode_name(wifi_mode_t mode)

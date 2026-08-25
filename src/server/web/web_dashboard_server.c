@@ -1,4 +1,4 @@
-#include "web_dashboard_server.h"
+#include "server/web/web_dashboard_server.h"
 
 #include <stdio.h>
 #include <string.h>

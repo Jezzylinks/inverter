@@ -3,7 +3,7 @@
  * @brief WiFi Signal Strength History & Trending
  */
 
-#include "signal_history.h"
+#include "server/signal/signal_history.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

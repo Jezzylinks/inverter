@@ -75,7 +75,7 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('default INVERTER_WIFI_MODE_APSTA', kconfig)
 
     def test_system_error_codes_are_unique_and_include_internet_failure(self):
-        text = Path(__file__).parents[1].joinpath("src", "system_error_codes.h").read_text()
+        text = Path(__file__).parents[1].joinpath("include", "system", "system_error_codes.h").read_text()
         values = re.findall(r"SYSTEM_ERROR_[A-Z0-9_]+\s*=\s*0x([0-9A-Fa-f]+)", text)
         self.assertEqual(len(values), len(set(values)))
         self.assertIn("SYSTEM_ERROR_WIFI_INTERNET_UNAVAILABLE", text)

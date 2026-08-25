@@ -1,4 +1,4 @@
-#include "factory_reset.h"
+#include "security/factory_reset.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -8,12 +8,12 @@
 #include "freertos/semphr.h"
 #include <stdatomic.h>
 
-#include "security.h"
-#include "pin_entry.h"
-#include "lcd_writer.h"   // lcd_flash_enqueue, FLASH_PRIORITY_*, FLASH_DURATION_*
-#include "system_state.h" // sys_lcd, sys_state, sys_state_mutex
-#include "lcd_state.h"    // LCD_SCREEN_FACTORY_RESET, factory_reset phase atomics
-#include "lcd_flash_queue.h"
+#include "security/security.h"
+#include "security/pin_entry.h"
+#include "lcd/lcd_writer.h"   // lcd_flash_enqueue, FLASH_PRIORITY_*, FLASH_DURATION_*
+#include "system/system_state.h" // sys_lcd, sys_state, sys_state_mutex
+#include "lcd/lcd_state.h"    // LCD_SCREEN_FACTORY_RESET, factory_reset phase atomics
+#include "lcd/lcd_flash_queue.h"
 #include "utility/buzzer.h"
 
 static const char *TAG = "FACTORY_RESET";

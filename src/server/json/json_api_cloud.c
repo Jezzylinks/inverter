@@ -1,5 +1,5 @@
-#include "json_api_cloud.h"
-#include "json_api_server.h"
+#include "server/json/json_api_cloud.h"
+#include "server/json/json_api_server.h"
 
 #include <string.h>
 

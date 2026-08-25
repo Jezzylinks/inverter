@@ -4,16 +4,16 @@
   All functions write to sys_state.lcd_render under sys_state_mutex,
   then return immediately.  Zero hardware access here.
 ==============================================================================*/
-#include "lcd_writer.h"
+#include "lcd/lcd_writer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
 #include "esp_log.h"
-#include "system_state.h"
-#include "lcd_flash_queue.h"
-#include "lcd.h"
+#include "system/system_state.h"
+#include "lcd/lcd_flash_queue.h"
+#include "lcd/lcd.h"
 
 /* The LCD render instance and mutex are declared by lcd_writer.h. */
 extern system_state_t sys_state; /* the single system-state instance */

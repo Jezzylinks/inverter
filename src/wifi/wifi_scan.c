@@ -1,4 +1,4 @@
-#include "wifi_scan.h"
+#include "wifi/wifi_scan.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,7 +8,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "wifi_config.h"
+#include "wifi/wifi_config.h"
 
 #define WIFI_SCAN_TAG "WIFI_SCAN"
 

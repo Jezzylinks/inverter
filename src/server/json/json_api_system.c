@@ -1,5 +1,5 @@
-#include "json_api_system.h"
-#include "json_api_server.h"
+#include "server/json/json_api_system.h"
+#include "server/json/json_api_server.h"
 
 #include "esp_http_server.h"
 #include "cJSON.h"

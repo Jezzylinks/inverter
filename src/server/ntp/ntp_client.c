@@ -3,7 +3,7 @@
  * @brief NTP Client for time synchronization
  */
 
-#include "ntp_client.h"
+#include "server/ntp/ntp_client.h"
 #include <string.h>
 
 #include "esp_log.h"

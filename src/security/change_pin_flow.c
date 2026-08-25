@@ -1,9 +1,9 @@
-#include "change_pin_flow.h"
+#include "security/change_pin_flow.h"
 
 #include <string.h>
 #include <stdio.h>
-#include "lcd_flash_queue.h"
-#include "button_controller.h"
+#include "lcd/lcd_flash_queue.h"
+#include "app/button_controller.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "events/system_events.h"

@@ -1,11 +1,11 @@
-#include "app_buttons.h"
+#include "app/app_buttons.h"
 
 #include <string.h>
 
-#include "app_input.h"
-#include "button_controller.h"
+#include "app/app_input.h"
+#include "app/button_controller.h"
 #include "esp_log.h"
-#include "hardware_config.h"
+#include "hardware/hardware_config.h"
 
 #define APP_BUTTONS_TAG "APP_BUTTONS"
 #define APP_BUTTON_DEBOUNCE_MS 35U

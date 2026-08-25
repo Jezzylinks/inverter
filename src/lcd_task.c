@@ -6,10 +6,10 @@
     3. Screen corruption detection    (lcd_integrity.h)
     4. Security screen + PIN flow     (security.h / change_pin_flow.h)
 ==============================================================================*/
-#include "lcd_state.h"
-#include "lcd_watchdog.h"
-#include "task_watchdog.h"
-#include "lcd_integrity.h"
+#include "lcd/lcd_state.h"
+#include "lcd/lcd_watchdog.h"
+#include "system/task_watchdog.h"
+#include "lcd/lcd_integrity.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -19,20 +19,20 @@
 #include "esp_system.h"
 #include "esp_random.h"
 #include "esp_netif.h"
-#include "lcd.h"
+#include "lcd/lcd.h"
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
-#include "lcd_flash_queue.h"
-#include "lcd_writer.h"
+#include "lcd/lcd_flash_queue.h"
+#include "lcd/lcd_writer.h"
 #include <stdatomic.h>
-#include "system_state.h"
+#include "system/system_state.h"
 #include "security/security.h"
 #include "security/change_pin_flow.h"
 #include "security/pin_entry.h"
 #include "utility/led.h"
 #include "events/event_dispatcher.h"
-#include "hardware_config.h"
+#include "hardware/hardware_config.h"
 #include "wifi/wifi_monitor.h"
 #include "server/network_services.h"
 

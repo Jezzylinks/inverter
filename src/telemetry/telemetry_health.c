@@ -1,4 +1,4 @@
-#include "telemetry_health.h"
+#include "telemetry/telemetry_health.h"
 
 #include <math.h>
 #include <string.h>

@@ -1,6 +1,6 @@
-#include "post_lcd.h"
+#include "post/post_lcd.h"
 
-#include "lcd.h"
+#include "lcd/lcd.h"
 #include "esp_err.h"
 #include "esp_log.h"
 

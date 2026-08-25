@@ -1,12 +1,12 @@
-#include "post_fan.h"
+#include "post/post_fan.h"
 #include <string.h>
-#include "fan_controller.h"
-#include "fan_tach.h"
+#include "post/fan_controller.h"
+#include "post/fan_tach.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "hardware_config.h"
+#include "hardware/hardware_config.h"
 
 /*----------------------------------------------------------
  * Private Definitions

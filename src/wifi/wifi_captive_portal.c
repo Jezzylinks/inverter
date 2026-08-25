@@ -2,14 +2,14 @@
  * @file wifi_captive_portal.c
  * @brief Transactional captive-portal lifecycle.
  */
-#include "wifi_captive_portal.h"
+#include "wifi/wifi_captive_portal.h"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-#include "wifi_dns_server.h"
-#include "wifi_http_server.h"
+#include "wifi/wifi_dns_server.h"
+#include "wifi/wifi_http_server.h"
 
 #define WIFI_CAPTIVE_TAG "WIFI_CAPTIVE"
 

@@ -1,13 +1,13 @@
-#include "protection.h"
+#include "security/protection.h"
 #include <string.h>
 #include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
-#include "system_state.h"
+#include "system/system_state.h"
 #include "events/system_events.h"
-#include "lcd_writer.h"
-#include "system_error_codes.h"
+#include "lcd/lcd_writer.h"
+#include "system/system_error_codes.h"
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 

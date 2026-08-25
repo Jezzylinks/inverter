@@ -11,7 +11,7 @@
   All public functions are non-blocking from the caller's perspective;
   the mutex is held only for microseconds.
 ==============================================================================*/
-#include "lcd_flash_queue.h"
+#include "lcd/lcd_flash_queue.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -20,8 +20,8 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <esp_log.h>
-#include "system_state.h"
-#include "lcd_config.h"
+#include "system/system_state.h"
+#include "lcd/lcd_config.h"
 
 #define TAG "LCD_FLASH"
 #define LCD_FLASH_QUEUE_DEPTH 16

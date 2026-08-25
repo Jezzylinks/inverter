@@ -1,4 +1,4 @@
-#include "json_api_device.h"
+#include "server/json/json_api_device.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -13,18 +13,18 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-#include "firmware_version.h"
-#include "hardware_config.h"
-#include "inverter_power_status.h"
-#include "inverter_errors.h"
-#include "lcd_config.h"
+#include "system/firmware_version.h"
+#include "hardware/hardware_config.h"
+#include "inverter/inverter_power_status.h"
+#include "system/inverter_errors.h"
+#include "lcd/lcd_config.h"
 #include "server/network_services.h"
 #include "server/ntp/ntp_client.h"
-#include "system_state.h"
+#include "system/system_state.h"
 #include "wifi/wifi_config.h"
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_monitor.h"
-#include "json_api_server.h"
+#include "server/json/json_api_server.h"
 
 extern system_state_t sys_state;
 extern SemaphoreHandle_t sys_state_mutex;

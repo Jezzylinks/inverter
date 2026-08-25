@@ -1,4 +1,4 @@
-#include "app_init.h"
+#include "app/app_init.h"
 
 void app_main(void)
 {

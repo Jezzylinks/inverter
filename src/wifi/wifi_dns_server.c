@@ -3,7 +3,7 @@
  * @brief Captive Portal DNS Server
  */
 
-#include "wifi_dns_server.h"
+#include "wifi/wifi_dns_server.h"
 #include <string.h>
 #include <errno.h>
 

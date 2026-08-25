@@ -3,12 +3,12 @@
  * @brief Wi-Fi Runtime Monitor
  */
 
-#include "wifi_monitor.h"
+#include "wifi/wifi_monitor.h"
 #include <string.h>
 #include <sys/socket.h>
 
 #include "esp_log.h"
-#include "wifi_events.h"
+#include "wifi/wifi_events.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"

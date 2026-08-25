@@ -1,4 +1,4 @@
-#include "inverter_power_status.h"
+#include "inverter/inverter_power_status.h"
 
 #include <string.h>
 

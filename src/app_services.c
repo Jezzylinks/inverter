@@ -1,4 +1,4 @@
-#include "app_services.h"
+#include "app/app_services.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -9,10 +9,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "lcd_writer.h"
-#include "lcd_flash_queue.h"
+#include "lcd/lcd_writer.h"
+#include "lcd/lcd_flash_queue.h"
 #include "nvs.h"
-#include "system_state.h"
+#include "system/system_state.h"
 #include "wifi/wifi_controller.h"
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_manager.h"
@@ -24,9 +24,9 @@
 #include "wifi/wifi_scan.h"
 #include "server/network_services.h"
 #include "server/websocket/websocket_server.h"
-#include "system_error_codes.h"
+#include "system/system_error_codes.h"
 
-#include "task_watchdog.h"
+#include "system/task_watchdog.h"
 #define APP_SERVICES_TAG "APP_SERVICES"
 #ifdef CONFIG_INVERTER_OTA_MANIFEST_URL
 #define APP_OTA_DEFAULT_MANIFEST_URL CONFIG_INVERTER_OTA_MANIFEST_URL

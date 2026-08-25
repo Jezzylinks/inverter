@@ -2,8 +2,8 @@
   lcd_integrity.c
   Screen corruption detection — implementation.
 ==============================================================================*/
-#include "lcd_integrity.h"
-#include "lcd.h"
+#include "lcd/lcd_integrity.h"
+#include "lcd/lcd.h"
 #include "esp_timer.h"
 #include "esp_log.h"
 #include <string.h>

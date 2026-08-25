@@ -1,4 +1,4 @@
-#include "ota_manifest.h"
+#include "ota/ota_manifest.h"
 
 #include <ctype.h>
 #include <stdlib.h>

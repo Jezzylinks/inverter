@@ -2,7 +2,7 @@
  * @file wifi_events.c
  * @brief Wi-Fi runtime state and ESP-IDF event integration.
  */
-#include "wifi_events.h"
+#include "wifi/wifi_events.h"
 
 #include <string.h>
 
@@ -11,7 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "wifi_config.h"
+#include "wifi/wifi_config.h"
 
 #define WIFI_EVENTS_TAG "WIFI_EVENTS"
 #define WIFI_MAX_CALLBACKS 8

@@ -1,4 +1,4 @@
-#include "cloud_reporting.h"
+#include "cloud/cloud_reporting.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -13,7 +13,7 @@
 #include "freertos/task.h"
 #include "nvs.h"
 
-#include "firmware_version.h"
+#include "system/firmware_version.h"
 
 #define CLOUD_NVS_NAMESPACE "cloud_rpt"
 #define CLOUD_NVS_KEY "config"

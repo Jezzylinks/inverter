@@ -1,4 +1,4 @@
-#include "battery_filter.h"
+#include "battery/battery_filter.h"
 #include "stdlib.h"
 
 #define BATTERY_FILTER_MIN_ALPHA (0.01f)

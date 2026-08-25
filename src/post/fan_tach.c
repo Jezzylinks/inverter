@@ -1,4 +1,4 @@
-#include "fan_tach.h"
+#include "post/fan_tach.h"
 
 #include <string.h>
 

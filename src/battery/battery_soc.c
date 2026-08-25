@@ -16,9 +16,9 @@
   - Li-Ion (3S 11.1 V nominal → scaled to 12 V equivalent): common 18650 data
   - NiMH (10-cell 12 V pack): Energizer / Panasonic application notes
 ==============================================================================*/
-#include "battery_soc.h"
+#include "battery/battery_soc.h"
 #include <stddef.h>
-#include "system_state.h"
+#include "system/system_state.h"
 
 /* ── Lead-Acid (flooded, 12 V, C/20 discharge) ───────────────────────── */
 static const soc_point_t s_lead_acid_pts[] = {

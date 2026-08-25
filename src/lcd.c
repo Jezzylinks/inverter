@@ -1,4 +1,4 @@
-#include "lcd.h"
+#include "lcd/lcd.h"
 #include "driver/i2c.h"
 #include "esp_log.h"
 #include "rom/ets_sys.h"

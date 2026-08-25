@@ -3,8 +3,8 @@
  * @brief mDNS/Bonjour Service for device discovery
  */
 
-#include "mdns_service.h"
-#include "firmware_version.h"
+#include "server/mdns/mdns_service.h"
+#include "system/firmware_version.h"
 #include <string.h>
 #include "mdns.h"
 #include "esp_log.h"

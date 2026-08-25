@@ -3,7 +3,7 @@
  * @brief WebSocket server for real-time status updates
  */
 
-#include "websocket_server.h"
+#include "server/websocket/websocket_server.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -23,8 +23,8 @@
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_monitor.h"
 #include "security/security.h"
-#include "system_state.h"
-#include "inverter_power_status.h"
+#include "system/system_state.h"
+#include "inverter/inverter_power_status.h"
 
 static const char *TAG = "WS_SERVER";
 

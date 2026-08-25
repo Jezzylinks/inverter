@@ -1,12 +1,12 @@
-#include "task_watchdog.h"
+#include "system/task_watchdog.h"
 // events/protection_handler.c (or add to event_dispatcher.c)
 
 #include "events/event_dispatcher.h"
 #include "security/protection.h"
-#include "system_state.h"
+#include "system/system_state.h"
 #include "utility/led.h"
 #include "utility/buzzer.h"
-#include "lcd_writer.h"
+#include "lcd/lcd_writer.h"
 #include "esp_log.h"
 
 extern system_state_t sys_state;

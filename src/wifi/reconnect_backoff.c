@@ -3,7 +3,7 @@
  * @brief Exponential Backoff WiFi Reconnect Strategy
  */
 
-#include "reconnect_backoff.h"
+#include "wifi/reconnect_backoff.h"
 #include <string.h>
 
 #include "esp_log.h"

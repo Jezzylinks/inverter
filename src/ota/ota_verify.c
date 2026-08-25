@@ -1,4 +1,4 @@
-#include "ota_verify.h"
+#include "ota/ota_verify.h"
 
 #include <stdio.h>
 #include <stdlib.h>

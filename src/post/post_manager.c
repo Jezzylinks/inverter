@@ -1,10 +1,10 @@
-#include "post_manager.h"
+#include "post/post_manager.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "post_adc.h"
-#include "post_fan.h"
-#include "post_lcd.h"
+#include "post/post_adc.h"
+#include "post/post_fan.h"
+#include "post/post_lcd.h"
 
 static const char *TAG = "POST_MANAGER";
 static post_result_t s_last_result;

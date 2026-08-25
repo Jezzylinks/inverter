@@ -1,4 +1,4 @@
-#include "app_menu.h"
+#include "app/app_menu.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -6,10 +6,10 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "lcd_writer.h"
-#include "lcd.h"
+#include "lcd/lcd_writer.h"
+#include "lcd/lcd.h"
 #include "security/security.h"
-#include "app_services.h"
+#include "app/app_services.h"
 
 #define APP_MENU_TAG "APP_MENU"
 #define APP_MENU_HISTORY_DEPTH 10

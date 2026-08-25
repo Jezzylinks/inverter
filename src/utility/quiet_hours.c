@@ -1,4 +1,4 @@
-#include "quiet_hours.h"
+#include "utility/quiet_hours.h"
 
 #include <time.h>
 #include <sys/time.h>
@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include "esp_sntp.h"
 #include "esp_log.h"
-#include "system_state.h"
+#include "system/system_state.h"
 
 extern system_state_t sys_state;
 

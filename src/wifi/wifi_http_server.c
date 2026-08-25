@@ -2,7 +2,7 @@
  * @file wifi_http_server.c
  * @brief Hardened local HTTP server for Wi-Fi provisioning.
  */
-#include "wifi_http_server.h"
+#include "wifi/wifi_http_server.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -15,10 +15,10 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
-#include "wifi_manager.h"
-#include "wifi_scan.h"
-#include "wifi_storage.h"
-#include "wifi_web_pages.h"
+#include "wifi/wifi_manager.h"
+#include "wifi/wifi_scan.h"
+#include "wifi/wifi_storage.h"
+#include "wifi/wifi_web_pages.h"
 #include "security/security.h"
 
 #define WIFI_HTTP_TAG "WIFI_HTTP"

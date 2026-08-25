@@ -1,4 +1,4 @@
-#include "fan_controller.h"
+#include "post/fan_controller.h"
 
 #include <string.h>
 

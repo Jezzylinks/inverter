@@ -1,15 +1,15 @@
-#include "led.h"
+#include "utility/led.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "utility/led.h"
-#include "hardware_config.h"
-#include "system_state.h"
+#include "hardware/hardware_config.h"
+#include "system/system_state.h"
 
-#include "task_watchdog.h"
+#include "system/task_watchdog.h"
 static volatile bool s_inverter_active = false;
 #include "events/event_dispatcher.h"
 #include "events/system_events.h"
-#include "hardware_config.h"
+#include "hardware/hardware_config.h"
 
 #define LED_REPEAT_FOREVER UINT16_MAX
 

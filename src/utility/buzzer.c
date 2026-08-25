@@ -1,15 +1,15 @@
-#include "buzzer.h"
+#include "utility/buzzer.h"
 #include "events/event_dispatcher.h"
 #include "events/system_events.h"
 #include "utility/buzzer.h"
 #include "esp_log.h"
 #include "freertos/task.h"
 #include "utility/led.h"
-#include "hardware_config.h"
-#include "system_state.h"
-#include "quiet_hours.h"
+#include "hardware/hardware_config.h"
+#include "system/system_state.h"
+#include "utility/quiet_hours.h"
 
-#include "task_watchdog.h"
+#include "system/task_watchdog.h"
 extern system_state_t sys_state;
 
 static const char *TAG = "BUZZER";

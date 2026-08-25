@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include "app_runtime.h"
+#include "app/app_runtime.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -15,9 +15,9 @@
 #include <string.h>
 #include <esp_log.h>
 #include <math.h>
-#include "task_watchdog.h"
+#include "system/task_watchdog.h"
 // System state
-#include "system_state.h"
+#include "system/system_state.h"
 #include "telemetry/telemetry_health.h"
 #include "diagnostics/system_diagnostics.h"
 
@@ -33,8 +33,8 @@
 #include "soc/soc.h"
 #include "esp_event.h"
 #include <driver/i2c.h>
-#include "lcd.h"
-#include "lcd_writer.h"
+#include "lcd/lcd.h"
+#include "lcd/lcd_writer.h"
 #include "esp_wifi.h"
 #include "esp_wifi_types.h"
 #include "freertos/event_groups.h"
@@ -43,10 +43,10 @@
 
 #include "sdkconfig.h"
 #include "rom/ets_sys.h"
-#include "utils.h" // Added MIN & MAX
+#include "system/utils.h" // Added MIN & MAX
 #include <stdbool.h>
-#include "button_controller.h"
-#include "hardware_config.h"
+#include "app/button_controller.h"
+#include "hardware/hardware_config.h"
 #include "post/post_fan.h"
 #include "post/fan_tach.h"
 
@@ -60,14 +60,14 @@
 #include "battery/battery_storage.h"
 
 /* ── NEW: lcd_state / lcd_writer headers ──────────────────────────────── */
-#include "lcd_state.h"
-#include "lcd_writer.h"
+#include "lcd/lcd_state.h"
+#include "lcd/lcd_writer.h"
 
 // WIFI Credentials
 #include "esp_wifi.h"
-#include "lcd_watchdog.h"
-#include "lcd_flash_queue.h"
-#include "lcd_event_receiver.h"
+#include "lcd/lcd_watchdog.h"
+#include "lcd/lcd_flash_queue.h"
+#include "lcd/lcd_event_receiver.h"
 
 // SECURITY
 #include "security/change_pin_flow.h"
@@ -89,13 +89,13 @@
 #include "wifi/wifi_scan.h"
 #include "wifi/wifi_storage.h"
 #include "ota/ota_service.h"
-#include "firmware_version.h"
-#include "app_buttons.h"
-#include "app_menu.h"
-#include "app_services.h"
+#include "system/firmware_version.h"
+#include "app/app_buttons.h"
+#include "app/app_menu.h"
+#include "app/app_services.h"
 #include "server/websocket/websocket_server.h"
 #include "cloud/cloud_reporting.h"
-#include "inverter_errors.h"
+#include "system/inverter_errors.h"
 
 /* ── All original #defines─────────────────────────────── */
 #define WEATHER_API_KEY "YOUR_OPEN_WEATHER_API_KEY"

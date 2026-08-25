@@ -3,20 +3,20 @@
  * @brief High Level Wi-Fi Controller
  */
 
-#include "wifi_controller.h"
+#include "wifi/wifi_controller.h"
 #include <string.h>
 
 #include "esp_log.h"
 #include "freertos/semphr.h"
 
-#include "wifi_storage.h"
-#include "wifi_manager.h"
-#include "wifi_config.h"
+#include "wifi/wifi_storage.h"
+#include "wifi/wifi_manager.h"
+#include "wifi/wifi_config.h"
 #if WIFI_RUNTIME_PROVISIONING_ENABLED
-#include "wifi_provision.h"
+#include "wifi/wifi_provision.h"
 #endif
-#include "wifi_scan.h"
-#include "wifi_monitor.h"
+#include "wifi/wifi_scan.h"
+#include "wifi/wifi_monitor.h"
 
 static const char *TAG = "WIFI_CONTROLLER";
 

@@ -3,7 +3,7 @@
  * @brief Coulomb Counter Implementation
  ******************************************************************************/
 
-#include "coulomb_counter.h"
+#include "battery/coulomb_counter.h"
 
 #include <math.h>
 

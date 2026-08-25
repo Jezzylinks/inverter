@@ -2,7 +2,7 @@
  * @file wifi_provision.c
  * @brief SoftAP provisioning lifecycle built on manager-owned ESP-IDF objects.
  */
-#include "wifi_provision.h"
+#include "wifi/wifi_provision.h"
 
 #include <string.h>
 
@@ -11,10 +11,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-#include "wifi_captive_portal.h"
-#include "wifi_http_server.h"
-#include "wifi_storage.h"
-#include "wifi_config.h"
+#include "wifi/wifi_captive_portal.h"
+#include "wifi/wifi_http_server.h"
+#include "wifi/wifi_storage.h"
+#include "wifi/wifi_config.h"
 
 #define WIFI_PROVISION_TAG "WIFI_PROVISION"
 

@@ -4,7 +4,7 @@
  */
 
 #include "mqtt_client.h"
-#include "mqtt_client_manager.h"
+#include "server/mqtt/mqtt_client_manager.h"
 #include "esp_event_base.h"
 #include <string.h>
 

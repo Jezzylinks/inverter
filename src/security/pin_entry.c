@@ -1,13 +1,13 @@
-#include "pin_entry.h"
+#include "security/pin_entry.h"
 
 #include <string.h>
 #include <stdio.h>
-#include "button_controller.h"
-#include "factory_reset.h"
-#include "lcd_state.h"
-#include "lcd_config.h"
-#include "system_state.h"
-#include "lcd_flash_queue.h"
+#include "app/button_controller.h"
+#include "security/factory_reset.h"
+#include "lcd/lcd_state.h"
+#include "lcd/lcd_config.h"
+#include "system/system_state.h"
+#include "lcd/lcd_flash_queue.h"
 #include "esp_log.h"
 
 extern lcd_render_state_t sys_lcd;

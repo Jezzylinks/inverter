@@ -1,17 +1,17 @@
-#include "ota_service.h"
+#include "ota/ota_service.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-#include "firmware_version.h"
+#include "system/firmware_version.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "ota_download.h"
-#include "ota_manifest.h"
-#include "task_watchdog.h"
+#include "ota/ota_download.h"
+#include "ota/ota_manifest.h"
+#include "system/task_watchdog.h"
 
 static const char *TAG = "OTA_SERVICE";
 

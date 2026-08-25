@@ -164,14 +164,14 @@ The repository contains one shared firmware environment. Wokwi does not compile 
 pio run
 ```
 
-Then start Wokwi from the VS Code Command Palette with **Wokwi: Start Simulator**. The configuration points to `.pio/build/esp32dev/firmware.bin` and `.pio/build/esp32dev/firmware.elf`. The checked-in diagram uses the `wokwi-lcd2004` component for the 20×4 configuration. Set `MENU_CONFIG_LCD_20X4` to `1` in `src/menu_config.h` before building when using that diagram.
+Then start Wokwi from the VS Code Command Palette with **Wokwi: Start Simulator**. The configuration points to `.pio/build/esp32dev/firmware.bin` and `.pio/build/esp32dev/firmware.elf`. The checked-in diagram uses the `wokwi-lcd2004` component for the 20×4 configuration. Set `MENU_CONFIG_LCD_20X4` to `1` in `include/lcd/menu_config.h` before building when using that diagram.
 
 ## Compile-time 16×2 and 20×4 LCD selection
 
 The project has one shared codebase and one PlatformIO environment. The physical LCD is selected before compilation in:
 
 ```text
-src/menu_config.h
+include/lcd/menu_config.h
 ```
 
 The controlling line is:
@@ -196,7 +196,7 @@ The value in `menu_config.h` is compiled throughout the entire firmware. It dete
 
 ### Selecting 16×2 before compiling
 
-Open `src/menu_config.h` and leave or set:
+Open `include/lcd/menu_config.h` and leave or set:
 
 ```c
 #define MENU_CONFIG_LCD_20X4 0
@@ -206,7 +206,7 @@ Then run `pio run` and upload the generated firmware. The firmware uses two rows
 
 ### Selecting 20×4 before compiling
 
-Open `src/menu_config.h` and change the value to:
+Open `include/lcd/menu_config.h` and change the value to:
 
 ```c
 #define MENU_CONFIG_LCD_20X4 1
@@ -242,7 +242,7 @@ CGRAM is initialized with the set matching the compiled geometry. The 16×2 buil
 
 ### Hardware configuration
 
-Install the physical LCD that matches the value compiled in `src/menu_config.h`. Keep the existing validated I2C address, SDA/SCL pins, power, ground, contrast, and logic-level configuration. If the physical panel changes, change `MENU_CONFIG_LCD_20X4`, rebuild, and upload again. Do not select `0` for a 20×4 panel or `1` for a 16×2 panel, because the firmware will use the wrong row count and column width.
+Install the physical LCD that matches the value compiled in `include/lcd/menu_config.h`. Keep the existing validated I2C address, SDA/SCL pins, power, ground, contrast, and logic-level configuration. If the physical panel changes, change `MENU_CONFIG_LCD_20X4`, rebuild, and upload again. Do not select `0` for a 20×4 panel or `1` for a 16×2 panel, because the firmware will use the wrong row count and column width.
 
 The 20×4 driver uses the standard HD44780 DDRAM offsets `{0x00, 0x40, 0x14, 0x54}`. For Wokwi, the diagram component must also match the compiled choice: use `wokwi-lcd1602` for a 16×2 simulation and `wokwi-lcd2004` for a 20×4 simulation. Wokwi project configuration details are documented in the [Wokwi project configuration guide](https://docs.wokwi.com/vscode/project-config) and the [Wokwi 20×4 LCD reference](https://docs.wokwi.com/parts/wokwi-lcd2004).
 

@@ -4,7 +4,7 @@
  * Alternative to AP mode for WiFi setup
  */
 
-#include "ble_provision.h"
+#include "wifi/ble_provision.h"
 #include <string.h>
 
 #include "esp_log.h"

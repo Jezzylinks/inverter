@@ -26,7 +26,7 @@ The most significant dependency concerns were the large shared-state surface and
 `src/main.c` is now **6 lines** and contains only the ESP-IDF entry point:
 
 ```c
-#include "app_init.h"
+#include "app/app_init.h"
 
 void app_main(void)
 {
@@ -34,17 +34,31 @@ void app_main(void)
 }
 ```
 
-The extracted startup coordinator is `src/app_init.c` with **244 lines**, and its public declaration is `src/app_init.h`. The previous runtime implementation is now `src/app_runtime.c` with **7,020 lines**. This keeps the behavior-heavy implementation out of the entry point while avoiding an uncontrolled rewrite of safety-sensitive firmware.
+The extracted startup coordinator is `src/app_init.c` with **244 lines**, and its public declaration is `include/app/app_init.h`. The previous runtime implementation is now `src/app_runtime.c` with **7,020 lines**. This keeps the behavior-heavy implementation out of the entry point while avoiding an uncontrolled rewrite of safety-sensitive firmware.
 
 | File | Responsibility |
 | --- | --- |
 | `src/main.c` | ESP-IDF entry point only; delegates to `app_init()`. |
 | `src/app_init.c` | Ordered application startup, task creation, ADC warm-up/POST coordination, OTA running-image validation, startup UI release, and foreground maintenance loop. |
-| `src/app_init.h` | Public `app_init()` declaration. |
+| `include/app/app_init.h` | Public `app_init()` declaration. |
 | `src/app_runtime.c` | Existing non-startup runtime implementation and shared-state owner, moved from `main.c` without domain logic changes. |
-| `src/app_runtime.h` | Narrow application lifecycle declarations, shared synchronization handles required by existing modules, `sys_state`, and `APP_EVENT_ADC_READY`. |
-| `src/lcd_writer.h` | Ownership comment updated from `main.c` to `app_runtime.c`. |
+| `include/app/app_runtime.h` | Narrow application lifecycle declarations, shared synchronization handles required by existing modules, `sys_state`, and `APP_EVENT_ADC_READY`. |
+| `include/lcd/lcd_writer.h` | Ownership comment updated from `main.c` to `app_runtime.c`. |
 | `tools/test_firmware_contracts.py` | ADC warm-up structural contract now checks `app_init.c`, the module that owns that branch. |
+
+### Header organization
+
+All project-owned headers now live under `include/` and are grouped by responsibility. The source tree contains implementation files only; no project-owned `.h` files remain under `src/`.
+
+| Include namespace | Contents |
+| --- | --- |
+| `include/app/` | Application entry, runtime, input, menu, services, and button interfaces. |
+| `include/battery/`, `include/cloud/`, `include/diagnostics/`, `include/events/` | Battery, cloud, telemetry/diagnostics, and event interfaces. |
+| `include/hardware/`, `include/inverter/`, `include/lcd/`, `include/ota/`, `include/post/`, `include/security/` | Hardware, inverter, LCD, update, self-test, and security interfaces. |
+| `include/server/` | JSON, mDNS, MQTT, NTP, signal, web, WebSocket, and network-service interfaces. |
+| `include/system/`, `include/utility/`, `include/wifi/` | System-wide definitions, utility interfaces, and Wi-Fi interfaces. |
+
+The component registration now exposes `../include` through `src/CMakeLists.txt`, and all project include directives use the canonical namespace paths. Documentation and the host-side contract test were updated accordingly.
 
 ### Functions moved from `main.c`
 

@@ -1,7 +1,7 @@
-#include "post_adc.h"
+#include "post/post_adc.h"
 
 #include "esp_log.h"
-#include "system_state.h"
+#include "system/system_state.h"
 
 extern system_state_t sys_state;
 

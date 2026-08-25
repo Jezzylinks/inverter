@@ -1,7 +1,7 @@
-#include "battery_estimator.h"
-#include "coulomb_counter.h"
+#include "battery/battery_estimator.h"
+#include "battery/coulomb_counter.h"
 #include "stdlib.h"
-#include "system_state.h"
+#include "system/system_state.h"
 
 static float save_timer_seconds = 0.0f;
 extern battery_system_t battery;

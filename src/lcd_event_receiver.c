@@ -1,4 +1,4 @@
-#include "lcd_event_receiver.h"
+#include "lcd/lcd_event_receiver.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -8,11 +8,11 @@
 #include "esp_log.h"
 
 #include "events/event_dispatcher.h"
-#include "lcd_flash_queue.h"
-#include "lcd_config.h"
-#include "lcd_writer.h"
+#include "lcd/lcd_flash_queue.h"
+#include "lcd/lcd_config.h"
+#include "lcd/lcd_writer.h"
 
-#include "task_watchdog.h"
+#include "system/task_watchdog.h"
 #define LCD_EVENT_RECEIVER_STACK_SIZE 3072
 #define LCD_EVENT_RECEIVER_PRIORITY 3
 #define LCD_EVENT_RECEIVER_WAIT_MS 250

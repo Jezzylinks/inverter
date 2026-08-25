@@ -1,10 +1,10 @@
-#include "task_watchdog.h"
+#include "system/task_watchdog.h"
 /**
  * @file button_controller.c
  * @brief Shared-task button controller implementation.
  */
 
-#include "button_controller.h"
+#include "app/button_controller.h"
 
 #include "esp_attr.h"
 #include "esp_log.h"
