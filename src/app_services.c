@@ -808,7 +808,7 @@ esp_err_t app_services_init(void)
     }
     if (!s_wifi_toggle_queue)
     {
-        s_wifi_toggle_queue = xQueueCreate(WIFI_TOGGLE_QUEUE_LENGTH,
+        s_wifi_toggle_queue = xQueueCreate(APP_WIFI_TOGGLE_QUEUE_LENGTH,
                                            sizeof(wifi_toggle_request_t));
         if (!s_wifi_toggle_queue) {
             ESP_LOGE(APP_SERVICES_TAG, "Could not create Wi-Fi toggle queue");
