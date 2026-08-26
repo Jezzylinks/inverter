@@ -109,6 +109,14 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('"ADC TIMEOUT     "', failure_branch)
         self.assertIn('lcd_show_fault("SENSOR STARTUP ", fault)', failure_branch)
 
+    def test_fan_tach_does_not_collide_with_battery_adc_or_declared_peripherals(self):
+        root = Path(__file__).parents[1]
+        hardware = root.joinpath("include", "hardware", "hardware_config.h").read_text()
+        self.assertIn("#define GPIO_FAN_TACH GPIO_NUM_23", hardware)
+        self.assertIn("GPIO35 is reserved for Battery Voltage", hardware)
+        self.assertIn('"Fan tach GPIO collides with another peripheral"', hardware)
+        self.assertIn('"Fan tach GPIO collides with a button GPIO"', hardware)
+
     def test_adc_startup_timeout_publishes_terminal_failure_before_app_timeout(self):
         root = Path(__file__).parents[1]
         adc = root.joinpath("src", "adc", "inverter_adc.c").read_text()
