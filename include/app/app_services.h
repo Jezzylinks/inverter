@@ -50,7 +50,7 @@ typedef struct {
 /** Initialize Wi-Fi and OTA application coordination after system settings load. */
 esp_err_t app_services_init(void);
 
-/** Apply and persist user Wi-Fi intent, starting or stopping the controller immediately. */
+/** Queue user Wi-Fi intent for asynchronous controller start/stop and persistence. */
 esp_err_t app_services_set_wifi_enabled(bool enabled);
 bool app_services_wifi_enabled(void);
 

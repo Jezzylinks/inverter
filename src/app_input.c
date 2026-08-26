@@ -289,8 +289,8 @@ static void handle_wifi_menu_action(uint8_t selection)
 {
     switch (selection) {
     case 0:
-        (void)app_services_set_wifi_enabled(!app_services_wifi_enabled());
         show_menu_screen(MENU_WIFI_CONFIG, selection);
+        (void)app_services_set_wifi_enabled(!app_services_wifi_enabled());
         break;
     case 1:
         app_services_show_wifi_status();

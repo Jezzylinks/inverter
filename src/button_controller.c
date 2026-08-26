@@ -249,6 +249,10 @@ static void process_stable_level(button_controller_t *button, int level, int64_t
             if (button->config.enable_multi_click) {
                 atomic_store(&button->current_state, BUTTON_STATE_RELEASED);
             } else {
+                if (button->config.button_id == BTN_ENTER) {
+                    ESP_LOGI("BUTTON", "ENTER click generated after %ums stable debounce",
+                             elapsed_ms(now_us, button->last_edge_us));
+                }
                 emit_event(button, BUTTON_EVENT_CLICK, now_us, duration_ms, 1);
                 button->click_count = 0;
                 atomic_store(&button->current_state, BUTTON_STATE_IDLE);

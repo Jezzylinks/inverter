@@ -47,6 +47,7 @@
 #define APP_WIFI_OPERATION_WATCH_PRIORITY 5U
 #define APP_WIFI_TOGGLE_TASK_STACK_SIZE 4096U
 #define APP_WIFI_TOGGLE_TASK_PRIORITY 5U
+#define APP_WIFI_TOGGLE_QUEUE_LENGTH 1U
 #define APP_WIFI_OPERATION_TIMEOUT_MS 30000U
 #define APP_WIFI_SCAN_DURATION_MS 40000U
 #define APP_WIFI_SCAN_POLL_MS 250U
@@ -63,9 +64,7 @@ static TaskHandle_t s_ota_manifest_check_task;
 static bool s_ota_manifest_check_active;
 static TaskHandle_t s_wifi_operation_watch_task;
 static TaskHandle_t s_wifi_toggle_task;
-static bool s_wifi_toggle_pending;
-static bool s_wifi_toggle_enabled;
-static uint64_t s_wifi_toggle_requested_ms;
+static QueueHandle_t s_wifi_toggle_queue;
 static TaskHandle_t s_wifi_scan_task;
 static bool s_wifi_forget_pending;
 static bool s_wifi_disconnect_pending;
@@ -90,6 +89,12 @@ static char s_wifi_operation_ssid[WIFI_MAX_SSID_LEN + 1U];
 static uint32_t s_wifi_operation_generation;
 static TickType_t s_wifi_operation_started_tick;
 static int8_t s_wifi_operation_rssi = -127;
+
+typedef struct {
+    bool enabled;
+    bool previous_enabled;
+    uint64_t requested_ms;
+} wifi_toggle_request_t;
 
 static esp_err_t persist_u8(const char *key, uint8_t value);
 
@@ -258,7 +263,8 @@ static bool app_wifi_operation_pending(void)
     return pending;
 }
 
-static esp_err_t app_services_execute_wifi_toggle(bool enabled)
+static esp_err_t app_services_execute_wifi_toggle(bool enabled,
+                                                    bool previous_enabled)
 {
     const uint64_t started_ms = (uint64_t)(esp_timer_get_time() / 1000LL);
 
@@ -296,8 +302,8 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled)
         app_wifi_end_operation();
         lcd_flash_message(enabled ? "Wi-Fi ON" : "Wi-Fi OFF", "Ready", 900U);
     } else if (controller_err != ESP_OK && controller_err != ESP_ERR_WIFI_CONN) {
-        sys_state.wifi.enabled = !enabled;
-        sys_state.inverter.wifi_enabled = !enabled;
+        sys_state.wifi.enabled = previous_enabled;
+        sys_state.inverter.wifi_enabled = previous_enabled;
         app_wifi_end_operation();
         if (enabled && controller_err == ESP_ERR_NOT_FOUND) {
             lcd_flash_message("Wi-Fi Not Config", "Use menuconfig", 1800U);
@@ -320,29 +326,22 @@ static void app_wifi_toggle_task(void *parameter)
     (void)parameter;
     task_watchdog_register("wifi_toggle_task");
 
+    wifi_toggle_request_t request;
     while (true) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        task_watchdog_feed();
-
-        bool enabled = false;
-        uint64_t requested_ms = 0U;
-        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-        if (s_wifi_toggle_pending) {
-            enabled = s_wifi_toggle_enabled;
-            requested_ms = s_wifi_toggle_requested_ms;
-            s_wifi_toggle_pending = false;
-        }
-        xSemaphoreGive(s_services_mutex);
-
-        if (requested_ms == 0U) {
+        if (xQueueReceive(s_wifi_toggle_queue, &request, portMAX_DELAY) != pdTRUE) {
             continue;
         }
 
+        task_watchdog_feed();
+        const uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
         ESP_LOGI(APP_SERVICES_TAG,
                  "Wi-Fi %s worker dispatch after %llums",
-                 enabled ? "ON" : "OFF",
-                 (unsigned long long)((uint64_t)(esp_timer_get_time() / 1000LL) - requested_ms));
-        (void)app_services_execute_wifi_toggle(enabled);
+                 request.enabled ? "ON" : "OFF",
+                 (unsigned long long)(now_ms >= request.requested_ms
+                                          ? now_ms - request.requested_ms
+                                          : 0U));
+        (void)app_services_execute_wifi_toggle(request.enabled,
+                                                request.previous_enabled);
         task_watchdog_feed();
     }
 }
@@ -718,9 +717,7 @@ esp_err_t app_services_init(void)
     s_wifi_operation_generation = 0U;
     s_wifi_operation_started_tick = 0U;
     s_wifi_toggle_task = NULL;
-    s_wifi_toggle_pending = false;
-    s_wifi_toggle_enabled = false;
-    s_wifi_toggle_requested_ms = 0U;
+    s_wifi_toggle_queue = NULL;
     s_wifi_scan_active = false;
     s_wifi_scan_cancel_requested = false;
     s_wifi_scan_task = NULL;
@@ -809,6 +806,15 @@ esp_err_t app_services_init(void)
             ESP_LOGW(APP_SERVICES_TAG, "Could not create OTA availability task");
         }
     }
+    if (!s_wifi_toggle_queue)
+    {
+        s_wifi_toggle_queue = xQueueCreate(WIFI_TOGGLE_QUEUE_LENGTH,
+                                           sizeof(wifi_toggle_request_t));
+        if (!s_wifi_toggle_queue) {
+            ESP_LOGE(APP_SERVICES_TAG, "Could not create Wi-Fi toggle queue");
+            return ESP_ERR_NO_MEM;
+        }
+    }
     if (!s_wifi_toggle_task)
     {
         if (xTaskCreate(app_wifi_toggle_task,
@@ -818,8 +824,11 @@ esp_err_t app_services_init(void)
                         APP_WIFI_TOGGLE_TASK_PRIORITY,
                         &s_wifi_toggle_task) != pdPASS)
         {
+            vQueueDelete(s_wifi_toggle_queue);
+            s_wifi_toggle_queue = NULL;
             s_wifi_toggle_task = NULL;
             ESP_LOGW(APP_SERVICES_TAG, "Could not create Wi-Fi toggle worker");
+            return ESP_ERR_NO_MEM;
         }
     }
     if (!s_wifi_operation_watch_task)
@@ -840,7 +849,7 @@ esp_err_t app_services_init(void)
 
 esp_err_t app_services_set_wifi_enabled(bool enabled)
 {
-    if (s_services_mutex == NULL || s_wifi_toggle_task == NULL) {
+    if (s_services_mutex == NULL || s_wifi_toggle_queue == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -849,19 +858,21 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
         strncpy(ssid, WIFI_COMPILED_STA_SSID, sizeof(ssid) - 1U);
     }
 
-    sys_state.wifi.enabled = enabled;
-    sys_state.inverter.wifi_enabled = enabled;
+    wifi_toggle_request_t request = {
+        .enabled = enabled,
+        .previous_enabled = sys_state.wifi.enabled,
+        .requested_ms = (uint64_t)(esp_timer_get_time() / 1000ULL),
+    };
+
     app_wifi_begin_operation(enabled ? APP_WIFI_OPERATION_ENABLE
                                      : APP_WIFI_OPERATION_DISABLE,
                              ssid, -127);
 
-    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    s_wifi_toggle_enabled = enabled;
-    s_wifi_toggle_requested_ms = (uint64_t)(esp_timer_get_time() / 1000LL);
-    s_wifi_toggle_pending = true;
-    TaskHandle_t toggle_task = s_wifi_toggle_task;
-    xSemaphoreGive(s_services_mutex);
-    xTaskNotifyGive(toggle_task);
+    if (xQueueSend(s_wifi_toggle_queue, &request, 0) != pdTRUE) {
+        app_wifi_end_operation();
+        lcd_flash_message("Wi-Fi Busy", "Please wait", 900U);
+        return ESP_ERR_TIMEOUT;
+    }
 
     /* This is an operation-progress indication, not a claim that the radio
      * or station connection is already complete. Actual Wi-Fi events update
