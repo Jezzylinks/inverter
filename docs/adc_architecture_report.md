@@ -118,7 +118,9 @@ If the fallback cannot be initialized, the common ADC manager enters its existin
 
 ## Hardware validation status
 
-The supplied board logs have validated the diagnosis of a zero-frame Continuous producer, but they have not validated the new fallback build. After flashing the resulting commit, the expected diagnostic is:
+The supplied board logs first validated the diagnosis of a zero-frame Continuous producer and then exposed a second failure during the fallback transition: an ESP-IDF ringbuffer assertion immediately after LCD initialization. ESP-IDF 5.3 stops the ADC DMA engine but frees the Continuous ringbuffer before freeing the I2S0 interrupt handle. A pending EOF interrupt can therefore enter the driver during teardown. The fallback now waits two RTOS ticks after `adc_continuous_stop()` and before `adc_continuous_deinit()` so the disabled I2S0 interrupt can quiesce before the ringbuffer is deleted. This is a targeted teardown-race mitigation; it does not claim that Continuous frame production is fixed.
+
+The supplied board logs have validated the diagnosis of a zero-frame Continuous producer, but they have not validated the corrected fallback build. After flashing the resulting commit, the expected diagnostic is:
 
 ```text
 E (...) ADC_CONTINUOUS: No DMA frames after 500 ms; switched safely to ADC1 Oneshot fallback
@@ -131,3 +133,4 @@ The decisive follow-up is that the repeated Continuous `DMA read failed` message
 [1]: https://docs.espressif.com/projects/esp-idf/en/v5.2/esp32/api-reference/peripherals/adc_continuous.html "ESP-IDF ADC Continuous Mode Driver documentation"
 [2]: https://github.com/espressif/esp-idf/issues/12053 "ESP-IDF issue #12053: adc_continuous_read returning ESP_ERR_TIMEOUT"
 [3]: https://github.com/espressif/esp-idf/issues/10612 "ESP-IDF issue #10612: ESP32 ADC DMA sampling rate behavior"
+[4]: https://github.com/espressif/esp-idf/blob/v5.3.0/components/esp_adc/adc_continuous.c "ESP-IDF 5.3 ADC continuous driver teardown implementation"

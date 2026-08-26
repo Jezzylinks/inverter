@@ -7,6 +7,8 @@
 #include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "soc/soc_caps.h"
 
 #if INVERTER_ADC_MODE == INVERTER_ADC_MODE_CONTINUOUS
@@ -202,6 +204,13 @@ static esp_err_t continuous_switch_to_oneshot(continuous_context_t *context)
     if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
         return result;
     }
+    /*
+     * ESP-IDF 5.3 frees the ringbuffer before freeing the I2S0 interrupt
+     * handle. Give a pending EOF ISR time to return after STOP has disabled
+     * the interrupt, otherwise the ISR can dereference the deleted ringbuffer
+     * while this task is switching to Oneshot.
+     */
+    vTaskDelay(pdMS_TO_TICKS(2));
     result = adc_continuous_deinit(context->handle);
     if (result != ESP_OK) {
         return result;

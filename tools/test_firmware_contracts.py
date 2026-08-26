@@ -200,6 +200,8 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("ADC_CONTINUOUS_STARTUP_GRACE_MS 500U", source)
         self.assertIn("continuous_switch_to_oneshot", source)
         self.assertIn("adc_continuous_deinit(context->handle)", source)
+        self.assertIn("vTaskDelay(pdMS_TO_TICKS(2))", source)
+        self.assertIn("pending EOF ISR", source)
         self.assertIn("adc_oneshot_new_unit", source)
         self.assertIn("switched safely to ADC1 Oneshot fallback", source)
 
