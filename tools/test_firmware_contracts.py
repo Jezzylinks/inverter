@@ -109,6 +109,17 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('"ADC TIMEOUT     "', failure_branch)
         self.assertIn('lcd_show_fault("SENSOR STARTUP ", fault)', failure_branch)
 
+    def test_adc_startup_timeout_publishes_terminal_failure_before_app_timeout(self):
+        root = Path(__file__).parents[1]
+        adc = root.joinpath("src", "adc", "inverter_adc.c").read_text()
+        self.assertIn("ADC_STARTUP_FAILURE_TIMEOUT_MS 2000U", adc)
+        self.assertIn("startup_failure_reported", adc)
+        self.assertIn("required telemetry did not become valid/fresh during startup deadline", adc)
+        self.assertIn("adc_signal_failed(", adc)
+        self.assertIn("!telemetry_ready && !readiness_reported", adc)
+        self.assertIn("xEventGroupSetBits(sys_event_group, APP_EVENT_ADC_READY)", adc)
+        self.assertIn("telemetry_health_required_ready", adc)
+
     def test_adc_and_lcd_selection_is_menuconfig_backed_and_exclusive(self):
         root = Path(__file__).parents[1]
         kconfig = root.joinpath("src", "Kconfig.projbuild").read_text()

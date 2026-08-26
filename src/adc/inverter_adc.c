@@ -28,6 +28,10 @@
 
 #define ADC_MULTISAMPLING_COUNT 10U
 #define TELEMETRY_STALE_TIMEOUT_MS 1000U
+/* Startup coordination must fail promptly when acquisition never produces a
+ * valid required snapshot; app_main has a separate 10 s safety timeout, but
+ * waiting for it leaves the LCD on HARDWARE CHECK unnecessarily. */
+#define ADC_STARTUP_FAILURE_TIMEOUT_MS 2000U
 #define BATTERY_ADC_PHYSICAL_MARGIN 1.15f
 #define AC_ADC_PHYSICAL_MAX_V 350.0f
 #define ADC_TASK_STACK_SIZE 4096U
@@ -517,6 +521,9 @@ static void adc_task_body(void)
     uint8_t sample_count = 0U;
     uint32_t last_ws_publish_ms = 0U;
     bool readiness_reported = false;
+    bool startup_failure_reported = false;
+    const uint32_t startup_started_ms =
+        (uint32_t)(esp_timer_get_time() / 1000ULL);
 
     while (true) {
         task_watchdog_feed();
@@ -529,6 +536,19 @@ static void adc_task_body(void)
             (uint32_t)(esp_timer_get_time() / 1000ULL);
         const bool telemetry_ready = telemetry_health_required_ready(
             sample_time_ms, TELEMETRY_STALE_TIMEOUT_MS);
+
+        /* A backend can initialize successfully yet return timeouts forever.
+         * That is not a normal running state during startup: it must publish a
+         * terminal failure so app_main leaves its wait immediately. Never set
+         * ADC_READY here; readiness still requires valid and fresh telemetry. */
+        if (!telemetry_ready && !readiness_reported &&
+            !startup_failure_reported &&
+            (uint32_t)(sample_time_ms - startup_started_ms) >=
+                ADC_STARTUP_FAILURE_TIMEOUT_MS) {
+            startup_failure_reported = true;
+            adc_signal_failed("required telemetry did not become valid/fresh during startup deadline");
+        }
+
         if (telemetry_ready && sample_count < ADC_MULTISAMPLING_COUNT) {
             sys_state.error.error_flags = 0U;
             ++sample_count;
