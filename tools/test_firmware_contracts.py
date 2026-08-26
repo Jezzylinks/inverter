@@ -182,6 +182,7 @@ class FirmwareContracts(unittest.TestCase):
         controller_header = root.joinpath("include", "app", "button_controller.h").read_text()
         controller = root.joinpath("src", "button_controller.c").read_text()
         app_input = root.joinpath("src", "app_input.c").read_text()
+        main = root.joinpath("src", "main.c").read_text()
         self.assertIn("config INVERTER_BUTTON_DIAGNOSTICS", kconfig)
         self.assertIn("default n", kconfig)
         self.assertIn("button_diagnostic_t", controller_header)
@@ -190,7 +191,8 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('"DIAG %s gpio=', controller)
         self.assertIn('"EVENT %s button=', controller)
         self.assertIn('"CALLBACK %s event=', app_input)
-        self.assertIn("if (!sys_state.system_ready)", app_input)
+        self.assertIn("while (sys_state.system_ready || !startup_healthy)", main)
+        self.assertIn("retaining button/event tasks while output remains inhibited", main)
 
     def test_progress_bars_use_filled_lcd_blocks(self):
         root = Path(__file__).parents[1]

@@ -299,7 +299,15 @@ void app_main(void)
     lcd_watchdog_init(lcd_task_handle);
     task_watchdog_register("app_main");
     task_watchdog_feed();
-    while (sys_state.system_ready)
+    if (!startup_healthy) {
+        /* Keep button_task and the event consumers alive in the latched
+         * startup-fault state. They remain safety-gated by system_ready, but
+         * deinitializing them here made the physical inputs impossible to
+         * diagnose or use for an explicitly safe recovery action. */
+        ESP_LOGW(APP_TAG,
+                 "Startup fault latched; retaining button/event tasks while output remains inhibited");
+    }
+    while (sys_state.system_ready || !startup_healthy)
     {
         task_watchdog_feed();
         update_lcd_activity_state();
