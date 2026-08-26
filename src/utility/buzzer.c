@@ -2,6 +2,7 @@
 #include "events/event_dispatcher.h"
 #include "events/system_events.h"
 #include "utility/buzzer.h"
+#include <stdatomic.h>
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/task.h"
@@ -18,9 +19,18 @@ static volatile bool s_critical_preempt_pending = false;
 static volatile bool s_buzzer_initialized = false;
 static TaskHandle_t s_buzzer_task = NULL;
 static volatile uint32_t s_pending_button_clicks = 0U;
+static _Atomic uint32_t s_requests_received;
+static _Atomic uint32_t s_requests_played;
+static _Atomic uint32_t s_requests_dropped;
+static _Atomic uint32_t s_queue_overflows;
+static _Atomic buzzer_pattern_t s_last_pattern;
+static _Atomic uint32_t s_last_play_timestamp_ms;
+static _Atomic buzzer_pattern_t s_current_pattern;
 
+/* LEDC timer 0/channels 1-2 are owned by the LED subsystem. The LCD
+ * backlight owns timer 1/channel 3. The buzzer owns timer 2/channel 0. */
 #define BUZZER_LEDC_MODE LEDC_LOW_SPEED_MODE
-#define BUZZER_LEDC_TIMER LEDC_TIMER_0
+#define BUZZER_LEDC_TIMER LEDC_TIMER_2
 #define BUZZER_LEDC_CHANNEL LEDC_CHANNEL_0
 #define BUZZER_LEDC_RES LEDC_TIMER_10_BIT
 
@@ -59,6 +69,16 @@ esp_err_t buzzer_init(void)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "LEDC channel initialization failed on GPIO %d: %s",
                  GPIO_BUZZER, esp_err_to_name(err));
+        return err;
+    }
+
+    err = ledc_set_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL, 0);
+    if (err == ESP_OK) {
+        err = ledc_update_duty(BUZZER_LEDC_MODE, BUZZER_LEDC_CHANNEL);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to force buzzer OFF during initialization: %s",
+                 esp_err_to_name(err));
         return err;
     }
 
@@ -281,11 +301,50 @@ static void beep_limit(void) { buzzer_beep(1100, 55, 70); }
 
 void buzzer_button_click(void)
 {
+    atomic_fetch_add(&s_requests_received, 1U);
     if (s_buzzer_task != NULL) {
         (void)xTaskNotifyGive(s_buzzer_task);
     } else if (s_pending_button_clicks < UINT32_MAX) {
         s_pending_button_clicks++;
+    } else {
+        atomic_fetch_add(&s_requests_dropped, 1U);
     }
+}
+
+void buzzer_record_dispatch_result(bool accepted)
+{
+    if (accepted) {
+        atomic_fetch_add(&s_requests_received, 1U);
+    } else {
+        atomic_fetch_add(&s_requests_dropped, 1U);
+        atomic_fetch_add(&s_queue_overflows, 1U);
+    }
+}
+
+esp_err_t buzzer_get_diagnostic(buzzer_diagnostic_t *out)
+{
+    if (out == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    out->initialized = s_buzzer_initialized;
+    out->enabled = sys_state.sound_enabled && !quiet_hours_is_active();
+    out->requests_received = atomic_load(&s_requests_received);
+    out->requests_played = atomic_load(&s_requests_played);
+    out->requests_dropped = atomic_load(&s_requests_dropped);
+    out->queue_overflows = atomic_load(&s_queue_overflows);
+    out->last_pattern = atomic_load(&s_last_pattern);
+    out->last_play_timestamp_ms = atomic_load(&s_last_play_timestamp_ms);
+    out->current_pattern = atomic_load(&s_current_pattern);
+    return ESP_OK;
+}
+
+esp_err_t buzzer_self_test(void)
+{
+    if (!s_buzzer_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    buzzer_beep(2000U, 50U, 80U);
+    return ESP_OK;
 }
 
 void post_buzzer_event(bool success)
@@ -328,7 +387,13 @@ void buzzer_event_task(void *pv)
         task_watchdog_feed();
         if (!critical_active && ulTaskNotifyTake(pdTRUE, 0) > 0U) {
             s_critical_preempt_pending = false;
+            atomic_store(&s_current_pattern, BUZZER_PATTERN_CLICK);
             beep_click();
+            atomic_fetch_add(&s_requests_played, 1U);
+            atomic_store(&s_last_pattern, BUZZER_PATTERN_CLICK);
+            atomic_store(&s_last_play_timestamp_ms,
+                         (uint32_t)xTaskGetTickCount());
+            atomic_store(&s_current_pattern, BUZZER_PATTERN_NONE);
         }
         if (!event_dispatcher_receive(EVENT_SUB_BUZZER,
                                       &evt,
@@ -340,10 +405,16 @@ void buzzer_event_task(void *pv)
         if (evt.action == EVENT_ACTION_RECOVERED) {
             critical_active = false;
         } else if (evt.priority == EVENT_PRIORITY_CRITICAL) {
+            atomic_store(&s_current_pattern, BUZZER_PATTERN_CRITICAL);
             s_critical_preempt_pending = false;
             critical_active = true;
             buzzer_off();
             beep_critical();
+            atomic_fetch_add(&s_requests_played, 1U);
+            atomic_store(&s_last_pattern, BUZZER_PATTERN_CRITICAL);
+            atomic_store(&s_last_play_timestamp_ms,
+                         (uint32_t)xTaskGetTickCount());
+            atomic_store(&s_current_pattern, BUZZER_PATTERN_NONE);
             continue;
         } else if (critical_active) {
             /* Critical alarm state suppresses lower-priority tones until the
@@ -363,20 +434,32 @@ void buzzer_event_task(void *pv)
             switch (evt.action)
             {
             case EVENT_ACTION_WARNING:
+                atomic_store(&s_current_pattern, BUZZER_PATTERN_WARNING);
                 beep_warning();
+                atomic_store(&s_last_pattern, BUZZER_PATTERN_WARNING);
                 break;
             case EVENT_ACTION_DERATE:
+                atomic_store(&s_current_pattern, BUZZER_PATTERN_DERATE);
                 beep_derate();
+                atomic_store(&s_last_pattern, BUZZER_PATTERN_DERATE);
                 break;
             case EVENT_ACTION_SHUTDOWN:
+                atomic_store(&s_current_pattern, BUZZER_PATTERN_SHUTDOWN);
                 beep_shutdown();
+                atomic_store(&s_last_pattern, BUZZER_PATTERN_SHUTDOWN);
                 break;
             case EVENT_ACTION_RECOVERED:
+                atomic_store(&s_current_pattern, BUZZER_PATTERN_RECOVERED);
                 beep_recovered();
+                atomic_store(&s_last_pattern, BUZZER_PATTERN_RECOVERED);
                 break;
             default:
                 break;
             }
+            atomic_fetch_add(&s_requests_played, 1U);
+            atomic_store(&s_last_play_timestamp_ms,
+                         (uint32_t)xTaskGetTickCount());
+            atomic_store(&s_current_pattern, BUZZER_PATTERN_NONE);
             break;
 
         case EVENT_CATEGORY_SYSTEM:
@@ -384,32 +467,53 @@ void buzzer_event_task(void *pv)
         case EVENT_CATEGORY_WIFI:
             if (evt.action == EVENT_ACTION_ON)
             {
+                atomic_store(&s_current_pattern, BUZZER_PATTERN_ON);
                 beep_on();
+                atomic_store(&s_last_pattern, BUZZER_PATTERN_ON);
             }
             else if (evt.action == EVENT_ACTION_OFF)
             {
+                atomic_store(&s_current_pattern, BUZZER_PATTERN_OFF);
                 beep_off();
+                atomic_store(&s_last_pattern, BUZZER_PATTERN_OFF);
             }
             else if (evt.action == EVENT_ACTION_SUCCESS)
             {
+                atomic_store(&s_current_pattern, BUZZER_PATTERN_SUCCESS);
                 beep_success();
+                atomic_store(&s_last_pattern, BUZZER_PATTERN_SUCCESS);
             }
             else if (evt.action == EVENT_ACTION_ERROR)
             {
+                atomic_store(&s_current_pattern, BUZZER_PATTERN_ERROR);
                 beep_error();
+                atomic_store(&s_last_pattern, BUZZER_PATTERN_ERROR);
             }
+            atomic_fetch_add(&s_requests_played, 1U);
+            atomic_store(&s_last_play_timestamp_ms,
+                         (uint32_t)xTaskGetTickCount());
+            atomic_store(&s_current_pattern, BUZZER_PATTERN_NONE);
             break;
 
         case EVENT_CATEGORY_BUTTON:
             if (evt.action == EVENT_ACTION_PRESSED)
             {
                 ESP_LOGD(TAG, "Button press event received; triggering click");
+                atomic_store(&s_current_pattern, BUZZER_PATTERN_CLICK);
                 beep_click();
+                atomic_store(&s_last_pattern, BUZZER_PATTERN_CLICK);
+                atomic_fetch_add(&s_requests_played, 1U);
             }
             else if (evt.action == EVENT_ACTION_ERROR)
             {
+                atomic_store(&s_current_pattern, BUZZER_PATTERN_LIMIT);
                 beep_limit();
+                atomic_store(&s_last_pattern, BUZZER_PATTERN_LIMIT);
+                atomic_fetch_add(&s_requests_played, 1U);
             }
+            atomic_store(&s_last_play_timestamp_ms,
+                         (uint32_t)xTaskGetTickCount());
+            atomic_store(&s_current_pattern, BUZZER_PATTERN_NONE);
             break;
 
         default:

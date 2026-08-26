@@ -159,6 +159,23 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("task_watchdog_unregister();\n    vTaskDelete(NULL);", lcd_events)
         self.assertIn("task_watchdog_unregister();\n        vTaskDelete(NULL);", ota)
 
+    def test_buzzer_is_initialized_independently_and_uses_nonconflicting_ledc_resources(self):
+        root = Path(__file__).parents[1]
+        buzzer = root.joinpath("src", "utility", "buzzer.c").read_text()
+        dispatcher = root.joinpath("src", "events", "event_dispatcher.c").read_text()
+        main = root.joinpath("src", "main.c").read_text()
+        header = root.joinpath("include", "utility", "buzzer.h").read_text()
+        self.assertIn("#define BUZZER_LEDC_TIMER LEDC_TIMER_2", buzzer)
+        self.assertIn("#define BUZZER_LEDC_CHANNEL LEDC_CHANNEL_0", buzzer)
+        self.assertNotIn("#define BUZZER_LEDC_TIMER LEDC_TIMER_0", buzzer)
+        self.assertIn("buzzer_init_result = buzzer_init()", main)
+        self.assertIn("Buzzer unavailable; continuing without sound", main)
+        self.assertIn("xQueueSend(g_event_subscriber_queue[subscriber], event, 0)", dispatcher)
+        self.assertIn("buzzer_record_dispatch_result(false)", dispatcher)
+        self.assertIn("buzzer_record_dispatch_result(true)", dispatcher)
+        self.assertIn("buzzer_self_test", header)
+        self.assertIn("buzzer_get_diagnostic", header)
+
     def test_button_diagnostics_are_opt_in_and_cover_signal_path(self):
         root = Path(__file__).parents[1]
         kconfig = root.joinpath("src", "Kconfig.projbuild").read_text()

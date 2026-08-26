@@ -366,8 +366,14 @@ bool event_dispatcher_send(event_subscriber_t subscriber,
     }
 
     if (sent != pdPASS) {
+        if (subscriber == EVENT_SUB_BUZZER) {
+            buzzer_record_dispatch_result(false);
+        }
         ESP_LOGW(TAG, "Subscriber queue %d is full; event dropped", subscriber);
         return false;
+    }
+    if (subscriber == EVENT_SUB_BUZZER) {
+        buzzer_record_dispatch_result(true);
     }
     return true;
 }

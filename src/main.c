@@ -78,10 +78,14 @@ void app_main(void)
     post_result_t startup_post = {0};
     init_watchdog(true, true);
 
-    system_events_init();
+    if (!system_events_init()) {
+        ESP_LOGE(APP_TAG, "System event queue initialization failed");
+    }
     task_watchdog_feed();
 
-    event_dispatcher_init();
+    if (!event_dispatcher_init()) {
+        ESP_LOGE(APP_TAG, "Event dispatcher initialization failed; sound/events degraded");
+    }
     task_watchdog_feed();
 
     sys_event_group = xEventGroupCreate();
@@ -146,6 +150,14 @@ void app_main(void)
     lcd_power_init();
     LCD_power(true);
     lcd_set_brightness(200);
+
+    /* Buzzer owns its LEDC timer/channel. A buzzer failure is deliberately
+     * non-fatal: physical button events must remain independent of sound. */
+    const esp_err_t buzzer_init_result = buzzer_init();
+    if (buzzer_init_result != ESP_OK) {
+        ESP_LOGE(APP_TAG, "Buzzer unavailable; continuing without sound: %s",
+                 esp_err_to_name(buzzer_init_result));
+    }
 
     /* Boot screen starts on LCD_SCREEN_BOOT_BRAND (set by lcd_writer_init). */
     xEventGroupClearBits(sys_event_group,
