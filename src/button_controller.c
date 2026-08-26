@@ -159,6 +159,10 @@ static void finalize_clicks(button_controller_t *button, int64_t now_us)
         break;
     }
 
+    if (button->config.button_id == BTN_ENTER && type == BUTTON_EVENT_CLICK) {
+        ESP_LOGI("BUTTON", "ENTER click generated after %ums release window",
+                 elapsed_ms(now_us, button->last_release_us));
+    }
     emit_event(button, type, now_us, button->last_click_duration_ms, button->click_count);
     button->click_count = 0;
     atomic_store(&button->current_state, BUTTON_STATE_IDLE);

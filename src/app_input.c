@@ -692,6 +692,15 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
     {
         post_button_click_event();
     }
+    if (event_info->event == BUTTON_EVENT_CLICK)
+    {
+        const uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000LL);
+        const uint64_t event_ms = event_info->timestamp_us > 0
+                                      ? (uint64_t)event_info->timestamp_us / 1000ULL
+                                      : now_ms;
+        ESP_LOGI(APP_INPUT_TAG, "ENTER click delivered after %llums",
+                 (unsigned long long)(now_ms >= event_ms ? now_ms - event_ms : 0U));
+    }
 
     if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_PROGRESS)
     {
