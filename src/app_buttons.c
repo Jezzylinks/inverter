@@ -24,7 +24,7 @@ typedef struct {
 
 static app_button_binding_t s_bindings[] = {
     {GPIO_BUTTON_POWER, "Power", handle_power_button_event, true, NULL},
-    {GPIO_BUTTON_ENTER_MENU, "Enter/Menu", handle_enter_menu_button_event, false, NULL},
+    {GPIO_BUTTON_ENTER_MENU, "Enter/Menu", handle_enter_menu_button_event, true, NULL},
     {GPIO_BUTTON_UP, "Up", handle_up_button_event, false, NULL},
     {GPIO_BUTTON_DOWN, "Down", handle_down_button_event, false, NULL},
     {GPIO_BUTTON_BACK, "Back", handle_back_button_event, false, NULL},

@@ -10,7 +10,6 @@
 #include "esp_attr.h"
 #include "esp_log.h"
 #include "freertos/portmacro.h"
-#include <inttypes.h>
 #include <string.h>
 
 #define BUTTON_INVALID_LEVEL (-1)
@@ -160,10 +159,6 @@ static void finalize_clicks(button_controller_t *button, int64_t now_us)
         break;
     }
 
-    if (button->config.button_id == BTN_ENTER && type == BUTTON_EVENT_CLICK) {
-        ESP_LOGI("BUTTON", "ENTER click generated after %" PRIu32 "ms release window",
-                 elapsed_ms(now_us, button->last_release_us));
-    }
     emit_event(button, type, now_us, button->last_click_duration_ms, button->click_count);
     button->click_count = 0;
     atomic_store(&button->current_state, BUTTON_STATE_IDLE);
@@ -250,10 +245,6 @@ static void process_stable_level(button_controller_t *button, int level, int64_t
             if (button->config.enable_multi_click) {
                 atomic_store(&button->current_state, BUTTON_STATE_RELEASED);
             } else {
-                if (button->config.button_id == BTN_ENTER) {
-                    ESP_LOGI("BUTTON", "ENTER click generated after %" PRIu32 "ms stable debounce",
-                             elapsed_ms(now_us, button->last_edge_us));
-                }
                 emit_event(button, BUTTON_EVENT_CLICK, now_us, duration_ms, 1);
                 button->click_count = 0;
                 atomic_store(&button->current_state, BUTTON_STATE_IDLE);
