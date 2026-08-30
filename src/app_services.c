@@ -48,6 +48,7 @@
 #define APP_WIFI_TOGGLE_TASK_STACK_SIZE 4096U
 #define APP_WIFI_TOGGLE_TASK_PRIORITY 5U
 #define APP_WIFI_TOGGLE_QUEUE_LENGTH 1U
+#define APP_WIFI_TOGGLE_WATCHDOG_POLL_MS 500U
 #define APP_WIFI_OPERATION_TIMEOUT_MS 30000U
 #define APP_WIFI_SCAN_DURATION_MS 40000U
 #define APP_WIFI_SCAN_POLL_MS 250U
@@ -328,7 +329,9 @@ static void app_wifi_toggle_task(void *parameter)
 
     wifi_toggle_request_t request;
     while (true) {
-        if (xQueueReceive(s_wifi_toggle_queue, &request, portMAX_DELAY) != pdTRUE) {
+        task_watchdog_feed();
+        if (xQueueReceive(s_wifi_toggle_queue, &request,
+                         pdMS_TO_TICKS(APP_WIFI_TOGGLE_WATCHDOG_POLL_MS)) != pdTRUE) {
             continue;
         }
 
