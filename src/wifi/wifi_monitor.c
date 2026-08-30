@@ -9,6 +9,7 @@
 
 #include "esp_log.h"
 #include "wifi/wifi_events.h"
+#include "system/task_watchdog.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -296,6 +297,10 @@ esp_err_t wifi_monitor_stop(void)
     const int max_waits = WIFI_MONITOR_STOP_TIMEOUT_MS / 50;
     for (int wait = 0; s_monitor_task != NULL && wait < max_waits; ++wait) {
         vTaskDelay(pdMS_TO_TICKS(50));
+        /* Monitor shutdown is a bounded wait, but it runs in the caller's
+         * context. Keep the caller visible to the shared TWDT while the
+         * monitor exits, without changing the timeout or safety behavior. */
+        task_watchdog_feed();
     }
 
     return (s_monitor_task == NULL) ? ESP_OK : ESP_ERR_TIMEOUT;
