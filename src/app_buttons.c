@@ -95,14 +95,6 @@ esp_err_t app_buttons_init(void)
                      esp_err_to_name(err));
             goto fail;
         }
-        button_diagnostic_t diagnostic;
-        if (button_controller_get_diagnostic(binding->handle, &diagnostic) == ESP_OK)
-        {
-            ESP_LOGI(APP_BUTTONS_TAG,
-                     "%s GPIO%d started: initial=%d active_low=%d pullup=%d",
-                     binding->name, diagnostic.gpio_pin, diagnostic.raw_level,
-                     config.active_low, config.enable_pullup);
-        }
     }
     return ESP_OK;
 
