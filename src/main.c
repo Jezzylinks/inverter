@@ -265,7 +265,9 @@ void app_main(void)
                                 lcd_ready, adc_ready, false);
         ESP_LOGI("POST", "Startup prerequisite result propagated: complete=1 passed=0 lcd=%d adc=%d",
                  lcd_ready, adc_ready);
-        inverter_emergency_shutdown();
+        /* Startup begins with the inverter OFF and system_ready false. A
+         * shutdown sequence is only needed after an operational start; keep
+         * this POST failure latched without invoking that runtime path. */
         if (lcd_ready)
         {
             const char *fault = lcd_failed ? "LCD INIT FAIL   " :
