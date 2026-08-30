@@ -14,7 +14,8 @@
 #define APP_BUTTON_REPEAT_MS 45U
 #define APP_BUTTON_NAV_LONG_PRESS_MS 350U
 
-typedef struct {
+typedef struct
+{
     gpio_num_t gpio;
     const char *name;
     button_event_callback_t callback;
@@ -32,7 +33,8 @@ static app_button_binding_t s_bindings[] = {
 
 static void destroy_binding(app_button_binding_t *binding)
 {
-    if (!binding || !binding->handle) {
+    if (!binding || !binding->handle)
+    {
         return;
     }
     (void)button_controller_stop(binding->handle);
@@ -43,11 +45,13 @@ static void destroy_binding(app_button_binding_t *binding)
 esp_err_t app_buttons_init(void)
 {
     esp_err_t err = button_controller_init();
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         return err;
     }
 
-    for (size_t i = 0; i < sizeof(s_bindings) / sizeof(s_bindings[0]); ++i) {
+    for (size_t i = 0; i < sizeof(s_bindings) / sizeof(s_bindings[0]); ++i)
+    {
         app_button_binding_t *binding = &s_bindings[i];
         button_config_t config;
         button_controller_get_default_config(&config);
@@ -69,7 +73,8 @@ esp_err_t app_buttons_init(void)
         config.controller_name = binding->name;
 
         err = button_controller_create(&config, &binding->handle);
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             ESP_LOGE(APP_BUTTONS_TAG, "%s create failed: %s", binding->name,
                      esp_err_to_name(err));
             goto fail;
@@ -77,27 +82,28 @@ esp_err_t app_buttons_init(void)
         err = button_controller_register_event_callback(binding->handle,
                                                         binding->callback,
                                                         NULL);
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             ESP_LOGE(APP_BUTTONS_TAG, "%s callback failed: %s", binding->name,
                      esp_err_to_name(err));
             goto fail;
         }
         err = button_controller_start(binding->handle);
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             ESP_LOGE(APP_BUTTONS_TAG, "%s start failed: %s", binding->name,
                      esp_err_to_name(err));
             goto fail;
         }
         button_diagnostic_t diagnostic;
-        if (button_controller_get_diagnostic(binding->handle, &diagnostic) == ESP_OK) {
+        if (button_controller_get_diagnostic(binding->handle, &diagnostic) == ESP_OK)
+        {
             ESP_LOGI(APP_BUTTONS_TAG,
                      "%s GPIO%d started: initial=%d active_low=%d pullup=%d",
                      binding->name, diagnostic.gpio_pin, diagnostic.raw_level,
                      config.active_low, config.enable_pullup);
         }
     }
-
-    ESP_LOGI(APP_BUTTONS_TAG, "All five buttons registered on one shared task");
     return ESP_OK;
 
 fail:
@@ -107,7 +113,8 @@ fail:
 
 void app_buttons_deinit(void)
 {
-    for (size_t i = 0; i < sizeof(s_bindings) / sizeof(s_bindings[0]); ++i) {
+    for (size_t i = 0; i < sizeof(s_bindings) / sizeof(s_bindings[0]); ++i)
+    {
         destroy_binding(&s_bindings[i]);
     }
     (void)button_controller_deinit();
@@ -115,8 +122,10 @@ void app_buttons_deinit(void)
 
 void app_buttons_reset_statistics(void)
 {
-    for (size_t i = 0; i < sizeof(s_bindings) / sizeof(s_bindings[0]); ++i) {
-        if (s_bindings[i].handle) {
+    for (size_t i = 0; i < sizeof(s_bindings) / sizeof(s_bindings[0]); ++i)
+    {
+        if (s_bindings[i].handle)
+        {
             (void)button_controller_reset_stats(s_bindings[i].handle);
         }
     }
