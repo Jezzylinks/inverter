@@ -213,6 +213,26 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("while (sys_state.system_ready || !startup_healthy)", main)
         self.assertIn("retaining button/event tasks while output remains inhibited", main)
 
+    def test_buttons_remain_available_in_startup_fault_but_inverter_enable_is_locked(self):
+        root = Path(__file__).parents[1]
+        app_input = root.joinpath("src", "app_input.c").read_text()
+        for handler in (
+            "handle_enter_menu_button_event",
+            "handle_up_button_event",
+            "handle_down_button_event",
+            "handle_back_button_event",
+        ):
+            start = app_input.index(f"void {handler}")
+            next_handler = app_input.find("\nvoid ", start + 6)
+            body = app_input[start:] if next_handler < 0 else app_input[start:next_handler]
+            self.assertNotIn("if (!sys_state.system_ready)", body)
+        self.assertIn("require_system_ready_for_inverter_action", app_input)
+        self.assertIn('"inverter enable"', app_input)
+        self.assertIn('"SYSTEM NOT READY"', app_input)
+        self.assertIn('"CONTROL LOCKED  "', app_input)
+        self.assertIn("if (require_system_ready_for_inverter_action(\"inverter enable\"))", app_input)
+        self.assertIn("shutdown_inverter();", app_input)
+
     def test_progress_bars_use_filled_lcd_blocks(self):
         root = Path(__file__).parents[1]
         lcd_task = root.joinpath("src", "lcd_task.c").read_text()

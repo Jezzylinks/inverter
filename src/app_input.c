@@ -29,6 +29,8 @@
 #define APP_INPUT_TAG "APP_INPUT"
 #define APP_SEQUENCE_TIMEOUT_MS 3000U
 
+extern system_state_t sys_state;
+
 static void log_button_callback(const char *name,
                                 const button_event_info_t *event_info,
                                 bool system_ready)
@@ -46,7 +48,19 @@ static void log_button_callback(const char *name,
 #endif
 }
 
-extern system_state_t sys_state;
+static bool require_system_ready_for_inverter_action(const char *action)
+{
+    if (sys_state.system_ready) {
+        return true;
+    }
+
+    ESP_LOGW(APP_INPUT_TAG, "Blocked %s: system not ready; POST/safety lock remains active",
+             action != NULL ? action : "inverter action");
+    lcd_flash_info("SYSTEM NOT READY", "CONTROL LOCKED  ", 1500U);
+    post_buzzer_event(false);
+    return false;
+}
+
 extern lcd_render_state_t sys_lcd;
 extern battery_estimator_t bat_estimate;
 extern SemaphoreHandle_t change_pin_mutex;
@@ -381,8 +395,6 @@ void handle_power_button_event(button_event_info_t *event_info,
                                void *user_data)
 {
     log_button_callback("Power", event_info, sys_state.system_ready);
-    if (!sys_state.system_ready)
-        return;
 
     if (event_info->event == BUTTON_EVENT_PRESS)
     {
@@ -518,7 +530,9 @@ void handle_power_button_event(button_event_info_t *event_info,
         {
         case INVERTER_OFF:
         case INVERTER_STANDBY:
-            inverter_power_on();
+            if (require_system_ready_for_inverter_action("inverter enable")) {
+                inverter_power_on();
+            }
             break;
         case INVERTER_ON:
         case INVERTER_STARTING:
@@ -527,6 +541,9 @@ void handle_power_button_event(button_event_info_t *event_info,
             shutdown_inverter();
             break;
         case INVERTER_FAULT:
+            if (!require_system_ready_for_inverter_action("fault recovery enable")) {
+                break;
+            }
             lcd_show_fault("Clearing fault  ", "Please wait...  ");
             vTaskDelay(pdMS_TO_TICKS(1000));
             sys_state.error.error_flags &= (ERR_EEPROM | ERR_FAN_FAIL);
@@ -685,8 +702,6 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                                     void *user_data)
 {
     log_button_callback("Enter/Menu", event_info, sys_state.system_ready);
-    if (!sys_state.system_ready)
-        return;
 
     if (event_info->event == BUTTON_EVENT_PRESS)
     {
@@ -1388,8 +1403,6 @@ void handle_up_button_event(button_event_info_t *event_info,
                             void *user_data)
 {
     log_button_callback("Up", event_info, sys_state.system_ready);
-    if (!sys_state.system_ready)
-        return;
 
     if (event_info->event == BUTTON_EVENT_PRESS)
     {
@@ -1641,8 +1654,6 @@ void handle_down_button_event(button_event_info_t *event_info,
                               void *user_data)
 {
     log_button_callback("Down", event_info, sys_state.system_ready);
-    if (!sys_state.system_ready)
-        return;
 
     if (event_info->event == BUTTON_EVENT_PRESS)
     {
@@ -1913,8 +1924,6 @@ void handle_back_button_event(button_event_info_t *event_info,
                               void *user_data)
 {
     log_button_callback("Back", event_info, sys_state.system_ready);
-    if (!sys_state.system_ready)
-        return;
 
     if (event_info->event == BUTTON_EVENT_PRESS)
     {
