@@ -204,7 +204,7 @@ static telemetry_channel_t health_channel_for_adc(adc_channel_id_t channel_id)
 static void driver_status_refresh(void)
 {
     adc_driver_runtime_t runtime = {
-        .state = ADC_DRIVER_UNINITIALIZED,
+        .driver_state = ADC_DRIVER_UNINITIALIZED,
     };
     if (adc_driver_context == NULL ||
         adc_driver_get_runtime(adc_driver_context, &runtime) != ESP_OK) {
