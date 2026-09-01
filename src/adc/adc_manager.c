@@ -1,5 +1,5 @@
-#include "adc/inverter_adc.h"
-#include "adc/inverter_adc_backend.h"
+#include "adc/adc_manager.h"
+#include "adc/adc_driver.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -36,7 +36,7 @@
 #define AC_ADC_PHYSICAL_MAX_V 350.0f
 #define ADC_TASK_STACK_SIZE 4096U
 #define ADC_TASK_PRIORITY 5U
-#define INVERTER_ADC_DRIVER_TAG "ADC_INIT"
+#define ADC_MANAGER_DRIVER_TAG "ADC_INIT"
 
 #define LOW_BATTERY_VOLTAGE_THRESHOLD 10.5f
 #define UNDER_VOLTAGE_THRESHOLD 160.0f
@@ -58,15 +58,15 @@
 #define INVERTER_VOLTAGE_DIVIDER_RATIO ((R1_INVERTER_VOLTAGE + R2_INVERTER_VOLTAGE) / R2_INVERTER_VOLTAGE)
 
 #define ADC_REQUIRED_MASK ((1UL << TELEMETRY_CHANNEL_BATTERY_VOLTAGE) | \
-                           (1UL << TELEMETRY_CHANNEL_INVERTER_OUTPUT_VOLTAGE))
+                          (1UL << TELEMETRY_CHANNEL_INVERTER_OUTPUT_VOLTAGE))
 #define EVT_ADC_VALID (1U << 1)
 
 enum
 {
-    INVERTER_ADC_LOW_BATTERY = ADC_CHANNEL_6,
-    INVERTER_ADC_OVER_UNDER_VOLTAGE = ADC_CHANNEL_0,
-    INVERTER_ADC_BATTERY_VOLTAGE = ADC_CHANNEL_7,
-    INVERTER_ADC_OUTPUT_VOLTAGE = ADC_CHANNEL_4,
+    ADC1_CHANNEL_LOW_BATTERY = ADC_CHANNEL_6,
+    ADC1_CHANNEL_OVER_UNDER_VOLTAGE = ADC_CHANNEL_0,
+    ADC1_CHANNEL_BATTERY_VOLTAGE = ADC_CHANNEL_7,
+    ADC1_CHANNEL_OUTPUT_VOLTAGE = ADC_CHANNEL_4,
 };
 
 typedef enum
@@ -97,16 +97,17 @@ extern void inverter_emergency_disable(const char *reason);
 extern const char *get_error_string(uint32_t flags);
 
 static battery_filter_t battery_voltage_filter;
-static inverter_adc_state_t s_state = INVERTER_ADC_STATE_RESET;
-static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
-static inverter_adc_snapshot_t s_snapshot;
-static inverter_adc_backend_channel_t s_backend_channels[INVERTER_ADC_CHANNEL_COUNT];
-static void *s_backend_context;
-static inverter_adc_backend_status_t s_backend_status;
-static inverter_adc_measurement_t s_measurements[INVERTER_ADC_CHANNEL_COUNT];
+static adc_manager_state_t adc_manager_state = ADC_MANAGER_STATE_RESET;
+static portMUX_TYPE adc_manager_state_lock = portMUX_INITIALIZER_UNLOCKED;
+static adc_manager_snapshot_t s_snapshot;
+static adc_driver_channel_t adc_driver_channels[
+    ADC_MANAGER_CHANNEL_COUNT];
+static void *adc_driver_context;
+static adc_driver_status_t adc_driver_status;
+static adc_manager_measurement_t adc_manager_measurements[ADC_MANAGER_CHANNEL_COUNT];
 
-static const adc_channel_config_t s_adc_configs[] = {
-    {.channel = INVERTER_ADC_LOW_BATTERY,
+static const adc_channel_config_t adc_manager_channel_configs[] = {
+    {.channel = ADC1_CHANNEL_LOW_BATTERY,
      .channel_id = CHANNEL_ID_LOW_BATTERY,
      .target_value = &sys_state.inverter.low_bat_egs002_signal,
      .threshold_low = LOW_BATTERY_VOLTAGE_THRESHOLD,
@@ -114,7 +115,7 @@ static const adc_channel_config_t s_adc_configs[] = {
      .error_flag = ERR_LOW_BAT,
      .name = "Low Battery",
      .voltage_divider_ratio = LOW_BATTERY_DIVIDER_RATIO},
-    {.channel = INVERTER_ADC_OVER_UNDER_VOLTAGE,
+    {.channel = ADC1_CHANNEL_OVER_UNDER_VOLTAGE,
      .channel_id = CHANNEL_ID_OVER_UNDER_VOLTAGE,
      .target_value = &sys_state.inverter.over_under_voltage,
      .threshold_low = UNDER_VOLTAGE_THRESHOLD,
@@ -123,7 +124,7 @@ static const adc_channel_config_t s_adc_configs[] = {
      .error_flag = ERR_AC_FAULT,
      .name = "AC Voltage",
      .voltage_divider_ratio = AC_VOLTAGE_DIVIDER_RATIO},
-    {.channel = INVERTER_ADC_BATTERY_VOLTAGE,
+    {.channel = ADC1_CHANNEL_BATTERY_VOLTAGE,
      .channel_id = CHANNEL_ID_BATTERY_VOLTAGE,
      .target_value = &sys_state.inverter.battery.voltage,
      .threshold_low = BATTERY_VOLTAGE_THRESHOLD,
@@ -131,7 +132,7 @@ static const adc_channel_config_t s_adc_configs[] = {
      .error_flag = ERR_BATTERY_VOLTAGE,
      .name = "Battery Voltage",
      .voltage_divider_ratio = BATTERY_VOLTAGE_DIVIDER_RATIO},
-    {.channel = INVERTER_ADC_OUTPUT_VOLTAGE,
+    {.channel = ADC1_CHANNEL_OUTPUT_VOLTAGE,
      .channel_id = CHANNEL_ID_INVERTER_OUTPUT_VOLTAGE,
      .target_value = &sys_state.inverter.output_voltage,
      .threshold_low = INVERTER_OUTPUT_VOLTAGE_THRESHOLD,
@@ -141,7 +142,7 @@ static const adc_channel_config_t s_adc_configs[] = {
      .voltage_divider_ratio = INVERTER_VOLTAGE_DIVIDER_RATIO},
 };
 
-#define ADC_CONFIG_COUNT (sizeof(s_adc_configs) / sizeof(s_adc_configs[0]))
+#define ADC_CONFIG_COUNT (sizeof(adc_manager_channel_configs) / sizeof(adc_manager_channel_configs[0]))
 
 #define ADC_MEASURED_MIN 0.4f
 #define ADC_MEASURED_MAX 3.12f
@@ -150,12 +151,10 @@ static const adc_channel_config_t s_adc_configs[] = {
 
 static float clamp_float(float value, float minimum, float maximum)
 {
-    if (value < minimum)
-    {
+    if (value < minimum) {
         return minimum;
     }
-    if (value > maximum)
-    {
+    if (value > maximum) {
         return maximum;
     }
     return value;
@@ -163,12 +162,10 @@ static float clamp_float(float value, float minimum, float maximum)
 
 static float map_adc_to_full_range(float adc_voltage)
 {
-    if (adc_voltage < ADC_MEASURED_MIN)
-    {
+    if (adc_voltage < ADC_MEASURED_MIN) {
         adc_voltage = ADC_MEASURED_MIN;
     }
-    if (adc_voltage > ADC_MEASURED_MAX)
-    {
+    if (adc_voltage > ADC_MEASURED_MAX) {
         adc_voltage = ADC_MEASURED_MAX;
     }
     return ((adc_voltage - ADC_MEASURED_MIN) /
@@ -180,12 +177,10 @@ static float map_adc_to_full_range(float adc_voltage)
 static float selected_battery_voltage_multiplier(void)
 {
     float nominal_voltage = sys_state.battery_profile.nominal_voltage;
-    if (nominal_voltage < 11.0f)
-    {
+    if (nominal_voltage < 11.0f) {
         nominal_voltage = (float)sys_state.battery_voltage_system;
     }
-    if (nominal_voltage < 11.0f)
-    {
+    if (nominal_voltage < 11.0f) {
         nominal_voltage = 12.0f;
     }
     return nominal_voltage / 12.0f;
@@ -193,8 +188,7 @@ static float selected_battery_voltage_multiplier(void)
 
 static telemetry_channel_t health_channel_for_adc(adc_channel_id_t channel_id)
 {
-    switch (channel_id)
-    {
+    switch (channel_id) {
     case CHANNEL_ID_BATTERY_VOLTAGE:
         return TELEMETRY_CHANNEL_BATTERY_VOLTAGE;
     case CHANNEL_ID_OVER_UNDER_VOLTAGE:
@@ -207,23 +201,22 @@ static telemetry_channel_t health_channel_for_adc(adc_channel_id_t channel_id)
     }
 }
 
-static void backend_status_refresh(void)
+static void driver_status_refresh(void)
 {
-    inverter_adc_backend_runtime_t runtime = {
-        .state = INVERTER_ADC_BACKEND_UNINITIALIZED,
+    adc_driver_runtime_t runtime = {
+        .state = ADC_DRIVER_UNINITIALIZED,
     };
-    if (s_backend_context == NULL ||
-        inverter_adc_backend_get_runtime(s_backend_context, &runtime) != ESP_OK)
-    {
-        runtime.state = INVERTER_ADC_BACKEND_FAULT;
+    if (adc_driver_context == NULL ||
+        adc_driver_get_runtime(adc_driver_context, &runtime) != ESP_OK) {
+        runtime.driver_state = ADC_DRIVER_FAULT;
     }
 
-    taskENTER_CRITICAL(&s_state_lock);
-    s_backend_status.state = runtime.state;
-    s_backend_status.frames_received = runtime.frames_received;
-    s_backend_status.frames_dropped = runtime.frames_dropped;
-    s_backend_status.pool_overflows = runtime.pool_overflows;
-    taskEXIT_CRITICAL(&s_state_lock);
+    taskENTER_CRITICAL(&adc_manager_state_lock);
+    adc_driver_status.driver_state = runtime.driver_state;
+    adc_driver_status.frames_received = runtime.frames_received;
+    adc_driver_status.frames_dropped = runtime.frames_dropped;
+    adc_driver_status.pool_overflows = runtime.pool_overflows;
+    taskEXIT_CRITICAL(&adc_manager_state_lock);
 }
 
 static void measurement_record(adc_channel_id_t channel_id,
@@ -234,12 +227,11 @@ static void measurement_record(adc_channel_id_t channel_id,
                                bool calibrated,
                                bool saturated)
 {
-    if (channel_id < 0 || channel_id >= CHANNEL_ID_COUNT)
-    {
+    if (channel_id < 0 || channel_id >= CHANNEL_ID_COUNT) {
         return;
     }
-    taskENTER_CRITICAL(&s_state_lock);
-    inverter_adc_measurement_t *measurement = &s_measurements[channel_id];
+    taskENTER_CRITICAL(&adc_manager_state_lock);
+    adc_manager_measurement_t *measurement = &adc_manager_measurements[channel_id];
     measurement->voltage = voltage;
     measurement->sample_count = sample_count;
     measurement->timestamp_ms = timestamp_ms;
@@ -247,40 +239,34 @@ static void measurement_record(adc_channel_id_t channel_id,
     measurement->calibrated = calibrated;
     measurement->fresh = valid;
     measurement->saturated = saturated;
-    if (valid)
-    {
-        ++s_backend_status.consecutive_successes;
-        s_backend_status.consecutive_failures = 0U;
-        s_backend_status.last_success_ms = timestamp_ms;
-        if (s_backend_status.consecutive_successes == 0U)
-        {
-            s_backend_status.consecutive_successes = UINT32_MAX;
+    if (valid) {
+        ++adc_driver_status.consecutive_successes;
+        adc_driver_status.consecutive_failures = 0U;
+        adc_driver_status.last_success_ms = timestamp_ms;
+        if (adc_driver_status.consecutive_successes == 0U) {
+            adc_driver_status.consecutive_successes = UINT32_MAX;
         }
-    }
-    else
-    {
+    } else {
         ++measurement->error_count;
-        ++s_backend_status.invalid_samples;
-        ++s_backend_status.consecutive_failures;
-        s_backend_status.consecutive_successes = 0U;
+        ++adc_driver_status.invalid_samples;
+        ++adc_driver_status.consecutive_failures;
+        adc_driver_status.consecutive_successes = 0U;
     }
-    if (saturated)
-    {
-        ++s_backend_status.saturated_samples;
+    if (saturated) {
+        ++adc_driver_status.saturated_samples;
     }
-    taskEXIT_CRITICAL(&s_state_lock);
+    taskEXIT_CRITICAL(&adc_manager_state_lock);
 }
 
 static void measurement_record_read_error(adc_channel_id_t channel_id,
                                           uint32_t timestamp_ms,
                                           bool calibrated)
 {
-    if (channel_id < 0 || channel_id >= CHANNEL_ID_COUNT)
-    {
+    if (channel_id < 0 || channel_id >= CHANNEL_ID_COUNT) {
         return;
     }
-    taskENTER_CRITICAL(&s_state_lock);
-    inverter_adc_measurement_t *measurement = &s_measurements[channel_id];
+    taskENTER_CRITICAL(&adc_manager_state_lock);
+    adc_manager_measurement_t *measurement = &adc_manager_measurements[channel_id];
     measurement->timestamp_ms = timestamp_ms;
     measurement->sample_count = 0U;
     measurement->valid = false;
@@ -288,32 +274,31 @@ static void measurement_record_read_error(adc_channel_id_t channel_id,
     measurement->fresh = false;
     measurement->saturated = false;
     ++measurement->error_count;
-    ++s_backend_status.read_errors;
-    ++s_backend_status.invalid_samples;
-    ++s_backend_status.consecutive_failures;
-    s_backend_status.consecutive_successes = 0U;
-    taskEXIT_CRITICAL(&s_state_lock);
+    ++adc_driver_status.read_errors;
+    ++adc_driver_status.invalid_samples;
+    ++adc_driver_status.consecutive_failures;
+    adc_driver_status.consecutive_successes = 0U;
+    taskEXIT_CRITICAL(&adc_manager_state_lock);
 }
 
 static void adc_signal_failed(const char *reason)
 {
-    taskENTER_CRITICAL(&s_state_lock);
-    s_state = INVERTER_ADC_STATE_FAILED;
-    s_backend_status.state = INVERTER_ADC_BACKEND_FAULT;
-    taskEXIT_CRITICAL(&s_state_lock);
+    taskENTER_CRITICAL(&adc_manager_state_lock);
+    adc_manager_state = ADC_MANAGER_STATE_FAILED;
+    adc_driver_status.driver_state = ADC_DRIVER_FAULT;
+    taskEXIT_CRITICAL(&adc_manager_state_lock);
     sys_state.adc_ready = false;
     sys_state.adc_data_valid = false;
     sys_state.inverter.adc_data_valid = false;
-    if (sys_event_group != NULL)
-    {
+    if (sys_event_group != NULL) {
         xEventGroupSetBits(sys_event_group, APP_EVENT_ADC_FAILED);
     }
-    ESP_LOGE(INVERTER_ADC_DRIVER_TAG, "ADC subsystem failed: %s", reason);
+    ESP_LOGE(ADC_MANAGER_DRIVER_TAG, "ADC subsystem failed: %s", reason);
 }
 
 static void snapshot_update(uint32_t timestamp_ms, bool ready)
 {
-    inverter_adc_snapshot_t snapshot = {
+    adc_manager_snapshot_t snapshot = {
         .low_battery_voltage = sys_state.inverter.low_bat_egs002_signal,
         .ac_voltage = sys_state.inverter.over_under_voltage,
         .battery_voltage = sys_state.inverter.battery.voltage,
@@ -322,54 +307,50 @@ static void snapshot_update(uint32_t timestamp_ms, bool ready)
         .timestamp_ms = timestamp_ms,
         .required_data_valid = ready,
         .fresh = ready,
-        .backend_state = s_backend_status.state,
-        .backend_degraded = s_backend_status.state == INVERTER_ADC_BACKEND_FALLBACK,
-        .backend_status = s_backend_status,
+        .driver_state = adc_driver_status.driver_state,
+        .driver_degraded = adc_driver_status.driver_state == ADC_DRIVER_FALLBACK,
+        .driver_status = adc_driver_status,
     };
-    taskENTER_CRITICAL(&s_state_lock);
-    memcpy(snapshot.channel, s_measurements, sizeof(s_measurements));
-    for (size_t i = 0U; i < INVERTER_ADC_CHANNEL_COUNT; ++i)
-    {
+    taskENTER_CRITICAL(&adc_manager_state_lock);
+    memcpy(snapshot.channel, adc_manager_measurements, sizeof(adc_manager_measurements));
+    for (size_t i = 0U; i < ADC_MANAGER_CHANNEL_COUNT; ++i) {
         snapshot.channel[i].fresh = snapshot.channel[i].valid &&
-                                    (uint32_t)(timestamp_ms - snapshot.channel[i].timestamp_ms) <=
-                                        TELEMETRY_STALE_TIMEOUT_MS;
+            (uint32_t)(timestamp_ms - snapshot.channel[i].timestamp_ms) <=
+                TELEMETRY_STALE_TIMEOUT_MS;
     }
-    snapshot.backend_status = s_backend_status;
-    snapshot.backend_state = s_backend_status.state;
-    snapshot.backend_degraded = s_backend_status.state == INVERTER_ADC_BACKEND_FALLBACK;
+    snapshot.driver_status = adc_driver_status;
+    snapshot.driver_state = adc_driver_status.driver_state;
+    snapshot.driver_degraded = adc_driver_status.driver_state == ADC_DRIVER_FALLBACK;
     s_snapshot = snapshot;
-    taskEXIT_CRITICAL(&s_state_lock);
+    taskEXIT_CRITICAL(&adc_manager_state_lock);
 }
 
 static bool process_adc_reading(const adc_channel_config_t *config,
-                                const inverter_adc_backend_channel_t *backend_state)
+                                const adc_driver_channel_t *driver_channel)
 {
-    if (config == NULL || backend_state == NULL)
-    {
+    if (config == NULL || driver_channel == NULL) {
         return false;
     }
 
     float adc_voltage = 0.0f;
-    const esp_err_t read_result = inverter_adc_backend_read_sample(
-        s_backend_context, backend_state, &adc_voltage);
+    const esp_err_t read_result = adc_driver_read_sample(
+        adc_driver_context, driver_channel, &adc_voltage);
     const uint32_t sample_time_ms =
         (uint32_t)(esp_timer_get_time() / 1000ULL);
     const telemetry_channel_t health_channel =
         health_channel_for_adc(config->channel_id);
-    if (read_result != ESP_OK)
-    {
+    if (read_result != ESP_OK) {
         measurement_record_read_error(config->channel_id, sample_time_ms,
-                                      backend_state->state.is_calibrated);
+                                      driver_channel->channel_state.is_calibrated);
         telemetry_health_record_invalid(health_channel, sample_time_ms);
-        ESP_LOGW(INVERTER_ADC_DRIVER_TAG,
+        ESP_LOGW(ADC_MANAGER_DRIVER_TAG,
                  "%s sample acquisition failed: %s",
                  config->name, esp_err_to_name(read_result));
         return false;
     }
-    if (config->voltage_divider_ratio <= 0.0f || !isfinite(adc_voltage))
-    {
+    if (config->voltage_divider_ratio <= 0.0f || !isfinite(adc_voltage)) {
         telemetry_health_record_invalid(health_channel, sample_time_ms);
-        ESP_LOGE(INVERTER_ADC_DRIVER_TAG, "%s has invalid ADC conversion", config->name);
+        ESP_LOGE(ADC_MANAGER_DRIVER_TAG, "%s has invalid ADC conversion", config->name);
         return false;
     }
 
@@ -377,12 +358,10 @@ static bool process_adc_reading(const adc_channel_config_t *config,
     adc_voltage = map_adc_to_full_range(adc_voltage);
     float actual_voltage = adc_voltage * config->voltage_divider_ratio;
     float threshold_low = config->threshold_low;
-    if (config->channel_id == CHANNEL_ID_BATTERY_VOLTAGE)
-    {
+    if (config->channel_id == CHANNEL_ID_BATTERY_VOLTAGE) {
         actual_voltage *= selected_battery_voltage_multiplier();
         threshold_low = sys_state.battery_profile.cutoff_voltage_12v;
-        if (threshold_low <= 0.0f)
-        {
+        if (threshold_low <= 0.0f) {
             threshold_low = config->threshold_low * selected_battery_voltage_multiplier();
         }
         battery_filter_update(&battery_voltage_filter, actual_voltage);
@@ -391,14 +370,11 @@ static bool process_adc_reading(const adc_channel_config_t *config,
     float telemetry_min = 0.0f;
     float telemetry_max = 350.0f;
     if (config->channel_id == CHANNEL_ID_BATTERY_VOLTAGE ||
-        config->channel_id == CHANNEL_ID_LOW_BATTERY)
-    {
+        config->channel_id == CHANNEL_ID_LOW_BATTERY) {
         telemetry_min = sys_state.battery_profile.cutoff_voltage_min_12v * 0.50f;
         telemetry_max = sys_state.battery_profile.overvoltage_protection_12v *
                         BATTERY_ADC_PHYSICAL_MARGIN;
-    }
-    else if (config->channel_id == CHANNEL_ID_INVERTER_OUTPUT_VOLTAGE)
-    {
+    } else if (config->channel_id == CHANNEL_ID_INVERTER_OUTPUT_VOLTAGE) {
         telemetry_max = AC_ADC_PHYSICAL_MAX_V;
     }
 
@@ -408,22 +384,23 @@ static bool process_adc_reading(const adc_channel_config_t *config,
     *(config->target_value) = actual_voltage;
     measurement_record(config->channel_id, actual_voltage,
                        ADC_MULTISAMPLING_COUNT, sample_time_ms,
-                       telemetry_valid, backend_state->state.is_calibrated,
+                       telemetry_valid, driver_channel->channel_state.is_calibrated,
                        saturated);
 
     const bool error_detected = config->has_high_threshold
                                     ? (actual_voltage < threshold_low ||
                                        actual_voltage > config->threshold_high)
                                     : (actual_voltage < threshold_low);
-    if (error_detected)
-    {
+    if (error_detected) {
         sys_state.error.error_flags |= config->error_flag;
-    }
-    else
-    {
+    } else {
         sys_state.error.error_flags &= ~config->error_flag;
     }
-
+    if (!telemetry_valid) {
+        ESP_LOGW(ADC_MANAGER_DRIVER_TAG,
+                 "%s sample outside safe range: %.2fV [%.2f, %.2f]",
+                 config->name, actual_voltage, telemetry_min, telemetry_max);
+    }
     return telemetry_valid;
 }
 
@@ -468,12 +445,10 @@ static void update_snapshot_and_outputs(uint32_t sample_time_ms,
                               sys_state.efficiency <= 1.0f)
                                  ? sys_state.efficiency
                                  : 0.90f;
-    if (remaining_ah > 0.05f && load_kw > 0.02f && battery_voltage > 5.0f)
-    {
+    if (remaining_ah > 0.05f && load_kw > 0.02f && battery_voltage > 5.0f) {
         const float battery_current_a =
             (load_kw * 1000.0f) / (battery_voltage * efficiency);
-        if (battery_current_a > 0.05f)
-        {
+        if (battery_current_a > 0.05f) {
             const float minutes = (remaining_ah / battery_current_a) * 60.0f;
             remaining_minutes = (minutes >= 65535.0f) ? UINT16_MAX : (uint16_t)minutes;
         }
@@ -485,30 +460,25 @@ static void update_snapshot_and_outputs(uint32_t sample_time_ms,
                           (uint8_t)sys_state.battery_profile.nominal_voltage,
                           sys_state.inverter.operating_mode);
     lcd_update_wifi_status(wifi_monitor_is_online(), wifi_monitor_get_rssi());
-    if ((uint32_t)(sample_time_ms - *last_ws_publish_ms) >= 1000U)
-    {
+    if ((uint32_t)(sample_time_ms - *last_ws_publish_ms) >= 1000U) {
         *last_ws_publish_ms = sample_time_ms;
         websocket_broadcast_device_status();
         cloud_reporting_publish(&sys_state, pv_kw, load_kw,
                                 wifi_monitor_get_rssi());
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_STANDBY)
-    {
+    if (sys_lcd.screen == LCD_SCREEN_STANDBY) {
         lcd_show_standby(sys_state.inverter.battery.voltage,
                          battery_pct, sys_state.inverter.connected);
     }
     if (sys_state.error.error_flags && telemetry_ready &&
-        sample_count >= ADC_MULTISAMPLING_COUNT)
-    {
+        sample_count >= ADC_MULTISAMPLING_COUNT) {
         const char *err = get_error_string(sys_state.error.error_flags);
         char l0[LCD_LINE_SIZE], l1[LCD_LINE_SIZE];
         snprintf(l0, LCD_LINE_SIZE, "%-16.16s", err);
         snprintf(l1, LCD_LINE_SIZE, "%-16s", "Check system    ");
         lcd_show_fault(l0, l1);
-    }
-    else if (sys_lcd.screen == LCD_SCREEN_FAULT)
-    {
+    } else if (sys_lcd.screen == LCD_SCREEN_FAULT) {
         lcd_clear_fault();
     }
 }
@@ -519,34 +489,33 @@ static void adc_task_body(void)
     telemetry_health_init();
     telemetry_health_set_required_mask(ADC_REQUIRED_MASK);
     battery_filter_init(&battery_voltage_filter, 0.20f);
-    taskENTER_CRITICAL(&s_state_lock);
-    memset(&s_backend_status, 0, sizeof(s_backend_status));
-    memset(s_measurements, 0, sizeof(s_measurements));
-    s_backend_status.state = INVERTER_ADC_BACKEND_UNINITIALIZED;
-    taskEXIT_CRITICAL(&s_state_lock);
+    taskENTER_CRITICAL(&adc_manager_state_lock);
+    memset(&adc_driver_status, 0, sizeof(adc_driver_status));
+    memset(adc_manager_measurements, 0, sizeof(adc_manager_measurements));
+    adc_driver_status.driver_state = ADC_DRIVER_UNINITIALIZED;
+    taskEXIT_CRITICAL(&adc_manager_state_lock);
 
     const adc_channel_t channels[ADC_CONFIG_COUNT] = {
-        INVERTER_ADC_LOW_BATTERY,
-        INVERTER_ADC_OVER_UNDER_VOLTAGE,
-        INVERTER_ADC_BATTERY_VOLTAGE,
-        INVERTER_ADC_OUTPUT_VOLTAGE,
+        ADC1_CHANNEL_LOW_BATTERY,
+        ADC1_CHANNEL_OVER_UNDER_VOLTAGE,
+        ADC1_CHANNEL_BATTERY_VOLTAGE,
+        ADC1_CHANNEL_OUTPUT_VOLTAGE,
     };
-    const bool init_result = inverter_adc_backend_init(
-        channels, ADC_CONFIG_COUNT, s_backend_channels, &s_backend_context);
-    if (init_result != ESP_OK)
-    {
+    const bool init_result = adc_driver_init(
+        channels, ADC_CONFIG_COUNT, adc_driver_channels, &adc_driver_context);
+    if (init_result != ESP_OK) {
         adc_signal_failed(esp_err_to_name(init_result));
         task_watchdog_unregister();
         vTaskDelete(NULL);
         return;
     }
 
-    taskENTER_CRITICAL(&s_state_lock);
-    s_state = INVERTER_ADC_STATE_RUNNING;
-    taskEXIT_CRITICAL(&s_state_lock);
-    backend_status_refresh();
-    ESP_LOGI(INVERTER_ADC_DRIVER_TAG, "ADC %s backend initialized",
-             inverter_adc_backend_name());
+    taskENTER_CRITICAL(&adc_manager_state_lock);
+    adc_manager_state = ADC_MANAGER_STATE_RUNNING;
+    taskEXIT_CRITICAL(&adc_manager_state_lock);
+    driver_status_refresh();
+    ESP_LOGI(ADC_MANAGER_DRIVER_TAG, "ADC %s driver initialized",
+             adc_driver_get_name());
 
     bool telemetry_shutdown_latched = false;
     uint8_t sample_count = 0U;
@@ -556,95 +525,81 @@ static void adc_task_body(void)
     const uint32_t startup_started_ms =
         (uint32_t)(esp_timer_get_time() / 1000ULL);
 
-    while (true)
-    {
+    while (true) {
         task_watchdog_feed();
-        for (size_t i = 0U; i < ADC_CONFIG_COUNT; ++i)
-        {
-            (void)process_adc_reading(&s_adc_configs[i], &s_backend_channels[i]);
+        for (size_t i = 0U; i < ADC_CONFIG_COUNT; ++i) {
+            (void)process_adc_reading(&adc_manager_channel_configs[i], &adc_driver_channels[i]);
         }
 
-        backend_status_refresh();
+        driver_status_refresh();
         const uint32_t sample_time_ms =
             (uint32_t)(esp_timer_get_time() / 1000ULL);
         const bool telemetry_ready = telemetry_health_required_ready(
             sample_time_ms, TELEMETRY_STALE_TIMEOUT_MS);
 
-        /* A backend can initialize successfully yet return timeouts forever.
+        /* A driver can initialize successfully yet return timeouts forever.
          * That is not a normal running state during startup: it must publish a
          * terminal failure so app_main leaves its wait immediately. Never set
          * ADC_READY here; readiness still requires valid and fresh telemetry. */
         if (!telemetry_ready && !readiness_reported &&
             !startup_failure_reported &&
             (uint32_t)(sample_time_ms - startup_started_ms) >=
-                ADC_STARTUP_FAILURE_TIMEOUT_MS)
-        {
+                ADC_STARTUP_FAILURE_TIMEOUT_MS) {
             startup_failure_reported = true;
             adc_signal_failed("required telemetry did not become valid/fresh during startup deadline");
         }
 
-        if (telemetry_ready && sample_count < ADC_MULTISAMPLING_COUNT)
-        {
+        if (telemetry_ready && sample_count < ADC_MULTISAMPLING_COUNT) {
             sys_state.error.error_flags = 0U;
             ++sample_count;
-            ESP_LOGI(INVERTER_ADC_DRIVER_TAG, "ADC warmup: %u/%u",
+            ESP_LOGI(ADC_MANAGER_DRIVER_TAG, "ADC warmup: %u/%u",
                      sample_count, ADC_MULTISAMPLING_COUNT);
         }
 
-        if (telemetry_ready && !readiness_reported)
-        {
+        if (telemetry_ready && !readiness_reported) {
             readiness_reported = true;
-            taskENTER_CRITICAL(&s_state_lock);
-            s_state = INVERTER_ADC_STATE_READY;
-            taskEXIT_CRITICAL(&s_state_lock);
+            taskENTER_CRITICAL(&adc_manager_state_lock);
+            adc_manager_state = ADC_MANAGER_STATE_READY;
+            taskEXIT_CRITICAL(&adc_manager_state_lock);
             sys_state.adc_ready = true;
-            if (sys_event_group != NULL)
-            {
+            if (sys_event_group != NULL) {
                 xEventGroupSetBits(sys_event_group, APP_EVENT_ADC_READY);
             }
-            ESP_LOGI(INVERTER_ADC_DRIVER_TAG,
+            ESP_LOGI(ADC_MANAGER_DRIVER_TAG,
                      "ADC ready: required telemetry is valid and fresh");
         }
 
-        if (telemetry_ready)
-        {
+        if (telemetry_ready) {
             telemetry_shutdown_latched = false;
-            if (sys_event_group != NULL)
-            {
+            if (sys_event_group != NULL) {
                 xEventGroupSetBits(sys_event_group, EVT_ADC_VALID);
             }
-        }
-        else
-        {
+        } else {
             sys_state.adc_ready = readiness_reported;
-            if (sys_event_group != NULL)
-            {
+            if (sys_event_group != NULL) {
                 xEventGroupClearBits(sys_event_group, EVT_ADC_VALID);
             }
             sys_state.error.error_flags |= ERR_BATTERY_VOLTAGE;
             if (!telemetry_shutdown_latched &&
                 (sys_state.inverter.inverter_active ||
-                 sys_state.inverter.inverter_state == INVERTER_STARTING))
-            {
+                 sys_state.inverter.inverter_state == INVERTER_STARTING)) {
                 telemetry_shutdown_latched = true;
                 inverter_emergency_disable("required ADC telemetry invalid or stale");
             }
         }
 
-        if (telemetry_ready && sample_count >= ADC_MULTISAMPLING_COUNT)
-        {
+        if (telemetry_ready && sample_count >= ADC_MULTISAMPLING_COUNT) {
             check_protections();
         }
         update_snapshot_and_outputs(sample_time_ms, telemetry_ready,
                                     sample_count, &last_ws_publish_ms);
 
         if (readiness_reported && sample_count >= ADC_MULTISAMPLING_COUNT &&
-            !sys_state.inverter.adc_data_valid)
-        {
+            !sys_state.inverter.adc_data_valid) {
             /* The data has gone stale after a prior successful boot. The event
              * remains a historical boot completion marker, while the snapshot
              * and interlock flags immediately report the unsafe condition. */
-            ESP_LOGW(INVERTER_ADC_DRIVER_TAG, "ADC telemetry lost freshness");
+            ESP_LOGW(ADC_MANAGER_DRIVER_TAG, "ADC telemetry lost freshness");
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -656,95 +611,89 @@ void adc_task(void *arg)
     adc_task_body();
 }
 
-esp_err_t inverter_adc_start(void)
+esp_err_t adc_manager_start(void)
 {
-    taskENTER_CRITICAL(&s_state_lock);
-    const inverter_adc_state_t current = s_state;
-    if (current == INVERTER_ADC_STATE_INITIALIZING ||
-        current == INVERTER_ADC_STATE_RUNNING ||
-        current == INVERTER_ADC_STATE_READY)
-    {
-        taskEXIT_CRITICAL(&s_state_lock);
+    taskENTER_CRITICAL(&adc_manager_state_lock);
+    const adc_manager_state_t current = adc_manager_state;
+    if (current == ADC_MANAGER_STATE_INITIALIZING ||
+        current == ADC_MANAGER_STATE_RUNNING ||
+        current == ADC_MANAGER_STATE_READY) {
+        taskEXIT_CRITICAL(&adc_manager_state_lock);
         return ESP_OK;
     }
-    if (current == INVERTER_ADC_STATE_FAILED)
-    {
-        taskEXIT_CRITICAL(&s_state_lock);
+    if (current == ADC_MANAGER_STATE_FAILED) {
+        taskEXIT_CRITICAL(&adc_manager_state_lock);
         return ESP_FAIL;
     }
-    s_state = INVERTER_ADC_STATE_INITIALIZING;
-    taskEXIT_CRITICAL(&s_state_lock);
+    adc_manager_state = ADC_MANAGER_STATE_INITIALIZING;
+    taskEXIT_CRITICAL(&adc_manager_state_lock);
 
     const BaseType_t result = xTaskCreate(
         adc_task, "adc_task", ADC_TASK_STACK_SIZE, NULL,
         ADC_TASK_PRIORITY, NULL);
-    if (result != pdPASS)
-    {
+    if (result != pdPASS) {
         adc_signal_failed("ADC task creation failed");
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
 }
 
-inverter_adc_state_t inverter_adc_get_state(void)
+adc_manager_state_t adc_manager_get_state(void)
 {
-    taskENTER_CRITICAL(&s_state_lock);
-    const inverter_adc_state_t state = s_state;
-    taskEXIT_CRITICAL(&s_state_lock);
+    taskENTER_CRITICAL(&adc_manager_state_lock);
+    const adc_manager_state_t state = adc_manager_state;
+    taskEXIT_CRITICAL(&adc_manager_state_lock);
     return state;
 }
 
-bool inverter_adc_is_ready(void)
+bool adc_manager_is_ready(void)
 {
-    return inverter_adc_get_state() == INVERTER_ADC_STATE_READY;
+    return adc_manager_get_state() == ADC_MANAGER_STATE_READY;
 }
 
-esp_err_t inverter_adc_get_snapshot(inverter_adc_snapshot_t *out)
+esp_err_t adc_manager_get_snapshot(adc_manager_snapshot_t *out)
 {
-    if (out == NULL)
-    {
+    if (out == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    taskENTER_CRITICAL(&s_state_lock);
+    taskENTER_CRITICAL(&adc_manager_state_lock);
     *out = s_snapshot;
-    taskEXIT_CRITICAL(&s_state_lock);
+    taskEXIT_CRITICAL(&adc_manager_state_lock);
     return ESP_OK;
 }
 
-inverter_adc_mode_t inverter_adc_get_mode(void)
+adc_manager_mode_t adc_manager_get_mode(void)
 {
-#if INVERTER_ADC_MODE == INVERTER_ADC_MODE_CONTINUOUS
-    return INVERTER_ADC_MODE_CONTINUOUS_ENUM;
+#if ADC_MANAGER_MODE == ADC_MANAGER_MODE_CONTINUOUS
+    return ADC_MANAGER_MODE_CONTINUOUS_ENUM;
 #else
-    return INVERTER_ADC_MODE_ONESHOT_ENUM;
+    return ADC_MANAGER_MODE_ONESHOT_ENUM;
 #endif
 }
 
-esp_err_t inverter_adc_get_backend_status(inverter_adc_backend_status_t *out)
+esp_err_t adc_manager_get_driver_status(adc_driver_status_t *out)
 {
-    if (out == NULL)
-    {
+    if (out == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    taskENTER_CRITICAL(&s_state_lock);
-    *out = s_backend_status;
-    taskEXIT_CRITICAL(&s_state_lock);
+    taskENTER_CRITICAL(&adc_manager_state_lock);
+    *out = adc_driver_status;
+    taskEXIT_CRITICAL(&adc_manager_state_lock);
     return ESP_OK;
 }
 
-esp_err_t inverter_adc_get_measurement(inverter_adc_channel_t channel,
-                                       inverter_adc_measurement_t *out)
+esp_err_t adc_manager_get_measurement(adc_manager_channel_t channel,
+                                       adc_manager_measurement_t *out)
 {
-    if (out == NULL || channel < 0 || channel >= INVERTER_ADC_CHANNEL_COUNT)
-    {
+    if (out == NULL || channel < 0 || channel >= ADC_MANAGER_CHANNEL_COUNT) {
         return ESP_ERR_INVALID_ARG;
     }
     const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
-    taskENTER_CRITICAL(&s_state_lock);
-    *out = s_measurements[channel];
+    taskENTER_CRITICAL(&adc_manager_state_lock);
+    *out = adc_manager_measurements[channel];
     out->fresh = out->valid &&
                  (uint32_t)(now_ms - out->timestamp_ms) <=
                      TELEMETRY_STALE_TIMEOUT_MS;
-    taskEXIT_CRITICAL(&s_state_lock);
+    taskEXIT_CRITICAL(&adc_manager_state_lock);
     return ESP_OK;
 }

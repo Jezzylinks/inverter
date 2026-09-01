@@ -1,8 +1,8 @@
-#include "adc/inverter_adc_backend.h"
+#include "adc/adc_driver.h"
 
 #include <stdlib.h>
 
-#include "adc/inverter_adc_config.h"
+#include "adc/adc_config.h"
 #include "esp_adc/adc_continuous.h"
 #include "esp_attr.h"
 #include "esp_log.h"
@@ -11,7 +11,7 @@
 #include "freertos/task.h"
 #include "soc/soc_caps.h"
 
-#if INVERTER_ADC_MODE == INVERTER_ADC_MODE_CONTINUOUS
+#if ADC_MANAGER_MODE == ADC_MANAGER_MODE_CONTINUOUS
 
 #define ADC_CONTINUOUS_ATTEN ADC_ATTEN_DB_12
 #define ADC_CONTINUOUS_SAMPLES 10U
@@ -39,8 +39,8 @@ typedef struct
     int64_t started_at_us;
     bool using_oneshot_fallback;
     adc_oneshot_unit_handle_t oneshot_handle;
-    inverter_adc_backend_channel_t *states;
-} continuous_context_t;
+    adc_driver_channel_t *channel_states;
+} adc_continuous_context_t;
 
 static bool IRAM_ATTR continuous_on_conv_done(
     adc_continuous_handle_t handle,
@@ -48,7 +48,7 @@ static bool IRAM_ATTR continuous_on_conv_done(
     void *user_data)
 {
     (void)handle;
-    continuous_context_t *context = user_data;
+    adc_continuous_context_t *context = user_data;
     if (context != NULL && event != NULL) {
         context->last_frame_size = event->size;
         context->frames_produced++;
@@ -63,25 +63,25 @@ static bool IRAM_ATTR continuous_on_pool_overflow(
 {
     (void)handle;
     (void)event;
-    continuous_context_t *context = user_data;
+    adc_continuous_context_t *context = user_data;
     if (context != NULL) {
         context->pool_overflows++;
     }
     return false;
 }
 
-esp_err_t inverter_adc_backend_init(const adc_channel_t *channels,
+esp_err_t adc_driver_init(const adc_channel_t *channels,
                                      size_t channel_count,
-                                     inverter_adc_backend_channel_t *states,
-                                     void **backend_context)
+                                     adc_driver_channel_t *channel_states,
+                                     void **driver_context)
 {
-    if (channels == NULL || states == NULL || backend_context == NULL ||
+    if (channels == NULL || channel_states == NULL || driver_context == NULL ||
         channel_count == 0U || channel_count > SOC_ADC_MAX_CHANNEL_NUM) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    *backend_context = NULL;
-    continuous_context_t *context = calloc(1U, sizeof(*context));
+    *driver_context = NULL;
+    adc_continuous_context_t *context = calloc(1U, sizeof(*context));
     adc_digi_pattern_config_t *pattern = calloc(
         channel_count, sizeof(*pattern));
     if (context == NULL || pattern == NULL) {
@@ -106,9 +106,9 @@ esp_err_t inverter_adc_backend_init(const adc_channel_t *channels,
     }
 
     for (size_t i = 0U; i < channel_count; ++i) {
-        states[i].channel = channels[i];
-        states[i].state.cali_handle = NULL;
-        states[i].state.is_calibrated = false;
+        channel_states[i].channel = channels[i];
+        channel_states[i].channel_state.cali_handle = NULL;
+        channel_states[i].channel_state.is_calibrated = false;
         pattern[i] = (adc_digi_pattern_config_t){
             .atten = ADC_CONTINUOUS_ATTEN,
             .channel = channels[i] & 0x7U,
@@ -128,10 +128,10 @@ esp_err_t inverter_adc_backend_init(const adc_channel_t *channels,
                      (unsigned)i, (unsigned)(channels[i] & 0x7U),
                      esp_err_to_name(gpio_result));
         }
-        states[i].state.is_calibrated = adc_calibration_init(
+        channel_states[i].channel_state.is_calibrated = adc_calibration_init(
             ADC_UNIT_1, channels[i], ADC_CONTINUOUS_ATTEN,
-            &states[i].state.cali_handle);
-        if (!states[i].state.is_calibrated) {
+            &channel_states[i].channel_state.cali_handle);
+        if (!channel_states[i].channel_state.is_calibrated) {
             ESP_LOGW(ADC_CONTINUOUS_TAG,
                      "Channel %d calibration unavailable; raw conversion is retained",
                      channels[i]);
@@ -150,7 +150,7 @@ esp_err_t inverter_adc_backend_init(const adc_channel_t *channels,
     if (result != ESP_OK) {
         ESP_LOGE(ADC_CONTINUOUS_TAG, "Continuous configuration failed: %s",
                  esp_err_to_name(result));
-        inverter_adc_backend_deinit(context, states, channel_count);
+        adc_driver_deinit(context, channel_states, channel_count);
         return result;
     }
 
@@ -164,7 +164,7 @@ esp_err_t inverter_adc_backend_init(const adc_channel_t *channels,
         ESP_LOGE(ADC_CONTINUOUS_TAG,
                  "Continuous callback registration failed: %s",
                  esp_err_to_name(result));
-        inverter_adc_backend_deinit(context, states, channel_count);
+        adc_driver_deinit(context, channel_states, channel_count);
         return result;
     }
 
@@ -179,20 +179,20 @@ esp_err_t inverter_adc_backend_init(const adc_channel_t *channels,
     if (result != ESP_OK) {
         ESP_LOGE(ADC_CONTINUOUS_TAG, "Continuous start failed: %s",
                  esp_err_to_name(result));
-        inverter_adc_backend_deinit(context, states, channel_count);
+        adc_driver_deinit(context, channel_states, channel_count);
         return result;
     }
 
     context->channel_count = channel_count;
-    context->states = states;
+    context->channel_states = channel_states;
     context->started_at_us = esp_timer_get_time();
-    *backend_context = context;
+    *driver_context = context;
     return ESP_OK;
 }
 
-static esp_err_t continuous_switch_to_oneshot(continuous_context_t *context)
+static esp_err_t continuous_switch_to_oneshot(adc_continuous_context_t *context)
 {
-    if (context == NULL || context->states == NULL ||
+    if (context == NULL || context->channel_states == NULL ||
         context->channel_count == 0U) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -233,7 +233,7 @@ static esp_err_t continuous_switch_to_oneshot(continuous_context_t *context)
     for (size_t i = 0U; i < context->channel_count; ++i) {
         result = adc_oneshot_config_channel(
             context->oneshot_handle,
-            context->states[i].channel,
+            context->channel_states[i].channel,
             &channel_config);
         if (result != ESP_OK) {
             (void)adc_oneshot_del_unit(context->oneshot_handle);
@@ -249,21 +249,21 @@ static esp_err_t continuous_switch_to_oneshot(continuous_context_t *context)
     return ESP_OK;
 }
 
-esp_err_t inverter_adc_backend_read_sample(
-    void *backend_context,
-    const inverter_adc_backend_channel_t *channel_state,
+esp_err_t adc_driver_read_sample(
+    void *driver_context,
+    const adc_driver_channel_t *channel_state,
     float *out_voltage)
 {
-    if (backend_context == NULL || channel_state == NULL || out_voltage == NULL) {
+    if (driver_context == NULL || channel_state == NULL || out_voltage == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    continuous_context_t *context = backend_context;
+    adc_continuous_context_t *context = driver_context;
     if (context->using_oneshot_fallback) {
         return adc_read_with_multisampling(
             context->oneshot_handle, channel_state->channel,
-            channel_state->state.cali_handle,
-            channel_state->state.is_calibrated,
+            channel_state->channel_state.cali_handle,
+            channel_state->channel_state.is_calibrated,
             out_voltage, ADC_CONTINUOUS_SAMPLES);
     }
 
@@ -279,8 +279,8 @@ esp_err_t inverter_adc_backend_read_sample(
         }
         return adc_read_with_multisampling(
             context->oneshot_handle, channel_state->channel,
-            channel_state->state.cali_handle,
-            channel_state->state.is_calibrated,
+            channel_state->channel_state.cali_handle,
+            channel_state->channel_state.is_calibrated,
             out_voltage, ADC_CONTINUOUS_SAMPLES);
     }
 
@@ -318,11 +318,11 @@ esp_err_t inverter_adc_backend_read_sample(
             }
 
             const int raw_value = sample->type1.data;
-            if (channel_state->state.is_calibrated &&
-                channel_state->state.cali_handle != NULL) {
+            if (channel_state->channel_state.is_calibrated &&
+                channel_state->channel_state.cali_handle != NULL) {
                 int voltage_mv = 0;
                 const esp_err_t conversion_result = adc_cali_raw_to_voltage(
-                    channel_state->state.cali_handle, raw_value, &voltage_mv);
+                    channel_state->channel_state.cali_handle, raw_value, &voltage_mv);
                 if (conversion_result != ESP_OK) {
                     continue;
                 }
@@ -341,8 +341,8 @@ esp_err_t inverter_adc_backend_read_sample(
     if (valid_samples == 0U) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (channel_state->state.is_calibrated &&
-        channel_state->state.cali_handle != NULL) {
+    if (channel_state->channel_state.is_calibrated &&
+        channel_state->channel_state.cali_handle != NULL) {
         *out_voltage = (float)sum_voltage_mv /
                        ((float)valid_samples * 1000.0f);
     } else {
@@ -353,14 +353,14 @@ esp_err_t inverter_adc_backend_read_sample(
     return ESP_OK;
 }
 
-void inverter_adc_backend_deinit(void *backend_context,
-                                 inverter_adc_backend_channel_t *states,
+void adc_driver_deinit(void *driver_context,
+                                 adc_driver_channel_t *channel_states,
                                  size_t channel_count)
 {
-    if (backend_context == NULL) {
+    if (driver_context == NULL) {
         return;
     }
-    continuous_context_t *context = backend_context;
+    adc_continuous_context_t *context = driver_context;
     if (context->oneshot_handle != NULL) {
         const esp_err_t oneshot_result = adc_oneshot_del_unit(
             context->oneshot_handle);
@@ -382,37 +382,37 @@ void inverter_adc_backend_deinit(void *backend_context,
                      esp_err_to_name(deinit_result));
         }
     }
-    if (states != NULL) {
+    if (channel_states != NULL) {
         for (size_t i = 0U; i < channel_count; ++i) {
-            if (states[i].state.cali_handle != NULL) {
-                adc_calibration_deinit(states[i].state.cali_handle);
-                states[i].state.cali_handle = NULL;
-                states[i].state.is_calibrated = false;
+            if (channel_states[i].channel_state.cali_handle != NULL) {
+                adc_calibration_deinit(channel_states[i].channel_state.cali_handle);
+                channel_states[i].channel_state.cali_handle = NULL;
+                channel_states[i].channel_state.is_calibrated = false;
             }
         }
     }
     free(context);
 }
 
-const char *inverter_adc_backend_name(void)
+const char *adc_driver_get_name(void)
 {
     return "continuous";
 }
 
-esp_err_t inverter_adc_backend_get_runtime(
-    void *backend_context, inverter_adc_backend_runtime_t *out)
+esp_err_t adc_driver_get_runtime(
+    void *driver_context, adc_driver_runtime_t *out)
 {
-    if (backend_context == NULL || out == NULL) {
+    if (driver_context == NULL || out == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    const continuous_context_t *context = backend_context;
-    out->state = context->using_oneshot_fallback
-                     ? INVERTER_ADC_BACKEND_FALLBACK
-                     : INVERTER_ADC_BACKEND_CONTINUOUS;
+    const adc_continuous_context_t *context = driver_context;
+    out->driver_state = context->using_oneshot_fallback
+                     ? ADC_DRIVER_FALLBACK
+                     : ADC_DRIVER_CONTINUOUS;
     out->frames_received = context->frames_produced;
     out->frames_dropped = 0U;
     out->pool_overflows = context->pool_overflows;
     return ESP_OK;
 }
 
-#endif /* INVERTER_ADC_MODE == INVERTER_ADC_MODE_CONTINUOUS */
+#endif /* ADC_MANAGER_MODE == ADC_MANAGER_MODE_CONTINUOUS */

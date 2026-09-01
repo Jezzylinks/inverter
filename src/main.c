@@ -11,7 +11,7 @@
 
 #include "app/app_buttons.h"
 #include "app/app_runtime.h"
-#include "adc/inverter_adc.h"
+#include "adc/adc_manager.h"
 #include "app/app_services.h"
 #include "cloud/cloud_reporting.h"
 #include "diagnostics/system_diagnostics.h"
@@ -163,7 +163,7 @@ void app_main(void)
     xEventGroupClearBits(sys_event_group,
                          APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED |
                          APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED);
-    const esp_err_t adc_start_result = inverter_adc_start();
+    const esp_err_t adc_start_result = adc_manager_start();
     if (adc_start_result != ESP_OK)
     {
         ESP_LOGE(APP_TAG, "Failed to start ADC subsystem: %s",

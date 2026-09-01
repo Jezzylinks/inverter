@@ -1,17 +1,17 @@
 menu "Inverter Hardware Configuration"
 
-choice INVERTER_ADC_MODE
+choice ADC_MANAGER_MODE
     prompt "ADC acquisition mode"
-    default INVERTER_ADC_MODE_CONTINUOUS
+    default ADC_MANAGER_MODE_CONTINUOUS
     help
-        Select the ADC acquisition backend. Continuous/DMA is the default and
+        Select the ADC acquisition driver. Continuous/DMA is the default and
         is recommended for normal operation. Oneshot is the compatibility
-        fallback. Exactly one backend is selected at compile time.
+        fallback. Exactly one driver is selected at compile time.
 
-config INVERTER_ADC_MODE_CONTINUOUS
+config ADC_MANAGER_MODE_CONTINUOUS
     bool "Continuous / DMA"
 
-config INVERTER_ADC_MODE_ONESHOT
+config ADC_MANAGER_MODE_ONESHOT
     bool "Oneshot fallback"
 
 endchoice

@@ -7,14 +7,14 @@ The firmware now has a three-layer ADC design. The low-level helper remains reus
 | Layer | Files | Responsibility |
 | --- | --- | --- |
 | Portable helper | `src/adc/adc.c`, `include/adc/adc.h` | ESP-IDF oneshot unit lifecycle, calibration handles, calibrated/raw conversion, and the existing fixed-count multisample helper. |
-| Acquisition backends | `src/adc/adc_continuous.c`, `src/adc/adc_oneshot.c`, `src/adc/inverter_adc_backend.h` | Exactly one backend is compiled into the firmware. Continuous mode uses the ESP-IDF ADC1 digital controller and parses DMA conversion frames; oneshot mode uses the reusable helper. |
-| Inverter adapter | `src/adc/inverter_adc.c`, `include/adc/inverter_adc.h` | Channel mapping, electrical conversion, battery 12/24/48 V scaling, range mapping, telemetry health, filtering, protections, emergency shutdown, LCD/API/cloud updates, snapshots, and lifecycle state. |
+| Acquisition backends | `src/adc/adc_continuous.c`, `src/adc/adc_oneshot.c`, `src/adc/adc_driver.h` | Exactly one backend is compiled into the firmware. Continuous mode uses the ESP-IDF ADC1 digital controller and parses DMA conversion frames; oneshot mode uses the reusable helper. |
+| Inverter adapter | `src/adc/adc_manager.c`, `include/adc/adc_manager.h` | Channel mapping, electrical conversion, battery 12/24/48 V scaling, range mapping, telemetry health, filtering, protections, emergency shutdown, LCD/API/cloud updates, snapshots, and lifecycle state. |
 
-`src/adc/inverter_adc.c` is the only application-facing ADC implementation. The rest of the firmware uses the common API and the existing `sys_state` values; it does not call ESP-IDF acquisition APIs or select a backend.
+`src/adc/adc_manager.c` is the only application-facing ADC implementation. The rest of the firmware uses the common API and the existing `sys_state` values; it does not call ESP-IDF acquisition APIs or select a backend.
 
 ## Menuconfig selection
 
-ADC mode and LCD geometry are selected through ESP-IDF menuconfig. The Kconfig definitions are in `src/Kconfig.projbuild`; the generated values are mapped by `include/adc/inverter_adc_config.h` and `include/lcd/menu_config.h`.
+ADC mode and LCD geometry are selected through ESP-IDF menuconfig. The Kconfig definitions are in `src/Kconfig.projbuild`; the generated values are mapped by `include/adc/adc_config.h` and `include/lcd/menu_config.h`.
 
 From the project root, open the configuration UI with:
 
@@ -43,30 +43,30 @@ pio run -e esp32dev -t upload
 
 With the native ESP-IDF command-line workflow, the equivalent command is `idf.py menuconfig`, followed by `idf.py build` and `idf.py flash`. PlatformIO stores the generated configuration in an environment-specific `sdkconfig` file, which is intentionally ignored by Git because it may also contain credentials and machine-specific settings.
 
-Continuous/DMA is the default. The generated configuration is a Kconfig `choice`, and the header adds a compile-time guard against both options being present or neither option being selected. The backend source files are compiled together by the project source glob, but preprocessor selection ensures that only one implementation exports `inverter_adc_backend_init()`, `inverter_adc_backend_read_sample()`, and the matching cleanup functions. There is no runtime attempt to initialize both ADC controllers.
+Continuous/DMA is the default. The generated configuration is a Kconfig `choice`, and the header adds a compile-time guard against both options being present or neither option being selected. The backend source files are compiled together by the project source glob, but preprocessor selection ensures that only one implementation exports `adc_driver_init()`, `adc_driver_read_sample()`, and the matching cleanup functions. There is no runtime attempt to initialize both ADC controllers.
 
 There is now one production environment (`esp32dev`) for all ADC/LCD combinations. Change the menuconfig selection, rebuild, and upload. The `esp32dev-ui-mock` environment extends the same configuration and adds only the test physical-feedback flag; it should not be flashed as a production safety build. These choices do not alter ADC channels, attenuation, scaling, thresholds, or sampling counts.
 
 ## Common lifecycle and snapshot API
 
-The public interface in `include/adc/inverter_adc.h` is intentionally backend-neutral:
+The public interface in `include/adc/adc_manager.h` is intentionally backend-neutral:
 
 ```c
-esp_err_t inverter_adc_start(void);
-inverter_adc_state_t inverter_adc_get_state(void);
-bool inverter_adc_is_ready(void);
-esp_err_t inverter_adc_get_snapshot(inverter_adc_snapshot_t *out);
-inverter_adc_mode_t inverter_adc_get_mode(void);
+esp_err_t adc_manager_start(void);
+adc_manager_state_t adc_manager_get_state(void);
+bool adc_manager_is_ready(void);
+esp_err_t adc_manager_get_snapshot(adc_manager_snapshot_t *out);
+adc_manager_mode_t adc_manager_get_mode(void);
 ```
 
-The snapshot is a coherent application-level view containing low-battery, AC, battery, and inverter-output voltages, a monotonically increasing sequence, a timestamp, and validity/freshness flags. `inverter_adc_get_mode()` is diagnostic information; consumers do not branch on it.
+The snapshot is a coherent application-level view containing low-battery, AC, battery, and inverter-output voltages, a monotonically increasing sequence, a timestamp, and validity/freshness flags. `adc_manager_get_mode()` is diagnostic information; consumers do not branch on it.
 
 The lifecycle is:
 
-1. `main.c` creates the shared event group and starts the ADC subsystem with `inverter_adc_start()`.
+1. `main.c` creates the shared event group and starts the ADC subsystem with `adc_manager_start()`.
 2. The selected backend creates and configures ADC1, establishes all calibration handles before sampling, and starts its hardware acquisition path.
 3. The adapter processes the configured channels using the preserved ten-sample aggregation policy. Continuous mode accumulates ten matching DMA results per channel; oneshot mode calls the existing ten-read helper.
-4. Telemetry health validates the physically scaled values and requires fresh battery and inverter-output telemetry before the adapter enters `INVERTER_ADC_STATE_READY` and sets `APP_EVENT_ADC_READY`.
+4. Telemetry health validates the physically scaled values and requires fresh battery and inverter-output telemetry before the adapter enters `ADC_MANAGER_STATE_READY` and sets `APP_EVENT_ADC_READY`.
 5. `main.c` waits for both `APP_EVENT_ADC_READY` and `APP_EVENT_LCD_READY`. `post_run_all()` is called only inside that gate, so POST never consumes an uninitialized ADC state.
 6. After readiness, the adapter continues the existing warmup and protection timing. A later freshness failure clears data-valid state and can trigger emergency disable; the historical startup event is not falsely reused as a live validity flag.
 

@@ -8,7 +8,7 @@ The board evidence supplied during the audit was decisive: every Continuous read
 
 ## Existing architecture
 
-The reusable low-level helper in `src/adc/adc.c` owns ADC1 Oneshot unit creation, per-channel calibration, calibrated/raw conversion, ten-sample averaging, and cleanup. `src/adc/adc_continuous.c` owns the ADC1 digital-controller/DMA backend, while `src/adc/adc_oneshot.c` owns the compile-time Oneshot backend. `src/adc/inverter_adc.c` is the application adapter: it maps measurements to inverter state, applies divider scaling and battery-system multipliers, updates telemetry health, drives the battery filter, publishes LCD/network values, and invokes existing protection and emergency-shutdown paths.
+The reusable low-level helper in `src/adc/adc.c` owns ADC1 Oneshot unit creation, per-channel calibration, calibrated/raw conversion, ten-sample averaging, and cleanup. `src/adc/adc_continuous.c` owns the ADC1 digital-controller/DMA backend, while `src/adc/adc_oneshot.c` owns the compile-time Oneshot backend. `src/adc/adc_manager.c` is the application adapter: it maps measurements to inverter state, applies divider scaling and battery-system multipliers, updates telemetry health, drives the battery filter, publishes LCD/network values, and invokes existing protection and emergency-shutdown paths.
 
 The four configured channels remain ADC1 channels 6, 0, 7, and 4 for Low Battery, AC Voltage, Battery Voltage, and Inverter Voltage. The existing channel-to-GPIO mappings, 12 dB attenuation, 12-bit conversion assumptions, resistor-divider ratios, and application measurement names are unchanged.
 
@@ -28,9 +28,9 @@ Before this work, the application-facing ADC snapshot exposed only scaled voltag
 | --- | --- |
 | `src/adc/adc_continuous.c` | Preserved Continuous/DMA as the primary backend; aligned frames to the ESP32 DMA conversion stride; masked channel IDs; registered conversion-done and pool-overflow diagnostics; resolved and logged ADC1 GPIO mappings; added a bounded no-frame transition to safe Oneshot operation. |
 | `src/adc/adc_oneshot.c` | Added the matching runtime-status implementation for menuconfig-selected Oneshot mode. |
-| `src/adc/inverter_adc_backend.h` | Added a backend runtime-status contract shared by both backends. |
-| `include/adc/inverter_adc.h` | Added backend states, per-channel measurement metadata, backend health counters, additive snapshot fields, and read-only status/measurement getters. Existing APIs remain available. |
-| `src/adc/inverter_adc.c` | Added coherent measurement caching, per-channel quality metadata, health counters, backend-state refresh, age-based freshness, and read-only getter implementations. Existing validation and protection decisions remain in place. |
+| `src/adc/adc_driver.h` | Added a backend runtime-status contract shared by both backends. |
+| `include/adc/adc_manager.h` | Added backend states, per-channel measurement metadata, backend health counters, additive snapshot fields, and read-only status/measurement getters. Existing APIs remain available. |
+| `src/adc/adc_manager.c` | Added coherent measurement caching, per-channel quality metadata, health counters, backend-state refresh, age-based freshness, and read-only getter implementations. Existing validation and protection decisions remain in place. |
 | `tools/test_firmware_contracts.py` | Added source contracts for DMA diagnostics, safe fallback ordering, explicit backend states, measurement metadata, and status APIs. |
 | `docs/adc_zero_frame_investigation.md` | Records the zero-frame evidence and driver investigation. |
 
@@ -71,13 +71,13 @@ The public API now distinguishes the following states:
 
 | State | Meaning |
 | --- | --- |
-| `INVERTER_ADC_BACKEND_UNINITIALIZED` | No backend context is active. |
-| `INVERTER_ADC_BACKEND_CONTINUOUS` | The configured Continuous/DMA backend is active. |
-| `INVERTER_ADC_BACKEND_ONESHOT` | Oneshot was selected directly through menuconfig. |
-| `INVERTER_ADC_BACKEND_FALLBACK` | Continuous produced no frame within the bounded startup grace period and the firmware switched to Oneshot after releasing Continuous resources. |
-| `INVERTER_ADC_BACKEND_FAULT` | Backend initialization or another unrecoverable ADC manager failure occurred. |
+| `ADC_DRIVER_UNINITIALIZED` | No backend context is active. |
+| `ADC_DRIVER_CONTINUOUS` | The configured Continuous/DMA backend is active. |
+| `ADC_DRIVER_ONESHOT` | Oneshot was selected directly through menuconfig. |
+| `ADC_DRIVER_FALLBACK` | Continuous produced no frame within the bounded startup grace period and the firmware switched to Oneshot after releasing Continuous resources. |
+| `ADC_DRIVER_FAULT` | Backend initialization or another unrecoverable ADC manager failure occurred. |
 
-`inverter_adc_get_backend_status()` exposes frame count, dropped-frame count, pool-overflow count, read errors, invalid samples, saturation count, consecutive success/failure counters, and the last successful sample time. `inverter_adc_get_measurement()` exposes voltage, sample count, timestamp, error count, validity, calibration, freshness, and saturation for each application channel. These are read-only snapshots and do not permit consumers to bypass the common acquisition or safety policy.
+`adc_manager_get_backend_status()` exposes frame count, dropped-frame count, pool-overflow count, read errors, invalid samples, saturation count, consecutive success/failure counters, and the last successful sample time. `adc_manager_get_measurement()` exposes voltage, sample count, timestamp, error count, validity, calibration, freshness, and saturation for each application channel. These are read-only snapshots and do not permit consumers to bypass the common acquisition or safety policy.
 
 ## Measurement quality and safety behavior
 
@@ -95,14 +95,14 @@ In the Continuous build, the backend records conversion-done callbacks and waits
 2. It calls `adc_continuous_deinit()` to release Continuous/DMA and I2S0 resources.
 3. It creates a new ADC1 Oneshot unit.
 4. It configures the same channels with the same attenuation and calibration state.
-5. It reports `INVERTER_ADC_BACKEND_FALLBACK` through the common status and snapshot APIs.
+5. It reports `ADC_DRIVER_FALLBACK` through the common status and snapshot APIs.
 6. It continues through the normal telemetry-validity, freshness, POST, and protection logic.
 
 If the fallback cannot be initialized, the common ADC manager enters its existing failed state and keeps output inhibited. There is no automatic repeated Continuous recovery loop yet; repeatedly disrupting a functioning safety-compatible Oneshot path would require a separate cooldown and hardware validation design.
 
 ## Startup and POST
 
-`inverter_adc_start()` still runs before `post_run_all()`. The common ADC task sets `APP_EVENT_ADC_READY` only after required battery and inverter-output telemetry has been valid and fresh. `post_adc.c` independently requires the ADC lifecycle to be ready and the application snapshot to be valid and fresh before applying battery and idle-output plausibility checks. A fallback backend must satisfy the same readiness contract.
+`adc_manager_start()` still runs before `post_run_all()`. The common ADC task sets `APP_EVENT_ADC_READY` only after required battery and inverter-output telemetry has been valid and fresh. `post_adc.c` independently requires the ADC lifecycle to be ready and the application snapshot to be valid and fresh before applying battery and idle-output plausibility checks. A fallback backend must satisfy the same readiness contract.
 
 ## Build and test results
 

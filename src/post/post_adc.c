@@ -1,7 +1,7 @@
 #include "post/post_adc.h"
 
 #include "esp_log.h"
-#include "adc/inverter_adc.h"
+#include "adc/adc_manager.h"
 #include "system/system_state.h"
 
 extern system_state_t sys_state;
@@ -14,9 +14,9 @@ static const char *TAG = "POST_ADC";
 bool post_adc_test(void)
 {
     bool all_passed = true;
-    inverter_adc_snapshot_t snapshot = {0};
-    if (!inverter_adc_is_ready() ||
-        inverter_adc_get_snapshot(&snapshot) != ESP_OK ||
+    adc_manager_snapshot_t snapshot = {0};
+    if (!adc_manager_is_ready() ||
+        adc_manager_get_snapshot(&snapshot) != ESP_OK ||
         !snapshot.required_data_valid || !snapshot.fresh) {
         ESP_LOGE(TAG, "ADC snapshot is not ready/fresh; refusing ADC POST");
         return false;

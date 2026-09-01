@@ -120,7 +120,7 @@ class FirmwareContracts(unittest.TestCase):
 
     def test_adc_startup_timeout_publishes_terminal_failure_before_app_timeout(self):
         root = Path(__file__).parents[1]
-        adc = root.joinpath("src", "adc", "inverter_adc.c").read_text()
+        adc = root.joinpath("src", "adc", "adc_manager.c").read_text()
         self.assertIn("ADC_STARTUP_FAILURE_TIMEOUT_MS 2000U", adc)
         self.assertIn("startup_failure_reported", adc)
         self.assertIn("required telemetry did not become valid/fresh during startup deadline", adc)
@@ -132,16 +132,16 @@ class FirmwareContracts(unittest.TestCase):
     def test_adc_and_lcd_selection_is_menuconfig_backed_and_exclusive(self):
         root = Path(__file__).parents[1]
         kconfig = root.joinpath("src", "Kconfig.projbuild").read_text()
-        self.assertIn("choice INVERTER_ADC_MODE", kconfig)
-        self.assertIn("default INVERTER_ADC_MODE_CONTINUOUS", kconfig)
-        self.assertIn("config INVERTER_ADC_MODE_ONESHOT", kconfig)
+        self.assertIn("choice ADC_MANAGER_MODE", kconfig)
+        self.assertIn("default ADC_MANAGER_MODE_CONTINUOUS", kconfig)
+        self.assertIn("config ADC_MANAGER_MODE_ONESHOT", kconfig)
         self.assertIn("choice INVERTER_LCD_GEOMETRY", kconfig)
         self.assertIn("default INVERTER_LCD_20X4", kconfig)
 
-        config = root.joinpath("include", "adc", "inverter_adc_config.h").read_text()
+        config = root.joinpath("include", "adc", "adc_config.h").read_text()
         self.assertIn('include "sdkconfig.h"', config)
-        self.assertIn("CONFIG_INVERTER_ADC_MODE_CONTINUOUS", config)
-        self.assertIn("CONFIG_INVERTER_ADC_MODE_ONESHOT", config)
+        self.assertIn("CONFIG_ADC_MANAGER_MODE_CONTINUOUS", config)
+        self.assertIn("CONFIG_ADC_MANAGER_MODE_ONESHOT", config)
         self.assertIn("ADC menuconfig selected both acquisition modes", config)
         self.assertIn("Select an ADC acquisition mode with idf.py menuconfig", config)
 
@@ -153,13 +153,13 @@ class FirmwareContracts(unittest.TestCase):
         platformio = root.joinpath("platformio.ini").read_text()
         self.assertIn("-t menuconfig", platformio)
         self.assertNotIn("esp32dev-continuous-16x2", platformio)
-        self.assertNotIn("-DINVERTER_ADC_MODE=", platformio)
+        self.assertNotIn("-DADC_MANAGER_MODE=", platformio)
 
     def test_watchdog_registered_self_deletes_unregister_first(self):
         root = Path(__file__).parents[1]
         watchdog = root.joinpath("src", "task_watchdog.c").read_text()
         header = root.joinpath("include", "system", "task_watchdog.h").read_text()
-        adc = root.joinpath("src", "adc", "inverter_adc.c").read_text()
+        adc = root.joinpath("src", "adc", "adc_manager.c").read_text()
         lcd_events = root.joinpath("src", "lcd_event_receiver.c").read_text()
         ota = root.joinpath("src", "ota", "ota_service.c").read_text()
         app_runtime = root.joinpath("src", "app_runtime.c").read_text()
@@ -246,7 +246,7 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("BAR_2 / PROGRESS_BLOCK", lcd_source)
         self.assertIn("0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F", lcd_source)
 
-    def test_continuous_backend_uses_esp32_supported_sample_rate(self):
+    def test_continuous_driver_uses_esp32_supported_sample_rate(self):
         root = Path(__file__).parents[1]
         source = root.joinpath("src", "adc", "adc_continuous.c").read_text()
         self.assertIn("ADC_CONTINUOUS_SAMPLE_FREQ_HZ 20000U", source)
@@ -264,37 +264,37 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("adc_oneshot_new_unit", source)
         self.assertIn("switched safely to ADC1 Oneshot fallback", source)
 
-    def test_common_adc_snapshot_and_ready_contract_is_backend_neutral(self):
+    def test_common_adc_snapshot_and_ready_contract_is_driver_neutral(self):
         root = Path(__file__).parents[1]
-        header = root.joinpath("include", "adc", "inverter_adc.h").read_text()
-        adapter = root.joinpath("src", "adc", "inverter_adc.c").read_text()
-        self.assertIn("inverter_adc_snapshot_t", header)
-        self.assertIn("inverter_adc_backend_state_t", header)
-        self.assertIn("INVERTER_ADC_BACKEND_FALLBACK", header)
-        self.assertIn("inverter_adc_measurement_t", header)
-        self.assertIn("inverter_adc_backend_status_t", header)
-        self.assertIn("inverter_adc_get_backend_status", header)
-        self.assertIn("inverter_adc_get_measurement", header)
-        self.assertIn("inverter_adc_get_snapshot", header)
-        self.assertIn("inverter_adc_is_ready", header)
-        self.assertIn("s_state = INVERTER_ADC_STATE_READY", adapter)
+        header = root.joinpath("include", "adc", "adc_manager.h").read_text()
+        adapter = root.joinpath("src", "adc", "adc_manager.c").read_text()
+        self.assertIn("adc_manager_snapshot_t", header)
+        self.assertIn("adc_driver_state_t", header)
+        self.assertIn("ADC_DRIVER_FALLBACK", header)
+        self.assertIn("adc_manager_measurement_t", header)
+        self.assertIn("adc_driver_status_t", header)
+        self.assertIn("adc_manager_get_driver_status", header)
+        self.assertIn("adc_manager_get_measurement", header)
+        self.assertIn("adc_manager_get_snapshot", header)
+        self.assertIn("adc_manager_is_ready", header)
+        self.assertIn("adc_manager_state = ADC_MANAGER_STATE_READY", adapter)
         self.assertIn("telemetry_health_required_ready", adapter)
         self.assertIn("APP_EVENT_ADC_READY", adapter)
         self.assertIn("measurement_record_read_error", adapter)
-        self.assertIn("backend_status_refresh", adapter)
-        self.assertIn("snapshot.backend_degraded", adapter)
+        self.assertIn("driver_status_refresh", adapter)
+        self.assertIn("snapshot.driver_degraded", adapter)
 
     def test_post_can_run_only_after_adc_and_lcd_ready_events(self):
         text = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
         wait_end = text.index("if (adc_ready && lcd_ready)")
         post_call = text.index("startup_post = post_run_all()")
         self.assertGreater(post_call, wait_end)
-        self.assertIn("inverter_adc_start()", text)
-        self.assertLess(text.index("inverter_adc_start()"), text.index("post_run_all()"))
+        self.assertIn("adc_manager_start()", text)
+        self.assertLess(text.index("adc_manager_start()"), text.index("post_run_all()"))
 
     def test_post_adc_refuses_unready_or_stale_snapshot(self):
         text = Path(__file__).parents[1].joinpath("src", "post", "post_adc.c").read_text()
-        self.assertIn("inverter_adc_is_ready()", text)
+        self.assertIn("adc_manager_is_ready()", text)
         self.assertIn("snapshot.required_data_valid", text)
         self.assertIn("snapshot.fresh", text)
         self.assertIn("ADC snapshot is not ready/fresh", text)
