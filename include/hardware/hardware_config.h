@@ -39,7 +39,10 @@ _Static_assert(GPIO_BUTTON_UP != GPIO_BUTTON_DOWN &&
 #define GPIO_POWER_RELAY GPIO_NUM_12
 #define GPIO_I2C_SDA GPIO_NUM_21
 #define GPIO_I2C_SCL GPIO_NUM_22
-#define GPIO_NEPA_INPUT GPIO_I2C_SCL
+/* NEPA is a digital input; GPIO39 is an unused ESP32 input-only GPIO.
+ * Keep it separate from the LCD I2C bus on GPIO21/GPIO22. GPIO39 has no
+ * internal pull-up/down, so the external NEPA circuit must provide its bias. */
+#define GPIO_NEPA_INPUT GPIO_NUM_39
 
 /* LCD power is separate from the PWM backlight output. */
 #define GPIO_LCD_POWER GPIO_NUM_27
@@ -50,6 +53,23 @@ _Static_assert(GPIO_BUTTON_UP != GPIO_BUTTON_DOWN &&
  * must be rewired to GPIO23, the audited unused digital-input pin. GPIO23 is
  * not an ADC input, button, LCD, LED, buzzer, relay, or fan-PWM owner. */
 #define GPIO_FAN_TACH GPIO_NUM_23 /* Yellow wire -- tachometer pulse input */
+
+_Static_assert(GPIO_NEPA_INPUT != GPIO_BUTTON_POWER &&
+               GPIO_NEPA_INPUT != GPIO_BUTTON_ENTER_MENU &&
+               GPIO_NEPA_INPUT != GPIO_BUTTON_UP &&
+               GPIO_NEPA_INPUT != GPIO_BUTTON_DOWN &&
+               GPIO_NEPA_INPUT != GPIO_BUTTON_BACK &&
+               GPIO_NEPA_INPUT != GPIO_BUZZER &&
+               GPIO_NEPA_INPUT != GPIO_STATUS_LED &&
+               GPIO_NEPA_INPUT != GPIO_ERROR_LED &&
+               GPIO_NEPA_INPUT != GPIO_POWER_RELAY &&
+               GPIO_NEPA_INPUT != GPIO_I2C_SDA &&
+               GPIO_NEPA_INPUT != GPIO_I2C_SCL &&
+               GPIO_NEPA_INPUT != GPIO_LCD_POWER &&
+               GPIO_NEPA_INPUT != GPIO_LCD_BACKLIGHT &&
+               GPIO_NEPA_INPUT != GPIO_FAN &&
+               GPIO_NEPA_INPUT != GPIO_FAN_TACH,
+               "NEPA input GPIO collides with another peripheral");
 
 _Static_assert(GPIO_FAN_TACH != GPIO_BUTTON_POWER &&
                GPIO_FAN_TACH != GPIO_BUTTON_ENTER_MENU &&

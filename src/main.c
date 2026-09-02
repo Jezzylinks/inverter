@@ -149,6 +149,7 @@ void app_main(void)
     task_watchdog_feed();
     lcd_power_init();
     LCD_power(true);
+    lcd_controller_init();
     lcd_set_brightness(200);
 
     /* Buzzer owns its LEDC timer/channel. A buzzer failure is deliberately

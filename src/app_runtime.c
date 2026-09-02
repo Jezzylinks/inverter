@@ -1425,13 +1425,19 @@ static value_edit_context_t value_edit[] = {
     },
 };
 
+// =============== LCD CONTROLLER INITIALIZATION ===============
+void lcd_controller_init(void)
+{
+#if CONFIG_USE_LCD
+    /* The LCD power rail must already be enabled before HD44780 startup. */
+    lcd_init(LCD_ADDR, SDA_PIN, SCL_PIN);
+    ESP_LOGI("LCD", "LCD controller initialization requested after power enable");
+#endif
+}
+
 // =============== HARDWARE INITIALIZATION ===============
 void init_hardware(void)
 {
-#if CONFIG_USE_LCD
-    lcd_init(LCD_ADDR, SDA_PIN, SCL_PIN);
-#endif
-
     // ==========================================================
     // Initialize LED Driver
     // ==========================================================
