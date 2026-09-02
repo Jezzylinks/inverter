@@ -42,6 +42,10 @@ typedef struct
     adc_driver_channel_t *channel_states;
 } adc_continuous_context_t;
 
+void adc_continuous_driver_deinit(void *driver_context,
+                                  adc_driver_channel_t *channel_states,
+                                  size_t channel_count);
+
 static bool IRAM_ATTR continuous_on_conv_done(
     adc_continuous_handle_t handle,
     const adc_continuous_evt_data_t *event,
