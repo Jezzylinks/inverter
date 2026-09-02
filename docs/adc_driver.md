@@ -7,7 +7,7 @@ The firmware now has a three-layer ADC design. The low-level helper remains reus
 | Layer | Files | Responsibility |
 | --- | --- | --- |
 | Portable helper | `src/adc/adc.c`, `include/adc/adc.h` | ESP-IDF oneshot unit lifecycle, calibration handles, calibrated/raw conversion, and the existing fixed-count multisample helper. |
-| Acquisition backends | `src/adc/adc_continuous.c`, `src/adc/adc_oneshot.c`, `src/adc/adc_driver.h` | Exactly one backend is compiled into the firmware. Continuous mode uses the ESP-IDF ADC1 digital controller and parses DMA conversion frames; oneshot mode uses the reusable helper. |
+| Acquisition backends | `src/adc/adc_continuous.c`, `src/adc/adc_oneshot.c`, `include/adc/adc_driver.h` | Exactly one backend is compiled into the firmware. Continuous mode uses the ESP-IDF ADC1 digital controller and parses DMA conversion frames; oneshot mode uses the reusable helper. |
 | Inverter adapter | `src/adc/adc_manager.c`, `include/adc/adc_manager.h` | Channel mapping, electrical conversion, battery 12/24/48 V scaling, range mapping, telemetry health, filtering, protections, emergency shutdown, LCD/API/cloud updates, snapshots, and lifecycle state. |
 
 `src/adc/adc_manager.c` is the only application-facing ADC implementation. The rest of the firmware uses the common API and the existing `sys_state` values; it does not call ESP-IDF acquisition APIs or select a backend.

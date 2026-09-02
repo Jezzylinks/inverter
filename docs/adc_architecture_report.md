@@ -28,7 +28,7 @@ Before this work, the application-facing ADC snapshot exposed only scaled voltag
 | --- | --- |
 | `src/adc/adc_continuous.c` | Preserved Continuous/DMA as the primary backend; aligned frames to the ESP32 DMA conversion stride; masked channel IDs; registered conversion-done and pool-overflow diagnostics; resolved and logged ADC1 GPIO mappings; added a bounded no-frame transition to safe Oneshot operation. |
 | `src/adc/adc_oneshot.c` | Added the matching runtime-status implementation for menuconfig-selected Oneshot mode. |
-| `src/adc/adc_driver.h` | Added a backend runtime-status contract shared by both backends. |
+| `include/adc/adc_driver.h` | Added a backend runtime-status contract shared by both backends. |
 | `include/adc/adc_manager.h` | Added backend states, per-channel measurement metadata, backend health counters, additive snapshot fields, and read-only status/measurement getters. Existing APIs remain available. |
 | `src/adc/adc_manager.c` | Added coherent measurement caching, per-channel quality metadata, health counters, backend-state refresh, age-based freshness, and read-only getter implementations. Existing validation and protection decisions remain in place. |
 | `tools/test_firmware_contracts.py` | Added source contracts for DMA diagnostics, safe fallback ordering, explicit backend states, measurement metadata, and status APIs. |

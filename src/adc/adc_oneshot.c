@@ -16,7 +16,7 @@ typedef struct
     adc_oneshot_unit_handle_t handle;
 } adc_oneshot_context_t;
 
-esp_err_t adc_driver_init(const adc_channel_t *channels,
+esp_err_t adc_oneshot_driver_init(const adc_channel_t *channels,
                                      size_t channel_count,
                                      adc_driver_channel_t *channel_states,
                                      void **driver_context)
@@ -76,7 +76,7 @@ esp_err_t adc_driver_init(const adc_channel_t *channels,
     return ESP_OK;
 }
 
-esp_err_t adc_driver_read_sample(
+esp_err_t adc_oneshot_driver_read_sample(
     void *driver_context,
     const adc_driver_channel_t *channel_state,
     float *out_voltage)
@@ -93,7 +93,7 @@ esp_err_t adc_driver_read_sample(
         out_voltage, ADC_ONESHOT_SAMPLES);
 }
 
-void adc_driver_deinit(void *driver_context,
+void adc_oneshot_driver_deinit(void *driver_context,
                                  adc_driver_channel_t *channel_states,
                                  size_t channel_count)
 {
@@ -120,12 +120,12 @@ void adc_driver_deinit(void *driver_context,
     free(context);
 }
 
-const char *adc_driver_get_name(void)
+const char *adc_oneshot_driver_get_name(void)
 {
     return "oneshot";
 }
 
-esp_err_t adc_driver_get_runtime(
+esp_err_t adc_oneshot_driver_get_runtime(
     void *driver_context, adc_driver_runtime_t *out)
 {
     if (driver_context == NULL || out == NULL) {

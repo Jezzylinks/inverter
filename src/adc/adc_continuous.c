@@ -70,7 +70,7 @@ static bool IRAM_ATTR continuous_on_pool_overflow(
     return false;
 }
 
-esp_err_t adc_driver_init(const adc_channel_t *channels,
+esp_err_t adc_continuous_driver_init(const adc_channel_t *channels,
                                      size_t channel_count,
                                      adc_driver_channel_t *channel_states,
                                      void **driver_context)
@@ -150,7 +150,7 @@ esp_err_t adc_driver_init(const adc_channel_t *channels,
     if (result != ESP_OK) {
         ESP_LOGE(ADC_CONTINUOUS_TAG, "Continuous configuration failed: %s",
                  esp_err_to_name(result));
-        adc_driver_deinit(context, channel_states, channel_count);
+        adc_continuous_driver_deinit(context, channel_states, channel_count);
         return result;
     }
 
@@ -164,7 +164,7 @@ esp_err_t adc_driver_init(const adc_channel_t *channels,
         ESP_LOGE(ADC_CONTINUOUS_TAG,
                  "Continuous callback registration failed: %s",
                  esp_err_to_name(result));
-        adc_driver_deinit(context, channel_states, channel_count);
+        adc_continuous_driver_deinit(context, channel_states, channel_count);
         return result;
     }
 
@@ -179,7 +179,7 @@ esp_err_t adc_driver_init(const adc_channel_t *channels,
     if (result != ESP_OK) {
         ESP_LOGE(ADC_CONTINUOUS_TAG, "Continuous start failed: %s",
                  esp_err_to_name(result));
-        adc_driver_deinit(context, channel_states, channel_count);
+        adc_continuous_driver_deinit(context, channel_states, channel_count);
         return result;
     }
 
@@ -249,7 +249,7 @@ static esp_err_t continuous_switch_to_oneshot(adc_continuous_context_t *context)
     return ESP_OK;
 }
 
-esp_err_t adc_driver_read_sample(
+esp_err_t adc_continuous_driver_read_sample(
     void *driver_context,
     const adc_driver_channel_t *channel_state,
     float *out_voltage)
@@ -353,7 +353,7 @@ esp_err_t adc_driver_read_sample(
     return ESP_OK;
 }
 
-void adc_driver_deinit(void *driver_context,
+void adc_continuous_driver_deinit(void *driver_context,
                                  adc_driver_channel_t *channel_states,
                                  size_t channel_count)
 {
@@ -394,12 +394,12 @@ void adc_driver_deinit(void *driver_context,
     free(context);
 }
 
-const char *adc_driver_get_name(void)
+const char *adc_continuous_driver_get_name(void)
 {
     return "continuous";
 }
 
-esp_err_t adc_driver_get_runtime(
+esp_err_t adc_continuous_driver_get_runtime(
     void *driver_context, adc_driver_runtime_t *out)
 {
     if (driver_context == NULL || out == NULL) {

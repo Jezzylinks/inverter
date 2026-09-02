@@ -246,6 +246,22 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("BAR_2 / PROGRESS_BLOCK", lcd_source)
         self.assertIn("0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F", lcd_source)
 
+    def test_adc_driver_dispatcher_exposes_mode_specific_implementations(self):
+        root = Path(__file__).parents[1]
+        public_header = root.joinpath("include", "adc", "adc_driver.h").read_text()
+        dispatcher = root.joinpath("src", "adc", "adc_driver.c").read_text()
+        continuous = root.joinpath("src", "adc", "adc_continuous.c").read_text()
+        oneshot = root.joinpath("src", "adc", "adc_oneshot.c").read_text()
+        self.assertIn("adc_driver_init", public_header)
+        self.assertIn("adc_driver_init", dispatcher)
+        self.assertIn("adc_continuous_driver_init", dispatcher)
+        self.assertIn("adc_oneshot_driver_init", dispatcher)
+        self.assertIn("adc_continuous_driver_init", continuous)
+        self.assertIn("adc_oneshot_driver_init", oneshot)
+        self.assertNotIn("esp_err_t adc_driver_init", continuous)
+        self.assertNotIn("esp_err_t adc_driver_init", oneshot)
+        self.assertFalse(root.joinpath("src", "adc", "adc_driver_impl.h").exists())
+
     def test_continuous_driver_uses_esp32_supported_sample_rate(self):
         root = Path(__file__).parents[1]
         source = root.joinpath("src", "adc", "adc_continuous.c").read_text()
