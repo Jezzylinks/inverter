@@ -1426,12 +1426,18 @@ static value_edit_context_t value_edit[] = {
 };
 
 // =============== LCD CONTROLLER INITIALIZATION ===============
-void lcd_controller_init(void)
+esp_err_t lcd_controller_init(void)
 {
 #if CONFIG_USE_LCD
     /* The LCD power rail must already be enabled before HD44780 startup. */
-    lcd_init(LCD_ADDR, SDA_PIN, SCL_PIN);
-    ESP_LOGI("LCD", "LCD controller initialization requested after power enable");
+    const esp_err_t err = lcd_init(LCD_ADDR, SDA_PIN, SCL_PIN);
+    if (err != ESP_OK) {
+        ESP_LOGE("LCD", "LCD controller initialization failed: %s",
+                 esp_err_to_name(err));
+    }
+    return err;
+#else
+    return ESP_ERR_NOT_SUPPORTED;
 #endif
 }
 

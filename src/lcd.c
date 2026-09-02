@@ -15,6 +15,7 @@
 // --------------------------------------------------
 static uint8_t lcd_address;
 static lcd_state_t lcd;
+static bool lcd_initialized;
 
 // Commands
 #define LCD_CMD_CLEAR 0x01
@@ -100,24 +101,30 @@ static esp_err_t lcd_write_byte(uint8_t data)
         I2C_PORT, lcd_address, &data_with_backlight, 1, 100 / portTICK_PERIOD_MS); // Increased timeout
 }
 
-static void lcd_pulse_enable(uint8_t data)
+static esp_err_t lcd_pulse_enable(uint8_t data)
 {
-    lcd_write_byte(data | ENABLE_BIT);
+    esp_err_t err = lcd_write_byte(data | ENABLE_BIT);
+    if (err != ESP_OK)
+        return err;
     esp_rom_delay_us(1);
-    lcd_write_byte(data & ~ENABLE_BIT);
+    err = lcd_write_byte(data & (uint8_t)~ENABLE_BIT);
+    if (err != ESP_OK)
+        return err;
     esp_rom_delay_us(50);
+    return ESP_OK;
 }
 
-static void lcd_write_nibble(uint8_t nibble, uint8_t mode)
+static esp_err_t lcd_write_nibble(uint8_t nibble, uint8_t mode)
 {
-    uint8_t data = nibble | mode;
-    lcd_pulse_enable(data);
+    return lcd_pulse_enable(nibble | mode);
 }
 
-static void lcd_send(uint8_t value, uint8_t mode)
+static esp_err_t lcd_send(uint8_t value, uint8_t mode)
 {
-    lcd_write_nibble(value & 0xF0, mode);
-    lcd_write_nibble((value << 4) & 0xF0, mode);
+    esp_err_t err = lcd_write_nibble(value & 0xF0, mode);
+    if (err != ESP_OK)
+        return err;
+    return lcd_write_nibble((value << 4) & 0xF0, mode);
 }
 
 // --------------------------------------------------
@@ -125,12 +132,12 @@ static void lcd_send(uint8_t value, uint8_t mode)
 // --------------------------------------------------
 void lcd_send_command(uint8_t cmd)
 {
-    lcd_send(cmd, 0x00);
+    (void)lcd_send(cmd, 0x00);
 }
 
 void lcd_print_char(char c)
 {
-    lcd_send(c, RS_BIT);
+    (void)lcd_send((uint8_t)c, RS_BIT);
 }
 
 void lcd_clear(void)
@@ -276,70 +283,84 @@ esp_err_t lcd_i2c_init(uint8_t sdaPin, uint8_t sclPin)
 // --------------------------------------------------
 // LCD INITIALIZATION (FIXED - WITH AUTO-SCAN)
 // --------------------------------------------------
-void lcd_init(uint8_t addr, uint8_t sdaPin, uint8_t sclPin)
+esp_err_t lcd_init(uint8_t addr, uint8_t sdaPin, uint8_t sclPin)
 {
-    // Initialize I2C first
+    lcd_initialized = false;
+
     esp_err_t err = lcd_i2c_init(sdaPin, sclPin);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "LCD I2C initialization failed: %s", esp_err_to_name(err));
-        return;
+        return err;
     }
 
-    // If address is 0, auto-scan for LCD
-    if (addr == 0)
-    {
+    if (addr == 0) {
         ESP_LOGI(TAG, "Auto-scanning for LCD address...");
         addr = lcd_scan_and_find_address();
-
-        if (addr == 0)
-        {
-            ESP_LOGE(TAG, "Failed to find LCD on I2C bus!");
-            return;
+        if (addr == 0) {
+            ESP_LOGE(TAG, "Failed to find LCD on I2C bus");
+            return ESP_ERR_NOT_FOUND;
         }
     }
 
     lcd_address = addr;
     lcd.backlight = 1;
+    ESP_LOGI(TAG, "LCD init started: address=0x%02X SDA=%u SCL=%u",
+             lcd_address, (unsigned)sdaPin, (unsigned)sclPin);
 
-    ESP_LOGI(TAG, "Initializing LCD at address 0x%02X", lcd_address);
-
-    // Wait for LCD to power up (IMPORTANT)
+    /* A physical HD44780 may need this power-stabilization interval. */
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    // FIX 1: Initialize to 8-bit mode first (standard HD44780 init sequence)
-    lcd_write_nibble(0x30, 0);
-    vTaskDelay(pdMS_TO_TICKS(5));
-
-    lcd_write_nibble(0x30, 0);
-    esp_rom_delay_us(150); // Short delay
-
-    lcd_write_nibble(0x30, 0);
+    /* Enter 8-bit reset state, then select 4-bit transfer mode. */
+    err = lcd_write_nibble(0x30, 0);
+    if (err == ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(5));
+        err = lcd_write_nibble(0x30, 0);
+    }
+    if (err == ESP_OK) {
+        esp_rom_delay_us(150);
+        err = lcd_write_nibble(0x30, 0);
+    }
+    if (err == ESP_OK) {
+        esp_rom_delay_us(150);
+        err = lcd_write_nibble(0x20, 0);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "LCD 4-bit entry failed: %s", esp_err_to_name(err));
+        return err;
+    }
     esp_rom_delay_us(150);
 
-    // FIX 2: Now switch to 4-bit mode
-    lcd_write_nibble(0x20, 0);
-    esp_rom_delay_us(150);
+    const uint8_t init_commands[] = {
+        LCD_CMD_FUNCTION_SET, /* 4-bit, 2-line, 5x8 font */
+        0x08,                  /* display off */
+        LCD_CMD_CLEAR,
+        LCD_CMD_ENTRY_MODE,
+        LCD_CMD_DISPLAY_ON,
+        LCD_CMD_HOME,
+    };
+    for (size_t i = 0; i < sizeof(init_commands); ++i) {
+        err = lcd_send(init_commands[i], 0);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "LCD init command 0x%02X failed: %s",
+                     init_commands[i], esp_err_to_name(err));
+            return err;
+        }
+        if (init_commands[i] == LCD_CMD_CLEAR ||
+            init_commands[i] == LCD_CMD_HOME) {
+            vTaskDelay(pdMS_TO_TICKS(2));
+        } else {
+            esp_rom_delay_us(50);
+        }
+    }
 
-    // FIX 3: Configure LCD in 4-bit mode with proper sequence
-    lcd_send_command(LCD_CMD_FUNCTION_SET); // 0x28: 4-bit, 2 lines, 5x8 font
-    esp_rom_delay_us(50);
+    lcd_initialized = true;
+    ESP_LOGI(TAG, "LCD init complete at address 0x%02X", lcd_address);
+    return ESP_OK;
+}
 
-    lcd_send_command(0x08); // Display OFF
-    esp_rom_delay_us(50);
-
-    lcd_send_command(LCD_CMD_CLEAR); // Clear display
-    vTaskDelay(pdMS_TO_TICKS(2));
-
-    lcd_send_command(LCD_CMD_ENTRY_MODE); // 0x06: Entry mode - increment, no shift
-    esp_rom_delay_us(50);
-
-    lcd_send_command(LCD_CMD_DISPLAY_ON); // 0x0C: Display ON, cursor OFF, blink OFF
-    esp_rom_delay_us(50);
-
-    lcd_send_command(LCD_CMD_HOME); // Return home
-    vTaskDelay(pdMS_TO_TICKS(2));
-
-    ESP_LOGI(TAG, "✓ LCD initialized successfully at address 0x%02X", addr);
+bool lcd_is_initialized(void)
+{
+    return lcd_initialized;
 }
 
 // --------------------------------------------------

@@ -149,7 +149,7 @@ void app_main(void)
     task_watchdog_feed();
     lcd_power_init();
     LCD_power(true);
-    lcd_controller_init();
+    const esp_err_t lcd_init_result = lcd_controller_init();
     lcd_set_brightness(200);
 
     /* Buzzer owns its LEDC timer/channel. A buzzer failure is deliberately
@@ -164,6 +164,9 @@ void app_main(void)
     xEventGroupClearBits(sys_event_group,
                          APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED |
                          APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED);
+    if (lcd_init_result != ESP_OK) {
+        xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
+    }
     const esp_err_t adc_start_result = adc_manager_start();
     if (adc_start_result != ESP_OK)
     {

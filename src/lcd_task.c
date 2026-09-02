@@ -1779,7 +1779,12 @@ void lcd_task_reinit(lcd_screen_id_t *last_screen)
     }
 
     /* Reinitialize LCD hardware and force full redraw. */
-    lcd_init(LCD_ADDR, SDA_PIN, SCL_PIN);
+    const esp_err_t init_err = lcd_init(LCD_ADDR, SDA_PIN, SCL_PIN);
+    if (init_err != ESP_OK) {
+        ESP_LOGE("LCD_REINIT", "LCD reinitialization failed: %s",
+                 esp_err_to_name(init_err));
+        return;
+    }
     lcd_init_cgram();
     *last_screen = LCD_SCREEN_COUNT;
 
@@ -1829,9 +1834,13 @@ void lcd_task(void *arg)
     reset_row_cache();
 
     ESP_LOGI(TAG, "lcd_task started (%dx%d)", lcd_geometry_cols(), lcd_geometry_rows());
-    lcd_init_cgram();
+    if (lcd_is_initialized()) {
+        lcd_init_cgram();
+    } else {
+        ESP_LOGE(TAG, "LCD task started without an initialized controller");
+    }
     lcd_flash_init(xTaskGetCurrentTaskHandle());
-    if (sys_event_group != NULL) {
+    if (sys_event_group != NULL && lcd_is_initialized()) {
         xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_READY);
     }
     while (1)

@@ -51,7 +51,12 @@ extern "C"
      * @param sdaPin GPIO pin for SDA
      * @param sclPin GPIO pin for SCL
      */
-    void lcd_init(uint8_t addr, uint8_t sdaPin, uint8_t sclPin);
+    esp_err_t lcd_init(uint8_t addr, uint8_t sdaPin, uint8_t sclPin);
+
+    /**
+     * @brief Return whether the LCD controller completed initialization.
+     */
+    bool lcd_is_initialized(void);
 
     /**
      * @brief Probe the LCD's I2C address for an ACK, without writing any

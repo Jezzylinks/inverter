@@ -40,7 +40,7 @@ void init_hardware(void);
 void restore_from_deep_sleep(void);
 void lcd_power_init(void);
 void LCD_power(bool enable);
-void lcd_controller_init(void);
+esp_err_t lcd_controller_init(void);
 void lcd_set_brightness(uint8_t brightness);
 void lcd_task(void *arg);
 void inverter_emergency_shutdown(void);
