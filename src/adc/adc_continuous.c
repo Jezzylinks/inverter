@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include "adc/adc_config.h"
+#include "adc/adc_continuous.h"
 #include "esp_adc/adc_continuous.h"
 #include "esp_attr.h"
 #include "esp_log.h"

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include "adc/adc_config.h"
+#include "adc/adc_oneshot.h"
 #include "esp_log.h"
 
 #if ADC_MANAGER_MODE == ADC_MANAGER_MODE_ONESHOT
