@@ -76,7 +76,6 @@ static const uint8_t cgram_bat_r[8] = {
     /* right cap + nub on top */
     0x1C, 0x1C, 0x10, 0x10, 0x10, 0x10, 0x1C, 0x1C};
 
-
 static const uint8_t cgram_wifi_tx[8] = {
     0x00, 0x04, 0x06, 0x1F, 0x06, 0x04, 0x00, 0x00};
 static const uint8_t cgram_wifi_rx[8] = {
@@ -266,14 +265,16 @@ esp_err_t lcd_i2c_init(uint8_t sdaPin, uint8_t sclPin)
         .master.clk_speed = I2C_FREQ_HZ};
 
     esp_err_t err = i2c_param_config(I2C_PORT, &cfg);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGE(TAG, "I2C parameter configuration failed: %s",
                  esp_err_to_name(err));
         return err;
     }
 
     err = i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGE(TAG, "I2C driver installation failed: %s",
                  esp_err_to_name(err));
     }
@@ -288,15 +289,18 @@ esp_err_t lcd_init(uint8_t addr, uint8_t sdaPin, uint8_t sclPin)
     lcd_initialized = false;
 
     esp_err_t err = lcd_i2c_init(sdaPin, sclPin);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+    {
         ESP_LOGE(TAG, "LCD I2C initialization failed: %s", esp_err_to_name(err));
         return err;
     }
 
-    if (addr == 0) {
+    if (addr == 0)
+    {
         ESP_LOGI(TAG, "Auto-scanning for LCD address...");
         addr = lcd_scan_and_find_address();
-        if (addr == 0) {
+        if (addr == 0)
+        {
             ESP_LOGE(TAG, "Failed to find LCD on I2C bus");
             return ESP_ERR_NOT_FOUND;
         }
@@ -312,19 +316,23 @@ esp_err_t lcd_init(uint8_t addr, uint8_t sdaPin, uint8_t sclPin)
 
     /* Enter 8-bit reset state, then select 4-bit transfer mode. */
     err = lcd_write_nibble(0x30, 0);
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         vTaskDelay(pdMS_TO_TICKS(5));
         err = lcd_write_nibble(0x30, 0);
     }
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         esp_rom_delay_us(150);
         err = lcd_write_nibble(0x30, 0);
     }
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         esp_rom_delay_us(150);
         err = lcd_write_nibble(0x20, 0);
     }
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGE(TAG, "LCD 4-bit entry failed: %s", esp_err_to_name(err));
         return err;
     }
@@ -332,23 +340,28 @@ esp_err_t lcd_init(uint8_t addr, uint8_t sdaPin, uint8_t sclPin)
 
     const uint8_t init_commands[] = {
         LCD_CMD_FUNCTION_SET, /* 4-bit, 2-line, 5x8 font */
-        0x08,                  /* display off */
+        0x08,                 /* display off */
         LCD_CMD_CLEAR,
         LCD_CMD_ENTRY_MODE,
         LCD_CMD_DISPLAY_ON,
         LCD_CMD_HOME,
     };
-    for (size_t i = 0; i < sizeof(init_commands); ++i) {
+    for (size_t i = 0; i < sizeof(init_commands); ++i)
+    {
         err = lcd_send(init_commands[i], 0);
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             ESP_LOGE(TAG, "LCD init command 0x%02X failed: %s",
                      init_commands[i], esp_err_to_name(err));
             return err;
         }
         if (init_commands[i] == LCD_CMD_CLEAR ||
-            init_commands[i] == LCD_CMD_HOME) {
+            init_commands[i] == LCD_CMD_HOME)
+        {
             vTaskDelay(pdMS_TO_TICKS(2));
-        } else {
+        }
+        else
+        {
             esp_rom_delay_us(50);
         }
     }
@@ -407,49 +420,105 @@ static uint8_t lcd_scan_and_find_address(void)
 {
     ESP_LOGI(TAG, "Scanning I2C bus for LCD...");
 
-    // Common LCD I2C addresses to check first
-    const uint8_t common_lcd_addresses[] = {0x27, 0x3F, 0x20, 0x38};
+    /*
+     * Common LCD I2C backpack addresses.
+     *
+     * PCF8574  : 0x20 - 0x27
+     * PCF8574A : 0x38 - 0x3F
+     *
+     * Try the most commonly encountered addresses first.
+     */
+    static const uint8_t common_lcd_addresses[] = {
+        0x27U,
+        0x3FU,
+        0x20U,
+        0x38U};
 
-    // First, try common LCD addresses
-    for (int i = 0; i < sizeof(common_lcd_addresses); i++)
+    /*
+     * Probe an address by performing a zero-byte write.
+     * This checks for an ACK without sending arbitrary data
+     * to the I2C device.
+     */
+    for (size_t i = 0U;
+         i < (sizeof(common_lcd_addresses) /
+              sizeof(common_lcd_addresses[0]));
+         ++i)
     {
-        uint8_t addr = common_lcd_addresses[i];
-        uint8_t data = 0x00;
-        esp_err_t ret = i2c_master_write_to_device(
-            I2C_PORT, addr, &data, 1, 100 / portTICK_PERIOD_MS);
+        const uint8_t addr = common_lcd_addresses[i];
+
+        const esp_err_t ret = i2c_master_write_to_device(
+            I2C_PORT,
+            addr,
+            NULL,
+            0U,
+            pdMS_TO_TICKS(20U));
 
         if (ret == ESP_OK)
         {
-            ESP_LOGI(TAG, "✓ LCD found at address 0x%02X", addr);
+            ESP_LOGI(
+                TAG,
+                "LCD I2C device found at address 0x%02X",
+                addr);
+
             return addr;
         }
     }
 
-    // If not found in common addresses, scan entire bus
-    ESP_LOGI(TAG, "Not found at common addresses, scanning entire bus...");
+    ESP_LOGI(
+        TAG,
+        "LCD not found at common addresses; "
+        "scanning PCF8574/PCF8574A ranges...");
 
-    for (uint8_t addr = 1; addr < 127; addr++)
+    static const struct
     {
-        uint8_t data = 0x00;
-        esp_err_t ret = i2c_master_write_to_device(
-            I2C_PORT, addr, &data, 1, 100 / portTICK_PERIOD_MS);
+        uint8_t first;
+        uint8_t last;
+    } lcd_address_ranges[] = {
+        {0x20U, 0x27U}, // PCF8574
+        {0x38U, 0x3FU}  // PCF8574A
+    };
 
-        if (ret == ESP_OK)
+    for (size_t range = 0U;
+         range < (sizeof(lcd_address_ranges) /
+                  sizeof(lcd_address_ranges[0]));
+         ++range)
+    {
+        for (uint8_t addr = lcd_address_ranges[range].first;
+             addr <= lcd_address_ranges[range].last;
+             ++addr)
         {
-            ESP_LOGI(TAG, "✓ I2C device found at address 0x%02X", addr);
-            return addr;
-        }
+            const esp_err_t ret = i2c_master_write_to_device(
+                I2C_PORT,
+                addr,
+                NULL,
+                0U,
+                pdMS_TO_TICKS(20U));
 
-        vTaskDelay(pdMS_TO_TICKS(2)); // Small delay between probes
+            if (ret == ESP_OK)
+            {
+                ESP_LOGI(
+                    TAG,
+                    "LCD I2C device found at address 0x%02X",
+                    addr);
+
+                return addr;
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(2U));
+        }
     }
 
-    ESP_LOGE(TAG, "⚠ No I2C devices found!");
+    ESP_LOGE(TAG, "No LCD I2C device found!");
+
     ESP_LOGE(TAG, "Check:");
-    ESP_LOGE(TAG, "  - Wiring (SDA/SCL connections)");
-    ESP_LOGE(TAG, "  - Power supply (5V for LCD)");
-    ESP_LOGE(TAG, "  - Pull-up resistors (try 4.7kΩ external)");
+    ESP_LOGE(TAG, "  - SDA connection");
+    ESP_LOGE(TAG, "  - SCL connection");
+    ESP_LOGE(TAG, "  - LCD/backpack power");
+    ESP_LOGE(TAG, "  - Common ground");
+    ESP_LOGE(TAG, "  - I2C pull-up resistors");
+    ESP_LOGE(TAG, "  - LCD backpack address jumpers");
 
-    return 0; // Return 0 if not found
+    return 0U;
 }
 
 void lcd_scan_i2c_bus(uint8_t sdaPin, uint8_t sclPin)
