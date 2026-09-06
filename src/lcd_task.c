@@ -106,7 +106,7 @@ static void draw_commit_rows(const char *const rows[])
                  rows[row] ? rows[row] : "");
         if (strcmp(line, cached[row]) != 0)
         {
-            lcd_set_cursor(0, row);
+            lcd_set_cursor(row, 0);
             lcd_print(line);
             strcpy(cached[row], line);
         }
@@ -137,7 +137,7 @@ static void __attribute__((unused)) draw_row(uint8_t row, const char *text)
         s_last_row2,
         s_last_row3,
     };
-    lcd_set_cursor(0, row);
+    lcd_set_cursor(row, 0);
     char line[LCD_LINE_SIZE];
     uint8_t active_cols = lcd_geometry_cols();
     snprintf(line, sizeof(line), "%-*.*s", active_cols, active_cols,
@@ -451,7 +451,7 @@ static void draw_value_edit(const lcd_value_edit_data_t *d)
          (d->value_str[1] == 'N' || d->value_str[1] == 'F'));
     if (!is_boolean_value && len < lcd_geometry_cols())
     {
-        lcd_set_cursor(len, 1);
+        lcd_set_cursor(1, len);
         lcd_print_string(blink_state ? "_" : " ");
     }
 }
