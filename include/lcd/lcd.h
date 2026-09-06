@@ -47,7 +47,8 @@ extern "C"
 
     /**
      * @brief Initialize the LCD with I2C
-     * @param addr I2C address of LCD (typically 0x27 or 0x3F)
+     * @param addr I2C address of LCD; pass 0 to scan automatically.
+     *        A PCF8574T uses 0x20-0x27; PCF8574A uses 0x38-0x3F.
      * @param sdaPin GPIO pin for SDA
      * @param sclPin GPIO pin for SCL
      */

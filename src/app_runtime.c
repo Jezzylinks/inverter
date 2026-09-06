@@ -102,7 +102,11 @@
 #define CITY_NAME "Lagos"
 #define WEATHER_CHECK_INTERNAL_MS 60000
 #define FIRMWARE_VERSION INVERTER_FIRMWARE_VERSION
-#define LCD_ADDR 0x27
+/*
+ * Let lcd_init() discover the actual HW-61 PCF8574T address. The A0/A1/A2
+ * solder links determine which address in 0x20-0x27 is active.
+ */
+#define LCD_ADDR 0U
 #define SCROLL_DELAY_MS 300
 #define ANIM_DELAY_MS 80
 #define SDA_PIN GPIO_I2C_SDA

@@ -52,7 +52,8 @@ extern system_state_t sys_state;
 extern led_pattern_t pattern;
 
 /* lcd.h hardware config */
-#define LCD_ADDR 0x27
+/* Pass zero so lcd_init() scans the PCF8574T address range (0x20-0x27). */
+#define LCD_ADDR 0U
 #define SDA_PIN GPIO_I2C_SDA
 #define SCL_PIN GPIO_I2C_SCL
 #define LCD_BLINK_INTERVAL_MS 500
