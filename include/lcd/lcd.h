@@ -161,7 +161,7 @@ extern "C"
      * @param location Character location (0-7)
      * @param charmap 8-byte array defining character pattern
      */
-    void lcd_create_custom_char(uint8_t location, const uint8_t charmap[]);
+    void lcd_create_custom_char(uint8_t location, const uint8_t charmap[8]);
     void lcd_init_cgram(void);
 
     /**
@@ -175,7 +175,7 @@ extern "C"
      * @brief Scroll text across the display
      * @param str String to scroll
      */
-    void lcd_text_scroll(char *str);
+    void lcd_text_scroll(const char *str);
 
     /**
      * @brief Write an integer at specified position with width

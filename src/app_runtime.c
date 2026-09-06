@@ -106,7 +106,7 @@
  * Let lcd_init() discover the actual HW-61 PCF8574T address. The A0/A1/A2
  * solder links determine which address in 0x20-0x27 is active.
  */
-#define LCD_ADDR 0U
+#define LCD_ADDR 0x27U
 #define SCROLL_DELAY_MS 300
 #define ANIM_DELAY_MS 80
 #define SDA_PIN GPIO_I2C_SDA
@@ -950,7 +950,7 @@ int64_t lcd_get_current_time_ms(void)
     return esp_timer_get_time() / 1000;
 }
 
-void lcd_create_custom_char(uint8_t location, const uint8_t charmap[]);
+void lcd_create_custom_char(uint8_t location, const uint8_t charmap[8]);
 
 adc_cali_handle_t handle = NULL;
 
@@ -1435,7 +1435,8 @@ esp_err_t lcd_controller_init(void)
 #if CONFIG_USE_LCD
     /* The LCD power rail must already be enabled before HD44780 startup. */
     const esp_err_t err = lcd_init(LCD_ADDR, SDA_PIN, SCL_PIN);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGE("LCD", "LCD controller initialization failed: %s",
                  esp_err_to_name(err));
     }
@@ -1504,7 +1505,8 @@ void init_hardware(void)
     }
 
     const esp_err_t buzzer_err = buzzer_init();
-    if (buzzer_err != ESP_OK) {
+    if (buzzer_err != ESP_OK)
+    {
         ESP_LOGE(APP_TAG, "Buzzer unavailable; continuing without audio: %s",
                  esp_err_to_name(buzzer_err));
     }
@@ -1586,20 +1588,25 @@ static nvs_setting_t g_settings[] = {
 static uint32_t settings_fingerprint(void)
 {
     uint32_t hash = 2166136261UL;
-    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i) {
+    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
+    {
         const nvs_setting_t *setting = &g_settings[i];
         const uint8_t *bytes = NULL;
         int32_t scaled = 0;
-        if (setting->is_scaled_float) {
+        if (setting->is_scaled_float)
+        {
             scaled = (int32_t)(*(const float *)setting->field * NVS_FLOAT_SCALE);
             bytes = (const uint8_t *)&scaled;
-        } else {
+        }
+        else
+        {
             bytes = (const uint8_t *)setting->field;
         }
         const size_t length = setting->is_scaled_float
                                   ? sizeof(scaled)
                                   : setting->size;
-        for (size_t j = 0U; j < length; ++j) {
+        for (size_t j = 0U; j < length; ++j)
+        {
             hash ^= bytes[j];
             hash *= 16777619UL;
         }
@@ -1611,13 +1618,19 @@ static uint32_t settings_fingerprint(void)
 
 static void nvs_apply_defaults(void)
 {
-    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i) {
+    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
+    {
         nvs_setting_t *setting = &g_settings[i];
-        if (setting->is_scaled_float) {
+        if (setting->is_scaled_float)
+        {
             *(float *)setting->field = setting->default_val;
-        } else if (setting->size == sizeof(uint8_t)) {
+        }
+        else if (setting->size == sizeof(uint8_t))
+        {
             *(uint8_t *)setting->field = (uint8_t)setting->default_val;
-        } else {
+        }
+        else
+        {
             *(int32_t *)setting->field = (int32_t)setting->default_val;
         }
     }
@@ -2086,7 +2099,8 @@ bool load_settings()
         return false;
     }
 
-    if (nvs_load_all(nvs) != ESP_OK) {
+    if (nvs_load_all(nvs) != ESP_OK)
+    {
         load_error = true;
     }
 
@@ -2103,7 +2117,8 @@ bool load_settings()
         nvs_get_u32(nvs, NVS_SETTINGS_TXN_CRC_KEY, &stored_crc) == ESP_OK;
     if (txn_present &&
         (txn_marker != NVS_SETTINGS_TXN_VERSION || !crc_present ||
-         stored_crc != settings_fingerprint())) {
+         stored_crc != settings_fingerprint()))
+    {
         ESP_LOGE(NVS_LOADING_TAG,
                  "Settings transaction invalid; restoring validated defaults");
         nvs_apply_defaults();
@@ -2171,18 +2186,22 @@ bool save_settings()
     uint32_t generation = 0U;
     (void)nvs_get_u32(nvs, NVS_SETTINGS_TXN_GEN_KEY, &generation);
     err = nvs_set_u8(nvs, NVS_SETTINGS_TXN_VALID_KEY, 0U);
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         err = nvs_set_u32(nvs, NVS_SETTINGS_TXN_GEN_KEY, generation + 1U);
     }
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         err = nvs_set_u32(nvs, NVS_SETTINGS_TXN_CRC_KEY,
                           settings_fingerprint());
     }
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         err = nvs_set_u8(nvs, NVS_SETTINGS_TXN_VALID_KEY,
                          NVS_SETTINGS_TXN_VERSION);
     }
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGE(NVS_SAVE_TAG, "Failed to stage transaction metadata: %s",
                  esp_err_to_name(err));
         nvs_close(nvs);
@@ -2195,7 +2214,8 @@ bool save_settings()
         ESP_LOGE(NVS_SAVE_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
     }
     nvs_close(nvs);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGE(NVS_SAVE_TAG, "Failed to commit settings: %s",
                  esp_err_to_name(err));
         return false;
@@ -2335,7 +2355,6 @@ bool detect_critical_error()
 
     return false;
 }
-
 
 void power_task(void *arg)
 {
@@ -3043,9 +3062,12 @@ void post_button_click_event(void)
     evt.priority = EVENT_PRIORITY_LOW;
     evt.timestamp = xTaskGetTickCount();
 
-    if (!system_event_post(&evt)) {
+    if (!system_event_post(&evt))
+    {
         ESP_LOGW(APP_TAG, "Failed to post button press event to dispatcher");
-    } else {
+    }
+    else
+    {
         ESP_LOGD(APP_TAG, "Button press event posted to dispatcher");
     }
 }
@@ -3100,7 +3122,8 @@ void inverter_emergency_disable(const char *reason)
     inverter_set_current_limit(0.0f);
     inverter_set_output_voltage(0.0f);
     const esp_err_t relay_err = gpio_set_level(GPIO_POWER_RELAY, 0);
-    if (relay_err != ESP_OK) {
+    if (relay_err != ESP_OK)
+    {
         ESP_LOGE(INV_TAG, "Emergency relay open failed: %s",
                  esp_err_to_name(relay_err));
     }
@@ -3655,7 +3678,7 @@ bool check_safety_conditions(void)
     /* A hardware fault caught by POST at boot shouldn't be forgotten by
      * the time someone actually tries to power on. */
     post_result_t post_result = post_get_last_result();
-        if (!post_result.all_passed)
+    if (!post_result.all_passed)
     {
         printf("SAFETY CHECK FAILED: POST did not pass (lcd=%d adc=%d fan=%d)\n",
                post_result.lcd_ok, post_result.adc_ok, post_result.fan_ok);
@@ -3967,7 +3990,8 @@ bool check_safety_conditions(void)
     if (!all_checks_passed)
     {
         printf("ERROR: One or more safety checks failed!\n");
-        if (s_last_start_error_code == INVERTER_START_ERROR_NONE) {
+        if (s_last_start_error_code == INVERTER_START_ERROR_NONE)
+        {
             set_last_start_error(INVERTER_START_ERROR_SAFETY,
                                  "Safety checks failed");
         }
@@ -4550,7 +4574,7 @@ void handle_value_confirmation(void)
     }
 
     // ======== Post-confirmation handling ========
-        if (safety_check_passed)
+    if (safety_check_passed)
     {
         /* exit_value_edit_mode(true) applies and persists the accepted value. */
         exit_value_edit_mode(true);
@@ -4600,7 +4624,8 @@ bool inverter_set_output_voltage(float voltage_setpoint)
     printf("HAL: Setting output voltage to %.1f V\n", voltage_setpoint);
     // Update the sys_state output voltage. The descriptor may not exist during
     // an early fault, but the hardware-safe output state must still be recorded.
-    if (sys_state.current_value_type != NULL) {
+    if (sys_state.current_value_type != NULL)
+    {
         sys_state.current_value_type->current_value = voltage_setpoint;
     }
     sys_state.inverter.output_voltage = voltage_setpoint;
@@ -5420,7 +5445,7 @@ void LCD_power(bool enable)
     {
         // Power sequence: Enable LCD first, then backlight
         gpio_set_level(GPIO_LCD_POWER, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));                            // Short delay for LCD to stabilize
+        vTaskDelay(pdMS_TO_TICKS(10));                                       // Short delay for LCD to stabilize
         ledc_set_duty(LEDC_LOW_SPEED_MODE, LCD_BACKLIGHT_LEDC_CHANNEL, 128); // 50% brightness
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_BACKLIGHT_LEDC_CHANNEL);
     }
@@ -6056,4 +6081,3 @@ esp_err_t nvs_set_float(const char *key, float value)
     nvs_close(handle);
     return err;
 }
-
