@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 /**
  * @file wifi_storage.c
  * @brief Wi-Fi NVS Storage
@@ -78,13 +79,13 @@ static esp_err_t wifi_storage_open(nvs_handle_t *handle, nvs_open_mode_t mode)
         return ESP_ERR_INVALID_ARG;
     }
 
-    return nvs_open(WIFI_NVS_NAMESPACE, mode, handle);
+    return storage_nvs_open(WIFI_NVS_NAMESPACE, mode, handle);
 }
 
 static esp_err_t wifi_storage_commit_close(nvs_handle_t handle)
 {
     esp_err_t err = nvs_commit(handle);
-    nvs_close(handle);
+    storage_nvs_close(handle);
     return err;
 }
 
@@ -98,19 +99,7 @@ esp_err_t wifi_storage_init(void)
 {
     esp_err_t err;
 
-    err = nvs_flash_init();
-
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
-        err == ESP_ERR_NVS_NEW_VERSION_FOUND)
-    {
-        err = nvs_flash_erase();
-        if (err != ESP_OK)
-        {
-            ESP_LOGE(TAG, "NVS erase failed (%s)", esp_err_to_name(err));
-            return err;
-        }
-        err = nvs_flash_init();
-    }
+    err = storage_nvs_init();
 
     if (err != ESP_OK)
     {
@@ -125,8 +114,7 @@ esp_err_t wifi_storage_init(void)
 
 esp_err_t wifi_storage_deinit(void)
 {
-    /* NVS flash deinit is global; only call if no other users */
-    /* nvs_flash_deinit(); */
+    /* NVS flash deinitialization is global and is owned by the manager. */
     return ESP_OK;
 }
 
@@ -171,7 +159,7 @@ esp_err_t wifi_storage_save_credentials(
 
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -182,7 +170,7 @@ esp_err_t wifi_storage_save_credentials(
 
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -232,7 +220,7 @@ esp_err_t wifi_storage_load_credentials(
 
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -244,7 +232,7 @@ esp_err_t wifi_storage_load_credentials(
         credentials->password,
         &password_len);
 
-    nvs_close(handle);
+    storage_nvs_close(handle);
 
     if (err == ESP_ERR_NVS_NOT_FOUND)
     {
@@ -321,7 +309,7 @@ esp_err_t wifi_storage_save_hostname(const char *hostname)
 
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -359,7 +347,7 @@ esp_err_t wifi_storage_load_hostname(char *hostname,
                       hostname,
                       &length);
 
-    nvs_close(handle);
+    storage_nvs_close(handle);
 
     if (err == ESP_ERR_NVS_NOT_FOUND)
     {
@@ -398,7 +386,7 @@ esp_err_t wifi_storage_erase_credentials(void)
     if (err != ESP_OK &&
         err != ESP_ERR_NVS_NOT_FOUND)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -407,7 +395,7 @@ esp_err_t wifi_storage_erase_credentials(void)
     if (err != ESP_OK &&
         err != ESP_ERR_NVS_NOT_FOUND)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -443,7 +431,7 @@ esp_err_t wifi_storage_factory_reset(void)
 
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -490,7 +478,7 @@ esp_err_t wifi_storage_save_network_config(
         config->mode);
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -500,7 +488,7 @@ esp_err_t wifi_storage_save_network_config(
         config->auto_reconnect);
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -510,7 +498,7 @@ esp_err_t wifi_storage_save_network_config(
         config->reconnect_interval_ms);
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -520,7 +508,7 @@ esp_err_t wifi_storage_save_network_config(
         config->dhcp);
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -531,7 +519,7 @@ esp_err_t wifi_storage_save_network_config(
         sizeof(esp_netif_ip_info_t));
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -541,7 +529,7 @@ esp_err_t wifi_storage_save_network_config(
                        sizeof(config->dns));
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -551,7 +539,7 @@ esp_err_t wifi_storage_save_network_config(
         config->ap_ssid);
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -561,7 +549,7 @@ esp_err_t wifi_storage_save_network_config(
         config->ap_password);
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -571,7 +559,7 @@ esp_err_t wifi_storage_save_network_config(
         config->ap_channel);
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -581,7 +569,7 @@ esp_err_t wifi_storage_save_network_config(
         config->ap_max_connection);
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -591,7 +579,7 @@ esp_err_t wifi_storage_save_network_config(
         config->ap_authmode);
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -673,7 +661,7 @@ esp_err_t wifi_storage_load_network_config(
     if (err != ESP_OK &&
         err != ESP_ERR_NVS_NOT_FOUND)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -682,7 +670,7 @@ esp_err_t wifi_storage_load_network_config(
     err = nvs_get_blob(handle, WIFI_KEY_DNS, &config->dns, &dns_size);
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -722,7 +710,7 @@ esp_err_t wifi_storage_load_network_config(
         config->ap_authmode = value;
     }
 
-    nvs_close(handle);
+    storage_nvs_close(handle);
     if (!wifi_storage_network_config_valid(config)) {
         ESP_LOGW(TAG, "Invalid network configuration in NVS; restoring safe defaults");
         wifi_storage_set_default_network_config(config);

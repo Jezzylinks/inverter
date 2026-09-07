@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 #include "diagnostics/system_diagnostics.h"
 
 #include <string.h>
@@ -36,7 +37,7 @@ typedef struct {
 static bool persist(void)
 {
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(DIAGNOSTICS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = storage_nvs_open(DIAGNOSTICS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Unable to open diagnostics NVS: %s", esp_err_to_name(err));
         return false;
@@ -52,7 +53,7 @@ static bool persist(void)
     if (err == ESP_OK) {
         err = nvs_commit(handle);
     }
-    nvs_close(handle);
+    storage_nvs_close(handle);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Unable to persist diagnostics: %s", esp_err_to_name(err));
         return false;
@@ -66,10 +67,10 @@ bool system_diagnostics_init(void)
     nvs_handle_t handle;
     diagnostics_record_t record;
     size_t length = sizeof(record);
-    esp_err_t err = nvs_open(DIAGNOSTICS_NAMESPACE, NVS_READONLY, &handle);
+    esp_err_t err = storage_nvs_open(DIAGNOSTICS_NAMESPACE, NVS_READONLY, &handle);
     if (err == ESP_OK) {
         err = nvs_get_blob(handle, DIAGNOSTICS_KEY, &record, &length);
-        nvs_close(handle);
+        storage_nvs_close(handle);
     }
 
     if (err == ESP_OK && length == sizeof(record) &&

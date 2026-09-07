@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 #include <stdio.h>
 #include "app/app_runtime.h"
 
@@ -597,7 +598,7 @@ bool battery_save_configuration(battery_type_t battery_type,
     esp_err_t err;
 
     // Open NVS in read-write mode
-    err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs_handle);
+    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs_handle);
     if (err != ESP_OK)
     {
         printf("ERROR: Failed to open NVS for writing!\n");
@@ -609,7 +610,7 @@ bool battery_save_configuration(battery_type_t battery_type,
     if (err != ESP_OK)
     {
         printf(": Failed to save battery type!\n");
-        nvs_close(nvs_handle);
+        storage_nvs_close(nvs_handle);
         return false;
     }
 
@@ -618,7 +619,7 @@ bool battery_save_configuration(battery_type_t battery_type,
     if (err != ESP_OK)
     {
         printf("ERROR: Failed to save voltage system!\n");
-        nvs_close(nvs_handle);
+        storage_nvs_close(nvs_handle);
         return false;
     }
 
@@ -627,7 +628,7 @@ bool battery_save_configuration(battery_type_t battery_type,
     if (err != ESP_OK)
     {
         printf("ERROR: Failed to save capacity!\n");
-        nvs_close(nvs_handle);
+        storage_nvs_close(nvs_handle);
         return false;
     }
 
@@ -636,11 +637,11 @@ bool battery_save_configuration(battery_type_t battery_type,
     if (err != ESP_OK)
     {
         printf("ERROR: Failed to commit NVS changes!\n");
-        nvs_close(nvs_handle);
+        storage_nvs_close(nvs_handle);
         return false;
     }
 
-    nvs_close(nvs_handle);
+    storage_nvs_close(nvs_handle);
 
     return true;
 }
@@ -657,7 +658,7 @@ bool battery_load_profile(battery_profile_t *profile_out)
     uint16_t capacity_ah;
 
     // Open NVS
-    err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs_handle);
+    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK)
     {
         printf("ERROR: Failed to open NVS!\n");
@@ -669,7 +670,7 @@ bool battery_load_profile(battery_profile_t *profile_out)
     if (err != ESP_OK)
     {
         printf("ERROR: Failed to read battery type from NVS!\n");
-        nvs_close(nvs_handle);
+        storage_nvs_close(nvs_handle);
         return false;
     }
 
@@ -677,7 +678,7 @@ bool battery_load_profile(battery_profile_t *profile_out)
     if (err != ESP_OK)
     {
         printf("ERROR: Failed to read voltage system from NVS!\n");
-        nvs_close(nvs_handle);
+        storage_nvs_close(nvs_handle);
         return false;
     }
 
@@ -685,11 +686,11 @@ bool battery_load_profile(battery_profile_t *profile_out)
     if (err != ESP_OK)
     {
         printf("ERROR: Failed to read capacity from NVS!\n");
-        nvs_close(nvs_handle);
+        storage_nvs_close(nvs_handle);
         return false;
     }
 
-    nvs_close(nvs_handle);
+    storage_nvs_close(nvs_handle);
 
     // Generate profile based on NVS settings
     return battery_generate_profile((battery_type_t)battery_type,
@@ -1732,7 +1733,7 @@ esp_err_t get_setting_value(const char *key, int32_t default_val, int32_t *out_v
         return ESP_ERR_INVALID_ARG;
     }
 
-    err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs);
+    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs);
     if (err != ESP_OK)
     {
         *out_value = default_val;
@@ -1740,7 +1741,7 @@ esp_err_t get_setting_value(const char *key, int32_t default_val, int32_t *out_v
     }
 
     err = nvs_get_i32(nvs, key, out_value);
-    nvs_close(nvs);
+    storage_nvs_close(nvs);
 
     if (err != ESP_OK)
     {
@@ -1761,7 +1762,7 @@ esp_err_t set_setting_value(const char *key, int32_t value)
         return ESP_ERR_INVALID_ARG;
     }
 
-    err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs);
+    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs);
     if (err != ESP_OK)
     {
         ESP_LOGE("NVS_SETTING", "Failed to open NVS for writing: %s", esp_err_to_name(err));
@@ -1772,7 +1773,7 @@ esp_err_t set_setting_value(const char *key, int32_t value)
     if (err != ESP_OK)
     {
         ESP_LOGE("NVS_SETTING", "Failed to set '%s': %s", key, esp_err_to_name(err));
-        nvs_close(nvs);
+        storage_nvs_close(nvs);
         return err;
     }
 
@@ -1782,77 +1783,20 @@ esp_err_t set_setting_value(const char *key, int32_t value)
         ESP_LOGE("NVS_SETTING", "Failed to commit '%s': %s", key, esp_err_to_name(err));
     }
 
-    nvs_close(nvs);
+    storage_nvs_close(nvs);
     return err;
 }
 
 void nvs_init(bool erase_on_fail)
 {
-    const char *TAG = "NVS";
-    esp_err_t err;
-
-    // Check if already initialized
-    if (nvs_initialized)
-    {
-        ESP_LOGD(TAG, "NVS already initialized");
-        return;
+    /* Kept as a compatibility entry point; storage_nvs_init is authoritative. */
+    (void)erase_on_fail;
+    const esp_err_t err = storage_nvs_init();
+    nvs_initialized = (err == ESP_OK);
+    if (err != ESP_OK) {
+        ESP_LOGE("NVS_INIT", "NVS unavailable: %s (0x%x)",
+                 esp_err_to_name(err), err);
     }
-
-    ESP_LOGI(TAG, "Initializing NVS...");
-
-    // Try to initialize NVS
-    err = nvs_flash_init();
-
-    if (err == ESP_OK)
-    {
-        // Success on first try
-        nvs_initialized = true;
-        ESP_LOGI(TAG, "NVS initialized successfully");
-        return;
-    }
-
-    // Handle errors that require erasing NVS
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
-    {
-        if (erase_on_fail)
-        {
-            ESP_LOGW(TAG, "NVS partition corrupted or version mismatch, erasing...");
-
-            // Erase NVS partition
-            err = nvs_flash_erase();
-            if (err != ESP_OK)
-            {
-                ESP_LOGE(TAG, "Failed to erase NVS: %s (0x%x)",
-                         esp_err_to_name(err), err);
-                return;
-            }
-
-            // Try to initialize again after erase
-            err = nvs_flash_init();
-            if (err == ESP_OK)
-            {
-                nvs_initialized = true;
-                ESP_LOGI(TAG, "NVS initialized successfully after erase");
-                return;
-            }
-            else
-            {
-                ESP_LOGE(TAG, "Failed to initialize NVS after erase: %s (0x%x)",
-                         esp_err_to_name(err), err);
-                return;
-            }
-        }
-        else
-        {
-            ESP_LOGE(TAG, "NVS needs erasing but erase_on_fail is false");
-            ESP_LOGE(TAG, "Error: %s (0x%x)", esp_err_to_name(err), err);
-            return;
-        }
-    }
-
-    // Other errors
-    ESP_LOGE(TAG, "Failed to initialize NVS: %s (0x%x)",
-             esp_err_to_name(err), err);
 }
 
 /**
@@ -1860,16 +1804,7 @@ void nvs_init(bool erase_on_fail)
  */
 bool nvs_is_initialized(void)
 {
-    nvs_handle_t test_handle;
-    esp_err_t err = nvs_open("test", NVS_READONLY, &test_handle);
-
-    if (err == ESP_OK)
-    {
-        nvs_close(test_handle);
-        return true;
-    }
-
-    return false;
+    return storage_nvs_is_ready();
 }
 
 /**
@@ -1877,24 +1812,14 @@ bool nvs_is_initialized(void)
  */
 void nvs_print_stats(void)
 {
-    const char *TAG = "NVS_STAT";
-    nvs_stats_t nvs_stats;
-    esp_err_t err = nvs_get_stats(NULL, &nvs_stats);
-
-    if (err == ESP_OK)
-    {
-        ESP_LOGI(TAG, "╔════════════════════════════════════╗");
-        ESP_LOGI(TAG, "║      NVS Statistics                ║");
-        ESP_LOGI(TAG, "╠════════════════════════════════════╣");
-        ESP_LOGI(TAG, "║ Used entries:   %5d              ║", nvs_stats.used_entries);
-        ESP_LOGI(TAG, "║ Free entries:   %5d              ║", nvs_stats.free_entries);
-        ESP_LOGI(TAG, "║ Total entries:  %5d              ║", nvs_stats.total_entries);
-        ESP_LOGI(TAG, "║ Namespace count: %4d              ║", nvs_stats.namespace_count);
-        ESP_LOGI(TAG, "╚════════════════════════════════════╝");
-    }
-    else
-    {
-        ESP_LOGE(TAG, "Failed to get NVS stats: %s", esp_err_to_name(err));
+    nvs_stats_t stats;
+    const esp_err_t err = storage_nvs_get_stats(&stats);
+    if (err == ESP_OK) {
+        ESP_LOGI("NVS_STAT", "used=%d free=%d total=%d namespaces=%d",
+                 stats.used_entries, stats.free_entries,
+                 stats.total_entries, stats.namespace_count);
+    } else {
+        ESP_LOGE("NVS_STAT", "stats failed: %s", esp_err_to_name(err));
     }
 }
 
@@ -1903,27 +1828,7 @@ void nvs_print_stats(void)
  */
 esp_err_t nvs_factory_reset(void)
 {
-    const char *TAG = "NVS_RESET";
-    ESP_LOGW(TAG, "Performing NVS factory reset...");
-
-    esp_err_t err = nvs_flash_erase();
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to erase NVS: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    // Reinitialize after erase
-    err = nvs_flash_init();
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to reinitialize NVS after erase: %s",
-                 esp_err_to_name(err));
-        return err;
-    }
-
-    ESP_LOGI(TAG, "NVS factory reset completed successfully");
-    return ESP_OK;
+    return storage_nvs_factory_reset();
 }
 
 /**
@@ -1931,41 +1836,7 @@ esp_err_t nvs_factory_reset(void)
  */
 esp_err_t nvs_erase_namespace(const char *namespace_name)
 {
-    const char *TAG = "NVS_ERASE";
-    if (namespace_name == NULL)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    nvs_handle_t handle;
-    esp_err_t err;
-
-    err = nvs_open(namespace_name, NVS_READWRITE, &handle);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to open namespace '%s': %s",
-                 namespace_name, esp_err_to_name(err));
-        return err;
-    }
-
-    err = nvs_erase_all(handle);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to erase namespace '%s': %s",
-                 namespace_name, esp_err_to_name(err));
-        nvs_close(handle);
-        return err;
-    }
-
-    err = nvs_commit(handle);
-    nvs_close(handle);
-
-    if (err == ESP_OK)
-    {
-        ESP_LOGI(TAG, "Namespace '%s' erased successfully", namespace_name);
-    }
-
-    return err;
+    return storage_nvs_erase_namespace(namespace_name);
 }
 
 void save_calibration()
@@ -1973,7 +1844,7 @@ void save_calibration()
     const char *NVS_CALIBRATION = "calibration"; // NVS namespace for calibration data
     // Save ADC calibration values to NVS
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &handle);
+    esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &handle);
     if (err != ESP_OK)
     {
         ESP_LOGE("NVS", "Failed to open NVS for calibration save: %s", esp_err_to_name(err));
@@ -1998,7 +1869,7 @@ void save_calibration()
         ESP_LOGE(NVS_CALIBRATION, "Failed to set calibration data: %s", esp_err_to_name(err));
     }
 
-    nvs_close(handle);
+    storage_nvs_close(handle);
 }
 
 void load_calibration()
@@ -2021,7 +1892,7 @@ void load_calibration()
         adc_calibration[i].calibration_mode = false;     // Not in calibration mode
         // Initialize calibration values for each channel
     }
-    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
+    esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
     if (err == ESP_ERR_NVS_NOT_FOUND)
     {
         ESP_LOGI(TAG_ADC_CALIB, "No calibration data found, using defaults");
@@ -2057,7 +1928,7 @@ void load_calibration()
             ESP_LOGI(TAG_ADC_CALIB, "Calibration data loaded successfully");
         }
 
-        nvs_close(handle);
+        storage_nvs_close(handle);
     }
 
     save_settings(); // Save the settings, possibly updated calibration
@@ -2092,7 +1963,7 @@ bool load_settings()
     bool load_error = false;
     const char *NVS_LOADING_TAG = "NVS_LOAD";
 
-    err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs);
+    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs);
     if (err != ESP_OK)
     {
         ESP_LOGE(NVS_LOADING_TAG, "Failed to open NVS: %s", esp_err_to_name(err));
@@ -2162,10 +2033,17 @@ bool save_settings()
     {
         nvs_init(true);
     }
+    if (!battery_save_configuration(sys_state.battery_profile.profile_id,
+                                    sys_state.battery_profile.nominal_voltage,
+                                    sys_state.battery_profile.capacity_ah))
+    {
+        ESP_LOGE("NVS_SAVE", "Battery configuration persistence failed");
+        return false;
+    }
     nvs_handle_t nvs;
     const char *NVS_SAVE_TAG = "NVS_SAVE";
 
-    err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs);
+    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs);
     if (err != ESP_OK)
     {
         ESP_LOGE(NVS_SAVE_TAG, "Failed to open NVS for writing: %s", esp_err_to_name(err));
@@ -2177,11 +2055,9 @@ bool save_settings()
     if (err != ESP_OK)
     {
         ESP_LOGE(NVS_SAVE_TAG, "One or more settings failed to save: %s", esp_err_to_name(err));
-        nvs_close(nvs);
+        storage_nvs_close(nvs);
         return false;
     }
-
-    battery_save_configuration(sys_state.battery_profile.profile_id, sys_state.battery_profile.nominal_voltage, sys_state.battery_profile.capacity_ah);
 
     uint32_t generation = 0U;
     (void)nvs_get_u32(nvs, NVS_SETTINGS_TXN_GEN_KEY, &generation);
@@ -2204,7 +2080,7 @@ bool save_settings()
     {
         ESP_LOGE(NVS_SAVE_TAG, "Failed to stage transaction metadata: %s",
                  esp_err_to_name(err));
-        nvs_close(nvs);
+        storage_nvs_close(nvs);
         return false;
     }
 
@@ -2213,7 +2089,7 @@ bool save_settings()
     {
         ESP_LOGE(NVS_SAVE_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
     }
-    nvs_close(nvs);
+    storage_nvs_close(nvs);
     if (err != ESP_OK)
     {
         ESP_LOGE(NVS_SAVE_TAG, "Failed to commit settings: %s",
@@ -2802,7 +2678,7 @@ void calibration_reset(void)
      * so this does not touch settings or battery profile keys stored in
      * the same namespace. */
     nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &h);
+    esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &h);
     if (err == ESP_OK)
     {
         err = nvs_set_blob(h, "adc_cal", adc_calibration, sizeof(adc_calibration));
@@ -2810,7 +2686,7 @@ void calibration_reset(void)
         {
             err = nvs_commit(h);
         }
-        nvs_close(h);
+        storage_nvs_close(h);
 
         if (err != ESP_OK)
         {
@@ -5120,12 +4996,18 @@ void show_profile_on_lcd(battery_profile_t *profile)
 void save_frequency_to_nvs(int frequency)
 {
     nvs_handle_t nvs_handler;
-    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs_handler);
+    esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs_handler);
     if (err == ESP_OK)
     {
-        nvs_set_i32(nvs_handler, FREQUENCY_SETTING_KEY, frequency);
-        nvs_commit(nvs_handler);
-        nvs_close(nvs_handler);
+        err = nvs_set_i32(nvs_handler, FREQUENCY_SETTING_KEY, frequency);
+        if (err == ESP_OK) {
+            err = storage_nvs_commit_close(nvs_handler);
+        } else {
+            storage_nvs_close(nvs_handler);
+        }
+        if (err != ESP_OK) {
+            ESP_LOGE("NVS", "frequency save failed: %s", esp_err_to_name(err));
+        }
     }
 }
 
@@ -5773,20 +5655,30 @@ void init_watchdog(bool enable_task_wdt, bool panic_on_hang)
 void log_error_to_nvs(uint8_t error_code)
 {
     nvs_handle_t nvs_handler;
-    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs_handler); // Use default NVS
+    esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs_handler); // Use default NVS
 
     if (err == ESP_OK)
     {
         uint32_t error_count = 0;
-        nvs_get_u32(nvs_handler, "count", &error_count);
+        err = nvs_get_u32(nvs_handler, "count", &error_count);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            err = ESP_OK;
+            error_count = 0U;
+        }
 
         char key[15];
         snprintf(key, sizeof(key), "err_%04lu", error_count % 1000);
-        nvs_set_u8(nvs_handler, key, error_code);
+        if (err == ESP_OK) err = nvs_set_u8(nvs_handler, key, error_code);
 
-        nvs_set_u32(nvs_handler, "count", error_count + 1);
-        nvs_commit(nvs_handler);
-        nvs_close(nvs_handler);
+        if (err == ESP_OK) err = nvs_set_u32(nvs_handler, "count", error_count + 1U);
+        if (err == ESP_OK) {
+            err = storage_nvs_commit_close(nvs_handler);
+        } else {
+            storage_nvs_close(nvs_handler);
+        }
+        if (err != ESP_OK) {
+            ESP_LOGE("NVS", "error log save failed: %s", esp_err_to_name(err));
+        }
     }
     else
     {
@@ -6041,7 +5933,7 @@ esp_err_t nvs_get_float(const char *key, float *out_value)
     uint32_t temp_value;
 
     // Open NVS
-    err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
+    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
     if (err != ESP_OK)
         return err;
 
@@ -6053,7 +5945,7 @@ esp_err_t nvs_get_float(const char *key, float *out_value)
         memcpy(out_value, &temp_value, sizeof(float));
     }
 
-    nvs_close(handle);
+    storage_nvs_close(handle);
     return err;
 }
 
@@ -6064,7 +5956,7 @@ esp_err_t nvs_set_float(const char *key, float value)
     uint32_t temp_value;
 
     // Open NVS
-    err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &handle);
+    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &handle);
     if (err != ESP_OK)
         return err;
 
@@ -6078,6 +5970,6 @@ esp_err_t nvs_set_float(const char *key, float value)
         err = nvs_commit(handle);
     }
 
-    nvs_close(handle);
+    storage_nvs_close(handle);
     return err;
 }

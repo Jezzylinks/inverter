@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 #include "battery/battery_storage.h"
 
 #include <math.h>
@@ -36,7 +37,7 @@ bool battery_storage_save(const battery_storage_data_t *data)
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(BATTERY_STORAGE_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = storage_nvs_open(BATTERY_STORAGE_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         return false;
     }
@@ -44,7 +45,7 @@ bool battery_storage_save(const battery_storage_data_t *data)
     if (err == ESP_OK) {
         err = nvs_commit(handle);
     }
-    nvs_close(handle);
+    storage_nvs_close(handle);
     return err == ESP_OK;
 }
 
@@ -56,13 +57,13 @@ bool battery_storage_load(battery_storage_data_t *data)
     memset(data, 0, sizeof(*data));
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(BATTERY_STORAGE_NAMESPACE, NVS_READONLY, &handle);
+    esp_err_t err = storage_nvs_open(BATTERY_STORAGE_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK) {
         return false;
     }
     size_t required_size = sizeof(*data);
     err = nvs_get_blob(handle, BATTERY_STORAGE_KEY, data, &required_size);
-    nvs_close(handle);
+    storage_nvs_close(handle);
 
     if (err != ESP_OK || required_size != sizeof(*data) || !battery_storage_data_valid(data)) {
         memset(data, 0, sizeof(*data));
@@ -74,7 +75,7 @@ bool battery_storage_load(battery_storage_data_t *data)
 bool battery_storage_erase(void)
 {
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(BATTERY_STORAGE_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = storage_nvs_open(BATTERY_STORAGE_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         return false;
     }
@@ -85,6 +86,6 @@ bool battery_storage_erase(void)
     if (err == ESP_OK) {
         err = nvs_commit(handle);
     }
-    nvs_close(handle);
+    storage_nvs_close(handle);
     return err == ESP_OK;
 }

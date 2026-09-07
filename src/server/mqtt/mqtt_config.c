@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 #include "server/mqtt/mqtt_config.h"
 
 #include <string.h>
@@ -98,7 +99,7 @@ esp_err_t mqtt_config_load(network_mqtt_config_t *config)
     mqtt_config_defaults(config);
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(MQTT_CONFIG_NVS_NAMESPACE, NVS_READONLY, &handle);
+    esp_err_t err = storage_nvs_open(MQTT_CONFIG_NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
         return ESP_OK;
     }
@@ -133,7 +134,7 @@ esp_err_t mqtt_config_load(network_mqtt_config_t *config)
     if (nvs_get_u8(handle, NETWORK_MQTT_RETAIN_KEY, &value) == ESP_OK) {
         config->retain = value != 0U;
     }
-    nvs_close(handle);
+    storage_nvs_close(handle);
 
     if (!mqtt_config_validate(config)) {
         ESP_LOGW(MQTT_CONFIG_TAG, "Stored MQTT configuration is invalid; MQTT disabled");
@@ -149,7 +150,7 @@ esp_err_t mqtt_config_save(const network_mqtt_config_t *config)
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(MQTT_CONFIG_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = storage_nvs_open(MQTT_CONFIG_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
         return err;
     }
@@ -164,6 +165,6 @@ esp_err_t mqtt_config_save(const network_mqtt_config_t *config)
     if (err == ESP_OK) err = nvs_set_i32(handle, NETWORK_MQTT_QOS_KEY, config->qos);
     if (err == ESP_OK) err = nvs_set_u8(handle, NETWORK_MQTT_RETAIN_KEY, config->retain ? 1U : 0U);
     if (err == ESP_OK) err = nvs_commit(handle);
-    nvs_close(handle);
+    storage_nvs_close(handle);
     return err;
 }

@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 #include "cloud/cloud_reporting.h"
 
 #include <stdio.h>
@@ -67,11 +68,11 @@ static void set_error_locked(const char *message)
 static esp_err_t save_config_locked(void)
 {
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(CLOUD_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = storage_nvs_open(CLOUD_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) return err;
     err = nvs_set_blob(handle, CLOUD_NVS_KEY, &s_config, sizeof(s_config));
     if (err == ESP_OK) err = nvs_commit(handle);
-    nvs_close(handle);
+    storage_nvs_close(handle);
     return err;
 }
 
@@ -225,11 +226,11 @@ esp_err_t cloud_reporting_init(void)
     memset(&s_config, 0, sizeof(s_config));
     s_config.period_sec = CLOUD_DEFAULT_PERIOD_SEC;
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(CLOUD_NVS_NAMESPACE, NVS_READONLY, &handle);
+    esp_err_t err = storage_nvs_open(CLOUD_NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err == ESP_OK) {
         size_t size = sizeof(s_config);
         err = nvs_get_blob(handle, CLOUD_NVS_KEY, &s_config, &size);
-        nvs_close(handle);
+        storage_nvs_close(handle);
         if (err != ESP_OK || size != sizeof(s_config)) {
             memset(&s_config, 0, sizeof(s_config));
             s_config.period_sec = CLOUD_DEFAULT_PERIOD_SEC;

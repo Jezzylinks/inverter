@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 #include "security/security.h"
 
 #include <string.h>
@@ -106,7 +107,7 @@ static esp_err_t persist_pin(const uint8_t pin[SECURITY_PIN_LEN], bool force_cha
     }
 
     nvs_handle_t handle = 0;
-    err = nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &handle);
+    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &handle);
     if (err == ESP_OK) {
         err = nvs_set_blob(handle, NVS_KEY_HASH, hash, sizeof(hash));
     }
@@ -120,7 +121,7 @@ static esp_err_t persist_pin(const uint8_t pin[SECURITY_PIN_LEN], bool force_cha
         err = nvs_commit(handle);
     }
     if (handle) {
-        nvs_close(handle);
+        storage_nvs_close(handle);
     }
 
     secure_zero(salt, sizeof(salt));
@@ -159,7 +160,7 @@ esp_err_t security_init(void)
     }
 
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
+    esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
     if (err != ESP_OK) {
         const uint8_t default_pin[SECURITY_PIN_LEN] = SECURITY_DEFAULT_PIN;
         const esp_err_t provision_err = persist_pin(default_pin, true);
@@ -181,7 +182,7 @@ esp_err_t security_init(void)
     size_t salt_len = sizeof(stored_salt);
     err = nvs_get_blob(handle, NVS_KEY_HASH, stored_hash, &hash_len);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         const uint8_t default_pin[SECURITY_PIN_LEN] = SECURITY_DEFAULT_PIN;
         err = persist_pin(default_pin, true);
         if (err == ESP_OK) {
@@ -205,7 +206,7 @@ esp_err_t security_init(void)
             err = force_err;
         }
     }
-    nvs_close(handle);
+    storage_nvs_close(handle);
 
     if (err != ESP_OK || hash_len != HASH_LEN || salt_len != SALT_LEN) {
         ESP_LOGW(TAG, "missing or invalid persisted PIN material; provisioning default 0000");
@@ -267,7 +268,7 @@ bool security_verify_pin_for_scope(const uint8_t pin[SECURITY_PIN_LEN],
     uint8_t salt[SALT_LEN] = {0};
     uint8_t candidate_hash[HASH_LEN] = {0};
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
+    esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
     if (err == ESP_OK) {
         size_t hash_len = sizeof(stored_hash);
         size_t salt_len = sizeof(salt);
@@ -278,7 +279,7 @@ bool security_verify_pin_for_scope(const uint8_t pin[SECURITY_PIN_LEN],
         if (err == ESP_OK && (hash_len != HASH_LEN || salt_len != SALT_LEN)) {
             err = ESP_ERR_INVALID_SIZE;
         }
-        nvs_close(handle);
+        storage_nvs_close(handle);
     }
     if (err == ESP_OK) {
         err = compute_hash(pin, salt, candidate_hash);

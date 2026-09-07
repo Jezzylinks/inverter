@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 #include "security/factory_reset.h"
 
 #include <string.h>
@@ -195,13 +196,13 @@ void factory_reset(void)
 {
     ESP_LOGI(TAG, "Performing full factory reset");
     atomic_store(&sys_lcd.factory_reset.progress_pct, 10);
-
-    nvs_flash_erase();
-    atomic_store(&sys_lcd.factory_reset.progress_pct, 60);
-
-    nvs_flash_init();
-    atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
-
+    const esp_err_t err = storage_nvs_factory_reset();
+    atomic_store(&sys_lcd.factory_reset.progress_pct, err == ESP_OK ? 100 : 60);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Full factory reset failed: %s", esp_err_to_name(err));
+        atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
+        return;
+    }
     atomic_store(&sys_lcd.factory_reset.phase, FACTORY_PHASE_DONE);
     ESP_LOGI(TAG, "Factory reset complete, restarting");
     esp_restart();
@@ -213,11 +214,12 @@ void clear_settings(void)
     atomic_store(&sys_lcd.factory_reset.progress_pct, 10);
 
     nvs_handle_t h;
-    if (nvs_open("settings", NVS_READWRITE, &h) == ESP_OK)
+    if (storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &h) == ESP_OK)
     {
-        nvs_erase_all(h);
-        nvs_commit(h);
-        nvs_close(h);
+        esp_err_t err = nvs_erase_all(h);
+        if (err == ESP_OK) err = storage_nvs_commit_close(h);
+        else storage_nvs_close(h);
+        if (err != ESP_OK) ESP_LOGE(TAG, "settings erase failed: %s", esp_err_to_name(err));
     }
 
     atomic_store(&sys_lcd.factory_reset.progress_pct, 100);
@@ -231,11 +233,12 @@ void erase_logs(void)
     atomic_store(&sys_lcd.factory_reset.progress_pct, 10);
 
     nvs_handle_t h;
-    if (nvs_open("fault_log", NVS_READWRITE, &h) == ESP_OK)
+    if (storage_nvs_open("fault_log", NVS_READWRITE, &h) == ESP_OK)
     {
-        nvs_erase_all(h);
-        nvs_commit(h);
-        nvs_close(h);
+        esp_err_t err = nvs_erase_all(h);
+        if (err == ESP_OK) err = storage_nvs_commit_close(h);
+        else storage_nvs_close(h);
+        if (err != ESP_OK) ESP_LOGE(TAG, "fault log erase failed: %s", esp_err_to_name(err));
     }
 
     atomic_store(&sys_lcd.factory_reset.progress_pct, 100);

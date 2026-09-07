@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 /**
  * @file ble_provision.c
  * @brief Bluetooth LE Provisioning (NimBLE-based)
@@ -293,18 +294,8 @@ esp_err_t ble_provision_init(void)
 #if !WIFI_RUNTIME_PROVISIONING_ENABLED
     return ESP_ERR_NOT_SUPPORTED;
 #else
-    esp_err_t err = nvs_flash_init();
+    esp_err_t err = storage_nvs_init();
 
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
-    {
-        err = nvs_flash_erase();
-        if (err != ESP_OK)
-        {
-            ESP_LOGE(TAG, "NVS erase failed: %s", esp_err_to_name(err));
-            return err;
-        }
-        err = nvs_flash_init();
-    }
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(err));

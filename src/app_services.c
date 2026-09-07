@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 #include "app/app_services.h"
 
 #include <stdio.h>
@@ -450,7 +451,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
 static esp_err_t persist_u8(const char *key, uint8_t value)
 {
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(APP_SERVICES_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = storage_nvs_open(APP_SERVICES_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK)
     {
         return err;
@@ -460,14 +461,14 @@ static esp_err_t persist_u8(const char *key, uint8_t value)
     {
         err = nvs_commit(handle);
     }
-    nvs_close(handle);
+    storage_nvs_close(handle);
     return err;
 }
 
 static esp_err_t persist_manifest_url(const char *url)
 {
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(APP_SERVICES_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = storage_nvs_open(APP_SERVICES_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK)
     {
         return err;
@@ -488,7 +489,7 @@ static esp_err_t persist_manifest_url(const char *url)
     {
         err = nvs_commit(handle);
     }
-    nvs_close(handle);
+    storage_nvs_close(handle);
     return err;
 }
 
@@ -497,7 +498,7 @@ static void load_persisted_config(void)
     uint8_t wifi_enabled = 0U;
     uint8_t auto_check = 1U;
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(APP_SERVICES_NVS_NAMESPACE, NVS_READONLY, &handle);
+    esp_err_t err = storage_nvs_open(APP_SERVICES_NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err == ESP_OK)
     {
         (void)nvs_get_u8(handle, APP_WIFI_ENABLED_KEY, &wifi_enabled);
@@ -508,7 +509,7 @@ static void load_persisted_config(void)
         {
             s_manifest_url[0] = '\0';
         }
-        nvs_close(handle);
+        storage_nvs_close(handle);
     }
     else
     {

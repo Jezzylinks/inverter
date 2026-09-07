@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 /**
  * @file wifi_security.c
  * @brief Wi-Fi Security Layer
@@ -30,7 +31,7 @@ static esp_err_t wifi_security_open(nvs_handle_t *handle,
         return ESP_ERR_INVALID_ARG;
     }
 
-    return nvs_open(WIFI_SECURITY_NAMESPACE,
+    return storage_nvs_open(WIFI_SECURITY_NAMESPACE,
                     mode,
                     handle);
 }
@@ -39,7 +40,7 @@ static esp_err_t wifi_security_commit_close(nvs_handle_t handle)
 {
     esp_err_t err = nvs_commit(handle);
 
-    nvs_close(handle);
+    storage_nvs_close(handle);
 
     return err;
 }
@@ -54,20 +55,7 @@ esp_err_t wifi_security_init(void)
 {
     esp_err_t err;
 
-    err = nvs_flash_init();
-
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES ||
-        err == ESP_ERR_NVS_NEW_VERSION_FOUND)
-    {
-        err = nvs_flash_erase();
-        if (err != ESP_OK)
-        {
-            ESP_LOGE(TAG, "NVS erase failed (%s)", esp_err_to_name(err));
-            return err;
-        }
-
-        err = nvs_flash_init();
-    }
+    err = storage_nvs_init();
 
     if (err != ESP_OK)
     {
@@ -115,7 +103,7 @@ esp_err_t wifi_security_save_root_ca(
 
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -158,7 +146,7 @@ esp_err_t wifi_security_load_root_ca(
                       buffer,
                       &required);
 
-    nvs_close(handle);
+    storage_nvs_close(handle);
 
     return err;
 }
@@ -182,7 +170,7 @@ esp_err_t wifi_security_delete_root_ca(void)
     if (err != ESP_OK &&
         err != ESP_ERR_NVS_NOT_FOUND)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -228,7 +216,7 @@ esp_err_t wifi_security_save_client_certificate(
 
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -270,7 +258,7 @@ esp_err_t wifi_security_load_client_certificate(
                       buffer,
                       &required);
 
-    nvs_close(handle);
+    storage_nvs_close(handle);
 
     return err;
 }
@@ -294,7 +282,7 @@ esp_err_t wifi_security_delete_client_certificate(void)
     if (err != ESP_OK &&
         err != ESP_ERR_NVS_NOT_FOUND)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -341,7 +329,7 @@ esp_err_t wifi_security_save_private_key(
 
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -383,7 +371,7 @@ esp_err_t wifi_security_load_private_key(
                       buffer,
                       &required);
 
-    nvs_close(handle);
+    storage_nvs_close(handle);
 
     return err;
 }
@@ -407,7 +395,7 @@ esp_err_t wifi_security_delete_private_key(void)
     if (err != ESP_OK &&
         err != ESP_ERR_NVS_NOT_FOUND)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 
@@ -545,7 +533,7 @@ esp_err_t wifi_security_factory_reset(void)
 
     if (err != ESP_OK)
     {
-        nvs_close(handle);
+        storage_nvs_close(handle);
         return err;
     }
 

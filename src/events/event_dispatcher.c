@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 #include "stdint.h"
 #include "stdarg.h"
 #include "events/event_dispatcher.h"
@@ -475,7 +476,7 @@ bool monitor_statistics_get(monitor_statistics_t *out)
 bool monitor_statistics_load(void)
 {
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(MONITOR_STATS_NVS_NAMESPACE, NVS_READONLY, &handle);
+    esp_err_t err = storage_nvs_open(MONITOR_STATS_NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK)
     {
         /* Namespace doesn't exist yet (first boot) -- not an error. */
@@ -485,7 +486,7 @@ bool monitor_statistics_load(void)
     monitor_statistics_t loaded;
     size_t required_size = sizeof(loaded);
     err = nvs_get_blob(handle, MONITOR_STATS_NVS_KEY, &loaded, &required_size);
-    nvs_close(handle);
+    storage_nvs_close(handle);
 
     if (err != ESP_OK || required_size != sizeof(loaded))
     {
@@ -503,7 +504,7 @@ bool monitor_statistics_load(void)
 bool monitor_statistics_save(void)
 {
     nvs_handle_t handle;
-    esp_err_t err = nvs_open(MONITOR_STATS_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    esp_err_t err = storage_nvs_open(MONITOR_STATS_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK)
     {
         ESP_LOGW("MON_STATS", "Failed to open NVS for stats save: %s", esp_err_to_name(err));
@@ -515,7 +516,7 @@ bool monitor_statistics_save(void)
     {
         err = nvs_commit(handle);
     }
-    nvs_close(handle);
+    storage_nvs_close(handle);
 
     if (err != ESP_OK)
     {

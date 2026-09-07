@@ -1,3 +1,4 @@
+#include "storage/nvs_manager.h"
 #include "events/fault_log.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -63,7 +64,7 @@ bool fault_log_init(void)
     s_dirty = false;
 
     nvs_handle_t h;
-    esp_err_t err = nvs_open(FAULT_LOG_NVS_NAMESPACE, NVS_READONLY, &h);
+    esp_err_t err = storage_nvs_open(FAULT_LOG_NVS_NAMESPACE, NVS_READONLY, &h);
     if (err != ESP_OK)
     {
         ESP_LOGI(TAG, "no prior fault log in NVS (err=0x%x), starting fresh", err);
@@ -73,7 +74,7 @@ bool fault_log_init(void)
     fault_log_nvs_blob_t blob;
     size_t len = sizeof(blob);
     err = nvs_get_blob(h, FAULT_LOG_NVS_KEY, &blob, &len);
-    nvs_close(h);
+    storage_nvs_close(h);
 
     if (err == ESP_OK && len == sizeof(blob) && compute_crc(&blob) == blob.crc32 && blob.count <= FAULT_LOG_CAPACITY)
     {
@@ -400,13 +401,12 @@ bool fault_log_flush_to_nvs(void)
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     blob.count = s_count;
     memcpy(blob.entries, s_entries, sizeof(s_entries));
-    s_dirty = false;
     xSemaphoreGive(s_mutex);
 
     blob.crc32 = compute_crc(&blob);
 
     nvs_handle_t h;
-    esp_err_t err = nvs_open(FAULT_LOG_NVS_NAMESPACE, NVS_READWRITE, &h);
+    esp_err_t err = storage_nvs_open(FAULT_LOG_NVS_NAMESPACE, NVS_READWRITE, &h);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "nvs_open failed: 0x%x", err);
@@ -415,13 +415,16 @@ bool fault_log_flush_to_nvs(void)
     err = nvs_set_blob(h, FAULT_LOG_NVS_KEY, &blob, sizeof(blob));
     if (err == ESP_OK)
         err = nvs_commit(h);
-    nvs_close(h);
+    storage_nvs_close(h);
 
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "flush failed: 0x%x", err);
         return false;
     }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_dirty = false;
+    xSemaphoreGive(s_mutex);
     return true;
 }
 
