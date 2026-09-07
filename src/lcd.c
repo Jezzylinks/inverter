@@ -52,7 +52,7 @@
 
 /* ── I2C transport ───────────────────────────────────────────────────── */
 #define I2C_PORT I2C_NUM_0
-#define I2C_FREQ_HZ 100000 /* 100 kHz — safe for long wires     */
+#define I2C_FREQ_HZ 25000 /* 25 kHz — validated for the physical LCD */
 #define I2C_TIMEOUT_MS 50
 
 /* ── HD44780 timing constants (µs) ──────────────────────────────────── *

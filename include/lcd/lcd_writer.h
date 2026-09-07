@@ -41,6 +41,7 @@ void lcd_show_loading(const char *title,
 
 /* True while the boot, loading, or inverter startup sequence owns the LCD. */
 bool lcd_is_startup_active(void);
+bool lcd_startup_minimum_elapsed(void);
 
 /* Release boot-only event filtering after the power-on self-test completes. */
 void lcd_startup_release(void);

@@ -14,6 +14,7 @@
 #include "system/system_state.h"
 #include "lcd/lcd_flash_queue.h"
 #include "lcd/lcd.h"
+#include "lcd/lcd_startup_config.h"
 
 /* The LCD render instance and mutex are declared by lcd_writer.h. */
 extern system_state_t sys_state; /* the single system-state instance */
@@ -27,6 +28,7 @@ static void lcd_request_refresh(void)
 }
 
 static bool s_startup_released = false;
+static uint32_t s_startup_started_ms = 0U;
 
 /**
  * Get current time in milliseconds (using FreeRTOS ticks)
@@ -49,6 +51,7 @@ static void set_line(char *dst, const char *src)
 void lcd_writer_init(void)
 {
     s_startup_released = false;
+    s_startup_started_ms = _lcd_get_time_ms();
     LCD_LOCK();
     memset(&sys_lcd, 0, sizeof(sys_lcd));
     sys_lcd.screen = LCD_SCREEN_BOOT_BRAND;
@@ -680,6 +683,12 @@ bool lcd_is_startup_active(void)
              sys_lcd.screen == LCD_SCREEN_STARTUP_STATUS;
     LCD_UNLOCK();
     return active;
+}
+
+bool lcd_startup_minimum_elapsed(void)
+{
+    return (_lcd_get_time_ms() - s_startup_started_ms) >=
+           LCD_STARTUP_MIN_VISIBLE_DURATION_MS;
 }
 
 void lcd_startup_release(void)

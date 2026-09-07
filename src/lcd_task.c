@@ -18,7 +18,6 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_system.h"
-#include "esp_random.h"
 #include "esp_netif.h"
 #include "lcd/lcd.h"
 #include <string.h>
@@ -26,6 +25,7 @@
 #include <math.h>
 #include "lcd/lcd_flash_queue.h"
 #include "lcd/lcd_writer.h"
+#include "lcd/lcd_startup_config.h"
 #include <stdatomic.h>
 #include "system/system_state.h"
 #include "security/security.h"
@@ -59,14 +59,8 @@ extern led_pattern_t pattern;
 #define LCD_BLINK_INTERVAL_MS 500
 #define LCD_FLASH_QUEUE_DEPTH 4
 #define SYSTEM_STARTUP_DISPLAY_DURATION_MS 1500U
-#define LCD_STARTUP_IDENTITY_DURATION_MS 1200U
-#define LCD_STARTUP_LOADING_MIN_MS 1800U
-#define LCD_STARTUP_LOADING_MAX_MS 3600U
-#define LCD_STARTUP_STAGE_DURATION_MS 850U
-#define LCD_STARTUP_READY_DURATION_MS 1100U
 
 static uint8_t loading_progress(uint32_t elapsed, uint32_t duration);
-static uint32_t s_loading_duration_ms;
 static uint32_t s_identity_started_ms;
 
 static const char *TAG = "LCD_TASK";
@@ -1919,15 +1913,7 @@ void lcd_task(void *arg)
             }
             draw_startup_identity();
             if (_lcd_get_time_ms() - s_identity_started_ms >= LCD_STARTUP_IDENTITY_DURATION_MS) {
-                if (s_loading_duration_ms == 0U) {
-                    const uint32_t span = LCD_STARTUP_LOADING_MAX_MS -
-                                          LCD_STARTUP_LOADING_MIN_MS + 1U;
-                    s_loading_duration_ms = LCD_STARTUP_LOADING_MIN_MS +
-                                            (esp_random() % span);
-                }
-                /* Preserve the existing loading renderer and animation; only
-                 * the selected minimum display duration varies per boot. */
-                lcd_show_loading("System Starting", s_loading_duration_ms,
+                lcd_show_loading("System Starting", LCD_STARTUP_LOADING_DURATION_MS,
                                  LCD_SCREEN_STARTUP_STATUS);
             }
             break;

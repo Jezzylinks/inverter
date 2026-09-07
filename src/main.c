@@ -300,7 +300,19 @@ void app_main(void)
                  esp_err_to_name(rollback_err));
     }
 
-    /* Release startup filtering only after POST has reported. */
+    /* Keep the terminal startup result visible for a deterministic minimum
+     * duration. This task yields and feeds the watchdog while ADC, event,
+     * monitoring, and protection tasks continue running normally. Readiness
+     * and failure state remain authoritative; the timer cannot make a failed
+     * startup healthy. */
+    while (!lcd_startup_minimum_elapsed())
+    {
+        task_watchdog_feed();
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    /* Release startup filtering only after POST has reported and the visible
+     * startup minimum has elapsed. */
     lcd_startup_release();
     if (ota_service_rollback_notification_pending())
     {
