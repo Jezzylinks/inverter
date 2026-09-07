@@ -249,6 +249,8 @@ void app_main(void)
         startup_post = post_run_all();
         post_completed = true;
         post_show_result_and_notify(startup_post);
+        post_buzzer_event(startup_post.all_passed);
+        post_led_event(startup_post.all_passed);
     }
     else
     {
@@ -265,6 +267,8 @@ void app_main(void)
             .all_passed = false,
         };
         post_completed = true;
+        post_buzzer_event(false);
+        post_led_event(false);
         lcd_show_startup_status(LCD_STARTUP_STAGE_HARDWARE, true, false,
                                 lcd_ready, adc_ready, false);
         ESP_LOGI("POST", "Startup prerequisite result propagated: complete=1 passed=0 lcd=%d adc=%d",
@@ -287,6 +291,7 @@ void app_main(void)
 
     const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&
                                  post_completed && startup_post.all_passed;
+    sys_state.system_ready = startup_healthy;
     const esp_err_t rollback_err = ota_service_validate_running_app(startup_healthy);
     if (rollback_err != ESP_OK && rollback_err != ESP_ERR_INVALID_STATE &&
         rollback_err != ESP_ERR_NOT_SUPPORTED)

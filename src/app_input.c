@@ -160,7 +160,7 @@ extern void enter_detail_view(menu_state_t parent_menu, int parent_selection);
 extern void exit_detail_view(void);
 extern void increase_value(bool fast_mode, bool precision_mode);
 extern void decrease_value(bool fast_mode, bool precision_mode);
-extern void exit_value_edit_mode(bool save_changes);
+extern bool exit_value_edit_mode(bool save_changes);
 extern void handle_value_confirmation(void);
 extern void update_system_parameter(value_edit_context_t *config, float new_value);
 extern value_edit_context_t *get_current_value_config(void);
@@ -1508,14 +1508,17 @@ void handle_up_button_event(button_event_info_t *event_info,
                     config->selection_index =
                         (config->selection_index + 1) % config->max_selection;
                     config->current_value = (float)config->selection_index;
+                    sys_state.value_changed = true;
                 }
                 break;
             case VALUE_EDIT_BOOL:
                 config->current_value = (config->current_value != 0.0f) ? 0.0f : 1.0f;
+                sys_state.value_changed = true;
                 break;
             case VALUE_EDIT_LIST:
                 config->list_index =
                     (config->list_index + 1) % config->list_size;
+                sys_state.value_changed = true;
                 break;
             default:
                 break;
@@ -1760,16 +1763,19 @@ void handle_down_button_event(button_event_info_t *event_info,
                             ? config->selection_index - 1
                             : config->max_selection - 1;
                     config->current_value = (float)config->selection_index;
+                    sys_state.value_changed = true;
                 }
                 break;
             case VALUE_EDIT_BOOL:
                 config->current_value = (config->current_value != 0.0f) ? 0.0f : 1.0f;
+                sys_state.value_changed = true;
                 break;
             case VALUE_EDIT_LIST:
                 config->list_index =
                     (config->list_index > 0)
                         ? config->list_index - 1
                         : config->list_size - 1;
+                sys_state.value_changed = true;
                 break;
             default:
                 break;

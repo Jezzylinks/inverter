@@ -55,8 +55,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_WARNING,
             .quantity = PROT_QUANTITY_TEMPERATURE,
-            .subscriber_count = 3,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
+            .subscriber_count = 5,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_LED, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG}},
 
         /**********************************************************************
          * TEMPERATURE DERATE
@@ -65,8 +65,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_DERATE,
             .quantity = PROT_QUANTITY_TEMPERATURE,
-            .subscriber_count = 4,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
+            .subscriber_count = 6,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LED, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG}},
 
         /**********************************************************************
          * TEMPERATURE SHUTDOWN
@@ -75,8 +75,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_SHUTDOWN,
             .quantity = PROT_QUANTITY_TEMPERATURE,
-            .subscriber_count = 5,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
+            .subscriber_count = 7,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LED, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG, EVENT_SUB_WIFI}},
 
         /**********************************************************************
          * TEMPERATURE RECOVERED
@@ -85,8 +85,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_RECOVERED,
             .quantity = PROT_QUANTITY_TEMPERATURE,
-            .subscriber_count = 4,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
+            .subscriber_count = 6,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LED, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG, EVENT_SUB_WIFI}},
 
         /**********************************************************************
          * BATTERY WARNING
@@ -95,8 +95,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_WARNING,
             .quantity = PROT_QUANTITY_BATTERY_VOLTAGE,
-            .subscriber_count = 3,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
+            .subscriber_count = 5,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_LED, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG}},
 
         /**********************************************************************
          * BATTERY DERATE  <-- NEW
@@ -105,8 +105,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_DERATE,
             .quantity = PROT_QUANTITY_BATTERY_VOLTAGE,
-            .subscriber_count = 4,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
+            .subscriber_count = 6,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LED, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG}},
 
         /**********************************************************************
          * BATTERY SHUTDOWN
@@ -115,8 +115,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_SHUTDOWN,
             .quantity = PROT_QUANTITY_BATTERY_VOLTAGE,
-            .subscriber_count = 5,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
+            .subscriber_count = 7,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LED, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG, EVENT_SUB_WIFI}},
 
         /**********************************************************************
          * BATTERY RECOVERED  <-- NEW
@@ -125,8 +125,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_RECOVERED,
             .quantity = PROT_QUANTITY_BATTERY_VOLTAGE,
-            .subscriber_count = 4,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
+            .subscriber_count = 6,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LED, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG, EVENT_SUB_WIFI}},
 
         /**********************************************************************
          * AC VOLTAGE WARNING  <-- NEW
@@ -135,8 +135,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_WARNING,
             .quantity = PROT_QUANTITY_AC_VOLTAGE,
-            .subscriber_count = 3,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
+            .subscriber_count = 5,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_LED, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG}},
 
         /**********************************************************************
          * AC VOLTAGE DERATE  <-- NEW
@@ -145,8 +145,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_DERATE,
             .quantity = PROT_QUANTITY_AC_VOLTAGE,
-            .subscriber_count = 4,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
+            .subscriber_count = 6,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LED, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG}},
 
         /**********************************************************************
          * AC VOLTAGE SHUTDOWN
@@ -155,8 +155,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_SHUTDOWN,
             .quantity = PROT_QUANTITY_AC_VOLTAGE,
-            .subscriber_count = 5,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
+            .subscriber_count = 7,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LED, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG, EVENT_SUB_WIFI}},
 
         /**********************************************************************
          * AC VOLTAGE RECOVERED  <-- NEW
@@ -165,8 +165,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_RECOVERED,
             .quantity = PROT_QUANTITY_AC_VOLTAGE,
-            .subscriber_count = 4,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
+            .subscriber_count = 6,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LED, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG, EVENT_SUB_WIFI}},
 
         /**********************************************************************
          * OUTPUT CURRENT WARNING  <-- NEW
@@ -175,8 +175,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_WARNING,
             .quantity = PROT_QUANTITY_OUTPUT_CURRENT,
-            .subscriber_count = 3,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
+            .subscriber_count = 5,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_LED, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG}},
 
         /**********************************************************************
          * OUTPUT CURRENT DERATE  <-- NEW
@@ -185,8 +185,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_DERATE,
             .quantity = PROT_QUANTITY_OUTPUT_CURRENT,
-            .subscriber_count = 4,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER}},
+            .subscriber_count = 6,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LED, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG}},
 
         /**********************************************************************
          * OUTPUT CURRENT SHUTDOWN
@@ -195,8 +195,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_SHUTDOWN,
             .quantity = PROT_QUANTITY_OUTPUT_CURRENT,
-            .subscriber_count = 5,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}},
+            .subscriber_count = 7,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LED, EVENT_SUB_BUZZER, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG, EVENT_SUB_WIFI}},
 
         /**********************************************************************
          * OUTPUT CURRENT RECOVERED  <-- NEW
@@ -205,8 +205,8 @@ static const event_route_t routes[] =
             .category = EVENT_CATEGORY_PROTECTION,
             .action = EVENT_ACTION_RECOVERED,
             .quantity = PROT_QUANTITY_OUTPUT_CURRENT,
-            .subscriber_count = 4,
-            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LOGGER, EVENT_SUB_WIFI}}};
+            .subscriber_count = 6,
+            .subscribers = {EVENT_SUB_LCD, EVENT_SUB_RELAY, EVENT_SUB_LED, EVENT_SUB_LOGGER, EVENT_SUB_FAULT_LOG, EVENT_SUB_WIFI}}};
 
 static const size_t route_count =
     sizeof(routes) / sizeof(routes[0]);

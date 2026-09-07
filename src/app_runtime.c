@@ -1038,7 +1038,7 @@ static inline float clamp_float(float value, float min, float max);
 void increase_value(bool fast_mode, bool precision_mode);
 void decrease_value(bool fast_mode, bool precision_mode);
 void enter_value_edit_mode(value_edit_context_t *value_type);
-void exit_value_edit_mode(bool save_changes);
+bool exit_value_edit_mode(bool save_changes);
 void apply_value_change(void);
 void reset_value_to_backup(void);
 float *get_current_value_pointer(void);
@@ -4180,8 +4180,9 @@ void enter_value_edit_mode(value_edit_context_t *value_type)
     printf("Use UP/DOWN to adjust, ENTER to save, BACK to cancel\n");
 }
 
-void exit_value_edit_mode(bool save_changes)
+bool exit_value_edit_mode(bool save_changes)
 {
+    bool saved = true;
     if (!sys_state.value_edit_mode)
     {
         /* Clear stale operation state even if a caller is recovering from an
@@ -4192,7 +4193,7 @@ void exit_value_edit_mode(bool save_changes)
         sys_state.repeat_count = 0;
         sys_state.fast_increment_active = false;
         sys_state.hold_start_time = 0;
-        return;
+        return saved;
     }
 
     value_edit_context_t *ctx = get_current_value_config();
@@ -4207,7 +4208,7 @@ void exit_value_edit_mode(bool save_changes)
         sys_state.repeat_count = 0;
         sys_state.fast_increment_active = false;
         sys_state.hold_start_time = 0;
-        return;
+        return false;
     }
 
     if (save_changes && sys_state.value_changed)
@@ -4215,8 +4216,16 @@ void exit_value_edit_mode(bool save_changes)
         apply_value_change();
         /* Every accepted settings edit is durable immediately, including
          * boolean, select, and list options. */
-        (void)save_settings();
-        printf("Value saved successfully\n");
+        saved = save_settings();
+        if (saved)
+        {
+            printf("Value saved successfully\n");
+        }
+        else
+        {
+            reset_value_to_backup();
+            ESP_LOGE("VALUE_EDIT", "Failed to persist setting; restored previous value");
+        }
     }
     else if (!save_changes && sys_state.value_changed)
     {
@@ -4232,6 +4241,7 @@ void exit_value_edit_mode(bool save_changes)
     sys_state.fast_increment_active = false;
     sys_state.hold_start_time = 0;
     sys_state.edit_backup_value = 0.0f;
+    return saved;
 }
 
 void apply_value_change(void)
@@ -4453,12 +4463,19 @@ void handle_value_confirmation(void)
     if (safety_check_passed)
     {
         /* exit_value_edit_mode(true) applies and persists the accepted value. */
-        exit_value_edit_mode(true);
+        const bool saved = exit_value_edit_mode(true);
 
         show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
-        lcd_flash_info_to(ctx->label, "Value Saved!    ", 1000, LCD_SCREEN_MENU);
-
-        printf("AUDIT: Parameter changed - %s\n", ctx->label);
+        if (saved)
+        {
+            lcd_flash_info_to(ctx->label, "Value Saved!    ", 1000, LCD_SCREEN_MENU);
+            printf("AUDIT: Parameter changed - %s\n", ctx->label);
+        }
+        else
+        {
+            post_buzzer_event(false);
+            lcd_flash_info_to("Save Failed     ", "Previous restored", 1200, LCD_SCREEN_MENU);
+        }
     }
     else
     {
@@ -5738,7 +5755,7 @@ void error_handler(void)
         if (sys_state.error.error_flags == errors[i].flag)
         {
             lcd_show_fault(errors[i].line1, errors[i].line2);
-            post_buzzer_event(true);
+            post_buzzer_event(false);
             error_found = true;
 
             if (errors[i].flag == ERR_LOW_BAT)
@@ -5779,7 +5796,7 @@ void error_handler(void)
     {
         // Instead of generic "Unknown", show the actual hex code
         lcd_show_fault("Error Detected  ", code_str);
-        post_buzzer_event(true);
+        post_buzzer_event(false);
     }
     // Log the error state for debugging
     log_all_error_flags(sys_state.error.error_flags);

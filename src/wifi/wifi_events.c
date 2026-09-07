@@ -12,6 +12,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "wifi/wifi_config.h"
+#include "events/system_events.h"
 
 #define WIFI_EVENTS_TAG "WIFI_EVENTS"
 #define WIFI_MAX_CALLBACKS 8
@@ -49,9 +50,13 @@ static void wifi_publish_state(wifi_connection_state_t state)
     wifi_status_t status = {0};
     wifi_status_callback_t status_callbacks[WIFI_MAX_CALLBACKS];
     wifi_event_callback_t event_callbacks[WIFI_MAX_CALLBACKS];
+    wifi_connection_state_t previous_state;
+    bool state_changed;
 
     events_lock();
+    previous_state = s_status.state;
     s_status.state = state;
+    state_changed = previous_state != state;
     status = s_status;
     memcpy(status_callbacks, s_status_callbacks, sizeof(status_callbacks));
     memcpy(event_callbacks, s_event_callbacks, sizeof(event_callbacks));
@@ -66,6 +71,22 @@ static void wifi_publish_state(wifi_connection_state_t state)
         if (event_callbacks[i] != NULL) {
             event_callbacks[i](state);
         }
+    }
+
+    if (state_changed && (state == WIFI_STATE_CONNECTED ||
+                          state == WIFI_STATE_AP_ACTIVE ||
+                          state == WIFI_STATE_FAILED ||
+                          state == WIFI_STATE_DISCONNECTED)) {
+        system_event_t event = {
+            .category = EVENT_CATEGORY_WIFI,
+            .action = (state == WIFI_STATE_CONNECTED || state == WIFI_STATE_AP_ACTIVE)
+                          ? EVENT_ACTION_SUCCESS : EVENT_ACTION_ERROR,
+            .source = EVENT_SOURCE_WIFI,
+            .priority = (state == WIFI_STATE_FAILED) ? EVENT_PRIORITY_HIGH
+                                                       : EVENT_PRIORITY_NORMAL,
+            .timestamp = xTaskGetTickCount(),
+        };
+        (void)system_event_post(&event);
     }
 }
 
