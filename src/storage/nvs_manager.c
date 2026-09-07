@@ -16,6 +16,11 @@ static uint32_t s_schema_version;
 #define STORAGE_SCHEMA_KEY "schema_ver"
 #define STORAGE_SCHEMA_CURRENT 1U
 
+static esp_err_t initialize_flash_partition(void)
+{
+    return nvs_flash_init();
+}
+
 static esp_err_t lock_storage(void)
 {
     if (!s_mutex) {
@@ -76,12 +81,12 @@ esp_err_t storage_nvs_init(void)
         return ESP_OK;
     }
 
-    err = nvs_flash_init();
+    err = initialize_flash_partition();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_LOGW(TAG, "NVS init requires documented recovery: %s", esp_err_to_name(err));
         esp_err_t erase_err = nvs_flash_erase();
         if (erase_err == ESP_OK) {
-            err = nvs_flash_init();
+            err = initialize_flash_partition();
             if (err == ESP_OK) {
                 s_state = STORAGE_NVS_STATE_RECOVERED;
                 s_recovery_count++;
@@ -190,7 +195,7 @@ esp_err_t storage_nvs_factory_reset(void)
     ESP_LOGW(TAG, "Explicit factory reset: erasing the complete default NVS partition");
     nvs_flash_deinit();
     err = nvs_flash_erase();
-    if (err == ESP_OK) err = nvs_flash_init();
+    if (err == ESP_OK) err = initialize_flash_partition();
     if (err == ESP_OK) s_state = STORAGE_NVS_STATE_READY;
     else { s_state = STORAGE_NVS_STATE_FAILED; s_last_error = err; }
     xSemaphoreGive(s_mutex);
