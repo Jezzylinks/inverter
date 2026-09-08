@@ -51,6 +51,7 @@ static button_controller_t g_button_controllers[BUTTON_MAX_CONTROLLERS];
 static button_handle_t g_gpio_to_controller[GPIO_NUM_MAX];
 static QueueHandle_t g_edge_queue;
 static TaskHandle_t g_button_task;
+static volatile uint32_t g_button_task_generation;
 static SemaphoreHandle_t g_controller_mutex;
 static _Atomic bool g_system_initialized;
 
@@ -285,6 +286,7 @@ static void button_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
+    g_button_task_generation = task_watchdog_current_generation();
     (void)arg;
     button_edge_t edge;
 
@@ -514,7 +516,11 @@ esp_err_t button_controller_deinit(void)
     if (g_button_task) {
         TaskHandle_t task = g_button_task;
         g_button_task = NULL;
-        task_watchdog_unregister_task(task);
+        const uint32_t generation = g_button_task_generation;
+        g_button_task_generation = 0U;
+        if (!task_watchdog_unregister_task_generation(task, generation)) {
+            ESP_LOGW("BUTTON", "Button watchdog cleanup rejected for task %p", task);
+        }
         vTaskDelete(task);
     }
     if (g_edge_queue) {

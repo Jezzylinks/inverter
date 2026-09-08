@@ -237,3 +237,10 @@ The generation-aware lifecycle API is `task_watchdog_unregister_task_generation(
 The repository contract test `tools/test_firmware_contracts.py` was updated to assert the centralized `task_watchdog_init()` implementation rather than requiring raw reconfiguration calls in `src/app_runtime.c`. This preserves the contract's intent while matching the single-owner architecture.
 
 The final corrective run produced **24 passing contract tests**, a successful `esp32dev` PlatformIO build, a generated 4 MB firmware image, and a clean `git diff --check`.
+
+
+### Surgical follow-up
+
+The external button-task deletion path now retains the task registration generation and calls `task_watchdog_unregister_task_generation()` before `vTaskDelete()`. This prevents a stale cleanup operation from removing a newer registration that happens to reuse the same FreeRTOS task handle. The lifecycle contract test was updated to assert this generation-aware cleanup.
+
+Final surgical validation: **24 contract tests passed**, the `esp32dev` PlatformIO build passed, firmware image generation passed, and `git diff --check` passed. Physical runtime scheduling and handle-reuse tests remain not verifiable without an attached ESP32.
