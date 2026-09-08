@@ -3,7 +3,6 @@
   Watchdog and heartbeat implementation for lcd_task.
 ==============================================================================*/
 #include "lcd/lcd_watchdog.h"
-#include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -27,45 +26,12 @@ void lcd_watchdog_init(TaskHandle_t lcd_handle)
     s_last_seen_hb = 0;
     s_last_feed_ms = 0;
 
-    if (lcd_handle == NULL)
-    {
-        ESP_LOGE(TAG, "lcd_watchdog_init: NULL handle — WDT not registered");
-        return;
-    }
-
-    /* Register lcd_task with the task WDT.
-     * ESP-IDF task WDT must have been initialised by the application first
-     * (via esp_task_wdt_init()).  If it was not, we log a warning and
-     * continue — the heartbeat checker still works independently. */
-    esp_err_t err = esp_task_wdt_add(lcd_handle);
-    if (err == ESP_OK)
-    {
-        ESP_LOGI(TAG, "lcd_task registered with task WDT "
-                      "(timeout %d ms)",
-                 LCD_WDT_TIMEOUT_MS);
-    }
-    else if (err == ESP_ERR_INVALID_STATE)
-    {
-        ESP_LOGW(TAG, "Task WDT not initialised — "
-                      "only heartbeat monitor active");
-    }
-    else if (err == ESP_ERR_INVALID_ARG)
-    {
-        ESP_LOGI(TAG, "lcd_task already registered with task WDT");
-    }
-    else
-    {
-        ESP_LOGE(TAG, "Failed to register with task WDT: %s",
-                 esp_err_to_name(err));
-    }
 }
 
 void lcd_watchdog_feed(void)
 {
-    /* Feed the ESP task WDT */
-    esp_task_wdt_reset();
-
-    /* Update heartbeat and timestamp */
+    /* TWDT ownership belongs exclusively to task_watchdog.c. This module
+     * reports LCD liveness without creating a second subscription path. */
     s_heartbeat++;
     s_last_feed_ms = (uint32_t)(esp_timer_get_time() / 1000);
 }
@@ -123,11 +89,8 @@ void lcd_watchdog_deinit(void)
 {
     if (s_lcd_handle != NULL)
     {
-        esp_err_t err = esp_task_wdt_delete(s_lcd_handle);
-        if (err == ESP_OK)
-            ESP_LOGI(TAG, "lcd_task deregistered from task WDT");
-        else
-            ESP_LOGW(TAG, "WDT deregister failed: %s", esp_err_to_name(err));
         s_lcd_handle = NULL;
+        s_heartbeat = 0;
+        s_last_feed_ms = 0;
     }
 }

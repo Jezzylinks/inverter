@@ -2184,8 +2184,10 @@ bool detect_critical_error()
     }
     */
 
-    // 3. Watchdog
-    if (esp_task_wdt_status(NULL) == ESP_ERR_TIMEOUT)
+    // 3. Application watchdog health. ESP-IDF esp_task_wdt_status() reports
+    // subscription state, not timeout state; timeout handling belongs to the
+    // TWDT panic path while liveness polling belongs to this health API.
+    if (!task_watchdog_all_healthy((uint32_t)(esp_timer_get_time() / 1000ULL)))
         current_error_code = ERR_SYSTEM_FAILURE;
 
     // 4. Stack overflow
@@ -5548,14 +5550,6 @@ void display_battery_settings(void)
     lcd_show_menu(l, v);
 }
 
-void register_task_to_wdt(TaskHandle_t task)
-{
-    if (esp_task_wdt_add(task) != ESP_OK)
-    {
-        ESP_LOGE("WDT", "Failed to add task %p to watchdog", task);
-    }
-}
-
 /* ── show_battery_voltage() / show_temperature() ─────────────────────────── */
 /* These are read-only display helpers.  In the refactored design they just   */
 /* update the main-screen data; lcd_task draws it.                            */
@@ -5597,7 +5591,7 @@ void perform_system_restart(bool factory_reset)
     }
     gpio_reset_pin(GPIO_BUZZER);
     gpio_reset_pin(GPIO_STATUS_LED);
-    esp_task_wdt_reset();
+    (void)task_watchdog_feed();
     vTaskDelay(pdMS_TO_TICKS(100));
     log_error_to_nvs(90);
     system_restart();
@@ -5632,7 +5626,7 @@ void disable_brownout()
 #endif
 }
 
-void init_watchdog(bool enable_task_wdt, bool panic_on_hang)
+bool init_watchdog(bool enable_task_wdt, bool panic_on_hang)
 {
     if (enable_task_wdt)
     {
@@ -5653,13 +5647,15 @@ void init_watchdog(bool enable_task_wdt, bool panic_on_hang)
         {
             ESP_LOGE("WDT", "Failed to configure task watchdog: %s",
                      esp_err_to_name(err));
+            return false;
         }
 
         // Subscribe current task to the watchdog
         err = esp_task_wdt_add(NULL);
-        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+        if (err != ESP_OK && esp_task_wdt_status(NULL) != ESP_OK)
         {
             ESP_LOGE("WDT", "Failed to add task to watchdog: %s", esp_err_to_name(err));
+            return false;
         }
     }
 
@@ -5667,6 +5663,7 @@ void init_watchdog(bool enable_task_wdt, bool panic_on_hang)
     // Interrupt WDT config can go here if needed in future.
     // The CONFIG_ESP_INT_WDT macro only exists if enabled in menuconfig.
 #endif
+    return true;
 }
 
 void log_error_to_nvs(uint8_t error_code)

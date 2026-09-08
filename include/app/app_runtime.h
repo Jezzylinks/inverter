@@ -30,7 +30,7 @@ extern system_state_t sys_state;
 #define APP_EVENT_LCD_FAILED (1U << 4)
 
 /* Existing lifecycle entry points retained behind one application boundary. */
-void init_watchdog(bool enable_task_wdt, bool panic_on_hang);
+bool init_watchdog(bool enable_task_wdt, bool panic_on_hang);
 void nvs_init(bool erase_on_fail);
 bool nvs_is_initialized(void);
 void nvs_print_stats(void);

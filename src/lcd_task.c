@@ -1817,6 +1817,7 @@ extern flash_entry_t s_queue[LCD_FLASH_QUEUE_DEPTH];
 void lcd_task(void *arg)
 {
     task_watchdog_register("lcd_task");
+    lcd_watchdog_init(xTaskGetCurrentTaskHandle());
     lcd_render_state_t snap;
     static lcd_screen_id_t last_screen = LCD_SCREEN_COUNT;
     bool need_clear = true;

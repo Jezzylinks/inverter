@@ -76,7 +76,12 @@ void app_main(void)
     bool lcd_event_ready = true;
     bool post_completed = false;
     post_result_t startup_post = {0};
-    init_watchdog(true, true);
+    if (!init_watchdog(true, true) || !task_watchdog_register("app_main"))
+    {
+        ESP_LOGE(APP_TAG, "FATAL: watchdog initialization/registration failed");
+        task_watchdog_unregister();
+        return;
+    }
 
     if (!system_events_init()) {
         ESP_LOGE(APP_TAG, "System event queue initialization failed");
@@ -319,8 +324,6 @@ void app_main(void)
         lcd_flash_info_to("Firmware Update", "Previous restored", 3500U,
                           LCD_SCREEN_MAIN);
     }
-    lcd_watchdog_init(lcd_task_handle);
-    task_watchdog_register("app_main");
     task_watchdog_feed();
     if (!startup_healthy) {
         /* Keep button_task and the event consumers alive in the latched

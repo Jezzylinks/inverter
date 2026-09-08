@@ -6,6 +6,7 @@
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "lcd/lcd_watchdog.h"
 
 static const char *TAG = "TASK_WDT";
 
@@ -21,6 +22,7 @@ typedef struct {
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static task_record_t s_records[TASK_WATCHDOG_MAX_TASKS];
 static TaskHandle_t s_supervisor_task;
+static TaskHandle_t s_last_feed_error_task;
 
 static uint32_t now_ms(void)
 {
@@ -37,7 +39,7 @@ static int find_record(TaskHandle_t handle)
     return -1;
 }
 
-static void record_health_registration(const char *task_name)
+static bool record_health_registration(const char *task_name, bool twdt_subscribed)
 {
     const TaskHandle_t current = xTaskGetCurrentTaskHandle();
     const uint32_t timestamp = now_ms();
@@ -56,6 +58,10 @@ static void record_health_registration(const char *task_name)
     if (index >= 0) {
         task_watchdog_snapshot_t *snapshot = &s_records[index].snapshot;
         snapshot->registered = true;
+        snapshot->health_registered = true;
+        snapshot->twdt_subscribed = twdt_subscribed;
+        snapshot->mode = twdt_subscribed ? TASK_WATCHDOG_MODE_TWDT_AND_HEALTH
+                                         : TASK_WATCHDOG_MODE_HEALTH_ONLY;
         snapshot->last_feed_ms = timestamp;
         if (task_name && task_name[0] != '\0') {
             strncpy(snapshot->name, task_name, sizeof(snapshot->name) - 1U);
@@ -67,28 +73,38 @@ static void record_health_registration(const char *task_name)
 
     if (index < 0) {
         ESP_LOGE(TAG, "Task watchdog registry full; task health unavailable");
+        return false;
     }
+    return true;
 }
 
-void task_watchdog_register(const char *task_name)
+bool task_watchdog_register(const char *task_name)
 {
     const esp_err_t status = esp_task_wdt_status(NULL);
-    if (status != ESP_OK) {
+    bool twdt_subscribed = status == ESP_OK;
+    if (status == ESP_ERR_NOT_FOUND) {
         const esp_err_t err = esp_task_wdt_add(NULL);
-        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-            ESP_LOGW(TAG, "Could not register %s: %s",
+        if (err == ESP_OK) {
+            twdt_subscribed = true;
+        } else {
+            ESP_LOGE(TAG, "Could not subscribe %s to TWDT: %s",
                      task_name ? task_name : "task", esp_err_to_name(err));
         }
+    } else if (status != ESP_OK) {
+        ESP_LOGE(TAG, "TWDT status unavailable for %s: %s",
+                 task_name ? task_name : "task", esp_err_to_name(status));
     }
-    record_health_registration(task_name);
+    const bool health_registered =
+        record_health_registration(task_name, twdt_subscribed);
+    return twdt_subscribed && health_registered;
 }
 
-void task_watchdog_register_health_only(const char *task_name)
+bool task_watchdog_register_health_only(const char *task_name)
 {
-    record_health_registration(task_name);
+    return record_health_registration(task_name, false);
 }
 
-static void update_health_heartbeat(TaskHandle_t current)
+static bool update_health_heartbeat(TaskHandle_t current)
 {
     const uint32_t timestamp = now_ms();
     taskENTER_CRITICAL(&s_lock);
@@ -100,6 +116,7 @@ static void update_health_heartbeat(TaskHandle_t current)
             uxTaskGetStackHighWaterMark(current);
     }
     taskEXIT_CRITICAL(&s_lock);
+    return index >= 0;
 }
 
 void task_watchdog_unregister_task(TaskHandle_t task_handle)
@@ -108,11 +125,26 @@ void task_watchdog_unregister_task(TaskHandle_t task_handle)
         return;
     }
 
-    const esp_err_t err = esp_task_wdt_delete(task_handle);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE &&
-        err != ESP_ERR_NOT_FOUND) {
-        ESP_LOGW(TAG, "Task watchdog unregister failed: %s",
-                 esp_err_to_name(err));
+    bool twdt_subscribed = false;
+    taskENTER_CRITICAL(&s_lock);
+    const int existing = find_record(task_handle);
+    if (existing >= 0) {
+        twdt_subscribed = s_records[existing].snapshot.twdt_subscribed;
+    }
+    taskEXIT_CRITICAL(&s_lock);
+
+    /* A task may be subscribed before its health record is created (fatal
+     * startup cleanup), so verify the real TWDT state in that case. */
+    if (existing < 0) {
+        twdt_subscribed = esp_task_wdt_status(task_handle) == ESP_OK;
+    }
+    if (twdt_subscribed) {
+        const esp_err_t err = esp_task_wdt_delete(task_handle);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE &&
+            err != ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG, "Task watchdog unregister failed for %p: %s",
+                     task_handle, esp_err_to_name(err));
+        }
     }
 
     taskENTER_CRITICAL(&s_lock);
@@ -128,18 +160,40 @@ void task_watchdog_unregister(void)
     task_watchdog_unregister_task(xTaskGetCurrentTaskHandle());
 }
 
-void task_watchdog_feed(void)
+bool task_watchdog_feed(void)
 {
-    const esp_err_t err = esp_task_wdt_reset();
-    update_health_heartbeat(xTaskGetCurrentTaskHandle());
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGD(TAG, "Task watchdog feed failed: %s", esp_err_to_name(err));
+    const TaskHandle_t current = xTaskGetCurrentTaskHandle();
+    bool twdt_subscribed = false;
+    taskENTER_CRITICAL(&s_lock);
+    const int index = find_record(current);
+    if (index >= 0) {
+        twdt_subscribed = s_records[index].snapshot.twdt_subscribed;
     }
+    taskEXIT_CRITICAL(&s_lock);
+
+    if (!twdt_subscribed) {
+        if (s_last_feed_error_task != current) {
+            ESP_LOGE(TAG, "TWDT feed rejected for unsubscribed task %p", current);
+            s_last_feed_error_task = current;
+        }
+        return false;
+    }
+
+    const esp_err_t err = esp_task_wdt_reset();
+    if (err != ESP_OK) {
+        if (s_last_feed_error_task != current) {
+            ESP_LOGE(TAG, "TWDT feed failed for task %p: %s",
+                     current, esp_err_to_name(err));
+            s_last_feed_error_task = current;
+        }
+        return false;
+    }
+    return update_health_heartbeat(current);
 }
 
-void task_watchdog_health_feed(void)
+bool task_watchdog_health_feed(void)
 {
-    update_health_heartbeat(xTaskGetCurrentTaskHandle());
+    return update_health_heartbeat(xTaskGetCurrentTaskHandle());
 }
 
 static void task_watchdog_supervisor(void *arg)
@@ -183,6 +237,7 @@ static void task_watchdog_supervisor(void *arg)
                      low_stack[i].name,
                      (unsigned long)low_stack[i].stack_high_water_words);
         }
+        (void)lcd_watchdog_check();
         vTaskDelay(pdMS_TO_TICKS(TASK_WATCHDOG_SUPERVISOR_PERIOD_MS));
     }
 }

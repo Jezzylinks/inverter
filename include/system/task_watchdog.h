@@ -16,19 +16,29 @@ extern "C" {
 #define TASK_WATCHDOG_STALE_MS 10000U
 #define TASK_WATCHDOG_NAME_LENGTH 24U
 
+typedef enum {
+    TASK_WATCHDOG_MODE_NONE = 0,
+    TASK_WATCHDOG_MODE_TWDT,
+    TASK_WATCHDOG_MODE_HEALTH_ONLY,
+    TASK_WATCHDOG_MODE_TWDT_AND_HEALTH,
+} task_watchdog_mode_t;
+
 typedef struct {
     char name[TASK_WATCHDOG_NAME_LENGTH];
     bool registered;
+    bool twdt_subscribed;
+    bool health_registered;
+    task_watchdog_mode_t mode;
     uint32_t last_feed_ms;
     uint32_t feed_count;
     uint32_t stack_high_water_words;
 } task_watchdog_snapshot_t;
 
 /* Register the calling FreeRTOS task with the ESP task watchdog. */
-void task_watchdog_register(const char *task_name);
+bool task_watchdog_register(const char *task_name);
 
 /* Register only in the health registry; do not subscribe the task to ESP TWDT. */
-void task_watchdog_register_health_only(const char *task_name);
+bool task_watchdog_register_health_only(const char *task_name);
 
 /* Unregister a task before it is externally deleted or permanently stopped. */
 void task_watchdog_unregister_task(TaskHandle_t task_handle);
@@ -37,10 +47,10 @@ void task_watchdog_unregister_task(TaskHandle_t task_handle);
 void task_watchdog_unregister(void);
 
 /* Feed the real ESP task watchdog and update the task-health heartbeat. */
-void task_watchdog_feed(void);
+bool task_watchdog_feed(void);
 
 /* Update only the health registry for tasks intentionally outside ESP TWDT. */
-void task_watchdog_health_feed(void);
+bool task_watchdog_health_feed(void);
 
 /* Start the health supervisor once after the task watchdog is configured. */
 bool task_watchdog_start_supervisor(void);
