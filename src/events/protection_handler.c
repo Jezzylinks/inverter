@@ -108,7 +108,11 @@ static const quantity_handler_t quantity_handlers[PROT_QUANTITY_COUNT] = {
 
 void protection_event_task(void *pv)
 {
-    task_watchdog_register("protection_event_task");
+    if (!task_watchdog_register("protection_event_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     system_event_t evt;
 
     while (1)

@@ -280,7 +280,11 @@ static void IRAM_ATTR button_gpio_isr_handler(void *arg)
 
 static void button_task(void *arg)
 {
-    task_watchdog_register("button_task");
+    if (!task_watchdog_register("button_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     (void)arg;
     button_edge_t edge;
 

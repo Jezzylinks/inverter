@@ -94,7 +94,11 @@ static void display_event_notice(const system_event_t *event)
 
 static void lcd_event_receiver_task(void *arg)
 {
-    task_watchdog_register("lcd_event_receiver_task");
+    if (!task_watchdog_register("lcd_event_receiver_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     (void)arg;
 
     while (s_running) {

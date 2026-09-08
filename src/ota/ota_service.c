@@ -114,7 +114,11 @@ static void download_verifying_callback(void *context)
 
 static void ota_task(void *parameter)
 {
-    task_watchdog_register("ota_task");
+    if (!task_watchdog_register("ota_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     ota_job_t *job = (ota_job_t *)parameter;
     if (!job) {
         set_job_finished();

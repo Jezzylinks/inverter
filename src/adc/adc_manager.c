@@ -485,7 +485,11 @@ static void update_snapshot_and_outputs(uint32_t sample_time_ms,
 
 static void adc_task_body(void)
 {
-    task_watchdog_register("adc_task");
+    if (!task_watchdog_register("adc_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     telemetry_health_init();
     telemetry_health_set_required_mask(ADC_REQUIRED_MASK);
     battery_filter_init(&battery_voltage_filter, 0.20f);

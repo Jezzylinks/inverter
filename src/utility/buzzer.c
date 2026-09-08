@@ -372,7 +372,11 @@ void post_buzzer_limit_event(void)
 
 void buzzer_event_task(void *pv)
 {
-    task_watchdog_register("buzzer_event_task");
+    if (!task_watchdog_register("buzzer_event_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     s_buzzer_task = xTaskGetCurrentTaskHandle();
     ESP_LOGI(TAG, "Buzzer event task started");
     if (s_pending_button_clicks > 0U) {

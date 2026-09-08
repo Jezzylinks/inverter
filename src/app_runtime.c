@@ -27,7 +27,6 @@
 #include <esp_adc/adc_cali_scheme.h>
 #include "esp_sleep.h"
 #include "driver/rtc_io.h"
-#include "esp_task_wdt.h"
 #include "esp_private/system_internal.h"
 #include "soc/rtc_cntl_reg.h"
 #include "soc/soc_caps.h"
@@ -2236,7 +2235,11 @@ bool detect_critical_error()
 
 void power_task(void *arg)
 {
-    task_watchdog_register("power_task");
+    if (!task_watchdog_register("power_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     static bool last_relay_state = false;
     static TickType_t last_state_change = 0;
     const TickType_t DEBOUNCE_TIME = pdMS_TO_TICKS(2000);
@@ -2566,7 +2569,11 @@ float esp_cpu_get_usage_percent()
 
 void diagnostic_update_task(void *pv)
 {
-    task_watchdog_register("diagnostic_update_task");
+    if (!task_watchdog_register("diagnostic_update_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     while (1)
     {
         task_watchdog_feed();
@@ -4625,7 +4632,11 @@ bool battery_monitor_set_cutoff(float cutoff_voltage)
  */
 void thermal_monitoring_task(void *pvParameters)
 {
-    task_watchdog_register("thermal_monitoring_task");
+    if (!task_watchdog_register("thermal_monitoring_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     const TickType_t xFrequency = pdMS_TO_TICKS(500); // Check every 500ms
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
@@ -4662,7 +4673,11 @@ void set_system_timeout(uint32_t timeout_ms)
  */
 void battery_monitoring_task(void *pvParameters)
 {
-    task_watchdog_register("battery_monitoring_task");
+    if (!task_watchdog_register("battery_monitoring_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     const TickType_t xFrequency = pdMS_TO_TICKS(1000); // Check every 1 second
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
@@ -5295,7 +5310,11 @@ void update_activity()
 // ================== DISPLAY TIMEOUT TASK ==================
 void display_timeout_task(void *arg)
 {
-    task_watchdog_register("display_timeout_task");
+    if (!task_watchdog_register("display_timeout_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     while (1)
     {
         task_watchdog_feed();
@@ -5591,7 +5610,9 @@ void perform_system_restart(bool factory_reset)
     }
     gpio_reset_pin(GPIO_BUZZER);
     gpio_reset_pin(GPIO_STATUS_LED);
-    (void)task_watchdog_feed();
+    if (!task_watchdog_feed()) {
+        ESP_LOGW("WDT", "Restart path could not feed the task watchdog");
+    }
     vTaskDelay(pdMS_TO_TICKS(100));
     log_error_to_nvs(90);
     system_restart();
@@ -5628,42 +5649,7 @@ void disable_brownout()
 
 bool init_watchdog(bool enable_task_wdt, bool panic_on_hang)
 {
-    if (enable_task_wdt)
-    {
-        esp_task_wdt_config_t twdt_config = {
-            .timeout_ms = 15000,                             // 15-second timeout
-            .idle_core_mask = (1 << portNUM_PROCESSORS) - 1, // Monitor all available cores
-            .trigger_panic = panic_on_hang};
-
-        esp_err_t err = esp_task_wdt_init(&twdt_config);
-        if (err == ESP_ERR_INVALID_STATE)
-        {
-            /* ESP-IDF may auto-initialize TWDT from sdkconfig before app_main.
-             * Reconfigure it here so the application’s explicit timeout and
-             * idle-core mask are not silently replaced by menuconfig defaults. */
-            err = esp_task_wdt_reconfigure(&twdt_config);
-        }
-        if (err != ESP_OK)
-        {
-            ESP_LOGE("WDT", "Failed to configure task watchdog: %s",
-                     esp_err_to_name(err));
-            return false;
-        }
-
-        // Subscribe current task to the watchdog
-        err = esp_task_wdt_add(NULL);
-        if (err != ESP_OK && esp_task_wdt_status(NULL) != ESP_OK)
-        {
-            ESP_LOGE("WDT", "Failed to add task to watchdog: %s", esp_err_to_name(err));
-            return false;
-        }
-    }
-
-#ifdef CONFIG_ESP_INT_WDT
-    // Interrupt WDT config can go here if needed in future.
-    // The CONFIG_ESP_INT_WDT macro only exists if enabled in menuconfig.
-#endif
-    return true;
+    return task_watchdog_init(enable_task_wdt, panic_on_hang);
 }
 
 void log_error_to_nvs(uint8_t error_code)

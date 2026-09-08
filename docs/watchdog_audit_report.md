@@ -192,3 +192,48 @@ The runtime policy intentionally overrides the checked-in menuconfig timeout and
 [1]: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/wdts.html "ESP-IDF Watchdogs API Reference"
 
 [2]: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/freertos.html "ESP-IDF FreeRTOS API Reference"
+
+
+## K. Corrective Follow-up to Commit `8cdb33d`
+
+A second source audit identified additional issues in the first refactor. These were corrected without introducing a second watchdog subsystem.
+
+| Follow-up issue | Corrective change |
+|---|---|
+| Failed TWDT registration could be represented as a health-only record | TWDT registration now exits before health-record creation when subscription verification fails. Health-only registration is available only through its explicit API. |
+| `esp_task_wdt_add()` success was treated as sufficient proof | Registration now checks status before add, calls add only for `ESP_ERR_NOT_FOUND`, then re-checks status and requires `ESP_OK`. |
+| Registration and health-record allocation were not transactional | A failed record allocation returns failure; a newly added TWDT subscription is rolled back. No successful record is created for a failed TWDT request. |
+| Task-handle reuse could invalidate stale cleanup | Each successful record receives a monotonically increasing generation. The generation-aware unregister API verifies both handle and generation before deletion and record removal. |
+| Registry critical sections included stack inspection | `uxTaskGetStackHighWaterMark()` now runs outside the registry critical section; only state copies and updates are protected. |
+| Diagnostic suppression state was unsynchronized | `s_last_feed_error_task` is read and updated under the same registry lock. Normal successful feeds remain silent and the first meaningful error per task is logged. |
+| Supervisor did not explicitly handle health registration failure | The supervisor now checks health-only registration and terminates rather than operating without a health record. |
+| TWDT-only records could be treated as stale health records | Supervisor and `task_watchdog_all_healthy()` now require `health_registered` before evaluating heartbeat age. |
+| TWDT task registration callers ignored registration failure | Monitored task entry points now delete themselves immediately when central TWDT-plus-health registration fails; they do not continue under an assumed protection policy. |
+
+The corrective implementation preserves the existing ADC-before-POST startup order, deterministic LCD startup timing, button behavior, network-task policy, and 25 kHz physical LCD I²C configuration.
+
+### Corrective validation
+
+| Check | Result |
+|---|---|
+| Contract tests | **PASS — 24 tests passed** |
+| PlatformIO `esp32dev` build | **PASS** |
+| Firmware image generation | **PASS** |
+| `git diff --check` | **PASS** |
+| Direct raw TWDT ownership audit | **PASS** — operational add/delete/reset/status calls are centralized in `src/task_watchdog.c`; runtime configuration remains in the application initialization boundary. |
+| Health-only reset-path audit | **PASS** — supervisor uses health feed only; LCD heartbeat does not call TWDT reset. |
+| Hardware runtime tests | **NOT VERIFIABLE** — no ESP32 board, LCD, ADC, Wi-Fi, or OTA target is attached. |
+
+
+### Final ownership correction
+
+The ESP-IDF calls `esp_task_wdt_init()`, `esp_task_wdt_reconfigure()`, `esp_task_wdt_status()`, `esp_task_wdt_add()`, `esp_task_wdt_delete()`, and `esp_task_wdt_reset()` are now operationally centralized in `src/task_watchdog.c`. `init_watchdog()` remains as the application compatibility boundary, but delegates to `task_watchdog_init()` and performs no direct ESP-IDF watchdog operation.
+
+The generation-aware lifecycle API is `task_watchdog_unregister_task_generation(handle, generation)`. A record is removed only when the handle and generation both match. The unregistration path performs the state check before deletion and rechecks the generation before removing the record. A task-registration failure is handled at each monitored task entry point by terminating that task rather than continuing under an assumed TWDT policy.
+
+
+### Final validation correction
+
+The repository contract test `tools/test_firmware_contracts.py` was updated to assert the centralized `task_watchdog_init()` implementation rather than requiring raw reconfiguration calls in `src/app_runtime.c`. This preserves the contract's intent while matching the single-owner architecture.
+
+The final corrective run produced **24 passing contract tests**, a successful `esp32dev` PlatformIO build, a generated 4 MB firmware image, and a clean `git diff --check`.

@@ -318,7 +318,11 @@ void post_led_event(bool success)
 
 void led_event_task(void *pv)
 {
-    task_watchdog_register("led_event_task");
+    if (!task_watchdog_register("led_event_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     system_event_t evt;
 
     while (1)

@@ -29,16 +29,25 @@ typedef struct {
     bool twdt_subscribed;
     bool health_registered;
     task_watchdog_mode_t mode;
+    uint32_t generation;
     uint32_t last_feed_ms;
     uint32_t feed_count;
     uint32_t stack_high_water_words;
 } task_watchdog_snapshot_t;
 
 /* Register the calling FreeRTOS task with the ESP task watchdog. */
+bool task_watchdog_init(bool enable_task_wdt, bool panic_on_hang);
 bool task_watchdog_register(const char *task_name);
 
 /* Register only in the health registry; do not subscribe the task to ESP TWDT. */
 bool task_watchdog_register_health_only(const char *task_name);
+
+/* Return the current task's lifecycle generation, or zero if unregistered. */
+uint32_t task_watchdog_current_generation(void);
+
+/* Remove a record only when both handle and lifecycle generation match. */
+bool task_watchdog_unregister_task_generation(TaskHandle_t task_handle,
+                                              uint32_t generation);
 
 /* Unregister a task before it is externally deleted or permanently stopped. */
 void task_watchdog_unregister_task(TaskHandle_t task_handle);

@@ -428,7 +428,11 @@ const event_route_t *event_route_find(
 
 void event_dispatcher_task(void *pv)
 {
-    task_watchdog_register("event_dispatcher_task");
+    if (!task_watchdog_register("event_dispatcher_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     ESP_LOGI(TAG, "Dispatcher task started");
 
     system_event_t evt = {0};
@@ -587,7 +591,11 @@ void monitor_statistics_update(const system_event_t *evt)
 
 void monitor_event_task(void *pv)
 {
-    task_watchdog_register("monitor_event_task");
+    if (!task_watchdog_register("monitor_event_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     system_event_t evt;
     monitor_statistics_init();
     monitor_statistics_load(); /* no-op if nothing saved yet (first boot) */

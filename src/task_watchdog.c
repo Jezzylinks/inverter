@@ -23,13 +23,37 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static task_record_t s_records[TASK_WATCHDOG_MAX_TASKS];
 static TaskHandle_t s_supervisor_task;
 static TaskHandle_t s_last_feed_error_task;
+static uint32_t s_generation_counter;
+
+bool task_watchdog_init(bool enable_task_wdt, bool panic_on_hang)
+{
+    if (!enable_task_wdt) {
+        return true;
+    }
+
+    esp_task_wdt_config_t config = {
+        .timeout_ms = 15000U,
+        .idle_core_mask = (1U << portNUM_PROCESSORS) - 1U,
+        .trigger_panic = panic_on_hang,
+    };
+    esp_err_t err = esp_task_wdt_init(&config);
+    if (err == ESP_ERR_INVALID_STATE) {
+        err = esp_task_wdt_reconfigure(&config);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure task watchdog: %s",
+                 esp_err_to_name(err));
+        return false;
+    }
+    return true;
+}
 
 static uint32_t now_ms(void)
 {
     return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
 }
 
-static int find_record(TaskHandle_t handle)
+static int find_record_locked(TaskHandle_t handle)
 {
     for (size_t i = 0U; i < TASK_WATCHDOG_MAX_TASKS; ++i) {
         if (s_records[i].snapshot.registered && s_records[i].handle == handle) {
@@ -43,8 +67,11 @@ static bool record_health_registration(const char *task_name, bool twdt_subscrib
 {
     const TaskHandle_t current = xTaskGetCurrentTaskHandle();
     const uint32_t timestamp = now_ms();
+    const UBaseType_t stack_words = uxTaskGetStackHighWaterMark(current);
+    bool registered = false;
+
     taskENTER_CRITICAL(&s_lock);
-    int index = find_record(current);
+    int index = find_record_locked(current);
     if (index < 0) {
         for (size_t i = 0U; i < TASK_WATCHDOG_MAX_TASKS; ++i) {
             if (!s_records[i].snapshot.registered) {
@@ -62,41 +89,82 @@ static bool record_health_registration(const char *task_name, bool twdt_subscrib
         snapshot->twdt_subscribed = twdt_subscribed;
         snapshot->mode = twdt_subscribed ? TASK_WATCHDOG_MODE_TWDT_AND_HEALTH
                                          : TASK_WATCHDOG_MODE_HEALTH_ONLY;
+        snapshot->generation = ++s_generation_counter;
         snapshot->last_feed_ms = timestamp;
+        snapshot->feed_count = 0U;
+        snapshot->stack_high_water_words = stack_words;
         if (task_name && task_name[0] != '\0') {
             strncpy(snapshot->name, task_name, sizeof(snapshot->name) - 1U);
             snapshot->name[sizeof(snapshot->name) - 1U] = '\0';
         }
-        snapshot->stack_high_water_words = uxTaskGetStackHighWaterMark(current);
+        registered = true;
     }
     taskEXIT_CRITICAL(&s_lock);
 
-    if (index < 0) {
+    if (!registered) {
         ESP_LOGE(TAG, "Task watchdog registry full; task health unavailable");
+    }
+    return registered;
+}
+
+static bool verify_and_subscribe_current(const char *task_name,
+                                         bool *new_subscription)
+{
+    *new_subscription = false;
+    const esp_err_t status_before = esp_task_wdt_status(NULL);
+    if (status_before == ESP_OK) {
+        return true;
+    }
+    if (status_before != ESP_ERR_NOT_FOUND) {
+        ESP_LOGE(TAG, "TWDT status unavailable for %s: %s",
+                 task_name ? task_name : "task", esp_err_to_name(status_before));
         return false;
     }
+
+    const esp_err_t add_err = esp_task_wdt_add(NULL);
+    if (add_err != ESP_OK) {
+        const esp_err_t status_after_error = esp_task_wdt_status(NULL);
+        ESP_LOGE(TAG, "Could not subscribe %s to TWDT: add=%s, status=%s",
+                 task_name ? task_name : "task", esp_err_to_name(add_err),
+                 esp_err_to_name(status_after_error));
+        return false;
+    }
+
+    const esp_err_t status_after = esp_task_wdt_status(NULL);
+    if (status_after != ESP_OK) {
+        ESP_LOGE(TAG, "TWDT subscription verification failed for %s: %s",
+                 task_name ? task_name : "task", esp_err_to_name(status_after));
+        const esp_err_t rollback = esp_task_wdt_delete(NULL);
+        if (rollback != ESP_OK && rollback != ESP_ERR_NOT_FOUND &&
+            rollback != ESP_ERR_INVALID_STATE) {
+            ESP_LOGE(TAG, "TWDT rollback delete failed for %s: %s",
+                     task_name ? task_name : "task", esp_err_to_name(rollback));
+        }
+        return false;
+    }
+    *new_subscription = true;
     return true;
 }
 
 bool task_watchdog_register(const char *task_name)
 {
-    const esp_err_t status = esp_task_wdt_status(NULL);
-    bool twdt_subscribed = status == ESP_OK;
-    if (status == ESP_ERR_NOT_FOUND) {
-        const esp_err_t err = esp_task_wdt_add(NULL);
-        if (err == ESP_OK) {
-            twdt_subscribed = true;
-        } else {
-            ESP_LOGE(TAG, "Could not subscribe %s to TWDT: %s",
-                     task_name ? task_name : "task", esp_err_to_name(err));
-        }
-    } else if (status != ESP_OK) {
-        ESP_LOGE(TAG, "TWDT status unavailable for %s: %s",
-                 task_name ? task_name : "task", esp_err_to_name(status));
+    bool new_subscription = false;
+    if (!verify_and_subscribe_current(task_name, &new_subscription)) {
+        return false;
     }
-    const bool health_registered =
-        record_health_registration(task_name, twdt_subscribed);
-    return twdt_subscribed && health_registered;
+
+    if (!record_health_registration(task_name, true)) {
+        if (new_subscription) {
+            const esp_err_t rollback = esp_task_wdt_delete(NULL);
+            if (rollback != ESP_OK && rollback != ESP_ERR_NOT_FOUND &&
+                rollback != ESP_ERR_INVALID_STATE) {
+                ESP_LOGE(TAG, "TWDT rollback failed after registry failure: %s",
+                         esp_err_to_name(rollback));
+            }
+        }
+        return false;
+    }
+    return true;
 }
 
 bool task_watchdog_register_health_only(const char *task_name)
@@ -104,19 +172,74 @@ bool task_watchdog_register_health_only(const char *task_name)
     return record_health_registration(task_name, false);
 }
 
+uint32_t task_watchdog_current_generation(void)
+{
+    const TaskHandle_t current = xTaskGetCurrentTaskHandle();
+    uint32_t generation = 0U;
+    taskENTER_CRITICAL(&s_lock);
+    const int index = find_record_locked(current);
+    if (index >= 0) {
+        generation = s_records[index].snapshot.generation;
+    }
+    taskEXIT_CRITICAL(&s_lock);
+    return generation;
+}
+
 static bool update_health_heartbeat(TaskHandle_t current)
 {
     const uint32_t timestamp = now_ms();
+    const UBaseType_t stack_words = uxTaskGetStackHighWaterMark(current);
+    bool updated = false;
     taskENTER_CRITICAL(&s_lock);
-    const int index = find_record(current);
-    if (index >= 0) {
+    const int index = find_record_locked(current);
+    if (index >= 0 && s_records[index].snapshot.health_registered) {
         s_records[index].snapshot.last_feed_ms = timestamp;
         s_records[index].snapshot.feed_count++;
-        s_records[index].snapshot.stack_high_water_words =
-            uxTaskGetStackHighWaterMark(current);
+        s_records[index].snapshot.stack_high_water_words = stack_words;
+        updated = true;
     }
     taskEXIT_CRITICAL(&s_lock);
-    return index >= 0;
+    return updated;
+}
+
+bool task_watchdog_unregister_task_generation(TaskHandle_t task_handle,
+                                              uint32_t generation)
+{
+    if (task_handle == NULL || generation == 0U) {
+        return false;
+    }
+
+    bool twdt_subscribed = false;
+    taskENTER_CRITICAL(&s_lock);
+    const int index = find_record_locked(task_handle);
+    if (index >= 0 && s_records[index].snapshot.generation == generation) {
+        twdt_subscribed = s_records[index].snapshot.twdt_subscribed;
+    } else {
+        taskEXIT_CRITICAL(&s_lock);
+        return false;
+    }
+    taskEXIT_CRITICAL(&s_lock);
+
+    if (twdt_subscribed) {
+        const esp_err_t err = esp_task_wdt_delete(task_handle);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE &&
+            err != ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG, "Task watchdog unregister failed for %p: %s",
+                     task_handle, esp_err_to_name(err));
+            return false;
+        }
+    }
+
+    bool removed = false;
+    taskENTER_CRITICAL(&s_lock);
+    const int current_index = find_record_locked(task_handle);
+    if (current_index >= 0 &&
+        s_records[current_index].snapshot.generation == generation) {
+        memset(&s_records[current_index], 0, sizeof(s_records[current_index]));
+        removed = true;
+    }
+    taskEXIT_CRITICAL(&s_lock);
+    return removed;
 }
 
 void task_watchdog_unregister_task(TaskHandle_t task_handle)
@@ -124,67 +247,66 @@ void task_watchdog_unregister_task(TaskHandle_t task_handle)
     if (task_handle == NULL) {
         return;
     }
-
-    bool twdt_subscribed = false;
+    uint32_t generation = 0U;
     taskENTER_CRITICAL(&s_lock);
-    const int existing = find_record(task_handle);
-    if (existing >= 0) {
-        twdt_subscribed = s_records[existing].snapshot.twdt_subscribed;
+    const int index = find_record_locked(task_handle);
+    if (index >= 0) {
+        generation = s_records[index].snapshot.generation;
     }
     taskEXIT_CRITICAL(&s_lock);
-
-    /* A task may be subscribed before its health record is created (fatal
-     * startup cleanup), so verify the real TWDT state in that case. */
-    if (existing < 0) {
-        twdt_subscribed = esp_task_wdt_status(task_handle) == ESP_OK;
-    }
-    if (twdt_subscribed) {
-        const esp_err_t err = esp_task_wdt_delete(task_handle);
-        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE &&
-            err != ESP_ERR_NOT_FOUND) {
-            ESP_LOGW(TAG, "Task watchdog unregister failed for %p: %s",
-                     task_handle, esp_err_to_name(err));
+    if (generation != 0U) {
+        if (!task_watchdog_unregister_task_generation(task_handle, generation)) {
+            ESP_LOGW(TAG, "Task watchdog generation cleanup rejected for %p",
+                     task_handle);
         }
     }
-
-    taskENTER_CRITICAL(&s_lock);
-    const int index = find_record(task_handle);
-    if (index >= 0) {
-        memset(&s_records[index], 0, sizeof(s_records[index]));
-    }
-    taskEXIT_CRITICAL(&s_lock);
 }
 
 void task_watchdog_unregister(void)
 {
-    task_watchdog_unregister_task(xTaskGetCurrentTaskHandle());
+    const TaskHandle_t current = xTaskGetCurrentTaskHandle();
+    const uint32_t generation = task_watchdog_current_generation();
+    if (generation != 0U) {
+        if (!task_watchdog_unregister_task_generation(current, generation)) {
+            ESP_LOGW(TAG, "Current task watchdog cleanup rejected for %p", current);
+        }
+    }
 }
 
 bool task_watchdog_feed(void)
 {
     const TaskHandle_t current = xTaskGetCurrentTaskHandle();
     bool twdt_subscribed = false;
+    bool should_log_error = false;
     taskENTER_CRITICAL(&s_lock);
-    const int index = find_record(current);
+    const int index = find_record_locked(current);
     if (index >= 0) {
         twdt_subscribed = s_records[index].snapshot.twdt_subscribed;
+    }
+    if (!twdt_subscribed && s_last_feed_error_task != current) {
+        s_last_feed_error_task = current;
+        should_log_error = true;
     }
     taskEXIT_CRITICAL(&s_lock);
 
     if (!twdt_subscribed) {
-        if (s_last_feed_error_task != current) {
+        if (should_log_error) {
             ESP_LOGE(TAG, "TWDT feed rejected for unsubscribed task %p", current);
-            s_last_feed_error_task = current;
         }
         return false;
     }
 
     const esp_err_t err = esp_task_wdt_reset();
     if (err != ESP_OK) {
-        if (s_last_feed_error_task != current) {
+        taskENTER_CRITICAL(&s_lock);
+        should_log_error = s_last_feed_error_task != current;
+        if (should_log_error) {
+            s_last_feed_error_task = current;
+        }
+        taskEXIT_CRITICAL(&s_lock);
+        if (should_log_error) {
             ESP_LOGE(TAG, "TWDT feed failed for task %p: %s",
                      current, esp_err_to_name(err));
-            s_last_feed_error_task = current;
         }
         return false;
     }
@@ -199,9 +321,17 @@ bool task_watchdog_health_feed(void)
 static void task_watchdog_supervisor(void *arg)
 {
     (void)arg;
-    task_watchdog_register_health_only("watchdog_supervisor");
+    if (!task_watchdog_register_health_only("watchdog_supervisor")) {
+        ESP_LOGE(TAG, "Watchdog supervisor health registration failed");
+        vTaskDelete(NULL);
+        return;
+    }
     while (true) {
-        task_watchdog_health_feed();
+        if (!task_watchdog_health_feed()) {
+            ESP_LOGE(TAG, "Watchdog supervisor heartbeat update failed");
+            vTaskDelete(NULL);
+            return;
+        }
         const uint32_t timestamp = now_ms();
         const TaskHandle_t supervisor = xTaskGetCurrentTaskHandle();
         static task_watchdog_snapshot_t stale[TASK_WATCHDOG_MAX_TASKS];
@@ -211,7 +341,8 @@ static void task_watchdog_supervisor(void *arg)
         taskENTER_CRITICAL(&s_lock);
         for (size_t i = 0U; i < TASK_WATCHDOG_MAX_TASKS; ++i) {
             const task_watchdog_snapshot_t *snapshot = &s_records[i].snapshot;
-            if (!snapshot->registered || s_records[i].handle == supervisor) {
+            if (!snapshot->registered || !snapshot->health_registered ||
+                s_records[i].handle == supervisor) {
                 continue;
             }
             if ((uint32_t)(timestamp - snapshot->last_feed_ms) >
@@ -227,9 +358,10 @@ static void task_watchdog_supervisor(void *arg)
         taskEXIT_CRITICAL(&s_lock);
 
         for (size_t i = 0U; i < stale_count; ++i) {
-            ESP_LOGE(TAG, "Task heartbeat stale: %s (%lums, stack=%lu)",
+            ESP_LOGE(TAG, "Task heartbeat stale: %s (%lums, expected=%ums, stack=%lu)",
                      stale[i].name,
                      (unsigned long)(timestamp - stale[i].last_feed_ms),
+                     (unsigned)TASK_WATCHDOG_STALE_MS,
                      (unsigned long)stale[i].stack_high_water_words);
         }
         for (size_t i = 0U; i < low_stack_count; ++i) {
@@ -278,7 +410,7 @@ bool task_watchdog_all_healthy(uint32_t timestamp)
     taskENTER_CRITICAL(&s_lock);
     for (size_t i = 0U; i < TASK_WATCHDOG_MAX_TASKS; ++i) {
         const task_watchdog_snapshot_t *snapshot = &s_records[i].snapshot;
-        if (snapshot->registered &&
+        if (snapshot->registered && snapshot->health_registered &&
             (uint32_t)(timestamp - snapshot->last_feed_ms) >
                 TASK_WATCHDOG_STALE_MS) {
             healthy = false;

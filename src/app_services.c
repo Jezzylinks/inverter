@@ -326,7 +326,11 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
 static void app_wifi_toggle_task(void *parameter)
 {
     (void)parameter;
-    task_watchdog_register("wifi_toggle_task");
+    if (!task_watchdog_register("wifi_toggle_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
 
     wifi_toggle_request_t request;
     while (true) {
@@ -662,7 +666,11 @@ static void ota_status_callback(ota_status_t status, int percent)
 
 static void ota_auto_check_task(void *parameter)
 {
-    task_watchdog_register("ota_auto_check_task");
+    if (!task_watchdog_register("ota_auto_check_task")) {
+        /* A TWDT task must not continue unprotected. */
+        vTaskDelete(NULL);
+        return;
+    }
     (void)parameter;
     uint32_t wait_ms = 30000U;
     while (wait_ms > 0U)
