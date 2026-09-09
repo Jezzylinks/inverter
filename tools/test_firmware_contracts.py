@@ -182,6 +182,13 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("task_watchdog_unregister();\n    vTaskDelete(NULL);", lcd_events)
         self.assertIn("task_watchdog_unregister();\n        vTaskDelete(NULL);", ota)
 
+    def test_watchdog_rejects_duplicate_and_conflicting_registration(self):
+        root = Path(__file__).parents[1]
+        watchdog = root.joinpath("src", "task_watchdog.c").read_text()
+        self.assertIn("Duplicate/conflicting watchdog registration rejected", watchdog)
+        self.assertIn("int index = find_record_locked(current);", watchdog)
+        self.assertIn("if (++s_generation_counter == 0U)", watchdog)
+
     def test_buzzer_is_initialized_independently_and_uses_nonconflicting_ledc_resources(self):
         root = Path(__file__).parents[1]
         buzzer = root.joinpath("src", "utility", "buzzer.c").read_text()

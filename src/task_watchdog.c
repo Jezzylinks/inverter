@@ -72,6 +72,13 @@ static bool record_health_registration(const char *task_name, bool twdt_subscrib
 
     taskENTER_CRITICAL(&s_lock);
     int index = find_record_locked(current);
+    if (index >= 0) {
+        const task_watchdog_mode_t existing_mode = s_records[index].snapshot.mode;
+        taskEXIT_CRITICAL(&s_lock);
+        ESP_LOGW(TAG, "Duplicate/conflicting watchdog registration rejected for %s (mode=%d)",
+                 task_name ? task_name : "task", (int)existing_mode);
+        return false;
+    }
     if (index < 0) {
         for (size_t i = 0U; i < TASK_WATCHDOG_MAX_TASKS; ++i) {
             if (!s_records[i].snapshot.registered) {
@@ -89,7 +96,10 @@ static bool record_health_registration(const char *task_name, bool twdt_subscrib
         snapshot->twdt_subscribed = twdt_subscribed;
         snapshot->mode = twdt_subscribed ? TASK_WATCHDOG_MODE_TWDT_AND_HEALTH
                                          : TASK_WATCHDOG_MODE_HEALTH_ONLY;
-        snapshot->generation = ++s_generation_counter;
+        if (++s_generation_counter == 0U) {
+            ++s_generation_counter;
+        }
+        snapshot->generation = s_generation_counter;
         snapshot->last_feed_ms = timestamp;
         snapshot->feed_count = 0U;
         snapshot->stack_high_water_words = stack_words;

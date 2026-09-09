@@ -244,3 +244,22 @@ The final corrective run produced **24 passing contract tests**, a successful `e
 The external button-task deletion path now retains the task registration generation and calls `task_watchdog_unregister_task_generation()` before `vTaskDelete()`. This prevents a stale cleanup operation from removing a newer registration that happens to reuse the same FreeRTOS task handle. The lifecycle contract test was updated to assert this generation-aware cleanup.
 
 Final surgical validation: **24 contract tests passed**, the `esp32dev` PlatformIO build passed, firmware image generation passed, and `git diff --check` passed. Physical runtime scheduling and handle-reuse tests remain not verifiable without an attached ESP32.
+
+
+## Final reliability audit follow-up
+
+### Baseline and existing protections verified
+
+The inspected repository was at commit `814d3c8`, which includes the prior watchdog corrections after baseline commit `8cdb33d`. Existing protections verified in source include post-add TWDT status verification, rollback on failed verification or registry allocation, generation-aware unregistration, synchronized feed-error suppression, stack-watermark collection outside the registry lock, health-only supervisor filtering, and explicit app-main initialization failure handling.
+
+### Remaining defect corrected
+
+`record_health_registration()` previously reused an existing record and overwrote its mode. That allowed a duplicate or conflicting registration request to silently replace a task’s established watchdog state. It now rejects any registration when the current task already has a record. A TWDT request made by a health-only task is therefore explicitly established and verified before the duplicate check, then rolled back if the record cannot be created; the existing health-only record is never overwritten. A health-only request made by a TWDT task is rejected without removing TWDT protection. Generation zero is skipped on counter wrap.
+
+### Reliability audit findings
+
+The startup path waits with a bounded 10-second loop for `APP_EVENT_ADC_READY`/`APP_EVENT_ADC_FAILED` and LCD readiness/failure, feeds app-main only after its verified registration, and runs POST only when both ADC and LCD readiness bits are set. The ADC manager defines readiness only after driver initialization, channel configuration, calibration, and a fresh valid required measurement; failure publishes `APP_EVENT_ADC_FAILED`. NVS operations use the centralized storage manager for initialization/open/close, and persistence modules check set/commit results before reporting success. Network services remain optional and outside the shared TWDT by policy. No concrete LCD, button, ADC sampling, Wi-Fi, OTA, MQTT, NTP, partition, or configuration defect was found that justified a change.
+
+### Validation
+
+The duplicate-registration contract is covered by the repository test suite. Final static and build results are recorded below after execution. Physical reboot persistence, task-handle reuse under real scheduling, ADC/LCD hardware startup, and network restart tests require hardware and were not claimed as executed.
