@@ -89,26 +89,30 @@ static bool record_health_registration(const char *task_name, bool twdt_subscrib
             }
         }
     }
-    if (index >= 0) {
-        task_watchdog_snapshot_t *snapshot = &s_records[index].snapshot;
-        snapshot->registered = true;
-        snapshot->health_registered = true;
-        snapshot->twdt_subscribed = twdt_subscribed;
-        snapshot->mode = twdt_subscribed ? TASK_WATCHDOG_MODE_TWDT_AND_HEALTH
-                                         : TASK_WATCHDOG_MODE_HEALTH_ONLY;
-        if (++s_generation_counter == 0U) {
-            ++s_generation_counter;
-        }
-        snapshot->generation = s_generation_counter;
-        snapshot->last_feed_ms = timestamp;
-        snapshot->feed_count = 0U;
-        snapshot->stack_high_water_words = stack_words;
-        if (task_name && task_name[0] != '\0') {
-            strncpy(snapshot->name, task_name, sizeof(snapshot->name) - 1U);
-            snapshot->name[sizeof(snapshot->name) - 1U] = '\0';
-        }
-        registered = true;
+    if (index < 0) {
+        taskEXIT_CRITICAL(&s_lock);
+        ESP_LOGE(TAG, "Task watchdog registry full; task health unavailable");
+        return false;
     }
+
+    task_watchdog_snapshot_t *snapshot = &s_records[index].snapshot;
+    snapshot->registered = true;
+    snapshot->health_registered = true;
+    snapshot->twdt_subscribed = twdt_subscribed;
+    snapshot->mode = twdt_subscribed ? TASK_WATCHDOG_MODE_TWDT_AND_HEALTH
+                                     : TASK_WATCHDOG_MODE_HEALTH_ONLY;
+    if (++s_generation_counter == 0U) {
+        ++s_generation_counter;
+    }
+    snapshot->generation = s_generation_counter;
+    snapshot->last_feed_ms = timestamp;
+    snapshot->feed_count = 0U;
+    snapshot->stack_high_water_words = stack_words;
+    if (task_name && task_name[0] != '\0') {
+        strncpy(snapshot->name, task_name, sizeof(snapshot->name) - 1U);
+        snapshot->name[sizeof(snapshot->name) - 1U] = '\0';
+    }
+    registered = true;
     taskEXIT_CRITICAL(&s_lock);
 
     if (!registered) {
