@@ -30,8 +30,8 @@ bool post_adc_test(void)
      * is disconnected, shorted, or wildly out of calibration -- not a
      * real battery condition. */
     float battery_voltage = snapshot.battery_voltage;
-    float plausible_min = sys_state.battery_profile.cutoff_voltage_12v * 0.7f;
-    float plausible_max = sys_state.battery_profile.overvoltage_protection_12v * 1.1f;
+    float plausible_min = sys_state.battery_profile.cutoff_voltage_v * 0.7f;
+    float plausible_max = sys_state.battery_profile.overvoltage_protection_v * 1.1f;
 
     if (battery_voltage < plausible_min || battery_voltage > plausible_max)
     {

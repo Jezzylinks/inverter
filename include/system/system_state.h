@@ -279,19 +279,19 @@ extern "C"
         uint16_t usable_capacity_ah;
 
         // 12V reference voltages (will be scaled)
-        float bulk_charge_voltage_12v;
-        float float_charge_voltage_12v;
-        float equalization_voltage_12v;
-        float full_charge_voltage_12v;
-        float nominal_voltage_actual_12v;
-        float low_voltage_warning_12v;
-        float low_voltage_alarm_12v;
-        float cutoff_voltage_12v;
-        float cutoff_voltage_min_12v;
-        float high_battery_voltage_12v;
-        float recharge_voltage_12v;
-        float overvoltage_protection_12v;
-        float undervoltage_protection_12v;
+        float bulk_charge_voltage_v;
+        float float_charge_voltage_v;
+        float equalization_voltage_v;
+        float full_charge_voltage_v;
+        float nominal_voltage_actual_v;
+        float low_voltage_warning_v;
+        float low_voltage_alarm_v;
+        float cutoff_voltage_v;
+        float cutoff_voltage_min_v;
+        float high_battery_voltage_v;
+        float recharge_voltage_v;
+        float overvoltage_protection_v;
+        float undervoltage_protection_v;
 
         // Current per 100Ah (will be scaled by capacity)
         float max_charge_current_per_100ah;
@@ -332,12 +332,12 @@ extern "C"
 
         // Charge termination
         float charge_termination_current_per_100ah;
-        float charge_termination_voltage_12v;
+        float charge_termination_voltage_v;
         float charge_termination_timeout;
 
         // Balancing
         bool requires_balancing;
-        float balance_start_voltage_12v;
+        float balance_start_voltage_v;
         float balance_voltage_delta_max;
 
         // Safety features

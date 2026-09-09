@@ -202,7 +202,7 @@ static void battery_error_handler(
     }
 
     if (value <
-        sys_state.battery_profile.cutoff_voltage_12v)
+        sys_state.battery_profile.cutoff_voltage_v)
     {
         sys_state.error.error_flags |= ERR_LOW_BAT;
 

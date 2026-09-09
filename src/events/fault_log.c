@@ -275,7 +275,7 @@ void fault_log_add_event(const system_event_t *evt)
             case EVENT_ACTION_SHUTDOWN:
 
                 if (evt->value <
-                    sys_state.battery_profile.cutoff_voltage_12v)
+                    sys_state.battery_profile.cutoff_voltage_v)
                 {
                     message = "Low battery shutdown";
                 }

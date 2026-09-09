@@ -629,7 +629,7 @@ void lcd_show_standby(float bat_v, uint8_t bat_pct, bool ac_connected)
     sys_lcd.screen = LCD_SCREEN_STANDBY;
     sys_lcd.standby.battery_voltage = bat_v;
     sys_lcd.standby.low_voltage_threshold =
-        sys_state.battery_profile.low_voltage_warning_12v;
+        sys_state.battery_profile.low_voltage_warning_v;
     sys_lcd.standby.battery_pct = bat_pct;
     sys_lcd.standby.ac_connected = ac_connected;
     sys_lcd.standby.wifi_connected = sys_lcd.main.wifi_connected;

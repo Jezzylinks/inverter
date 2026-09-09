@@ -318,19 +318,19 @@ static const battery_profile_t battery_profiles[BATTERY_TYPE_COUNT] = {
         .name_prefix = "L-Acid",
         .chemistry = BATTERY_CHEMISTRY_LEAD_ACID,
         .depth_of_discharge_max = 0.50f,
-        .bulk_charge_voltage_12v = 14.4f,
-        .float_charge_voltage_12v = 13.5f,
-        .equalization_voltage_12v = 15.5f,
-        .full_charge_voltage_12v = 12.7f,
-        .nominal_voltage_actual_12v = 12.0f,
-        .low_voltage_warning_12v = 11.8f,
-        .low_voltage_alarm_12v = 11.5f,
-        .cutoff_voltage_12v = 10.5f,
-        .cutoff_voltage_min_12v = 10.0f,
-        .high_battery_voltage_12v = 15.5f,
-        .recharge_voltage_12v = 11.5f,
-        .overvoltage_protection_12v = 15.5f,
-        .undervoltage_protection_12v = 10.0f,
+        .bulk_charge_voltage_v = 14.4f,
+        .float_charge_voltage_v = 13.5f,
+        .equalization_voltage_v = 15.5f,
+        .full_charge_voltage_v = 12.7f,
+        .nominal_voltage_actual_v = 12.0f,
+        .low_voltage_warning_v = 11.8f,
+        .low_voltage_alarm_v = 11.5f,
+        .cutoff_voltage_v = 10.5f,
+        .cutoff_voltage_min_v = 10.0f,
+        .high_battery_voltage_v = 15.5f,
+        .recharge_voltage_v = 11.5f,
+        .overvoltage_protection_v = 15.5f,
+        .undervoltage_protection_v = 10.0f,
         .max_charge_current_per_100ah = 20.0f,
         .max_discharge_current_per_100ah = 100.0f,
         .recommended_charge_current_per_100ah = 10.0f,
@@ -355,10 +355,10 @@ static const battery_profile_t battery_profiles[BATTERY_TYPE_COUNT] = {
         .cycle_life_dod = 0.50f,
         .self_discharge_rate = 5.0f,
         .charge_termination_current_per_100ah = 1.0f,
-        .charge_termination_voltage_12v = 14.4f,
+        .charge_termination_voltage_v = 14.4f,
         .charge_termination_timeout = 480.0f,
         .requires_balancing = false,
-        .balance_start_voltage_12v = 0.0f,
+        .balance_start_voltage_v = 0.0f,
         .balance_voltage_delta_max = 0.0f,
         .has_bms = false,
         .requires_external_bms = false,
@@ -369,15 +369,15 @@ static const battery_profile_t battery_profiles[BATTERY_TYPE_COUNT] = {
         .is_sealed = false,
         .maintenance_interval_days = 30},
 
-    [BATTERY_AGM] = {.name_prefix = "AGM", .chemistry = BATTERY_CHEMISTRY_AGM, .depth_of_discharge_max = 0.70f, .bulk_charge_voltage_12v = 14.4f, .float_charge_voltage_12v = 13.6f, .equalization_voltage_12v = 14.8f, .full_charge_voltage_12v = 12.8f, .nominal_voltage_actual_12v = 12.0f, .low_voltage_warning_12v = 11.8f, .low_voltage_alarm_12v = 11.3f, .cutoff_voltage_12v = 10.8f, .cutoff_voltage_min_12v = 10.5f, .recharge_voltage_12v = 11.5f, .overvoltage_protection_12v = 15.0f, .undervoltage_protection_12v = 10.5f, .max_charge_current_per_100ah = 30.0f, .max_discharge_current_per_100ah = 100.0f, .recommended_charge_current_per_100ah = 15.0f, .trickle_charge_current_per_100ah = 1.5f, .temp_coefficient = -0.025f, .operating_temp_min = -20.0f, .operating_temp_max = 50.0f, .charge_temp_min = -10.0f, .charge_temp_max = 50.0f, .discharge_temp_min = -20.0f, .discharge_temp_max = 50.0f, .bulk_charge_timeout_min = 360, .absorption_time_min = 120, .float_time_min = 1440, .equalization_time_min = 60, .equalization_interval_days = 90, .soc_full_threshold = 98.0f, .soc_empty_threshold = 5.0f, .soc_low_warning = 20.0f, .internal_resistance_mohm_12v = 4.0f, .cycle_life_rated = 800, .cycle_life_dod = 0.50f, .self_discharge_rate = 3.0f, .charge_termination_current_per_100ah = 1.5f, .charge_termination_voltage_12v = 14.4f, .charge_termination_timeout = 360.0f, .requires_balancing = false, .balance_start_voltage_12v = 0.0f, .balance_voltage_delta_max = 0.0f, .has_bms = false, .requires_external_bms = false, .supports_temperature_comp = true, .charge_efficiency = 0.90f, .discharge_efficiency = 0.95f, .requires_equalization = true, .is_sealed = true, .maintenance_interval_days = 90},
+    [BATTERY_AGM] = {.name_prefix = "AGM", .chemistry = BATTERY_CHEMISTRY_AGM, .depth_of_discharge_max = 0.70f, .bulk_charge_voltage_v = 14.4f, .float_charge_voltage_v = 13.6f, .equalization_voltage_v = 14.8f, .full_charge_voltage_v = 12.8f, .nominal_voltage_actual_v = 12.0f, .low_voltage_warning_v = 11.8f, .low_voltage_alarm_v = 11.3f, .cutoff_voltage_v = 10.8f, .cutoff_voltage_min_v = 10.5f, .recharge_voltage_v = 11.5f, .overvoltage_protection_v = 15.0f, .undervoltage_protection_v = 10.5f, .max_charge_current_per_100ah = 30.0f, .max_discharge_current_per_100ah = 100.0f, .recommended_charge_current_per_100ah = 15.0f, .trickle_charge_current_per_100ah = 1.5f, .temp_coefficient = -0.025f, .operating_temp_min = -20.0f, .operating_temp_max = 50.0f, .charge_temp_min = -10.0f, .charge_temp_max = 50.0f, .discharge_temp_min = -20.0f, .discharge_temp_max = 50.0f, .bulk_charge_timeout_min = 360, .absorption_time_min = 120, .float_time_min = 1440, .equalization_time_min = 60, .equalization_interval_days = 90, .soc_full_threshold = 98.0f, .soc_empty_threshold = 5.0f, .soc_low_warning = 20.0f, .internal_resistance_mohm_12v = 4.0f, .cycle_life_rated = 800, .cycle_life_dod = 0.50f, .self_discharge_rate = 3.0f, .charge_termination_current_per_100ah = 1.5f, .charge_termination_voltage_v = 14.4f, .charge_termination_timeout = 360.0f, .requires_balancing = false, .balance_start_voltage_v = 0.0f, .balance_voltage_delta_max = 0.0f, .has_bms = false, .requires_external_bms = false, .supports_temperature_comp = true, .charge_efficiency = 0.90f, .discharge_efficiency = 0.95f, .requires_equalization = true, .is_sealed = true, .maintenance_interval_days = 90},
 
-    [BATTERY_GEL] = {.name_prefix = "GEL", .chemistry = BATTERY_CHEMISTRY_GEL, .depth_of_discharge_max = 0.80f, .bulk_charge_voltage_12v = 14.1f, .float_charge_voltage_12v = 13.5f, .equalization_voltage_12v = 14.4f, .full_charge_voltage_12v = 12.8f, .nominal_voltage_actual_12v = 12.0f, .low_voltage_warning_12v = 11.9f, .low_voltage_alarm_12v = 11.5f, .cutoff_voltage_12v = 11.0f, .cutoff_voltage_min_12v = 10.5f, .recharge_voltage_12v = 11.8f, .overvoltage_protection_12v = 14.8f, .undervoltage_protection_12v = 10.5f, .max_charge_current_per_100ah = 25.0f, .max_discharge_current_per_100ah = 80.0f, .recommended_charge_current_per_100ah = 12.0f, .trickle_charge_current_per_100ah = 1.2f, .temp_coefficient = -0.028f, .operating_temp_min = -20.0f, .operating_temp_max = 55.0f, .charge_temp_min = -10.0f, .charge_temp_max = 50.0f, .discharge_temp_min = -20.0f, .discharge_temp_max = 55.0f, .bulk_charge_timeout_min = 420, .absorption_time_min = 180, .float_time_min = 1440, .equalization_time_min = 90, .equalization_interval_days = 120, .soc_full_threshold = 98.0f, .soc_empty_threshold = 5.0f, .soc_low_warning = 20.0f, .internal_resistance_mohm_12v = 6.0f, .cycle_life_rated = 1200, .cycle_life_dod = 0.50f, .self_discharge_rate = 2.0f, .charge_termination_current_per_100ah = 1.2f, .charge_termination_voltage_12v = 14.1f, .charge_termination_timeout = 420.0f, .requires_balancing = false, .balance_start_voltage_12v = 0.0f, .balance_voltage_delta_max = 0.0f, .has_bms = false, .requires_external_bms = false, .supports_temperature_comp = true, .charge_efficiency = 0.88f, .discharge_efficiency = 0.93f, .requires_equalization = true, .is_sealed = true, .maintenance_interval_days = 120},
+    [BATTERY_GEL] = {.name_prefix = "GEL", .chemistry = BATTERY_CHEMISTRY_GEL, .depth_of_discharge_max = 0.80f, .bulk_charge_voltage_v = 14.1f, .float_charge_voltage_v = 13.5f, .equalization_voltage_v = 14.4f, .full_charge_voltage_v = 12.8f, .nominal_voltage_actual_v = 12.0f, .low_voltage_warning_v = 11.9f, .low_voltage_alarm_v = 11.5f, .cutoff_voltage_v = 11.0f, .cutoff_voltage_min_v = 10.5f, .recharge_voltage_v = 11.8f, .overvoltage_protection_v = 14.8f, .undervoltage_protection_v = 10.5f, .max_charge_current_per_100ah = 25.0f, .max_discharge_current_per_100ah = 80.0f, .recommended_charge_current_per_100ah = 12.0f, .trickle_charge_current_per_100ah = 1.2f, .temp_coefficient = -0.028f, .operating_temp_min = -20.0f, .operating_temp_max = 55.0f, .charge_temp_min = -10.0f, .charge_temp_max = 50.0f, .discharge_temp_min = -20.0f, .discharge_temp_max = 55.0f, .bulk_charge_timeout_min = 420, .absorption_time_min = 180, .float_time_min = 1440, .equalization_time_min = 90, .equalization_interval_days = 120, .soc_full_threshold = 98.0f, .soc_empty_threshold = 5.0f, .soc_low_warning = 20.0f, .internal_resistance_mohm_12v = 6.0f, .cycle_life_rated = 1200, .cycle_life_dod = 0.50f, .self_discharge_rate = 2.0f, .charge_termination_current_per_100ah = 1.2f, .charge_termination_voltage_v = 14.1f, .charge_termination_timeout = 420.0f, .requires_balancing = false, .balance_start_voltage_v = 0.0f, .balance_voltage_delta_max = 0.0f, .has_bms = false, .requires_external_bms = false, .supports_temperature_comp = true, .charge_efficiency = 0.88f, .discharge_efficiency = 0.93f, .requires_equalization = true, .is_sealed = true, .maintenance_interval_days = 120},
 
-    [BATTERY_LIFEPO4] = {.name_prefix = "LiFePO4", .chemistry = BATTERY_CHEMISTRY_LIFEPO4, .depth_of_discharge_max = 0.95f, .bulk_charge_voltage_12v = 14.6f, .float_charge_voltage_12v = 13.6f, .equalization_voltage_12v = 0.0f, .full_charge_voltage_12v = 14.4f, .nominal_voltage_actual_12v = 12.8f, .low_voltage_warning_12v = 12.4f, .low_voltage_alarm_12v = 12.0f, .cutoff_voltage_12v = 11.0f, .cutoff_voltage_min_12v = 10.0f, .recharge_voltage_12v = 12.4f, .overvoltage_protection_12v = 15.0f, .undervoltage_protection_12v = 10.0f, .max_charge_current_per_100ah = 50.0f, .max_discharge_current_per_100ah = 100.0f, .recommended_charge_current_per_100ah = 30.0f, .trickle_charge_current_per_100ah = 0.0f, .temp_coefficient = 0.0f, .operating_temp_min = -20.0f, .operating_temp_max = 60.0f, .charge_temp_min = 0.0f, .charge_temp_max = 45.0f, .discharge_temp_min = -20.0f, .discharge_temp_max = 60.0f, .bulk_charge_timeout_min = 240, .absorption_time_min = 60, .float_time_min = 0, .equalization_time_min = 0, .equalization_interval_days = 0, .soc_full_threshold = 98.0f, .soc_empty_threshold = 5.0f, .soc_low_warning = 20.0f, .internal_resistance_mohm_12v = 15.0f, .cycle_life_rated = 3000, .cycle_life_dod = 0.80f, .self_discharge_rate = 3.0f, .charge_termination_current_per_100ah = 2.0f, .charge_termination_voltage_12v = 14.4f, .charge_termination_timeout = 240.0f, .requires_balancing = true, .balance_start_voltage_12v = 14.0f, .balance_voltage_delta_max = 50.0f, .has_bms = true, .requires_external_bms = false, .supports_temperature_comp = false, .charge_efficiency = 0.95f, .discharge_efficiency = 0.98f, .requires_equalization = false, .is_sealed = true, .maintenance_interval_days = 0},
+    [BATTERY_LIFEPO4] = {.name_prefix = "LiFePO4", .chemistry = BATTERY_CHEMISTRY_LIFEPO4, .depth_of_discharge_max = 0.95f, .bulk_charge_voltage_v = 14.6f, .float_charge_voltage_v = 13.6f, .equalization_voltage_v = 0.0f, .full_charge_voltage_v = 14.4f, .nominal_voltage_actual_v = 12.8f, .low_voltage_warning_v = 12.4f, .low_voltage_alarm_v = 12.0f, .cutoff_voltage_v = 11.0f, .cutoff_voltage_min_v = 10.0f, .recharge_voltage_v = 12.4f, .overvoltage_protection_v = 15.0f, .undervoltage_protection_v = 10.0f, .max_charge_current_per_100ah = 50.0f, .max_discharge_current_per_100ah = 100.0f, .recommended_charge_current_per_100ah = 30.0f, .trickle_charge_current_per_100ah = 0.0f, .temp_coefficient = 0.0f, .operating_temp_min = -20.0f, .operating_temp_max = 60.0f, .charge_temp_min = 0.0f, .charge_temp_max = 45.0f, .discharge_temp_min = -20.0f, .discharge_temp_max = 60.0f, .bulk_charge_timeout_min = 240, .absorption_time_min = 60, .float_time_min = 0, .equalization_time_min = 0, .equalization_interval_days = 0, .soc_full_threshold = 98.0f, .soc_empty_threshold = 5.0f, .soc_low_warning = 20.0f, .internal_resistance_mohm_12v = 15.0f, .cycle_life_rated = 3000, .cycle_life_dod = 0.80f, .self_discharge_rate = 3.0f, .charge_termination_current_per_100ah = 2.0f, .charge_termination_voltage_v = 14.4f, .charge_termination_timeout = 240.0f, .requires_balancing = true, .balance_start_voltage_v = 14.0f, .balance_voltage_delta_max = 50.0f, .has_bms = true, .requires_external_bms = false, .supports_temperature_comp = false, .charge_efficiency = 0.95f, .discharge_efficiency = 0.98f, .requires_equalization = false, .is_sealed = true, .maintenance_interval_days = 0},
 
-    [BATTERY_LITHIUM_ION] = {.name_prefix = "Li-Ion", .chemistry = BATTERY_CHEMISTRY_LITHIUM_ION, .depth_of_discharge_max = 0.90f, .bulk_charge_voltage_12v = 12.6f, .float_charge_voltage_12v = 12.4f, .equalization_voltage_12v = 0.0f, .full_charge_voltage_12v = 12.6f, .nominal_voltage_actual_12v = 11.1f, .low_voltage_warning_12v = 10.5f, .low_voltage_alarm_12v = 10.0f, .cutoff_voltage_12v = 9.0f, .cutoff_voltage_min_12v = 8.4f, .recharge_voltage_12v = 10.5f, .overvoltage_protection_12v = 13.0f, .undervoltage_protection_12v = 8.4f, .max_charge_current_per_100ah = 50.0f, .max_discharge_current_per_100ah = 100.0f, .recommended_charge_current_per_100ah = 20.0f, .trickle_charge_current_per_100ah = 0.0f, .temp_coefficient = 0.0f, .operating_temp_min = -10.0f, .operating_temp_max = 50.0f, .charge_temp_min = 0.0f, .charge_temp_max = 45.0f, .discharge_temp_min = -10.0f, .discharge_temp_max = 50.0f, .bulk_charge_timeout_min = 180, .absorption_time_min = 30, .float_time_min = 0, .equalization_time_min = 0, .equalization_interval_days = 0, .soc_full_threshold = 99.0f, .soc_empty_threshold = 5.0f, .soc_low_warning = 20.0f, .internal_resistance_mohm_12v = 25.0f, .cycle_life_rated = 1000, .cycle_life_dod = 0.80f, .self_discharge_rate = 5.0f, .charge_termination_current_per_100ah = 1.0f, .charge_termination_voltage_12v = 12.6f, .charge_termination_timeout = 180.0f, .requires_balancing = true, .balance_start_voltage_12v = 12.4f, .balance_voltage_delta_max = 30.0f, .has_bms = true, .requires_external_bms = false, .supports_temperature_comp = false, .charge_efficiency = 0.92f, .discharge_efficiency = 0.96f, .requires_equalization = false, .is_sealed = true, .maintenance_interval_days = 0},
+    [BATTERY_LITHIUM_ION] = {.name_prefix = "Li-Ion", .chemistry = BATTERY_CHEMISTRY_LITHIUM_ION, .depth_of_discharge_max = 0.90f, .bulk_charge_voltage_v = 12.6f, .float_charge_voltage_v = 12.4f, .equalization_voltage_v = 0.0f, .full_charge_voltage_v = 12.6f, .nominal_voltage_actual_v = 11.1f, .low_voltage_warning_v = 10.5f, .low_voltage_alarm_v = 10.0f, .cutoff_voltage_v = 9.0f, .cutoff_voltage_min_v = 8.4f, .recharge_voltage_v = 10.5f, .overvoltage_protection_v = 13.0f, .undervoltage_protection_v = 8.4f, .max_charge_current_per_100ah = 50.0f, .max_discharge_current_per_100ah = 100.0f, .recommended_charge_current_per_100ah = 20.0f, .trickle_charge_current_per_100ah = 0.0f, .temp_coefficient = 0.0f, .operating_temp_min = -10.0f, .operating_temp_max = 50.0f, .charge_temp_min = 0.0f, .charge_temp_max = 45.0f, .discharge_temp_min = -10.0f, .discharge_temp_max = 50.0f, .bulk_charge_timeout_min = 180, .absorption_time_min = 30, .float_time_min = 0, .equalization_time_min = 0, .equalization_interval_days = 0, .soc_full_threshold = 99.0f, .soc_empty_threshold = 5.0f, .soc_low_warning = 20.0f, .internal_resistance_mohm_12v = 25.0f, .cycle_life_rated = 1000, .cycle_life_dod = 0.80f, .self_discharge_rate = 5.0f, .charge_termination_current_per_100ah = 1.0f, .charge_termination_voltage_v = 12.6f, .charge_termination_timeout = 180.0f, .requires_balancing = true, .balance_start_voltage_v = 12.4f, .balance_voltage_delta_max = 30.0f, .has_bms = true, .requires_external_bms = false, .supports_temperature_comp = false, .charge_efficiency = 0.92f, .discharge_efficiency = 0.96f, .requires_equalization = false, .is_sealed = true, .maintenance_interval_days = 0},
 
-    [BATTERY_NIMH] = {.name_prefix = "NiMH", .chemistry = BATTERY_CHEMISTRY_NIMH, .depth_of_discharge_max = 0.90f, .bulk_charge_voltage_12v = 16.8f, .float_charge_voltage_12v = 14.4f, .equalization_voltage_12v = 0.0f, .full_charge_voltage_12v = 16.0f, .nominal_voltage_actual_12v = 14.4f, .low_voltage_warning_12v = 12.0f, .low_voltage_alarm_12v = 11.0f, .cutoff_voltage_12v = 10.0f, .cutoff_voltage_min_12v = 9.0f, .recharge_voltage_12v = 12.0f, .overvoltage_protection_12v = 17.5f, .undervoltage_protection_12v = 9.0f, .max_charge_current_per_100ah = 50.0f, .max_discharge_current_per_100ah = 200.0f, .recommended_charge_current_per_100ah = 10.0f, .trickle_charge_current_per_100ah = 1.0f, .temp_coefficient = -0.01f, .operating_temp_min = -20.0f, .operating_temp_max = 60.0f, .charge_temp_min = 0.0f, .charge_temp_max = 45.0f, .discharge_temp_min = -20.0f, .discharge_temp_max = 60.0f, .bulk_charge_timeout_min = 600, .absorption_time_min = 60, .float_time_min = 60, .equalization_time_min = 0, .equalization_interval_days = 0, .soc_full_threshold = 95.0f, .soc_empty_threshold = 10.0f, .soc_low_warning = 25.0f, .internal_resistance_mohm_12v = 100.0f, .cycle_life_rated = 500, .cycle_life_dod = 0.80f, .self_discharge_rate = 30.0f, .charge_termination_current_per_100ah = 0.5f, .charge_termination_voltage_12v = 16.8f, .charge_termination_timeout = 600.0f, .requires_balancing = false, .balance_start_voltage_12v = 0.0f, .balance_voltage_delta_max = 0.0f, .has_bms = false, .requires_external_bms = false, .supports_temperature_comp = true, .charge_efficiency = 0.70f, .discharge_efficiency = 0.85f, .requires_equalization = false, .is_sealed = true, .maintenance_interval_days = 0}};
+    [BATTERY_NIMH] = {.name_prefix = "NiMH", .chemistry = BATTERY_CHEMISTRY_NIMH, .depth_of_discharge_max = 0.90f, .bulk_charge_voltage_v = 16.8f, .float_charge_voltage_v = 14.4f, .equalization_voltage_v = 0.0f, .full_charge_voltage_v = 16.0f, .nominal_voltage_actual_v = 14.4f, .low_voltage_warning_v = 12.0f, .low_voltage_alarm_v = 11.0f, .cutoff_voltage_v = 10.0f, .cutoff_voltage_min_v = 9.0f, .recharge_voltage_v = 12.0f, .overvoltage_protection_v = 17.5f, .undervoltage_protection_v = 9.0f, .max_charge_current_per_100ah = 50.0f, .max_discharge_current_per_100ah = 200.0f, .recommended_charge_current_per_100ah = 10.0f, .trickle_charge_current_per_100ah = 1.0f, .temp_coefficient = -0.01f, .operating_temp_min = -20.0f, .operating_temp_max = 60.0f, .charge_temp_min = 0.0f, .charge_temp_max = 45.0f, .discharge_temp_min = -20.0f, .discharge_temp_max = 60.0f, .bulk_charge_timeout_min = 600, .absorption_time_min = 60, .float_time_min = 60, .equalization_time_min = 0, .equalization_interval_days = 0, .soc_full_threshold = 95.0f, .soc_empty_threshold = 10.0f, .soc_low_warning = 25.0f, .internal_resistance_mohm_12v = 100.0f, .cycle_life_rated = 500, .cycle_life_dod = 0.80f, .self_discharge_rate = 30.0f, .charge_termination_current_per_100ah = 0.5f, .charge_termination_voltage_v = 16.8f, .charge_termination_timeout = 600.0f, .requires_balancing = false, .balance_start_voltage_v = 0.0f, .balance_voltage_delta_max = 0.0f, .has_bms = false, .requires_external_bms = false, .supports_temperature_comp = true, .charge_efficiency = 0.70f, .discharge_efficiency = 0.85f, .requires_equalization = false, .is_sealed = true, .maintenance_interval_days = 0}};
 
 /**
  * @brief Generate a battery profile for a specific voltage system and capacity
@@ -420,23 +420,23 @@ bool battery_generate_profile(battery_type_t battery_type,
     profile_out->capacity_ah = capacity_ah;
     profile_out->usable_capacity_ah = (uint16_t)(capacity_ah * base->depth_of_discharge_max);
     profile_out->depth_of_discharge_max = base->depth_of_discharge_max;
-    profile_out->high_battery_voltage_12v = base->high_battery_voltage_12v * voltage_multiplier;
+    profile_out->high_battery_voltage_v = base->high_battery_voltage_v * voltage_multiplier;
 
     // Scale voltages by voltage multiplier
-    profile_out->bulk_charge_voltage_12v = base->bulk_charge_voltage_12v * voltage_multiplier;
-    profile_out->float_charge_voltage_12v = base->float_charge_voltage_12v * voltage_multiplier;
-    profile_out->equalization_voltage_12v = base->equalization_voltage_12v * voltage_multiplier;
-    profile_out->full_charge_voltage_12v = base->full_charge_voltage_12v * voltage_multiplier;
-    profile_out->nominal_voltage_actual_12v = base->nominal_voltage_actual_12v * voltage_multiplier;
-    profile_out->low_voltage_warning_12v = base->low_voltage_warning_12v * voltage_multiplier;
-    profile_out->low_voltage_alarm_12v = base->low_voltage_alarm_12v * voltage_multiplier;
-    profile_out->cutoff_voltage_12v = base->cutoff_voltage_12v * voltage_multiplier;
-    profile_out->cutoff_voltage_min_12v = base->cutoff_voltage_min_12v * voltage_multiplier;
-    profile_out->recharge_voltage_12v = base->recharge_voltage_12v * voltage_multiplier;
-    profile_out->overvoltage_protection_12v = base->overvoltage_protection_12v * voltage_multiplier;
-    profile_out->undervoltage_protection_12v = base->undervoltage_protection_12v * voltage_multiplier;
-    profile_out->charge_termination_voltage_12v = base->charge_termination_voltage_12v * voltage_multiplier;
-    profile_out->balance_start_voltage_12v = base->balance_start_voltage_12v * voltage_multiplier;
+    profile_out->bulk_charge_voltage_v = base->bulk_charge_voltage_v * voltage_multiplier;
+    profile_out->float_charge_voltage_v = base->float_charge_voltage_v * voltage_multiplier;
+    profile_out->equalization_voltage_v = base->equalization_voltage_v * voltage_multiplier;
+    profile_out->full_charge_voltage_v = base->full_charge_voltage_v * voltage_multiplier;
+    profile_out->nominal_voltage_actual_v = base->nominal_voltage_actual_v * voltage_multiplier;
+    profile_out->low_voltage_warning_v = base->low_voltage_warning_v * voltage_multiplier;
+    profile_out->low_voltage_alarm_v = base->low_voltage_alarm_v * voltage_multiplier;
+    profile_out->cutoff_voltage_v = base->cutoff_voltage_v * voltage_multiplier;
+    profile_out->cutoff_voltage_min_v = base->cutoff_voltage_min_v * voltage_multiplier;
+    profile_out->recharge_voltage_v = base->recharge_voltage_v * voltage_multiplier;
+    profile_out->overvoltage_protection_v = base->overvoltage_protection_v * voltage_multiplier;
+    profile_out->undervoltage_protection_v = base->undervoltage_protection_v * voltage_multiplier;
+    profile_out->charge_termination_voltage_v = base->charge_termination_voltage_v * voltage_multiplier;
+    profile_out->balance_start_voltage_v = base->balance_start_voltage_v * voltage_multiplier;
 
     // Scale currents by capacity
     profile_out->max_charge_current_per_100ah = base->max_charge_current_per_100ah * capacity_multiplier;
@@ -510,27 +510,27 @@ void battery_print_profile(const battery_profile_t *profile)
 
     printf("\n--- IDENTIFICATION ---\n");
     printf("Chemistry: %d\n", profile->chemistry);
-    printf("Nominal Voltage: %.2fV\n", profile->nominal_voltage_actual_12v);
+    printf("Nominal Voltage: %.2fV\n", profile->nominal_voltage_actual_v);
     printf("Capacity: %fAh (Usable: %dAh)\n", profile->capacity_ah, profile->usable_capacity_ah);
     printf("Max DoD: %.1f%%\n", profile->depth_of_discharge_max * 100.0f);
 
     printf("\n--- CHARGING VOLTAGES ---\n");
-    printf("Bulk Charge: %.2fV\n", profile->bulk_charge_voltage_12v);
-    printf("Float Charge: %.2fV\n", profile->float_charge_voltage_12v);
-    printf("Equalization: %.2fV\n", profile->equalization_voltage_12v);
-    printf("Full Charge: %.2fV\n", profile->full_charge_voltage_12v);
+    printf("Bulk Charge: %.2fV\n", profile->bulk_charge_voltage_v);
+    printf("Float Charge: %.2fV\n", profile->float_charge_voltage_v);
+    printf("Equalization: %.2fV\n", profile->equalization_voltage_v);
+    printf("Full Charge: %.2fV\n", profile->full_charge_voltage_v);
 
     printf("\n--- OPERATING VOLTAGES ---\n");
-    printf("Nominal (Actual): %.2fV\n", profile->nominal_voltage_actual_12v);
-    printf("Low Warning: %.2fV\n", profile->low_voltage_warning_12v);
-    printf("Low Alarm: %.2fV\n", profile->low_voltage_alarm_12v);
-    printf("Cutoff: %.2fV\n", profile->cutoff_voltage_12v);
-    printf("Cutoff Min: %.2fV\n", profile->cutoff_voltage_min_12v);
-    printf("Recharge: %.2fV\n", profile->recharge_voltage_12v);
+    printf("Nominal (Actual): %.2fV\n", profile->nominal_voltage_actual_v);
+    printf("Low Warning: %.2fV\n", profile->low_voltage_warning_v);
+    printf("Low Alarm: %.2fV\n", profile->low_voltage_alarm_v);
+    printf("Cutoff: %.2fV\n", profile->cutoff_voltage_v);
+    printf("Cutoff Min: %.2fV\n", profile->cutoff_voltage_min_v);
+    printf("Recharge: %.2fV\n", profile->recharge_voltage_v);
 
     printf("\n--- PROTECTION VOLTAGES ---\n");
-    printf("Overvoltage: %.2fV\n", profile->overvoltage_protection_12v);
-    printf("Undervoltage: %.2fV\n", profile->undervoltage_protection_12v);
+    printf("Overvoltage: %.2fV\n", profile->overvoltage_protection_v);
+    printf("Undervoltage: %.2fV\n", profile->undervoltage_protection_v);
 
     printf("\n--- CURRENT LIMITS ---\n");
     printf("Max Charge: %.2fA\n", profile->max_charge_current_per_100ah);
@@ -574,7 +574,7 @@ void battery_print_profile(const battery_profile_t *profile)
     printf("Requires Balancing: %s\n", profile->requires_balancing ? "Yes" : "No");
     if (profile->requires_balancing)
     {
-        printf("  Balance Start Voltage: %.2fV\n", profile->balance_start_voltage_12v);
+        printf("  Balance Start Voltage: %.2fV\n", profile->balance_start_voltage_v);
         printf("  Max Cell Delta: %.1f mV\n", profile->balance_voltage_delta_max);
     }
 
@@ -736,9 +736,9 @@ void battery_profile_load_from_nvs(battery_profile_t *profile)
         printf("Using profile for battery management:\n");
         printf("Charging at %.2fA until %.2fV\n",
                current_battery.recommended_charge_current_per_100ah,
-               current_battery.bulk_charge_voltage_12v);
+               current_battery.bulk_charge_voltage_v);
         printf("Will cutoff discharge at %.2fV\n",
-               current_battery.cutoff_voltage_12v);
+               current_battery.cutoff_voltage_v);
     }
     else
     {
@@ -1557,9 +1557,9 @@ static nvs_setting_t g_settings[] = {
     {"bat_cap_ah", &sys_state.battery_profile.capacity_ah, sizeof(int32_t), 0, true, "Battery Capacity"},
     {"bat_charge_cur", &sys_state.battery_profile.max_charge_current_per_100ah, sizeof(int32_t), 0, true, "Max Charge Cur"},
     {"bat_disc_cur", &sys_state.battery_profile.max_discharge_current_per_100ah, sizeof(int32_t), 0, true, "Max Discharge Cur"},
-    {"bat_full_volt", &sys_state.battery_profile.high_battery_voltage_12v, sizeof(int32_t), 0, true, "Bat Full Volt"},
-    {"bat_cutoff_volt", &sys_state.battery_profile.cutoff_voltage_12v, sizeof(int32_t), 10.5f, true, "Battery Cutoff"},
-    {"bat_rech_volt", &sys_state.battery_profile.recharge_voltage_12v, sizeof(int32_t), 14.8f, true, "Recharge Volt"},
+    {"bat_full_volt", &sys_state.battery_profile.high_battery_voltage_v, sizeof(int32_t), 0, true, "Bat Full Volt"},
+    {"bat_cutoff_volt", &sys_state.battery_profile.cutoff_voltage_v, sizeof(int32_t), 10.5f, true, "Battery Cutoff"},
+    {"bat_rech_volt", &sys_state.battery_profile.recharge_voltage_v, sizeof(int32_t), 14.8f, true, "Recharge Volt"},
     {"brightness", &sys_state.display.brightness, sizeof(int32_t), 100, false, "LCD Brightness"},
     {"backlight_time", &sys_state.display.backlight_timeout, sizeof(int32_t), 30, false, "Backlight Time"},
     {"auto_shutdown", &sys_state.display.auto_shutdown_enabled, sizeof(uint8_t), 0, false, "Auto Shutdown"},
@@ -3230,20 +3230,20 @@ static void sync_battery_voltage_state(void)
     const uint8_t voltage = (uint8_t)sys_state.battery_profile.nominal_voltage;
     sys_state.inverter.battery_voltage_system = voltage;
     sys_state.battery_voltage_system = voltage;
-    sys_state.battery_cutoff = sys_state.battery_profile.cutoff_voltage_12v;
+    sys_state.battery_cutoff = sys_state.battery_profile.cutoff_voltage_v;
 }
 
 static void sync_battery_protection_thresholds(void)
 {
     const battery_profile_t *p = &sys_state.battery_profile;
     protection_thresholds_t t = {
-        .warning_high = p->high_battery_voltage_12v,
-        .derate_high = p->high_battery_voltage_12v,
-        .fault_high = p->overvoltage_protection_12v,
+        .warning_high = p->high_battery_voltage_v,
+        .derate_high = p->high_battery_voltage_v,
+        .fault_high = p->overvoltage_protection_v,
         .hysteresis_high = 0.5f,
-        .warning_low = p->low_voltage_warning_12v,
-        .derate_low = p->low_voltage_alarm_12v,
-        .fault_low = p->cutoff_voltage_12v,
+        .warning_low = p->low_voltage_warning_v,
+        .derate_low = p->low_voltage_alarm_v,
+        .fault_low = p->cutoff_voltage_v,
         .hysteresis_low = 0.5f,
         .has_low_bound = true,
     };
@@ -3608,10 +3608,10 @@ bool check_safety_conditions(void)
      * Add real checks here once those sensors exist. */
 
     // Check overvoltage
-    if (measured_voltage > battery->overvoltage_protection_12v)
+    if (measured_voltage > battery->overvoltage_protection_v)
     {
         printf("❌ OVERVOLTAGE! %.2fV > %.2fV\n",
-               measured_voltage, battery->overvoltage_protection_12v);
+               measured_voltage, battery->overvoltage_protection_v);
         set_last_start_error(INVERTER_START_ERROR_BATTERY_OVERVOLTAGE,
                              "Battery voltage too high");
         all_checks_passed = false;
@@ -3619,14 +3619,14 @@ bool check_safety_conditions(void)
     else
     {
         printf("✓ Voltage OK (%.2fV <= %.2fV)\n",
-               measured_voltage, battery->overvoltage_protection_12v);
+               measured_voltage, battery->overvoltage_protection_v);
     }
 
     // Check undervoltage
-    if (measured_voltage < battery->undervoltage_protection_12v)
+    if (measured_voltage < battery->undervoltage_protection_v)
     {
         printf("❌ UNDERVOLTAGE! %.2fV < %.2fV\n",
-               measured_voltage, battery->undervoltage_protection_12v);
+               measured_voltage, battery->undervoltage_protection_v);
         set_last_start_error(INVERTER_START_ERROR_BATTERY_UNDERVOLTAGE,
                              "Battery voltage too low");
         all_checks_passed = false;
@@ -3634,14 +3634,14 @@ bool check_safety_conditions(void)
     else
     {
         printf("✓ Voltage above minimum (%.2fV >= %.2fV)\n",
-               measured_voltage, battery->undervoltage_protection_12v);
+               measured_voltage, battery->undervoltage_protection_v);
     }
 
     // Check low battery warning
-    if (measured_voltage < battery->low_voltage_warning_12v)
+    if (measured_voltage < battery->low_voltage_warning_v)
     {
         printf("⚠️  LOW BATTERY WARNING! %.2fV < %.2fV\n",
-               measured_voltage, battery->low_voltage_warning_12v);
+               measured_voltage, battery->low_voltage_warning_v);
     }
 
 // Check grid voltage (if grid-tied or hybrid)
@@ -4612,12 +4612,17 @@ bool thermal_protection_set_limit(float temperature_limit_celsius)
  */
 bool battery_monitor_set_cutoff(float cutoff_voltage)
 {
-    if (cutoff_voltage < 10.0f || cutoff_voltage > 15.0f)
+    battery_profile_t *profile = &sys_state.battery_profile;
+    if (cutoff_voltage < profile->cutoff_voltage_min_v ||
+        cutoff_voltage >= profile->recharge_voltage_v ||
+        cutoff_voltage > profile->high_battery_voltage_v)
     {
         printf("ERROR: Battery cutoff voltage out of range: %.2f V\n", cutoff_voltage);
         return false;
     }
     printf("HAL: Setting battery cutoff voltage to %.2f V\n", cutoff_voltage);
+    profile->cutoff_voltage_v = cutoff_voltage;
+    sys_state.battery_cutoff = cutoff_voltage;
     sys_state.cutoff_voltage = cutoff_voltage;
 
     return true;
@@ -4689,7 +4694,7 @@ void battery_monitoring_task(void *pvParameters)
          * system-scaled pack voltage. This task must not overwrite it with
          * a fixed dummy count or a 12 V-only divider formula. */
         const float voltage = sys_state.inverter.battery.voltage;
-        const float cutoff = sys_state.battery_profile.cutoff_voltage_12v;
+        const float cutoff = sys_state.battery_profile.cutoff_voltage_v;
 
         // Check against the active profile's scaled cutoff threshold.
         if (voltage > 0.0f && voltage < cutoff &&
@@ -4859,22 +4864,22 @@ static bool validate_and_clamp_settings(void)
     }
 
     /* ---- Battery cutoff voltage ---- */
-    float cutoff_floor = sys_state.battery_profile.cutoff_voltage_min_12v;
-    if (sys_state.battery_profile.cutoff_voltage_12v < cutoff_floor)
+    float cutoff_floor = sys_state.battery_profile.cutoff_voltage_min_v;
+    if (sys_state.battery_profile.cutoff_voltage_v < cutoff_floor)
     {
         ESP_LOGW(TAG_SYS, "Cutoff %.2fV below hw floor %.2fV — clamping",
-                 sys_state.battery_profile.cutoff_voltage_12v, cutoff_floor);
-        sys_state.battery_profile.cutoff_voltage_12v = cutoff_floor;
+                 sys_state.battery_profile.cutoff_voltage_v, cutoff_floor);
+        sys_state.battery_profile.cutoff_voltage_v = cutoff_floor;
         corrected = true;
     }
 
     /* ---- Battery recharge voltage vs its own ceiling ---- */
-    float recharge_ceiling = sys_state.battery_profile.high_battery_voltage_12v;
-    if (sys_state.battery_profile.recharge_voltage_12v > recharge_ceiling)
+    float recharge_ceiling = sys_state.battery_profile.high_battery_voltage_v;
+    if (sys_state.battery_profile.recharge_voltage_v > recharge_ceiling)
     {
         ESP_LOGW(TAG_SYS, "Recharge %.2fV above hw ceiling %.2fV — clamping",
-                 sys_state.battery_profile.recharge_voltage_12v, recharge_ceiling);
-        sys_state.battery_profile.recharge_voltage_12v = recharge_ceiling;
+                 sys_state.battery_profile.recharge_voltage_v, recharge_ceiling);
+        sys_state.battery_profile.recharge_voltage_v = recharge_ceiling;
         corrected = true;
     }
 
@@ -4882,22 +4887,22 @@ static bool validate_and_clamp_settings(void)
      * margin, otherwise the system could oscillate between "shut down,
      * low battery" and "resume, still low battery" every few seconds. ---- */
     const float CUTOFF_RECHARGE_MARGIN_V = 0.3f;
-    if (sys_state.battery_profile.cutoff_voltage_12v >=
-        sys_state.battery_profile.recharge_voltage_12v - CUTOFF_RECHARGE_MARGIN_V)
+    if (sys_state.battery_profile.cutoff_voltage_v >=
+        sys_state.battery_profile.recharge_voltage_v - CUTOFF_RECHARGE_MARGIN_V)
     {
         ESP_LOGE(TAG_SYS,
                  "Cutoff (%.2fV) too close to/above recharge (%.2fV) — "
                  "forcing recharge = cutoff + %.1fV",
-                 sys_state.battery_profile.cutoff_voltage_12v,
-                 sys_state.battery_profile.recharge_voltage_12v,
+                 sys_state.battery_profile.cutoff_voltage_v,
+                 sys_state.battery_profile.recharge_voltage_v,
                  CUTOFF_RECHARGE_MARGIN_V);
-        sys_state.battery_profile.recharge_voltage_12v =
-            sys_state.battery_profile.cutoff_voltage_12v + CUTOFF_RECHARGE_MARGIN_V;
+        sys_state.battery_profile.recharge_voltage_v =
+            sys_state.battery_profile.cutoff_voltage_v + CUTOFF_RECHARGE_MARGIN_V;
 
-        if (sys_state.battery_profile.recharge_voltage_12v > recharge_ceiling)
+        if (sys_state.battery_profile.recharge_voltage_v > recharge_ceiling)
         {
-            sys_state.battery_profile.recharge_voltage_12v = recharge_ceiling;
-            sys_state.battery_profile.cutoff_voltage_12v =
+            sys_state.battery_profile.recharge_voltage_v = recharge_ceiling;
+            sys_state.battery_profile.cutoff_voltage_v =
                 recharge_ceiling - CUTOFF_RECHARGE_MARGIN_V;
         }
         corrected = true;
@@ -5015,9 +5020,9 @@ void show_profile_on_lcd(battery_profile_t *profile)
 {
     char l[LCD_LINE_SIZE], v[LCD_LINE_SIZE];
     snprintf(l, LCD_LINE_SIZE, "Battery:%4.1fV  ",
-             profile->nominal_voltage_actual_12v);
+             profile->nominal_voltage_actual_v);
     snprintf(v, LCD_LINE_SIZE, "Cutoff:%5.1fV   ",
-             profile->cutoff_voltage_12v);
+             profile->cutoff_voltage_v);
     lcd_show_monitor_detail(l, v);
 }
 
@@ -5565,7 +5570,7 @@ void display_battery_settings(void)
     snprintf(l, LCD_LINE_SIZE, "%-16s", "Battery Settings");
     snprintf(v, LCD_LINE_SIZE, "Cutoff: %5.2fV  ",
              menu_edit.edit_step ? menu_edit.temp_value
-                                 : sys_state.battery_profile.cutoff_voltage_12v);
+                                 : sys_state.battery_profile.cutoff_voltage_v);
     lcd_show_menu(l, v);
 }
 

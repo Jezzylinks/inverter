@@ -360,7 +360,7 @@ static bool process_adc_reading(const adc_channel_config_t *config,
     float threshold_low = config->threshold_low;
     if (config->channel_id == CHANNEL_ID_BATTERY_VOLTAGE) {
         actual_voltage *= selected_battery_voltage_multiplier();
-        threshold_low = sys_state.battery_profile.cutoff_voltage_12v;
+        threshold_low = sys_state.battery_profile.cutoff_voltage_v;
         if (threshold_low <= 0.0f) {
             threshold_low = config->threshold_low * selected_battery_voltage_multiplier();
         }
@@ -371,8 +371,8 @@ static bool process_adc_reading(const adc_channel_config_t *config,
     float telemetry_max = 350.0f;
     if (config->channel_id == CHANNEL_ID_BATTERY_VOLTAGE ||
         config->channel_id == CHANNEL_ID_LOW_BATTERY) {
-        telemetry_min = sys_state.battery_profile.cutoff_voltage_min_12v * 0.50f;
-        telemetry_max = sys_state.battery_profile.overvoltage_protection_12v *
+        telemetry_min = sys_state.battery_profile.cutoff_voltage_min_v * 0.50f;
+        telemetry_max = sys_state.battery_profile.overvoltage_protection_v *
                         BATTERY_ADC_PHYSICAL_MARGIN;
     } else if (config->channel_id == CHANNEL_ID_INVERTER_OUTPUT_VOLTAGE) {
         telemetry_max = AC_ADC_PHYSICAL_MAX_V;
