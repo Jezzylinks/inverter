@@ -1056,6 +1056,7 @@ void edit_auto_shutdown(void);
 void edit_scroll_enable(void);
 void edit_scroll_speed(void);
 void edit_battery_type(void);
+void edit_battery_cutoff_voltage(void);
 void edit_battery_voltage_system(void);
 void edit_sound_enable(void);
 void edit_quiet_hours_enable(void);
@@ -1198,18 +1199,24 @@ static value_edit_context_t value_edit[] = {
 
     [VALUE_TYPE_BATTERY_VOLTAGE] = {
         .edit_type = VALUE_EDIT_NUMERIC,
-        .min_value = 10.0f,
-        .max_value = 15.0f,
+        /* min_value / max_value are intentionally 0 here — they are
+         * system- and chemistry-aware values that must be derived from
+         * the active battery profile at edit-open time.  Do not restore
+         * hardcoded 12 V-class numbers here; edit_battery_cutoff_voltage()
+         * sets them correctly for 12 V, 24 V, and 48 V before the user
+         * sees the edit screen. */
+        .min_value = 0.0f,
+        .max_value = 0.0f,
         .increment_small = 0.1f,
-        .increment_large = 5.0f,
-        .increment_precision = 0.5f,
-        .step_size = 0.5f,
+        .increment_large = 1.0f,
+        .increment_precision = 0.1f,
+        .step_size = 0.1f,
         .decimal_places = 2,
         .unit = "V",
         .label = "Battery Cutoff",
         .is_critical = true,
         .live_update = true,
-        .current_value = 12.0f,
+        .current_value = 0.0f,
         .apply = apply_battery_cutoff,
     },
 
@@ -1995,12 +2002,48 @@ bool load_settings()
         load_error = true;
     }
 
+    /* Snapshot the cutoff that nvs_load_all() placed into the profile field.
+     * battery_load_profile() below regenerates the ENTIRE profile from the
+     * stored chemistry + voltage-system, which overwrites cutoff_voltage_v
+     * with the chemistry default.  We save it here and restore it afterward
+     * so a user-customized cutoff (different from the chemistry default) is
+     * not silently lost on every boot. */
+    const float nvs_cutoff_snapshot = sys_state.battery_profile.cutoff_voltage_v;
+
     /* Load battery profile (type and voltage) */
     if (!battery_load_profile(&sys_state.battery_profile))
     {
         ESP_LOGW("BAT_PROFILE", "Failed to load battery profile, using defaults");
         load_error = true;
     }
+
+    /* Restore the user-customized cutoff if it is within the valid range for
+     * the newly regenerated profile.  The snapshot is the NVS-stored value;
+     * validate_and_clamp_settings() below will further correct it if needed.
+     * If the snapshot was the NVS default (never customized by the user) it
+     * will likely differ from the chemistry-scaled value; accept whichever is
+     * valid and let validate_and_clamp_settings() normalise it. */
+    {
+        const float lo = sys_state.battery_profile.cutoff_voltage_min_v;
+        const float hi = sys_state.battery_profile.recharge_voltage_v - 0.3f;
+        if (nvs_cutoff_snapshot >= lo && nvs_cutoff_snapshot <= hi)
+        {
+            sys_state.battery_profile.cutoff_voltage_v = nvs_cutoff_snapshot;
+            ESP_LOGI("BAT_PROFILE",
+                     "Restored user cutoff %.2fV (profile default was %.2fV)",
+                     nvs_cutoff_snapshot,
+                     sys_state.battery_profile.cutoff_voltage_v);
+        }
+        else
+        {
+            ESP_LOGI("BAT_PROFILE",
+                     "NVS cutoff %.2fV out of range [%.2f, %.2f] for current "
+                     "profile; using profile default %.2fV",
+                     nvs_cutoff_snapshot, lo, hi,
+                     sys_state.battery_profile.cutoff_voltage_v);
+        }
+    }
+
     sync_battery_voltage_state();
     sync_battery_protection_thresholds();
 
@@ -5915,6 +5958,73 @@ void edit_battery_type(void)
     ctx->selection_index = sys_state.battery_profile.profile_id;
     sys_state.edit_backup_value = (float)ctx->selection_index;
     lcd_show_value_edit_screen();
+}
+
+/* edit_battery_cutoff_voltage() — system- and chemistry-aware cutoff editor.
+ *
+ * The valid cutoff range depends on the CURRENT voltage system (12/24/48 V)
+ * and battery chemistry.  battery_generate_profile() has already scaled all
+ * voltages in sys_state.battery_profile by the appropriate multiplier, so we
+ * derive min/max directly from the active profile rather than hard-coding any
+ * voltage-system-specific constants here.
+ *
+ * Mapping (derived from the active profile, not invented here):
+ *   min  = cutoff_voltage_min_v  (absolute floor for this chemistry × system)
+ *   max  = recharge_voltage_v - CUTOFF_RECHARGE_MARGIN_V
+ *                               (must stay below recharge to avoid oscillation)
+ *   default/current = cutoff_voltage_v (the chemistry × system default, or
+ *                               whatever the user last saved)
+ *
+ * This function is the single authoritative place where the edit context
+ * bounds are set; validate_and_clamp_settings() uses the same profile fields
+ * for NVS restore, apply_battery_cutoff() / battery_monitor_set_cutoff() use
+ * them for runtime enforcement, and sync_battery_protection_thresholds() uses
+ * cutoff_voltage_v as the protection fault_low threshold.  All four sites
+ * read from sys_state.battery_profile, which is always regenerated whenever
+ * the voltage system or battery type changes.
+ */
+void edit_battery_cutoff_voltage(void)
+{
+    const battery_profile_t *p = &sys_state.battery_profile;
+
+    /* Derive system- and chemistry-aware bounds from the already-scaled
+     * active profile.  The 0.3 V margin matches validate_and_clamp_settings()
+     * so the same invariant is enforced at edit time and at boot. */
+    const float margin = 0.3f;
+    float lo = p->cutoff_voltage_min_v;
+    float hi = p->recharge_voltage_v - margin;
+
+    /* Guard against a degenerate profile (e.g. generated from NVS before
+     * battery_system_init() ran).  Fall back to a safe 12 V default range
+     * rather than presenting a reversed or zero-width slider. */
+    if (hi <= lo || lo <= 0.0f) {
+        ESP_LOGW("EDIT_CUTOFF",
+                 "Active profile bounds degenerate (lo=%.2f hi=%.2f); "
+                 "using 12 V Lead-Acid safe defaults",
+                 lo, hi);
+        lo = 10.0f;
+        hi = 12.5f;
+    }
+
+    /* Stamp the system-aware bounds into the edit context before begin_setting_edit()
+     * copies the context pointer into sys_state.current_value_type. */
+    value_edit_context_t *ctx = &value_edit[VALUE_TYPE_BATTERY_VOLTAGE];
+    ctx->min_value = lo;
+    ctx->max_value = hi;
+
+    /* Use the profile's current cutoff as the starting edit value, clamped to
+     * the valid range so a previously-saved but now-out-of-range value cannot
+     * be presented as a valid starting point. */
+    float current = p->cutoff_voltage_v;
+    if (current < lo) current = lo;
+    if (current > hi) current = hi;
+
+    begin_setting_edit(VALUE_TYPE_BATTERY_VOLTAGE, current);
+    lcd_show_value_edit_screen();
+
+    ESP_LOGI("EDIT_CUTOFF",
+             "Battery cutoff edit: system=%dV chem=%d lo=%.2fV hi=%.2fV current=%.2fV",
+             (int)p->nominal_voltage, (int)p->chemistry, lo, hi, current);
 }
 
 void edit_battery_voltage_system(void)

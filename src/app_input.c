@@ -179,6 +179,7 @@ extern void edit_auto_shutdown(void);
 extern void edit_scroll_enable(void);
 extern void edit_scroll_speed(void);
 extern void edit_battery_type(void);
+extern void edit_battery_cutoff_voltage(void);
 extern void edit_battery_voltage_system(void);
 extern void edit_sound_enable(void);
 extern void edit_quiet_hours_enable(void);
@@ -1094,6 +1095,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 break;
             case 16:
                 edit_set_time_minute();
+                break;
+            case 17:
+                edit_battery_cutoff_voltage();
                 break;
             }
             break;

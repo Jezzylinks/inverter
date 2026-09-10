@@ -66,7 +66,8 @@ static const menu_item_t settings_items[] = {
     {"Quiet End", MENU_SETTINGS},
     {"UTC Offset", MENU_SETTINGS},
     {"Set Hour", MENU_SETTINGS},
-    {"Set Minute", MENU_SETTINGS}};
+    {"Set Minute", MENU_SETTINGS},
+    {"Bat Cutoff", MENU_SETTINGS}};
 
 // MONITORING MENU (8 items)
 static const menu_item_t monitoring_items[] = {
