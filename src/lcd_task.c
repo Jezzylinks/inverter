@@ -1856,6 +1856,14 @@ void lcd_task(void *arg)
         diag_data.uptime_seconds = (uint32_t)(esp_timer_get_time() / 1000000ULL);
         xSemaphoreGive(sys_state_mutex);
 
+        /* Wi-Fi state is sampled here, outside sys_state_mutex, because
+         * wifi_monitor_is_online() and wifi_monitor_get_rssi() carry their
+         * own internal mutex.  The lcd_task owns this read: it is the correct
+         * place to sample live Wi-Fi state for display, with no dependency on
+         * the ADC measurement cycle or the services layer. */
+        snap.main.wifi_connected = wifi_monitor_is_online();
+        snap.main.wifi_rssi      = wifi_monitor_get_rssi();
+
         /* ====== STEP 4: FLASH EXPIRY ====== */
         if (lcd_flash_is_expired())
         {

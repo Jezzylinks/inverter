@@ -62,7 +62,6 @@ void lcd_update_main_data(float bat_v, float out_v, float out_a,
 
 void lcd_show_main(void); /* switch to main screen          */
 void lcd_main_next_page(void);
-void lcd_update_wifi_status(bool connected, int8_t rssi);
 void lcd_update_main_power(float pv_kw, float grid_kw, float load_kw,
                            float ac_voltage, uint16_t battery_remaining_minutes,
                            uint8_t voltage_system, uint8_t operating_mode);

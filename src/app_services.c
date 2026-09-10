@@ -303,15 +303,6 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
         sys_state.inverter.wifi_enabled = enabled;
         app_wifi_end_operation();
         lcd_flash_message(enabled ? "Wi-Fi ON" : "Wi-Fi OFF", "Ready", 900U);
-        /* Immediately push the new Wi-Fi state to the main screen icon.
-         * Without this the icon only updates on the next ADC task cycle
-         * (every 20 ms, gated on ADC_MULTISAMPLING_COUNT), producing a
-         * visible lag between the "Wi-Fi ON/OFF" flash clearing and the
-         * icon reflecting the change.  When disabling, signal not-connected
-         * and zero RSSI.  When enabling, the radio is up but station
-         * association is a separate step, so reflect the actual live state. */
-        lcd_update_wifi_status(enabled && wifi_monitor_is_online(),
-                               enabled ? wifi_monitor_get_rssi() : 0);
     } else if (controller_err != ESP_OK && controller_err != ESP_ERR_WIFI_CONN) {
         sys_state.wifi.enabled = previous_enabled;
         sys_state.inverter.wifi_enabled = previous_enabled;

@@ -459,7 +459,10 @@ static void update_snapshot_and_outputs(uint32_t sample_time_ms,
                           remaining_minutes,
                           (uint8_t)sys_state.battery_profile.nominal_voltage,
                           sys_state.inverter.operating_mode);
-    lcd_update_wifi_status(wifi_monitor_is_online(), wifi_monitor_get_rssi());
+    /* Wi-Fi status is no longer pushed from here.  The lcd_task reads
+     * wifi_monitor_is_online() / wifi_monitor_get_rssi() directly on every
+     * render cycle (Step 2 snapshot), so the icon always reflects the live
+     * state without coupling the ADC measurement path to the Wi-Fi stack. */
     if ((uint32_t)(sample_time_ms - *last_ws_publish_ms) >= 1000U) {
         *last_ws_publish_ms = sample_time_ms;
         websocket_broadcast_device_status();
