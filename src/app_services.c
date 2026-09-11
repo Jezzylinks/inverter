@@ -66,6 +66,12 @@ static bool s_ota_manifest_check_active;
 static TaskHandle_t s_wifi_operation_watch_task;
 static TaskHandle_t s_wifi_toggle_task;
 static QueueHandle_t s_wifi_toggle_queue;
+/* Set to 1 while app_wifi_toggle_task is inside execute_wifi_toggle().
+ * Prevents a new toggle from entering the radio stack while a previous
+ * start/stop sequence is still in progress.  esp_wifi_start/stop are
+ * not re-entrant; calling one while the other is running causes an
+ * assert/panic in the ESP-IDF Wi-Fi stack. */
+static volatile uint32_t s_wifi_toggle_executing = 0U;
 static TaskHandle_t s_wifi_scan_task;
 static bool s_wifi_forget_pending;
 static bool s_wifi_disconnect_pending;
@@ -340,8 +346,10 @@ static void app_wifi_toggle_task(void *parameter)
                  (unsigned long long)(now_ms >= request.requested_ms
                                           ? now_ms - request.requested_ms
                                           : 0U));
+        __atomic_store_n(&s_wifi_toggle_executing, 1U, __ATOMIC_SEQ_CST);
         (void)app_services_execute_wifi_toggle(request.enabled,
                                                 request.previous_enabled);
+        __atomic_store_n(&s_wifi_toggle_executing, 0U, __ATOMIC_SEQ_CST);
     }
 }
 
@@ -894,6 +902,22 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
     if (xQueueSend(s_wifi_toggle_queue, &request, 0) != pdTRUE) {
         app_wifi_end_operation();
         lcd_flash_message("Wi-Fi Busy", "Please wait", 900U);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    /* Also reject if the toggle task is actively inside execute_wifi_toggle().
+     * The queue can accept the item (it was just emptied by the task picking
+     * up the previous request) while the radio start/stop sequence is still
+     * running.  Calling esp_wifi_start() or esp_wifi_stop() while the other
+     * is in progress causes a panic in the ESP-IDF Wi-Fi stack. */
+    if (__atomic_load_n(&s_wifi_toggle_executing, __ATOMIC_SEQ_CST)) {
+        /* Remove the item we just sent — the task hasn't dequeued it yet. */
+        wifi_toggle_request_t discard;
+        (void)xQueueReceive(s_wifi_toggle_queue, &discard, 0);
+        app_wifi_end_operation();
+        lcd_flash_message("Wi-Fi Busy", "Please wait", 900U);
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Wi-Fi toggle rejected: previous toggle still executing");
         return ESP_ERR_TIMEOUT;
     }
 
