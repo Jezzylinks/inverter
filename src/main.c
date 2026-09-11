@@ -294,6 +294,11 @@ void app_main(void)
         }
     }
 
+    /* Safe settings defaults are already active. Defer flash persistence until
+     * the ADC/LCD prerequisite decision and POST have completed, so app_main
+     * is not held inside a potentially long NVS commit during recovery. */
+    app_runtime_start_deferred_settings_persistence();
+
     const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&
                                  post_completed && startup_post.all_passed;
     sys_state.system_ready = startup_healthy;

@@ -293,3 +293,14 @@ The regression suite now explicitly verifies that `app_wifi_toggle_task` and `ot
 | Hardware runtime validation | **NOT VERIFIABLE — no ESP32 board is attached** |
 
 The earlier report entries documenting a successful build refer to the prior repository state and are retained as historical validation. The current watchdog-classification diff has been validated by the host contract suite and static source checks, but no new compilation claim is made for this environment.
+
+
+## N. Deferred NVS recovery persistence
+
+The startup log identified `main`/`app_main` as the overdue TWDT subscriber while the invalid settings transaction was being repaired. The synchronous recovery path previously called `save_settings()` from `load_settings()`. That path performs bulk NVS writes and a flash commit; a single storage operation can block longer than the effective 15-second TWDT window, so feeds before or after the call cannot guarantee protection.
+
+Settings recovery now remains synchronous only for RAM state: settings are loaded, transaction metadata and ranges are validated, safe defaults are applied, and battery/protection thresholds are synchronized. When corrections are required, `load_settings()` sets a pending flag and returns without persisting to flash. `app_main()` starts the one-shot persistence worker only after the ADC/LCD prerequisite decision and POST processing have completed. This preserves safe runtime defaults and startup safety gates while moving potentially long flash persistence out of the subscribed startup task.
+
+The `settings_persistence_task` is deliberately ordinary/unmonitored. Its normal operation is a potentially blocking NVS/flash transaction and it has no continuously executing safety role. An atomic pending/active state prevents duplicate scheduling. Creation failure and save failure are logged; successful completion is logged explicitly. No TWDT timeout or direct ESP-IDF TWDT ownership was changed.
+
+The regression contracts verify that invalid recovery schedules rather than calls `save_settings()` synchronously, that the worker is not TWDT-subscribed, that duplicate scheduling is guarded atomically, and that the worker starts after the POST branch. The current environment supports the host contract tests and static checks; PlatformIO and hardware runtime validation remain environment-dependent.

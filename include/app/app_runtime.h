@@ -35,6 +35,7 @@ void nvs_init(bool erase_on_fail);
 bool nvs_is_initialized(void);
 void nvs_print_stats(void);
 void init_system_state(void);
+void app_runtime_start_deferred_settings_persistence(void);
 void init_menu_system(void);
 void init_hardware(void);
 void restore_from_deep_sleep(void);

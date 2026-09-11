@@ -13,6 +13,7 @@
 #include <driver/gpio.h>
 #include "driver/i2c.h"
 #include <stdint.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <esp_log.h>
 #include <math.h>
@@ -293,6 +294,11 @@ lcd_render_state_t sys_lcd;
 EventGroupHandle_t sys_event_group;
 SemaphoreHandle_t sys_state_mutex;
 TaskHandle_t lcd_task_handle = NULL;
+static atomic_bool s_settings_persistence_pending;
+static atomic_bool s_settings_persistence_active;
+
+#define SETTINGS_PERSISTENCE_TASK_STACK_SIZE 4096U
+#define SETTINGS_PERSISTENCE_TASK_PRIORITY 3U
 active_flash_t s_active_flash = {0};
 bool g_system_initialized = false;
 battery_estimator_t bat_estimate;
@@ -1676,13 +1682,6 @@ esp_err_t nvs_save_all(nvs_handle_t handle)
             }
         }
 
-        /* nvs_save_all() is part of app_main startup recovery. Each group of
-         * completed settings is genuine forward progress, so keep the
-         * subscribed startup task protected without feeding during a wait. */
-        if ((i & 7U) == 7U)
-        {
-            (void)task_watchdog_feed();
-        }
     }
 
     return first_err;
@@ -1725,12 +1724,6 @@ esp_err_t nvs_load_all(nvs_handle_t handle)
             *(int32_t *)s->field = val;
         }
 
-        /* Loading is also a potentially long startup phase when a corrupt or
-         * incomplete transaction requires the validated-default path. */
-        if ((i & 7U) == 7U)
-        {
-            (void)task_watchdog_feed();
-        }
     }
 
     return ESP_OK;
@@ -1975,6 +1968,40 @@ static bool get_i32_safe(nvs_handle_t handle, const char *key, int32_t *out)
     return nvs_get_i32(handle, key, out) == ESP_OK;
 }
 
+static void settings_persistence_task(void *parameter)
+{
+    (void)parameter;
+    const bool saved = save_settings();
+    ESP_LOGI("NVS_SAVE", "Deferred settings persistence %s",
+             saved ? "completed" : "failed");
+    atomic_store(&s_settings_persistence_active, false);
+    vTaskDelete(NULL);
+}
+
+void app_runtime_start_deferred_settings_persistence(void)
+{
+    if (!atomic_exchange(&s_settings_persistence_pending, false)) {
+        return;
+    }
+
+    bool expected = false;
+    if (!atomic_compare_exchange_strong(&s_settings_persistence_active,
+                                        &expected, true)) {
+        ESP_LOGW("NVS_SAVE", "Deferred settings persistence already active");
+        return;
+    }
+
+    if (xTaskCreate(settings_persistence_task,
+                    "settings_save",
+                    SETTINGS_PERSISTENCE_TASK_STACK_SIZE,
+                    NULL,
+                    SETTINGS_PERSISTENCE_TASK_PRIORITY,
+                    NULL) != pdPASS) {
+        atomic_store(&s_settings_persistence_active, false);
+        ESP_LOGE("NVS_SAVE", "Could not create deferred settings persistence task");
+    }
+}
+
 bool load_settings()
 {
     nvs_handle_t nvs;
@@ -2067,10 +2094,9 @@ bool load_settings()
     if (load_error)
     {
         ESP_LOGW(NVS_LOADING_TAG, "Settings loaded with one or more defaults/corrections");
-        /* Recovery has completed the validation phase before persisting the
-         * corrected values; this is genuine startup progress. */
-        (void)task_watchdog_feed();
-        save_settings();
+        atomic_store(&s_settings_persistence_pending, true);
+        ESP_LOGI(NVS_LOADING_TAG,
+                 "Validated settings recovery complete; persistence deferred");
         return false;
     }
 
@@ -2092,7 +2118,6 @@ bool save_settings()
         ESP_LOGE("NVS_SAVE", "Battery configuration persistence failed");
         return false;
     }
-    (void)task_watchdog_feed();
     nvs_handle_t nvs;
     const char *NVS_SAVE_TAG = "NVS_SAVE";
 

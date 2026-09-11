@@ -374,6 +374,33 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("APP_OTA_CHECK_INTERVAL_MS", auto_check)
         self.assertIn("vTaskDelay(pdMS_TO_TICKS(slice))", auto_check)
 
+    def test_nvs_recovery_defers_persistence_until_after_post(self):
+        root = Path(__file__).parents[1]
+        runtime = root.joinpath("src", "app_runtime.c").read_text()
+        main = root.joinpath("src", "main.c").read_text()
+        header = root.joinpath("include", "app", "app_runtime.h").read_text()
+
+        recovery = runtime[runtime.index("if (load_error)"):runtime.index(
+            "ESP_LOGI(NVS_LOADING_TAG, \"Settings loaded successfully\")")]
+        self.assertIn("atomic_store(&s_settings_persistence_pending, true)", recovery)
+        self.assertNotIn("save_settings();", recovery)
+        self.assertIn("app_runtime_start_deferred_settings_persistence", header)
+        self.assertIn("atomic_compare_exchange_strong", runtime)
+        self.assertIn("Deferred settings persistence", runtime)
+
+        post = main.index("if (adc_ready && lcd_ready)")
+        deferred = main.index("app_runtime_start_deferred_settings_persistence()")
+        self.assertGreater(deferred, post)
+
+    def test_deferred_nvs_worker_is_not_twdt_subscribed(self):
+        runtime = Path(__file__).parents[1].joinpath("src", "app_runtime.c").read_text()
+        start = runtime.index("static void settings_persistence_task")
+        end = runtime.index("bool load_settings()", start)
+        worker = runtime[start:end]
+        self.assertNotIn("task_watchdog_register", worker)
+        self.assertNotIn("task_watchdog_feed", worker)
+        self.assertIn("save_settings()", worker)
+
 
 if __name__ == "__main__":
     unittest.main()
