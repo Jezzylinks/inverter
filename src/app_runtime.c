@@ -1697,7 +1697,6 @@ esp_err_t nvs_save_all(nvs_handle_t handle)
                 first_err = err;
             }
         }
-
     }
 
     return first_err;
@@ -1739,7 +1738,6 @@ esp_err_t nvs_load_all(nvs_handle_t handle)
             }
             *(int32_t *)s->field = val;
         }
-
     }
 
     return ESP_OK;
@@ -1997,13 +1995,15 @@ static void settings_persistence_task(void *parameter)
 
 void app_runtime_start_deferred_settings_persistence(void)
 {
-    if (!atomic_exchange(&s_settings_persistence_pending, false)) {
+    if (!atomic_exchange(&s_settings_persistence_pending, false))
+    {
         return;
     }
 
     bool expected = false;
     if (!atomic_compare_exchange_strong(&s_settings_persistence_active,
-                                        &expected, true)) {
+                                        &expected, true))
+    {
         ESP_LOGW("NVS_SAVE", "Deferred settings persistence already active");
         return;
     }
@@ -2013,7 +2013,8 @@ void app_runtime_start_deferred_settings_persistence(void)
                     SETTINGS_PERSISTENCE_TASK_STACK_SIZE,
                     NULL,
                     SETTINGS_PERSISTENCE_TASK_PRIORITY,
-                    NULL) != pdPASS) {
+                    NULL) != pdPASS)
+    {
         atomic_store(&s_settings_persistence_active, false);
         ESP_LOGE("NVS_SAVE", "Could not create deferred settings persistence task");
     }
@@ -2029,102 +2030,95 @@ bool load_settings()
     err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs);
     if (err != ESP_OK)
     {
-        ESP_LOGE(NVS_LOADING_TAG, "Failed to open NVS: %s", esp_err_to_name(err));
+        ESP_LOGE(NVS_LOADING_TAG,
+                 "Failed to open NVS: %s",
+                 esp_err_to_name(err));
         return false;
     }
 
+    /* Load normal settings. */
     if (nvs_load_all(nvs) != ESP_OK)
     {
         load_error = true;
     }
 
-    /* Timeout enforcement uses sys_state.system_timeout while the settings
-     * table persists sys_state.settings.system_timeout. Keep both fields
-     * synchronized after every NVS load. */
-    sys_state.system_timeout = sys_state.settings.system_timeout;
+    /* Keep timeout fields synchronized. */
+    sys_state.system_timeout =
+        sys_state.settings.system_timeout;
 
+    /* Validate settings transaction while handle is still open. */
     uint8_t txn_marker = 0U;
     uint32_t stored_crc = 0U;
+
     const bool txn_present =
-        nvs_get_u8(nvs, NVS_SETTINGS_TXN_VALID_KEY, &txn_marker) == ESP_OK;
+        nvs_get_u8(nvs,
+                   NVS_SETTINGS_TXN_VALID_KEY,
+                   &txn_marker) == ESP_OK;
+
     const bool crc_present =
-        nvs_get_u32(nvs, NVS_SETTINGS_TXN_CRC_KEY, &stored_crc) == ESP_OK;
+        nvs_get_u32(nvs,
+                    NVS_SETTINGS_TXN_CRC_KEY,
+                    &stored_crc) == ESP_OK;
+
     if (txn_present &&
-        (txn_marker != NVS_SETTINGS_TXN_VERSION || !crc_present ||
+        (txn_marker != NVS_SETTINGS_TXN_VERSION ||
+         !crc_present ||
          stored_crc != settings_fingerprint()))
     {
         ESP_LOGE(NVS_LOADING_TAG,
                  "Settings transaction invalid; restoring validated defaults");
+
         nvs_apply_defaults();
         load_error = true;
     }
 
-    const float nvs_cutoff_snapshot = sys_state.battery_profile.cutoff_voltage_v;
+    /*
+     * IMPORTANT:
+     * battery_load_profile() opens NVS itself.
+     * Therefore the current NVS handle MUST be closed first.
+     */
+    storage_nvs_close(nvs);
+    nvs = 0;
 
-    /* Load battery profile (type and voltage) */
+    /* Now it is safe for battery_load_profile() to open NVS. */
     if (!battery_load_profile(&sys_state.battery_profile))
     {
-        ESP_LOGW("BAT_PROFILE", "Failed to load battery profile, using defaults");
+        ESP_LOGW("BAT_PROFILE",
+                 "Failed to load battery profile, using defaults");
         load_error = true;
     }
 
-    /* Restore the user-customized cutoff if it is within the valid range for
-     * the newly regenerated profile.  The snapshot is the NVS-stored value;
-     * validate_and_clamp_settings() below will further correct it if needed.
-     * If the snapshot was the NVS default (never customized by the user) it
-     * will likely differ from the chemistry-scaled value; accept whichever is
-     * valid and let validate_and_clamp_settings() normalise it. */
-    {
-        const float lo = sys_state.battery_profile.cutoff_voltage_min_v;
-        const float hi = sys_state.battery_profile.recharge_voltage_v - 0.3f;
-        if (nvs_cutoff_snapshot >= lo && nvs_cutoff_snapshot <= hi)
-        {
-            sys_state.battery_profile.cutoff_voltage_v = nvs_cutoff_snapshot;
-            ESP_LOGI("BAT_PROFILE",
-                     "Restored user cutoff %.2fV (profile default was %.2fV)",
-                     nvs_cutoff_snapshot,
-                     sys_state.battery_profile.cutoff_voltage_v);
-        }
-        else
-        {
-            ESP_LOGI("BAT_PROFILE",
-                     "NVS cutoff %.2fV out of range [%.2f, %.2f] for current "
-                     "profile; using profile default %.2fV",
-                     nvs_cutoff_snapshot, lo, hi,
-                     sys_state.battery_profile.cutoff_voltage_v);
-        }
-    }
-
     sync_battery_voltage_state();
     sync_battery_protection_thresholds();
 
-    /* Cross-field / range validation — catches corrupted or
-     * inconsistent values that a plain nvs_get_* success wouldn't. */
+    /* Cross-field / range validation. */
     if (validate_and_clamp_settings())
     {
-        ESP_LOGW(NVS_LOADING_TAG, "One or more loaded settings were out of range and were corrected");
-        load_error = true; /* forces save_settings() below to persist the fix */
+        ESP_LOGW(NVS_LOADING_TAG,
+                 "One or more loaded settings were out of range and were corrected");
+
+        load_error = true;
     }
+
     sync_battery_voltage_state();
     sync_battery_protection_thresholds();
-
-    /* MUST close the handle before calling save_settings().
-     * storage_nvs_open() takes s_mutex and holds it until storage_nvs_close()
-     * is called.  save_settings() → battery_save_configuration() →
-     * storage_nvs_open() tries to take the same mutex — deadlock on the
-     * main task if we don't release here first. */
-    storage_nvs_close(nvs);
 
     if (load_error)
     {
-        ESP_LOGW(NVS_LOADING_TAG, "Settings loaded with one or more defaults/corrections");
+        ESP_LOGW(NVS_LOADING_TAG,
+                 "Settings loaded with one or more defaults/corrections");
+
         atomic_store(&s_settings_persistence_pending, true);
+
         ESP_LOGI(NVS_LOADING_TAG,
                  "Validated settings recovery complete; persistence deferred");
+
         return false;
     }
 
-    ESP_LOGI(NVS_LOADING_TAG, "Settings loaded successfully");
+    ESP_LOGI(NVS_LOADING_TAG,
+             "Settings loaded successfully");
+
     return true;
 }
 
