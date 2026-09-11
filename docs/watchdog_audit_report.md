@@ -263,3 +263,33 @@ The startup path waits with a bounded 10-second loop for `APP_EVENT_ADC_READY`/`
 ### Validation
 
 The duplicate-registration contract is covered by the repository test suite. Final static and build results are recorded below after execution. Physical reboot persistence, task-handle reuse under real scheduling, ADC/LCD hardware startup, and network restart tests require hardware and were not claimed as executed.
+
+
+## L. Intentional waiting-task classification update
+
+The repository-wide audit was repeated against the current task bodies. The following workers were removed from ESP-IDF TWDT because their normal execution model includes intentional waiting or potentially long network service operations:
+
+| Task | Normal behavior | Long blocking/delay? | Safety critical? | TWDT | Health-only | Reason |
+|---|---|---:|---:|---:|---:|---|
+| `app_wifi_toggle_task` | Waits for a Wi-Fi toggle request, then starts/stops the network stack and services | Queue wait plus network/service operations | No | No | No | A service worker may legitimately wait for a request and its network transition is not a continuously executing safety loop. Existing Wi-Fi architecture intentionally keeps these service tasks outside shared TWDT. |
+| `ota_auto_check_task` | Initial 30-second delay, then periodic OTA checks every `APP_OTA_CHECK_INTERVAL_MS` (six hours) | Yes; periodic sleeps exceed the 15-second TWDT window | No | No | No | Automatic update polling is a long-period network helper. Feeding during one-second delay slices would only disguise the intentional sleep and would not provide meaningful liveness monitoring. |
+
+The following classes remain TWDT protected because they perform safety/control/event work and either use bounded waits or continue executing meaningful work within the configured window: `app_main`, `adc_task`, `lcd_task`, `button_task`, the event dispatcher and safety/event consumers, `buzzer_event_task`, `led_event_task`, `ota_task` during an active verified update, `power_task`, `diagnostic_update_task`, `thermal_monitoring_task`, `battery_monitoring_task`, and `display_timeout_task`. The watchdog supervisor remains health-only. Short-lived Wi-Fi scan, network synchronization, manifest-check, and other network helper tasks remain unmonitored.
+
+No TWDT timeout, startup ordering, LCD behavior, button timing, queue size, task priority, stack size, or core affinity was changed. No direct ESP-IDF TWDT API was added outside `src/task_watchdog.c`.
+
+The regression suite now explicitly verifies that `app_wifi_toggle_task` and `ota_auto_check_task` contain neither central TWDT registration nor feeds, while preserving their queue/periodic-delay behavior.
+
+
+## M. Validation for the intentional waiting-task update
+
+| Check | Result |
+|---|---|
+| `python3 tools/test_firmware_contracts.py` | **PASS — 26 tests passed** |
+| `git diff --check` | **PASS** |
+| Direct ESP-IDF TWDT ownership scan | **PASS** for operational calls; only `src/task_watchdog.c` contains the APIs. An unrelated comment in `src/app_runtime.c` mentions one API name but does not call it. |
+| `pio run -e esp32dev` | **NOT RUN — PlatformIO is not installed in this sandbox (`pio: command not found`)** |
+| Native CMake/Ninja fallback | **NOT RUN — required build artifacts/toolchain are unavailable** |
+| Hardware runtime validation | **NOT VERIFIABLE — no ESP32 board is attached** |
+
+The earlier report entries documenting a successful build refer to the prior repository state and are retained as historical validation. The current watchdog-classification diff has been validated by the host contract suite and static source checks, but no new compilation claim is made for this environment.
