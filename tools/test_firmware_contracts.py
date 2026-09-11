@@ -418,6 +418,36 @@ class FirmwareContracts(unittest.TestCase):
         self.assertNotIn("task_watchdog_unregister()", ota)
         self.assertIn("ota_download_firmware", ota)
 
+    def test_startup_initializers_return_and_handle_esp_errors(self):
+        root = Path(__file__).parents[1]
+        main = root.joinpath("src", "main.c").read_text()
+        runtime_header = root.joinpath("include", "app", "app_runtime.h").read_text()
+        diagnostics_header = root.joinpath(
+            "include", "diagnostics", "system_diagnostics.h").read_text()
+        lcd_header = root.joinpath("include", "lcd", "lcd_writer.h").read_text()
+
+        for declaration in (
+            "esp_err_t nvs_init(bool erase_on_fail);",
+            "esp_err_t init_system_state(void);",
+            "esp_err_t init_menu_system(void);",
+            "esp_err_t init_hardware(void);",
+            "esp_err_t restore_from_deep_sleep(void);",
+            "esp_err_t lcd_power_init(void);",
+        ):
+            self.assertIn(declaration, runtime_header)
+        self.assertIn("esp_err_t system_diagnostics_init(void);", diagnostics_header)
+        self.assertIn("esp_err_t lcd_writer_init(void);", lcd_header)
+        for variable, function in (
+            ("nvs_err", "nvs_init(false)"),
+            ("state_err", "init_system_state()"),
+            ("menu_err", "init_menu_system()"),
+            ("hardware_err", "init_hardware()"),
+            ("restore_err", "restore_from_deep_sleep()"),
+            ("lcd_power_err", "lcd_power_init()"),
+        ):
+            self.assertIn(f"const esp_err_t {variable} = {function};", main)
+            self.assertIn(f"{variable} != ESP_OK", main)
+
 
 if __name__ == "__main__":
     unittest.main()

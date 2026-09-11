@@ -61,7 +61,7 @@ static bool persist(void)
     return true;
 }
 
-bool system_diagnostics_init(void)
+esp_err_t system_diagnostics_init(void)
 {
     memset(&s_snapshot, 0, sizeof(s_snapshot));
     nvs_handle_t handle;
@@ -86,7 +86,7 @@ bool system_diagnostics_init(void)
     ESP_LOGI(TAG, "Boot #%lu, reset reason: %s",
              (unsigned long)s_snapshot.boot_count,
              system_diagnostics_reset_reason_name(s_snapshot.last_reset_reason));
-    return s_initialized;
+    return s_initialized ? ESP_OK : ESP_FAIL;
 }
 
 void system_diagnostics_record_fault(uint32_t fault_flags,

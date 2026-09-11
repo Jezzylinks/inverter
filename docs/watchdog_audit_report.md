@@ -313,3 +313,8 @@ The active OTA worker, LCD task, and `app_main` are now intentionally excluded f
 The central TWDT remains enabled for continuously executing safety, control, ADC, event, button, buzzer, LED, monitoring, and display-timeout tasks that have bounded waits or regular meaningful progress. No TWDT timeout was increased, and no direct ESP-IDF TWDT calls were added outside `src/task_watchdog.c`.
 
 The host contract suite now verifies that `app_main`, `lcd_task`, and `ota_task` have no central TWDT registration/feeds, while the OTA worker remains protected by its existing cancellation, HTTP/download timeout, verification, and failure-state handling.
+
+
+## P. Typed startup initializer results
+
+Startup initialization APIs now return `esp_err_t` rather than silently discarding status. This includes NVS, system diagnostics, system state, menu state, hardware, wake-state restoration, LCD power, and LCD writer initialization. `app_main()` captures each result and handles failures explicitly: fatal prerequisites keep the system unavailable and return, while recoverable diagnostics/hardware warnings are logged and startup safety gates remain authoritative. Contract tests verify the typed declarations and corresponding `ESP_OK` checks.

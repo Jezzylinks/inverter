@@ -48,7 +48,7 @@ static void set_line(char *dst, const char *src)
 }
 
 /*----------------------------------------------------------------------------*/
-void lcd_writer_init(void)
+esp_err_t lcd_writer_init(void)
 {
     s_startup_released = false;
     s_startup_started_ms = _lcd_get_time_ms();
@@ -57,6 +57,7 @@ void lcd_writer_init(void)
     sys_lcd.screen = LCD_SCREEN_BOOT_BRAND;
     sys_lcd.main.sub_page_interval_ms = 3000;
     LCD_UNLOCK();
+    return ESP_OK;
 }
 
 /* ── Boot ────────────────────────────────────────────────────────────────── */

@@ -31,15 +31,15 @@ extern system_state_t sys_state;
 
 /* Existing lifecycle entry points retained behind one application boundary. */
 bool init_watchdog(bool enable_task_wdt, bool panic_on_hang);
-void nvs_init(bool erase_on_fail);
+esp_err_t nvs_init(bool erase_on_fail);
 bool nvs_is_initialized(void);
 void nvs_print_stats(void);
-void init_system_state(void);
+esp_err_t init_system_state(void);
 void app_runtime_start_deferred_settings_persistence(void);
-void init_menu_system(void);
-void init_hardware(void);
-void restore_from_deep_sleep(void);
-void lcd_power_init(void);
+esp_err_t init_menu_system(void);
+esp_err_t init_hardware(void);
+esp_err_t restore_from_deep_sleep(void);
+esp_err_t lcd_power_init(void);
 void LCD_power(bool enable);
 esp_err_t lcd_controller_init(void);
 void lcd_set_brightness(uint8_t brightness);

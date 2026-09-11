@@ -105,13 +105,45 @@ void app_main(void)
     }
 
     /* Initialize rendering before any subsystem publishes display state. */
-    lcd_writer_init();
+    const esp_err_t lcd_writer_err = lcd_writer_init();
+    if (lcd_writer_err != ESP_OK)
+    {
+        ESP_LOGE(APP_TAG, "LCD writer initialization failed: %s",
+                 esp_err_to_name(lcd_writer_err));
+        return;
+    }
 
     /* NVS and system defaults must be ready before loading profiles or security. */
-    nvs_init(false);
-    system_diagnostics_init();
-    init_system_state();
-    init_menu_system();
+    const esp_err_t nvs_err = nvs_init(false);
+    if (nvs_err != ESP_OK)
+    {
+        ESP_LOGE(APP_TAG, "NVS initialization failed: %s",
+                 esp_err_to_name(nvs_err));
+        sys_state.system_ready = false;
+        return;
+    }
+    const esp_err_t diagnostics_err = system_diagnostics_init();
+    if (diagnostics_err != ESP_OK)
+    {
+        ESP_LOGW(APP_TAG, "System diagnostics initialization failed: %s",
+                 esp_err_to_name(diagnostics_err));
+    }
+    const esp_err_t state_err = init_system_state();
+    if (state_err != ESP_OK)
+    {
+        ESP_LOGE(APP_TAG, "System state initialization failed: %s",
+                 esp_err_to_name(state_err));
+        sys_state.system_ready = false;
+        return;
+    }
+    const esp_err_t menu_err = init_menu_system();
+    if (menu_err != ESP_OK)
+    {
+        ESP_LOGE(APP_TAG, "Menu initialization failed: %s",
+                 esp_err_to_name(menu_err));
+        sys_state.system_ready = false;
+        return;
+    }
     if (security_init() != ESP_OK)
     {
         ESP_LOGE(APP_TAG, "FATAL: security initialization failed; keeping controls disabled");
@@ -138,11 +170,27 @@ void app_main(void)
     }
 
     /* Hardware-dependent battery/LCD peripherals use the validated profile. */
-    init_hardware();
-    restore_from_deep_sleep();
+    const esp_err_t hardware_err = init_hardware();
+    if (hardware_err != ESP_OK)
+    {
+        ESP_LOGW(APP_TAG, "Hardware initialization completed with warnings: %s",
+                 esp_err_to_name(hardware_err));
+    }
+    const esp_err_t restore_err = restore_from_deep_sleep();
+    if (restore_err != ESP_OK)
+    {
+        ESP_LOGW(APP_TAG, "Wake-state restoration failed: %s",
+                 esp_err_to_name(restore_err));
+    }
     log_all_error_flags(sys_state.error.error_flags);
     vTaskDelay(pdMS_TO_TICKS(2000));
-    lcd_power_init();
+    const esp_err_t lcd_power_err = lcd_power_init();
+    if (lcd_power_err != ESP_OK)
+    {
+        ESP_LOGE(APP_TAG, "LCD power initialization failed: %s",
+                 esp_err_to_name(lcd_power_err));
+        return;
+    }
     LCD_power(true);
     const esp_err_t lcd_init_result = lcd_controller_init();
     lcd_set_brightness(200);

@@ -14,6 +14,7 @@
 #include "lcd/lcd_state.h"
 #include "system/inverter_errors.h"
 #include <stdint.h>
+#include "esp_err.h"
 #include <stdbool.h>
 
 #ifdef __cplusplus
@@ -29,7 +30,7 @@ extern SemaphoreHandle_t sys_state_mutex;
 #define LCD_UNLOCK() xSemaphoreGive(sys_state_mutex)
 
 /* Call once at startup before any task runs */
-void lcd_writer_init(void);
+esp_err_t lcd_writer_init(void);
 
 /* ── Boot ────────────────────────────────────────────────────────────────── */
 void lcd_show_boot_brand(void);

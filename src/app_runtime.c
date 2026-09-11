@@ -962,8 +962,8 @@ adc_cali_handle_t handle = NULL;
 
 // =============== FUNCTION PROTOTYPES ===============
 
-void init_hardware();
-void nvs_init(bool erase_on_fail);
+esp_err_t init_hardware();
+esp_err_t nvs_init(bool erase_on_fail);
 bool save_settings();
 bool load_settings();
 void lcd_show_bt_edit_screen(const char *label, const char *value);
@@ -1093,8 +1093,8 @@ static bool validate_and_clamp_settings(void);
 void menu_exit();
 menu_state_t display_menu_state();
 void adjust_factory_reset(button_event_info_t *btn);
-void init_menu_system();
-void restore_from_deep_sleep();
+esp_err_t init_menu_system();
+esp_err_t restore_from_deep_sleep();
 void enter_deep_sleep(uint32_t sleep_seconds);
 void init_deep_sleep(uint64_t wakeup_pin_mask, int wakeup_time_sec);
 void save_calibration();
@@ -1106,10 +1106,10 @@ void show_system_info();
 bool system_is_inactive();
 void update_activity();
 void display_timeout_task(void *arg);
-void lcd_power_init();
+esp_err_t lcd_power_init();
 void LCD_power(bool enable);
 void lcd_set_brightness(uint8_t brightness);
-void init_system_state();
+esp_err_t init_system_state();
 void handle_critical_error(); // centralized error handling
 bool battery_save_configuration(battery_type_t type, voltage_system_t voltage_sys, uint16_t capacity_ah);
 void battery_print_profile(const battery_profile_t *profile);
@@ -1454,7 +1454,7 @@ esp_err_t lcd_controller_init(void)
 }
 
 // =============== HARDWARE INITIALIZATION ===============
-void init_hardware(void)
+esp_err_t init_hardware(void)
 {
     // ==========================================================
     // Initialize LED Driver
@@ -1539,6 +1539,7 @@ void init_hardware(void)
     // ==========================================================
     xTaskCreate(display_timeout_task, "Display Timeout", 2048, NULL, 5, NULL);
 #endif
+    return buzzer_err == ESP_OK ? ESP_OK : buzzer_err;
 }
 
 #define NVS_FLOAT_SCALE 100.0f
@@ -1795,7 +1796,7 @@ esp_err_t set_setting_value(const char *key, int32_t value)
     return err;
 }
 
-void nvs_init(bool erase_on_fail)
+esp_err_t nvs_init(bool erase_on_fail)
 {
     /* Kept as a compatibility entry point; storage_nvs_init is authoritative. */
     (void)erase_on_fail;
@@ -1806,6 +1807,7 @@ void nvs_init(bool erase_on_fail)
         ESP_LOGE("NVS_INIT", "NVS unavailable: %s (0x%x)",
                  esp_err_to_name(err), err);
     }
+    return err;
 }
 
 /**
@@ -5139,7 +5141,7 @@ void save_frequency_to_nvs(int frequency)
 
 // ================== INITIALIZATION ==================
 // =============== INITIALIZE MENU SYSTEM ===============
-void init_menu_system()
+esp_err_t init_menu_system()
 {
     /* Keep controls inhibited until settings, battery profile, and security
      * policy have been loaded and validated. */
@@ -5171,15 +5173,17 @@ void init_menu_system()
     quiet_hours_restore_manual_time();
     sys_state.system_ready = true;
     printf("System initialization complete. Ready for operation.\n");
+    return ESP_OK;
 }
 
 // ================== RESTORE STATE ON WAKE =================
-void restore_from_deep_sleep()
+esp_err_t restore_from_deep_sleep()
 {
     // RTC restore is now handled in init_system_state()
     // This function can be called for additional setup if needed
     ESP_LOGI("RTC", "RTC memory magic: 0x%08lX", rtc_mem.magic_flag);
     ESP_LOGI("RTC", "Wake count: %lu", rtc_mem.wake_count);
+    return ESP_OK;
 }
 
 /* ── enter_deep_sleep() ──────────────────────────────────────────────────── */
@@ -5425,7 +5429,7 @@ void display_timeout_task(void *arg)
 }
 
 // Initialize LCD power control (call once at startup)
-void lcd_power_init()
+esp_err_t lcd_power_init()
 {
     // Configure power control GPIO
     gpio_config_t pwr_conf = {
@@ -5449,6 +5453,7 @@ void lcd_power_init()
         .channel = LCD_BACKLIGHT_LEDC_CHANNEL,
         .timer_sel = LCD_BACKLIGHT_LEDC_TIMER};
     ledc_channel_config(&ch_conf);
+    return ESP_OK;
 }
 
 // Control LCD power (true = on, false = off)
@@ -5505,8 +5510,9 @@ static bool is_valid_error_code(uint8_t error)
     }
 }
 
-void init_system_state()
+esp_err_t init_system_state()
 {
+    esp_err_t init_err = ESP_OK;
 
     // ✅ STEP 1: Clear system state
     memset(&sys_state, 0, sizeof(sys_state));
@@ -5517,6 +5523,7 @@ void init_system_state()
     if (!protection_init())
     {
         ESP_LOGE(TAG_SYS, "FATAL: protection_init failed");
+        init_err = ESP_ERR_INVALID_STATE;
     }
 
     // ✅ STEP 2: Initialize safe defaults
@@ -5609,6 +5616,7 @@ void init_system_state()
 
     // ✅ FINAL: Only keep persistent error flags if any
     sys_state.error.error_flags &= (ERR_EEPROM | ERR_FAN_FAIL);
+    return init_err;
 }
 
 /* ── handle_critical_error() ─────────────────────────────────────────────── */

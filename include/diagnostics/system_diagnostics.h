@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "esp_system.h"
+#include "esp_err.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,7 +20,7 @@ typedef struct {
     uint32_t last_uptime_seconds;
 } system_diagnostics_snapshot_t;
 
-bool system_diagnostics_init(void);
+esp_err_t system_diagnostics_init(void);
 void system_diagnostics_record_fault(uint32_t fault_flags,
                                      float battery_voltage,
                                      uint32_t timestamp_ms);
