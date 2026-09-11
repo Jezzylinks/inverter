@@ -2108,6 +2108,13 @@ bool load_settings()
     sync_battery_voltage_state();
     sync_battery_protection_thresholds();
 
+    /* MUST close the handle before calling save_settings().
+     * storage_nvs_open() takes s_mutex and holds it until storage_nvs_close()
+     * is called.  save_settings() → battery_save_configuration() →
+     * storage_nvs_open() tries to take the same mutex — deadlock on the
+     * main task if we don't release here first. */
+    storage_nvs_close(nvs);
+
     if (load_error)
     {
         ESP_LOGW(NVS_LOADING_TAG, "Settings loaded with one or more defaults/corrections");
