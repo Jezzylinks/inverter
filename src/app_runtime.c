@@ -1086,8 +1086,6 @@ esp_err_t get_setting_value(const char *key, int32_t default_val, int32_t *out_v
 esp_err_t set_setting_value(const char *key, int32_t value);
 esp_err_t set_i32_safe(nvs_handle_t nvs, const char *key, void *value);
 esp_err_t set_u8_safe(nvs_handle_t nvs, const char *key, void *value);
-static bool get_u8_safe(nvs_handle_t handle, const char *key, uint8_t *out);
-static bool get_i32_safe(nvs_handle_t handle, const char *key, int32_t *out);
 static bool validate_and_clamp_settings(void);
 
 void menu_exit();
@@ -1668,7 +1666,7 @@ esp_err_t nvs_save_all(nvs_handle_t handle)
 {
     esp_err_t err = ESP_OK;
     esp_err_t first_err = ESP_OK;
-    const char *NVS_SAVING_TAG = "NVS_LOAD";
+    const char *NVS_SAVING_TAG = "NVS_SAVE";
 
     for (size_t i = 0; i < NVS_SETTINGS_COUNT; i++)
     {
@@ -1704,43 +1702,53 @@ esp_err_t nvs_save_all(nvs_handle_t handle)
 
 esp_err_t nvs_load_all(nvs_handle_t handle)
 {
+    esp_err_t first_err = ESP_OK;
     for (size_t i = 0; i < NVS_SETTINGS_COUNT; i++)
     {
         nvs_setting_t *s = &g_settings[i];
-
+        esp_err_t err = ESP_OK;
         if (s->is_scaled_float)
         {
             int32_t scaled = (int32_t)(s->default_val * NVS_FLOAT_SCALE);
-            bool ok = get_i32_safe(handle, s->key, &scaled);
-            if (!ok)
+            err = nvs_get_i32(handle, s->key, &scaled);
+            if (err != ESP_OK)
             {
-                ESP_LOGW(NVS_LOAD_TAG, "'%s' not found, using default %.2f", s->key, s->default_val);
+                ESP_LOGW(NVS_LOAD_TAG, "Failed to load key '%s': %s (0x%x); using default %.2f",
+                         s->key, esp_err_to_name(err), err, s->default_val);
             }
             *(float *)s->field = (float)scaled / NVS_FLOAT_SCALE;
         }
         else if (s->size == sizeof(uint8_t))
         {
             uint8_t val = (uint8_t)s->default_val;
-            bool ok = get_u8_safe(handle, s->key, &val);
-            if (!ok)
+            err = nvs_get_u8(handle, s->key, &val);
+            if (err != ESP_OK)
             {
-                ESP_LOGW(NVS_LOAD_TAG, "'%s' not found, using default %u", s->key, val);
+                ESP_LOGW(NVS_LOAD_TAG, "Failed to load key '%s': %s (0x%x); using default %u",
+                         s->key, esp_err_to_name(err), err, val);
             }
             *(uint8_t *)s->field = val;
         }
         else
         {
             int32_t val = (int32_t)s->default_val;
-            bool ok = get_i32_safe(handle, s->key, &val);
-            if (!ok)
+            err = nvs_get_i32(handle, s->key, &val);
+            if (err != ESP_OK)
             {
-                ESP_LOGW(NVS_LOAD_TAG, "'%s' not found, using default %ld", s->key, (long)val);
+                ESP_LOGW(NVS_LOAD_TAG, "Failed to load key '%s': %s (0x%x); using default %ld",
+                         s->key, esp_err_to_name(err), err, (long)val);
             }
             *(int32_t *)s->field = val;
         }
+        /* Missing keys are expected on first boot and during migrations.
+         * Other read failures, especially TYPE_MISMATCH or INVALID_STATE,
+         * must be propagated so the caller can mark settings for recovery. */
+        if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND && first_err == ESP_OK)
+        {
+            first_err = err;
+        }
     }
-
-    return ESP_OK;
+    return first_err;
 }
 
 #define DEFAULT_SETTINGS_COUNT (sizeof(g_settings) / sizeof(g_settings[0]))
@@ -1973,16 +1981,6 @@ esp_err_t set_u8_safe(nvs_handle_t nvs, const char *key, void *value)
     return nvs_set_u8(nvs, key, *(uint8_t *)value);
 }
 
-static bool get_u8_safe(nvs_handle_t handle, const char *key, uint8_t *out)
-{
-    return nvs_get_u8(handle, key, out) == ESP_OK;
-}
-
-static bool get_i32_safe(nvs_handle_t handle, const char *key, int32_t *out)
-{
-    return nvs_get_i32(handle, key, out) == ESP_OK;
-}
-
 static void settings_persistence_task(void *parameter)
 {
     (void)parameter;
@@ -2116,8 +2114,7 @@ bool load_settings()
         return false;
     }
 
-    ESP_LOGI(NVS_LOADING_TAG,
-             "Settings loaded successfully");
+    ESP_LOGI(NVS_LOADING_TAG, "Settings loaded successfully");
 
     return true;
 }
@@ -2127,7 +2124,13 @@ bool save_settings()
     esp_err_t err;
     if (!nvs_initialized)
     {
-        nvs_init(true);
+        err = nvs_init(false);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE("NVS_SAVE", "Cannot save settings: NVS initialization failed: %s (0x%x)",
+                     esp_err_to_name(err), err);
+            return false;
+        }
     }
     if (!battery_save_configuration(sys_state.battery_profile.profile_id,
                                     sys_state.battery_profile.nominal_voltage,
