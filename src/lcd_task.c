@@ -2004,9 +2004,6 @@ void lcd_task(void *arg)
         diag_data.uptime_seconds = (uint32_t)(esp_timer_get_time() / 1000000ULL);
         xSemaphoreGive(sys_state_mutex);
 
-        snap.main.wifi_connected = wifi_monitor_is_online();
-        snap.main.wifi_rssi = wifi_monitor_get_rssi();
-
         /* ====== STEP 4: FLASH EXPIRY ====== */
         if (lcd_flash_is_expired())
         {

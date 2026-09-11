@@ -354,6 +354,20 @@ static void app_wifi_toggle_task(void *parameter)
     }
 }
 
+/* Called by wifi_monitor_task whenever Wi-Fi state changes.  Pushes the
+ * new connected/RSSI state to the LCD immediately — no polling required.
+ * Must not block for long: it runs in wifi_monitor_task context and must
+ * not take any mutex that could be held for an extended period. */
+static void app_wifi_lcd_status_callback(const wifi_monitor_status_t *status)
+{
+    if (status == NULL) {
+        return;
+    }
+    const bool online = status->connected && status->got_ip &&
+                        status->internet == WIFI_INTERNET_AVAILABLE;
+    lcd_update_wifi_status(online, online ? status->rssi : 0);
+}
+
 static void app_wifi_status_callback(const wifi_status_t *status)
 {
     if (status == NULL || s_services_mutex == NULL) {
@@ -777,6 +791,21 @@ esp_err_t app_services_init(void)
                      "Could not register Wi-Fi status callback: %s",
                      esp_err_to_name(callback_err));
         }
+        /* Register a wifi_monitor callback to push the Wi-Fi connected/RSSI
+         * state to the LCD immediately on every state change.
+         *
+         * This replaces the previous approach (polling from the ADC manager
+         * task every cycle) with an event-driven push that fires only when
+         * state actually changes.  The callback runs from wifi_monitor_task
+         * context, which is safe for lcd_update_wifi_status() — that function
+         * only takes the LCD mutex for a short memcpy, never for network I/O.
+         *
+         * Critically, the lcd_task itself must NOT call wifi_monitor_is_online()
+         * or wifi_monitor_get_rssi() directly: those functions take
+         * s_mutex with portMAX_DELAY, and wifi_monitor_task can hold s_mutex
+         * for up to 3500 ms during a ping probe.  Blocking the lcd_task on a
+         * foreign mutex past its watchdog feed point causes a TASK_WDT reset. */
+        (void)wifi_monitor_register_callback(app_wifi_lcd_status_callback);
         const esp_err_t network_err = network_services_init();
         if (network_err != ESP_OK) {
             ESP_LOGW(APP_SERVICES_TAG,
