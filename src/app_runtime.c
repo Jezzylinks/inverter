@@ -614,7 +614,8 @@ bool battery_save_configuration(battery_type_t battery_type,
     err = nvs_set_u8(nvs_handle, BATTERY_TYPE_KEY, (uint8_t)battery_type);
     if (err != ESP_OK)
     {
-        printf(": Failed to save battery type!\n");
+        ESP_LOGE("BAT_PROFILE", "Failed to save namespace='%s' key='%s': %s (0x%x)",
+                 NVS_NS_SYSTEM, BATTERY_TYPE_KEY, esp_err_to_name(err), err);
         storage_nvs_close(nvs_handle);
         return false;
     }
@@ -623,7 +624,9 @@ bool battery_save_configuration(battery_type_t battery_type,
     err = nvs_set_u8(nvs_handle, BATTERY_VOLTAGE_SYSTEM_KEY, (uint8_t)voltage_system);
     if (err != ESP_OK)
     {
-        printf("ERROR: Failed to save voltage system!\n");
+        ESP_LOGE("BAT_PROFILE", "Failed to save namespace='%s' key='%s': %s (0x%x)",
+                 NVS_NS_SYSTEM, BATTERY_VOLTAGE_SYSTEM_KEY,
+                 esp_err_to_name(err), err);
         storage_nvs_close(nvs_handle);
         return false;
     }
@@ -632,7 +635,8 @@ bool battery_save_configuration(battery_type_t battery_type,
     err = nvs_set_u16(nvs_handle, BATTERY_CAPACITY_KEY, capacity_ah);
     if (err != ESP_OK)
     {
-        printf("ERROR: Failed to save capacity!\n");
+        ESP_LOGE("BAT_PROFILE", "Failed to save namespace='%s' key='%s': %s (0x%x)",
+                 NVS_NS_SYSTEM, BATTERY_CAPACITY_KEY, esp_err_to_name(err), err);
         storage_nvs_close(nvs_handle);
         return false;
     }
@@ -641,7 +645,8 @@ bool battery_save_configuration(battery_type_t battery_type,
     err = nvs_commit(nvs_handle);
     if (err != ESP_OK)
     {
-        printf("ERROR: Failed to commit NVS changes!\n");
+        ESP_LOGE("BAT_PROFILE", "Failed to commit namespace='%s': %s (0x%x)",
+                 NVS_NS_SYSTEM, esp_err_to_name(err), err);
         storage_nvs_close(nvs_handle);
         return false;
     }
@@ -1084,8 +1089,6 @@ void reload_default_settings(void);
 void save_frequency_to_nvs(int frequency);
 esp_err_t get_setting_value(const char *key, int32_t default_val, int32_t *out_value);
 esp_err_t set_setting_value(const char *key, int32_t value);
-esp_err_t set_i32_safe(nvs_handle_t nvs, const char *key, void *value);
-esp_err_t set_u8_safe(nvs_handle_t nvs, const char *key, void *value);
 static bool validate_and_clamp_settings(void);
 
 void menu_exit();
@@ -1657,6 +1660,58 @@ static void nvs_apply_defaults(void)
     }
 }
 
+static esp_err_t nvs_write_setting(nvs_handle_t handle,
+                                   const nvs_setting_t *setting)
+{
+    if (setting->is_scaled_float)
+    {
+        const int32_t scaled =
+            (int32_t)(*(const float *)setting->field * NVS_FLOAT_SCALE);
+        return nvs_set_i32(handle, setting->key, scaled);
+    }
+    if (setting->size == sizeof(uint8_t))
+    {
+        return nvs_set_u8(handle, setting->key,
+                          *(const uint8_t *)setting->field);
+    }
+    return nvs_set_i32(handle, setting->key,
+                       *(const int32_t *)setting->field);
+}
+
+static esp_err_t nvs_set_u8_compat(nvs_handle_t handle, const char *key,
+                                   uint8_t value)
+{
+    esp_err_t err = nvs_set_u8(handle, key, value);
+    if (err == ESP_ERR_NVS_TYPE_MISMATCH)
+    {
+        ESP_LOGW("NVS_SAVE", "Migrating legacy type for namespace='%s' key='%s'",
+                 NVS_NS_SYSTEM, key);
+        err = nvs_erase_key(handle, key);
+        if (err == ESP_OK || err == ESP_ERR_NVS_NOT_FOUND)
+        {
+            err = nvs_set_u8(handle, key, value);
+        }
+    }
+    return err;
+}
+
+static esp_err_t nvs_set_u16_compat(nvs_handle_t handle, const char *key,
+                                    uint16_t value)
+{
+    esp_err_t err = nvs_set_u16(handle, key, value);
+    if (err == ESP_ERR_NVS_TYPE_MISMATCH)
+    {
+        ESP_LOGW("NVS_SAVE", "Migrating legacy type for namespace='%s' key='%s'",
+                 NVS_NS_SYSTEM, key);
+        err = nvs_erase_key(handle, key);
+        if (err == ESP_OK || err == ESP_ERR_NVS_NOT_FOUND)
+        {
+            err = nvs_set_u16(handle, key, value);
+        }
+    }
+    return err;
+}
+
 size_t app_settings_count(void)
 {
     return NVS_SETTINGS_COUNT;
@@ -1672,24 +1727,34 @@ esp_err_t nvs_save_all(nvs_handle_t handle)
     {
         nvs_setting_t *s = &g_settings[i];
 
-        if (s->is_scaled_float)
+        err = nvs_write_setting(handle, s);
+        if (err == ESP_ERR_NVS_TYPE_MISMATCH)
         {
-            float *fval = (float *)s->field;
-            int32_t scaled = (int32_t)((*fval) * NVS_FLOAT_SCALE);
-            err = set_i32_safe(handle, s->key, &scaled);
-        }
-        else if (s->size == sizeof(uint8_t))
-        {
-            err = set_u8_safe(handle, s->key, s->field);
-        }
-        else
-        {
-            err = set_i32_safe(handle, s->key, s->field);
+            /* NVS fixes a key's type when it is first created. Older
+             * firmware stored some numeric settings with a different type.
+             * Migrate only this conflicting key, not the namespace. */
+            ESP_LOGW(NVS_SAVING_TAG,
+                     "Migrating legacy type for namespace='%s' key='%s'",
+                     NVS_NS_SYSTEM, s->key);
+            const esp_err_t erase_err = nvs_erase_key(handle, s->key);
+            if (erase_err == ESP_OK || erase_err == ESP_ERR_NVS_NOT_FOUND)
+            {
+                err = nvs_write_setting(handle, s);
+            }
+            else
+            {
+                err = erase_err;
+            }
         }
 
         if (err != ESP_OK)
         {
-            ESP_LOGW(NVS_SAVING_TAG, "Failed to save '%s': %s", s->key, esp_err_to_name(err));
+            ESP_LOGE(NVS_SAVING_TAG,
+                     "Failed to save namespace='%s' key='%s' type=%s: %s (0x%x)",
+                     NVS_NS_SYSTEM, s->key,
+                     s->is_scaled_float ? "i32_scaled" :
+                         (s->size == sizeof(uint8_t) ? "u8" : "i32"),
+                     esp_err_to_name(err), err);
             if (first_err == ESP_OK)
             {
                 first_err = err;
@@ -1971,16 +2036,6 @@ void load_calibration()
 
 // load all the nvs settings
 
-esp_err_t set_i32_safe(nvs_handle_t nvs, const char *key, void *value)
-{
-    return nvs_set_i32(nvs, key, *(int32_t *)value);
-}
-
-esp_err_t set_u8_safe(nvs_handle_t nvs, const char *key, void *value)
-{
-    return nvs_set_u8(nvs, key, *(uint8_t *)value);
-}
-
 static void settings_persistence_task(void *parameter)
 {
     (void)parameter;
@@ -2132,13 +2187,6 @@ bool save_settings()
             return false;
         }
     }
-    if (!battery_save_configuration(sys_state.battery_profile.profile_id,
-                                    sys_state.battery_profile.nominal_voltage,
-                                    sys_state.battery_profile.capacity_ah))
-    {
-        ESP_LOGE("NVS_SAVE", "Battery configuration persistence failed");
-        return false;
-    }
     nvs_handle_t nvs;
     const char *NVS_SAVE_TAG = "NVS_SAVE";
 
@@ -2150,6 +2198,29 @@ bool save_settings()
     }
 
     ESP_LOGI(NVS_SAVE_TAG, "Saving settings to NVS...");
+    /* Battery and general settings share NVS_NS_SYSTEM. Keep them in the
+     * same transaction so a failed save cannot leave only the battery keys
+     * updated while the rest of the configuration remains old. */
+    err = nvs_set_u8_compat(nvs, BATTERY_TYPE_KEY,
+                            (uint8_t)sys_state.battery_profile.profile_id);
+    if (err == ESP_OK)
+    {
+        err = nvs_set_u8_compat(nvs, BATTERY_VOLTAGE_SYSTEM_KEY,
+                                (uint8_t)sys_state.battery_profile.nominal_voltage);
+    }
+    if (err == ESP_OK)
+    {
+        err = nvs_set_u16_compat(nvs, BATTERY_CAPACITY_KEY,
+                                 (uint16_t)sys_state.battery_profile.capacity_ah);
+    }
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(NVS_SAVE_TAG,
+                 "Failed to save namespace='%s' battery key(s): %s (0x%x)",
+                 NVS_NS_SYSTEM, esp_err_to_name(err), err);
+        storage_nvs_close(nvs);
+        return false;
+    }
     err = nvs_save_all(nvs);
     if (err != ESP_OK)
     {
@@ -2159,7 +2230,17 @@ bool save_settings()
     }
 
     uint32_t generation = 0U;
-    (void)nvs_get_u32(nvs, NVS_SETTINGS_TXN_GEN_KEY, &generation);
+    err = nvs_get_u32(nvs, NVS_SETTINGS_TXN_GEN_KEY, &generation);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
+    {
+        ESP_LOGE(NVS_SAVE_TAG,
+                 "Failed to read namespace='%s' key='%s': %s (0x%x)",
+                 NVS_NS_SYSTEM, NVS_SETTINGS_TXN_GEN_KEY,
+                 esp_err_to_name(err), err);
+        storage_nvs_close(nvs);
+        return false;
+    }
+    err = ESP_OK;
     err = nvs_set_u8(nvs, NVS_SETTINGS_TXN_VALID_KEY, 0U);
     if (err == ESP_OK)
     {

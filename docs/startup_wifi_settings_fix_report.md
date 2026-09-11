@@ -40,6 +40,14 @@ No physical ESP32, LCD, inverter power stage, Wi-Fi environment, or serial monit
 
 The repository's existing documentation also records that generated build artifacts must be regenerated from a clean build before flashing, and that flash wear from repeated settings saves requires long-duration testing.
 
+## Forensic NVS review update
+
+The settings namespace contains two historical representations of several battery values: the general settings table and the dedicated battery keys. The previous `save_settings()` implementation committed the dedicated battery keys first and then opened the same namespace again for the general settings and transaction marker. This was not atomic and could leave a partial configuration when a later write failed. The corrected implementation opens `inv_sys_v2` once, writes the battery keys, general settings, and transaction metadata, and commits once.
+
+NVS key types are persistent. A key created by an older firmware with a different numeric type can return `ESP_ERR_NVS_TYPE_MISMATCH` when the new firmware writes it. The corrected save path migrates only the conflicting key by erasing that key in the current uncommitted transaction and retrying the validated current value. It never erases the namespace or the full NVS partition for this condition. The same compatibility behavior covers the dedicated battery keys.
+
+The loader now logs transaction-marker read failures explicitly, while still treating `ESP_ERR_NVS_NOT_FOUND` as a normal first-boot case. All settings handles are closed before a nested battery read can occur, and every save failure path closes the active handle without committing a partial transaction.
+
 ## Conclusion
 
 The source-level root causes are addressed without disabling watchdogs, removing safety checks, erasing NVS as a first response, or using reboot as ordinary error recovery. Hardware testing remains necessary before claiming field-level closure.
