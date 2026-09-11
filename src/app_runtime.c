@@ -1199,12 +1199,6 @@ static value_edit_context_t value_edit[] = {
 
     [VALUE_TYPE_BATTERY_VOLTAGE] = {
         .edit_type = VALUE_EDIT_NUMERIC,
-        /* min_value / max_value are intentionally 0 here — they are
-         * system- and chemistry-aware values that must be derived from
-         * the active battery profile at edit-open time.  Do not restore
-         * hardcoded 12 V-class numbers here; edit_battery_cutoff_voltage()
-         * sets them correctly for 12 V, 24 V, and 48 V before the user
-         * sees the edit screen. */
         .min_value = 0.0f,
         .max_value = 0.0f,
         .increment_small = 0.1f,
@@ -1799,7 +1793,8 @@ void nvs_init(bool erase_on_fail)
     (void)erase_on_fail;
     const esp_err_t err = storage_nvs_init();
     nvs_initialized = (err == ESP_OK);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGE("NVS_INIT", "NVS unavailable: %s (0x%x)",
                  esp_err_to_name(err), err);
     }
@@ -1820,11 +1815,14 @@ void nvs_print_stats(void)
 {
     nvs_stats_t stats;
     const esp_err_t err = storage_nvs_get_stats(&stats);
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         ESP_LOGI("NVS_STAT", "used=%d free=%d total=%d namespaces=%d",
                  stats.used_entries, stats.free_entries,
                  stats.total_entries, stats.namespace_count);
-    } else {
+    }
+    else
+    {
         ESP_LOGE("NVS_STAT", "stats failed: %s", esp_err_to_name(err));
     }
 }
@@ -2002,12 +2000,6 @@ bool load_settings()
         load_error = true;
     }
 
-    /* Snapshot the cutoff that nvs_load_all() placed into the profile field.
-     * battery_load_profile() below regenerates the ENTIRE profile from the
-     * stored chemistry + voltage-system, which overwrites cutoff_voltage_v
-     * with the chemistry default.  We save it here and restore it afterward
-     * so a user-customized cutoff (different from the chemistry default) is
-     * not silently lost on every boot. */
     const float nvs_cutoff_snapshot = sys_state.battery_profile.cutoff_voltage_v;
 
     /* Load battery profile (type and voltage) */
@@ -2278,7 +2270,8 @@ bool detect_critical_error()
 
 void power_task(void *arg)
 {
-    if (!task_watchdog_register("power_task")) {
+    if (!task_watchdog_register("power_task"))
+    {
         /* A TWDT task must not continue unprotected. */
         vTaskDelete(NULL);
         return;
@@ -2612,7 +2605,8 @@ float esp_cpu_get_usage_percent()
 
 void diagnostic_update_task(void *pv)
 {
-    if (!task_watchdog_register("diagnostic_update_task")) {
+    if (!task_watchdog_register("diagnostic_update_task"))
+    {
         /* A TWDT task must not continue unprotected. */
         vTaskDelete(NULL);
         return;
@@ -4680,7 +4674,8 @@ bool battery_monitor_set_cutoff(float cutoff_voltage)
  */
 void thermal_monitoring_task(void *pvParameters)
 {
-    if (!task_watchdog_register("thermal_monitoring_task")) {
+    if (!task_watchdog_register("thermal_monitoring_task"))
+    {
         /* A TWDT task must not continue unprotected. */
         vTaskDelete(NULL);
         return;
@@ -4721,7 +4716,8 @@ void set_system_timeout(uint32_t timeout_ms)
  */
 void battery_monitoring_task(void *pvParameters)
 {
-    if (!task_watchdog_register("battery_monitoring_task")) {
+    if (!task_watchdog_register("battery_monitoring_task"))
+    {
         /* A TWDT task must not continue unprotected. */
         vTaskDelete(NULL);
         return;
@@ -5082,12 +5078,16 @@ void save_frequency_to_nvs(int frequency)
     if (err == ESP_OK)
     {
         err = nvs_set_i32(nvs_handler, FREQUENCY_SETTING_KEY, frequency);
-        if (err == ESP_OK) {
+        if (err == ESP_OK)
+        {
             err = storage_nvs_commit_close(nvs_handler);
-        } else {
+        }
+        else
+        {
             storage_nvs_close(nvs_handler);
         }
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             ESP_LOGE("NVS", "frequency save failed: %s", esp_err_to_name(err));
         }
     }
@@ -5358,7 +5358,8 @@ void update_activity()
 // ================== DISPLAY TIMEOUT TASK ==================
 void display_timeout_task(void *arg)
 {
-    if (!task_watchdog_register("display_timeout_task")) {
+    if (!task_watchdog_register("display_timeout_task"))
+    {
         /* A TWDT task must not continue unprotected. */
         vTaskDelete(NULL);
         return;
@@ -5658,7 +5659,8 @@ void perform_system_restart(bool factory_reset)
     }
     gpio_reset_pin(GPIO_BUZZER);
     gpio_reset_pin(GPIO_STATUS_LED);
-    if (!task_watchdog_feed()) {
+    if (!task_watchdog_feed())
+    {
         ESP_LOGW("WDT", "Restart path could not feed the task watchdog");
     }
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -5709,22 +5711,29 @@ void log_error_to_nvs(uint8_t error_code)
     {
         uint32_t error_count = 0;
         err = nvs_get_u32(nvs_handler, "count", &error_count);
-        if (err == ESP_ERR_NVS_NOT_FOUND) {
+        if (err == ESP_ERR_NVS_NOT_FOUND)
+        {
             err = ESP_OK;
             error_count = 0U;
         }
 
         char key[15];
         snprintf(key, sizeof(key), "err_%04lu", error_count % 1000);
-        if (err == ESP_OK) err = nvs_set_u8(nvs_handler, key, error_code);
+        if (err == ESP_OK)
+            err = nvs_set_u8(nvs_handler, key, error_code);
 
-        if (err == ESP_OK) err = nvs_set_u32(nvs_handler, "count", error_count + 1U);
-        if (err == ESP_OK) {
+        if (err == ESP_OK)
+            err = nvs_set_u32(nvs_handler, "count", error_count + 1U);
+        if (err == ESP_OK)
+        {
             err = storage_nvs_commit_close(nvs_handler);
-        } else {
+        }
+        else
+        {
             storage_nvs_close(nvs_handler);
         }
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             ESP_LOGE("NVS", "error log save failed: %s", esp_err_to_name(err));
         }
     }
@@ -5997,7 +6006,8 @@ void edit_battery_cutoff_voltage(void)
     /* Guard against a degenerate profile (e.g. generated from NVS before
      * battery_system_init() ran).  Fall back to a safe 12 V default range
      * rather than presenting a reversed or zero-width slider. */
-    if (hi <= lo || lo <= 0.0f) {
+    if (hi <= lo || lo <= 0.0f)
+    {
         ESP_LOGW("EDIT_CUTOFF",
                  "Active profile bounds degenerate (lo=%.2f hi=%.2f); "
                  "using 12 V Lead-Acid safe defaults",
@@ -6016,8 +6026,10 @@ void edit_battery_cutoff_voltage(void)
      * the valid range so a previously-saved but now-out-of-range value cannot
      * be presented as a valid starting point. */
     float current = p->cutoff_voltage_v;
-    if (current < lo) current = lo;
-    if (current > hi) current = hi;
+    if (current < lo)
+        current = lo;
+    if (current > hi)
+        current = hi;
 
     begin_setting_edit(VALUE_TYPE_BATTERY_VOLTAGE, current);
     lcd_show_value_edit_screen();

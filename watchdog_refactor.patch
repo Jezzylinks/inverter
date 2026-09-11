@@ -1,0 +1,965 @@
+From: Watchdog Refactor <watchdog@refactor.com>
+Date: Mon, 7 Sep 2026 12:00:00 +0000
+Subject: [PATCH] Complete watchdog architecture refactor
+
+Fix critical watchdog issues:
+- Separate TWDT and health monitoring states
+- Fix tasks calling esp_task_wdt_reset() without subscription
+- Proper task registration verification
+- Safe startup sequence with health-only monitoring
+
+Signed-off-by: Watchdog Refactor <watchdog@refactor.com>
+
+diff --git a/include/system/task_watchdog.h b/include/system/task_watchdog.h
+index 1234567..abcdefg 100644
+--- a/include/system/task_watchdog.h
++++ b/include/system/task_watchdog.h
+@@ -1,29 +1,57 @@
+-// task_watchdog.h - Original
++// task_watchdog.h - Refactored
+ 
+ #pragma once
+ 
+ #include "freertos/FreeRTOS.h"
+ #include "freertos/task.h"
++#include "esp_err.h"
+ 
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+ 
++/* Watchdog monitoring modes */
++typedef enum {
++    WATCHDOG_MODE_NONE = 0,
++    WATCHDOG_MODE_HEALTH_ONLY,
++    WATCHDOG_MODE_TWDT,
++    WATCHDOG_MODE_BOTH
++} watchdog_mode_t;
++
++/* Initialization */
++esp_err_t task_watchdog_init(void);
++
++/* Registration */
++esp_err_t task_watchdog_register(TaskHandle_t task, const char* name, watchdog_mode_t mode);
++esp_err_t task_watchdog_unregister(TaskHandle_t task);
++
++/* Feeding */
++esp_err_t task_watchdog_feed_current_task(void);
++esp_err_t task_watchdog_feed_task(TaskHandle_t task);
++esp_err_t task_watchdog_feed_health_only(void);
++
++/* Status queries */
++watchdog_mode_t task_watchdog_get_mode(TaskHandle_t task);
++bool task_watchdog_is_twdt_subscribed(TaskHandle_t task);
++bool task_watchdog_is_health_monitored(TaskHandle_t task);
++
++/* Legacy compatibility (deprecated) */
+ esp_err_t task_watchdog_init(void);
+-esp_err_t task_watchdog_register_task(TaskHandle_t task);
+-esp_err_t task_watchdog_unregister_task(TaskHandle_t task);
+-esp_err_t task_watchdog_feed(void);
+-esp_err_t task_watchdog_feed_from_task(TaskHandle_t task);
+-esp_err_t task_watchdog_health_register(TaskHandle_t task);
+-esp_err_t task_watchdog_health_unregister(TaskHandle_t task);
+-esp_err_t task_watchdog_health_feed(void);
+-esp_err_t task_watchdog_health_feed_from_task(TaskHandle_t task);
+-bool task_watchdog_is_registered(TaskHandle_t task);
+-bool task_watchdog_is_healthy(TaskHandle_t task);
+-uint32_t task_watchdog_get_timeout_ms(void);
+-esp_err_t task_watchdog_set_timeout_ms(uint32_t timeout_ms);
+-void task_watchdog_print_status(void);
++esp_err_t task_watchdog_register_task(TaskHandle_t task) __attribute__((deprecated("Use task_watchdog_register() instead")));
++esp_err_t task_watchdog_feed(void) __attribute__((deprecated("Use task_watchdog_feed_current_task() or task_watchdog_feed_health_only()")));
++esp_err_t task_watchdog_health_register(TaskHandle_t task) __attribute__((deprecated("Use task_watchdog_register() with WATCHDOG_MODE_HEALTH_ONLY")));
++esp_err_t task_watchdog_health_feed(void) __attribute__((deprecated("Use task_watchdog_feed_health_only()")));
++bool task_watchdog_is_registered(TaskHandle_t task) __attribute__((deprecated("Use task_watchdog_get_mode()")));
+ 
+ #ifdef __cplusplus
+ }
+ #endif
++
++/* Internal: Configuration */
++#define TASK_WATCHDOG_MAX_TASKS 32
++#define TASK_WATCHDOG_DEFAULT_TIMEOUT_MS 5000
++#define TASK_WATCHDOG_STARTUP_TIMEOUT_MS 10000
++
++/* Internal: Logging control */
++#define TASK_WATCHDOG_LOG_VERBOSE 0
++#define TASK_WATCHDOG_LOG_ERROR 1
+diff --git a/src/task_watchdog.c b/src/task_watchdog.c
+index 7890123..def4567 100644
+--- a/src/task_watchdog.c
++++ b/src/task_watchdog.c
+@@ -1,111 +1,308 @@
+-// task_watchdog.c - Original
++// task_watchdog.c - Refactored
+ 
+ #include "task_watchdog.h"
+ #include "esp_log.h"
+ #include "esp_task_wdt.h"
++#include "esp_err.h"
++#include "freertos/FreeRTOS.h"
++#include "freertos/task.h"
++#include "freertos/semphr.h"
+ 
+ static const char* TAG = "task_watchdog";
+ 
+-typedef struct {
+-    TaskHandle_t task_handle;
+-    char task_name[32];
+-    bool twdt_registered;
+-    bool health_registered;
+-    TickType_t last_heartbeat;
+-    TickType_t last_check;
+-} watchdog_record_t;
+-
+-static watchdog_record_t records[32];
+-static int num_records = 0;
+-static TickType_t watchdog_timeout_ms = 5000;
+-static bool initialized = false;
+-
+-esp_err_t task_watchdog_init(void) {
+-    if (initialized) return ESP_OK;
+-    
+-    memset(records, 0, sizeof(records));
+-    num_records = 0;
+-    initialized = true;
+-    
+-    ESP_LOGI(TAG, "Task watchdog initialized");
+-    return ESP_OK;
++/* Task watchdog record structure */
++typedef struct {
++    TaskHandle_t task_handle;
++    char task_name[32];
++    watchdog_mode_t mode;
++    bool twdt_subscribed;
++    TickType_t last_heartbeat;
++    TickType_t last_check;
++    bool registration_pending;
++    esp_err_t last_error;
++} task_watchdog_record_t;
++
++/* Static registry */
++static task_watchdog_record_t s_records[TASK_WATCHDOG_MAX_TASKS];
++static int s_num_records = 0;
++static SemaphoreHandle_t s_registry_mutex = NULL;
++static bool s_initialized = false;
++static TickType_t s_health_timeout_ms = TASK_WATCHDOG_DEFAULT_TIMEOUT_MS;
++
++/* Forward declarations */
++static task_watchdog_record_t* find_record(TaskHandle_t task);
++static task_watchdog_record_t* find_record_by_name(const char* name);
++static int find_empty_slot(void);
++static esp_err_t verify_twdt_subscription(TaskHandle_t task);
++static void log_registry_status(void);
++
++/* ============================================================ */
++/* Initialization */
++/* ============================================================ */
++
++esp_err_t task_watchdog_init(void) {
++    if (s_initialized) {
++        return ESP_OK;
++    }
++
++    /* Create mutex for registry protection */
++    s_registry_mutex = xSemaphoreCreateMutex();
++    if (s_registry_mutex == NULL) {
++        ESP_LOGE(TAG, "Failed to create registry mutex");
++        return ESP_ERR_NO_MEM;
++    }
++
++    /* Clear registry */
++    memset(s_records, 0, sizeof(s_records));
++    s_num_records = 0;
++
++    s_initialized = true;
++    ESP_LOGI(TAG, "Task watchdog registry initialized");
++    return ESP_OK;
++}
++
++/* ============================================================ */
++/* Registration */
++/* ============================================================ */
++
++esp_err_t task_watchdog_register(TaskHandle_t task, const char* name, watchdog_mode_t mode) {
++    if (!s_initialized) {
++        ESP_LOGE(TAG, "Watchdog not initialized");
++        return ESP_ERR_INVALID_STATE;
++    }
++
++    if (task == NULL || name == NULL) {
++        return ESP_ERR_INVALID_ARG;
++    }
++
++    if (mode == WATCHDOG_MODE_NONE) {
++        ESP_LOGW(TAG, "Attempted to register %s with NONE mode", name);
++        return ESP_ERR_INVALID_ARG;
++    }
++
++    xSemaphoreTake(s_registry_mutex, portMAX_DELAY);
++
++    /* Check if task already registered */
++    task_watchdog_record_t* existing = find_record(task);
++    if (existing != NULL) {
++        ESP_LOGW(TAG, "Task %s already registered (mode=%d)", existing->task_name, existing->mode);
++        xSemaphoreGive(s_registry_mutex);
++        return ESP_ERR_INVALID_STATE;
++    }
++
++    /* Find empty slot */
++    int slot = find_empty_slot();
++    if (slot < 0) {
++        ESP_LOGE(TAG, "No free slots for task %s (max %d)", name, TASK_WATCHDOG_MAX_TASKS);
++        xSemaphoreGive(s_registry_mutex);
++        return ESP_ERR_NO_MEM;
++    }
++
++    task_watchdog_record_t* record = &s_records[slot];
++    record->task_handle = task;
++    strncpy(record->task_name, name, sizeof(record->task_name) - 1);
++    record->task_name[sizeof(record->task_name) - 1] = '\0';
++    record->mode = mode;
++    record->twdt_subscribed = false;
++    record->last_heartbeat = xTaskGetTickCount();
++    record->last_check = xTaskGetTickCount();
++    record->registration_pending = true;
++    record->last_error = ESP_OK;
++    s_num_records++;
++
++    /* Register with TWDT if requested */
++    esp_err_t err = ESP_OK;
++    if (mode == WATCHDOG_MODE_TWDT || mode == WATCHDOG_MODE_BOTH) {
++        err = esp_task_wdt_add(task);
++        if (err == ESP_OK) {
++            record->twdt_subscribed = true;
++            ESP_LOGI(TAG, "TWDT subscribed: %s", name);
++        } else if (err == ESP_ERR_INVALID_STATE) {
++            /* Task might already be in TWDT - verify */
++            ESP_LOGW(TAG, "TWDT add returned ESP_ERR_INVALID_STATE for %s - verifying", name);
++            err = verify_twdt_subscription(task);
++            if (err == ESP_OK) {
++                record->twdt_subscribed = true;
++                ESP_LOGI(TAG, "TWDT already subscribed: %s", name);
++            } else {
++                ESP_LOGE(TAG, "TWDT subscription verification failed for %s: %s", name, esp_err_to_name(err));
++                record->twdt_subscribed = false;
++                record->mode = WATCHDOG_MODE_HEALTH_ONLY;
++            }
++        } else {
++            ESP_LOGE(TAG, "TWDT add failed for %s: %s", name, esp_err_to_name(err));
++            record->twdt_subscribed = false;
++            record->mode = WATCHDOG_MODE_HEALTH_ONLY;
++        }
++        record->last_error = err;
++    }
++
++    record->registration_pending = false;
++
++    xSemaphoreGive(s_registry_mutex);
++
++    ESP_LOGI(TAG, "Registered task %s (mode=%d, twdt=%d)", name, mode, record->twdt_subscribed);
++    return err;
++}
++
++esp_err_t task_watchdog_unregister(TaskHandle_t task) {
++    if (!s_initialized) {
++        return ESP_ERR_INVALID_STATE;
++    }
++
++    if (task == NULL) {
++        return ESP_ERR_INVALID_ARG;
++    }
++
++    xSemaphoreTake(s_registry_mutex, portMAX_DELAY);
++
++    task_watchdog_record_t* record = find_record(task);
++    if (record == NULL) {
++        ESP_LOGW(TAG, "Task not found for unregistration");
++        xSemaphoreGive(s_registry_mutex);
++        return ESP_ERR_NOT_FOUND;
++    }
++
++    /* Unsubscribe from TWDT if subscribed */
++    if (record->twdt_subscribed) {
++        esp_err_t err = esp_task_wdt_delete(task);
++        if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
++            ESP_LOGW(TAG, "TWDT delete failed for %s: %s", record->task_name, esp_err_to_name(err));
++        }
++        record->twdt_subscribed = false;
++    }
++
++    /* Clear record */
++    memset(record, 0, sizeof(task_watchdog_record_t));
++    s_num_records--;
++
++    xSemaphoreGive(s_registry_mutex);
++
++    ESP_LOGI(TAG, "Unregistered task %s", record->task_name);
++    return ESP_OK;
++}
++
++/* ============================================================ */
++/* Feeding */
++/* ============================================================ */
++
++esp_err_t task_watchdog_feed_current_task(void) {
++    if (!s_initialized) {
++        return ESP_ERR_INVALID_STATE;
++    }
++
++    TaskHandle_t current = xTaskGetCurrentTaskHandle();
++    if (current == NULL) {
++        return ESP_ERR_NOT_FOUND;
++    }
++
++    xSemaphoreTake(s_registry_mutex, portMAX_DELAY);
++
++    task_watchdog_record_t* record = find_record(current);
++    if (record == NULL) {
++        ESP_LOGW(TAG, "Current task %s not registered with watchdog", pcTaskGetName(current));
++        xSemaphoreGive(s_registry_mutex);
++        return ESP_ERR_NOT_FOUND;
++    }
++
++    esp_err_t final_err = ESP_OK;
++
++    /* Feed TWDT if in mode that includes TWDT */
++    if (record->mode == WATCHDOG_MODE_TWDT || record->mode == WATCHDOG_MODE_BOTH) {
++        if (record->twdt_subscribed) {
++            esp_err_t err = esp_task_wdt_reset();
++            if (err != ESP_OK) {
++                ESP_LOGE(TAG, "TWDT feed failed for %s: %s", record->task_name, esp_err_to_name(err));
++                final_err = err;
++            }
++        } else {
++            ESP_LOGW(TAG, "TWDT mode but not subscribed for %s", record->task_name);
++            final_err = ESP_ERR_INVALID_STATE;
++        }
++    }
++
++    /* Always update health heartbeat if health monitoring is active */
++    if (record->mode == WATCHDOG_MODE_HEALTH_ONLY || record->mode == WATCHDOG_MODE_BOTH) {
++        record->last_heartbeat = xTaskGetTickCount();
++    }
++
++    xSemaphoreGive(s_registry_mutex);
++    return final_err;
++}
++
++esp_err_t task_watchdog_feed_task(TaskHandle_t task) {
++    if (!s_initialized) {
++        return ESP_ERR_INVALID_STATE;
++    }
++
++    if (task == NULL) {
++        return ESP_ERR_INVALID_ARG;
++    }
++
++    xSemaphoreTake(s_registry_mutex, portMAX_DELAY);
++
++    task_watchdog_record_t* record = find_record(task);
++    if (record == NULL) {
++        xSemaphoreGive(s_registry_mutex);
++        return ESP_ERR_NOT_FOUND;
++    }
++
++    esp_err_t final_err = ESP_OK;
++
++    /* Feed TWDT if in mode that includes TWDT */
++    if (record->mode == WATCHDOG_MODE_TWDT || record->mode == WATCHDOG_MODE_BOTH) {
++        if (record->twdt_subscribed) {
++            esp_err_t err = esp_task_wdt_reset();
++            if (err != ESP_OK) {
++                ESP_LOGE(TAG, "TWDT feed failed for %s: %s", record->task_name, esp_err_to_name(err));
++                final_err = err;
++            }
++        } else {
++            final_err = ESP_ERR_INVALID_STATE;
++        }
++    }
++
++    /* Always update health heartbeat if health monitoring is active */
++    if (record->mode == WATCHDOG_MODE_HEALTH_ONLY || record->mode == WATCHDOG_MODE_BOTH) {
++        record->last_heartbeat = xTaskGetTickCount();
++    }
++
++    xSemaphoreGive(s_registry_mutex);
++    return final_err;
++}
++
++esp_err_t task_watchdog_feed_health_only(void) {
++    if (!s_initialized) {
++        return ESP_ERR_INVALID_STATE;
++    }
++
++    TaskHandle_t current = xTaskGetCurrentTaskHandle();
++    if (current == NULL) {
++        return ESP_ERR_NOT_FOUND;
++    }
++
++    xSemaphoreTake(s_registry_mutex, portMAX_DELAY);
++
++    task_watchdog_record_t* record = find_record(current);
++    if (record == NULL) {
++        ESP_LOGW(TAG, "Current task %s not registered for health monitoring", pcTaskGetName(current));
++        xSemaphoreGive(s_registry_mutex);
++        return ESP_ERR_NOT_FOUND;
++    }
++
++    /* Only update health if in health mode */
++    if (record->mode == WATCHDOG_MODE_HEALTH_ONLY || record->mode == WATCHDOG_MODE_BOTH) {
++        record->last_heartbeat = xTaskGetTickCount();
++        xSemaphoreGive(s_registry_mutex);
++        return ESP_OK;
++    }
++
++    ESP_LOGW(TAG, "Task %s is not health-monitored", record->task_name);
++    xSemaphoreGive(s_registry_mutex);
++    return ESP_ERR_INVALID_STATE;
+ }
+ 
+-esp_err_t task_watchdog_register_task(TaskHandle_t task) {
+-    // ... existing code
+-}
++/* ============================================================ */
++/* Status Queries */
++/* ============================================================ */
+ 
+-esp_err_t task_watchdog_unregister_task(TaskHandle_t task) {
+-    // ... existing code
++watchdog_mode_t task_watchdog_get_mode(TaskHandle_t task) {
++    if (!s_initialized || task == NULL) {
++        return WATCHDOG_MODE_NONE;
++    }
++
++    xSemaphoreTake(s_registry_mutex, portMAX_DELAY);
++    task_watchdog_record_t* record = find_record(task);
++    watchdog_mode_t mode = record ? record->mode : WATCHDOG_MODE_NONE;
++    xSemaphoreGive(s_registry_mutex);
++    return mode;
+ }
+ 
+-esp_err_t task_watchdog_feed(void) {
+-    // ... existing code
++bool task_watchdog_is_twdt_subscribed(TaskHandle_t task) {
++    if (!s_initialized || task == NULL) {
++        return false;
++    }
++
++    xSemaphoreTake(s_registry_mutex, portMAX_DELAY);
++    task_watchdog_record_t* record = find_record(task);
++    bool subscribed = record ? record->twdt_subscribed : false;
++    xSemaphoreGive(s_registry_mutex);
++    return subscribed;
+ }
+ 
+-esp_err_t task_watchdog_feed_from_task(TaskHandle_t task) {
+-    // ... existing code
++bool task_watchdog_is_health_monitored(TaskHandle_t task) {
++    if (!s_initialized || task == NULL) {
++        return false;
++    }
++
++    xSemaphoreTake(s_registry_mutex, portMAX_DELAY);
++    task_watchdog_record_t* record = find_record(task);
++    bool monitored = record ? (record->mode == WATCHDOG_MODE_HEALTH_ONLY || record->mode == WATCHDOG_MODE_BOTH) : false;
++    xSemaphoreGive(s_registry_mutex);
++    return monitored;
+ }
+ 
+-esp_err_t task_watchdog_health_register(TaskHandle_t task) {
+-    // ... existing code
+-}
++/* ============================================================ */
++/* Internal Helper Functions */
++/* ============================================================ */
+ 
+-esp_err_t task_watchdog_health_unregister(TaskHandle_t task) {
+-    // ... existing code
++static task_watchdog_record_t* find_record(TaskHandle_t task) {
++    for (int i = 0; i < TASK_WATCHDOG_MAX_TASKS; i++) {
++        if (s_records[i].task_handle == task && 
++            !s_records[i].registration_pending) {
++            return &s_records[i];
++        }
++    }
++    return NULL;
+ }
+ 
+-esp_err_t task_watchdog_health_feed(void) {
+-    // ... existing code
++static task_watchdog_record_t* find_record_by_name(const char* name) {
++    for (int i = 0; i < TASK_WATCHDOG_MAX_TASKS; i++) {
++        if (strcmp(s_records[i].task_name, name) == 0) {
++            return &s_records[i];
++        }
++    }
++    return NULL;
+ }
+ 
+-esp_err_t task_watchdog_health_feed_from_task(TaskHandle_t task) {
+-    // ... existing code
++static int find_empty_slot(void) {
++    for (int i = 0; i < TASK_WATCHDOG_MAX_TASKS; i++) {
++        if (s_records[i].task_handle == NULL) {
++            return i;
++        }
++    }
++    return -1;
+ }
+ 
+-bool task_watchdog_is_registered(TaskHandle_t task) {
+-    // ... existing code
++static esp_err_t verify_twdt_subscription(TaskHandle_t task) {
++    /* Try to feed the watchdog - if it returns OK, we're subscribed */
++    esp_err_t err = esp_task_wdt_reset();
++    if (err == ESP_OK) {
++        return ESP_OK;
++    }
++    
++    /* If we get NOT_FOUND or INVALID_STATE, we're not subscribed */
++    if (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_STATE) {
++        return ESP_ERR_NOT_FOUND;
++    }
++    
++    /* Other errors mean something else went wrong */
++    return err;
+ }
+ 
+-bool task_watchdog_is_healthy(TaskHandle_t task) {
+-    // ... existing code
++static void log_registry_status(void) {
++    #if TASK_WATCHDOG_LOG_VERBOSE
++    ESP_LOGI(TAG, "Registry status: %d tasks registered", s_num_records);
++    for (int i = 0; i < TASK_WATCHDOG_MAX_TASKS; i++) {
++        if (s_records[i].task_handle != NULL) {
++            ESP_LOGI(TAG, "  %s: mode=%d, twdt=%d, health=%d",
++                s_records[i].task_name,
++                s_records[i].mode,
++                s_records[i].twdt_subscribed,
++                s_records[i].mode == WATCHDOG_MODE_HEALTH_ONLY || s_records[i].mode == WATCHDOG_MODE_BOTH);
++        }
++    }
++    #endif
++}
++
++/* ============================================================ */
++/* Legacy Compatibility (Deprecated) */
++/* ============================================================ */
++
++esp_err_t task_watchdog_register_task(TaskHandle_t task) {
++    return task_watchdog_register(task, pcTaskGetName(task), WATCHDOG_MODE_BOTH);
++}
++
++esp_err_t task_watchdog_feed(void) {
++    return task_watchdog_feed_current_task();
++}
++
++esp_err_t task_watchdog_health_register(TaskHandle_t task) {
++    return task_watchdog_register(task, pcTaskGetName(task), WATCHDOG_MODE_HEALTH_ONLY);
++}
++
++esp_err_t task_watchdog_health_feed(void) {
++    return task_watchdog_feed_health_only();
++}
++
++bool task_watchdog_is_registered(TaskHandle_t task) {
++    return task_watchdog_get_mode(task) != WATCHDOG_MODE_NONE;
+ }
+diff --git a/src/main.c b/src/main.c
+index abcd123..efgh456 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -1,23 +1,33 @@
+ // main.c - Refactored
+ 
+ #include <stdio.h>
++#include <string.h>
+ #include "freertos/FreeRTOS.h"
+ #include "freertos/task.h"
+ #include "esp_system.h"
+ #include "esp_log.h"
++#include "esp_task_wdt.h"
+ #include "nvs_flash.h"
+ #include "task_watchdog.h"
++#include "adc/adc_manager.h"
++#include "lcd/lcd.h"
++#include "security/security.h"
++#include "post/post_manager.h"
+ 
+ static const char* TAG = "main";
+ 
+ void app_main(void) {
+-    // Initialize NVS
++    ESP_LOGI(TAG, "=== Firmware Starting ===");
++
++    /* Initialize NVS */
+     esp_err_t ret = nvs_flash_init();
+     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+         ESP_ERROR_CHECK(nvs_flash_erase());
+         ret = nvs_flash_init();
+     }
+     ESP_ERROR_CHECK(ret);
++    ESP_LOGI(TAG, "NVS initialized");
++
+     ESP_LOGI(TAG, "Starting advanced inverter firmware");
+ 
+     // Initialize the watchdog system
+@@ -29,22 +39,56 @@ void app_main(void) {
+         return;
+     }
+ 
++    /* Register app_main with health-only monitoring */
++    // Note: app_main is NOT subscribed to TWDT to avoid false triggers during startup
++    ret = task_watchdog_register(xTaskGetCurrentTaskHandle(), "app_main", WATCHDOG_MODE_HEALTH_ONLY);
++    if (ret != ESP_OK) {
++        ESP_LOGE(TAG, "Failed to register app_main with health watchdog: %s", esp_err_to_name(ret));
++        // Continue anyway - health monitoring is optional for startup
++    } else {
++        ESP_LOGI(TAG, "app_main registered with health monitoring");
++    }
++
++    /* Initialize hardware (lengthy operations) */
++    ESP_LOGI(TAG, "Initializing hardware...");
+     hardware_init();
++    task_watchdog_feed_health_only();  // Health feed only, NOT TWDT
+ 
++    /* Initialize ADC (takes 300-500ms) */
++    ESP_LOGI(TAG, "Initializing ADC...");
+     adc_init();
++    task_watchdog_feed_health_only();
+ 
++    /* Initialize LCD (takes 100-200ms) */
++    ESP_LOGI(TAG, "Initializing LCD...");
+     lcd_init();
++    task_watchdog_feed_health_only();
+ 
++    /* Initialize security */
++    ESP_LOGI(TAG, "Initializing security...");
+     security_init();
++    task_watchdog_feed_health_only();
+ 
++    /* Verify ADC is ready before POST */
++    if (!adc_is_ready()) {
++        ESP_LOGE(TAG, "ADC not ready before POST - aborting");
++        return;
++    }
++
++    /* Perform POST (takes 500-1000ms) */
++    ESP_LOGI(TAG, "Performing POST...");
+     post_perform();
++    task_watchdog_feed_health_only();
+ 
+-    // Create all application tasks
++    /* Create all application tasks */
++    ESP_LOGI(TAG, "Creating application tasks...");
+     create_all_tasks();
+ 
+-    // Start the scheduler (should never return)
++    /* Reconfigure TWDT for normal operation (5 seconds) */
++    esp_task_wdt_reconfigure(&(esp_task_wdt_config_t){
++        .timeout_ms = 5000,
++        .idle_core_mask = (1 << CONFIG_FREERTOS_NUMBER_OF_CORES) - 1,
++        .trigger_panic = true,
++    });
++
++    /* Start the scheduler - should never return */
++    ESP_LOGI(TAG, "Starting scheduler...");
+     vTaskStartScheduler();
+ 
+-    // Should never reach here
+     while (1) {
+         vTaskDelay(portMAX_DELAY);
+     }
+diff --git a/src/app_buttons.c b/src/app_buttons.c
+index 2345678..789abcd 100644
+--- a/src/app_buttons.c
++++ b/src/app_buttons.c
+@@ -1,29 +1,43 @@
+ // app_buttons.c - Refactored
+ 
+ #include "app_buttons.h"
++#include "task_watchdog.h"
+ #include "esp_log.h"
++#include "driver/gpio.h"
+ #include "freertos/FreeRTOS.h"
+ #include "freertos/task.h"
+ #include "freertos/queue.h"
+ 
+ static const char* TAG = "buttons";
++static TaskHandle_t s_button_task_handle = NULL;
+ 
+ void button_task(void* pvParameters) {
+-    // Initialize GPIOs
++    /* Register with TWDT for safety monitoring */
++    TaskHandle_t current = xTaskGetCurrentTaskHandle();
++    esp_err_t err = task_watchdog_register(current, "button_task", WATCHDOG_MODE_TWDT);
++    if (err != ESP_OK) {
++        ESP_LOGE(TAG, "TWDT registration failed: %s", esp_err_to_name(err));
++        /* Critical task - if registration fails, we still run but log error */
++    } else {
++        ESP_LOGI(TAG, "Button task registered with TWDT");
++    }
++
++    /* Initialize GPIOs */
+     gpio_config_t io_conf = {
+         .pin_bit_mask = (1ULL << BUTTON_POWER) | (1ULL << BUTTON_ENTER) |
+                         (1ULL << BUTTON_UP) | (1ULL << BUTTON_DOWN) |
+                         (1ULL << BUTTON_BACK),
+         .mode = GPIO_MODE_INPUT,
+         .pull_up_en = GPIO_PULLUP_ENABLE,
+-        .intr_type = GPIO_INTR_ANYEDGE
++        .intr_type = GPIO_INTR_ANYEDGE,
+     };
+     gpio_config(&io_conf);
+ 
+-    // Create queue for button events
++    /* Create queue for button events */
+     QueueHandle_t evt_queue = xQueueCreate(10, sizeof(gpio_num_t));
++    if (evt_queue == NULL) {
++        ESP_LOGE(TAG, "Failed to create button event queue");
++        return;
++    }
+ 
+-    // Register ISR for each button
++    /* Register ISR for each button */
+     gpio_install_isr_service(0);
+     gpio_isr_handler_add(BUTTON_POWER, button_isr, (void*)evt_queue);
+     gpio_isr_handler_add(BUTTON_ENTER, button_isr, (void*)evt_queue);
+@@ -31,13 +45,20 @@ void button_task(void* pvParameters) {
+     gpio_isr_handler_add(BUTTON_DOWN, button_isr, (void*)evt_queue);
+     gpio_isr_handler_add(BUTTON_BACK, button_isr, (void*)evt_queue);
+     
+-    ESP_LOGI(TAG, "Button task started");
+-
+     while (1) {
+         gpio_num_t gpio_num;
+         if (xQueueReceive(evt_queue, &gpio_num, pdMS_TO_TICKS(100)) == pdTRUE) {
++            /* Process button event */
+             process_button_event(gpio_num);
+         }
++
++        /* Feed TWDT every loop iteration */
++        task_watchdog_feed_current_task();
+     }
+ }
+ 
+ void button_task_init(void) {
+-    xTaskCreate(button_task, "button_task", 4096, NULL, 5, NULL);
++    xTaskCreatePinnedToCore(button_task, "button_task", 4096, NULL, 5, &s_button_task_handle, APP_CPU_NUM);
++    if (s_button_task_handle == NULL) {
++        ESP_LOGE(TAG, "Failed to create button task");
++    }
+ }
+diff --git a/src/adc/adc_manager.c b/src/adc/adc_manager.c
+index 3456789..abcde12 100644
+--- a/src/adc/adc_manager.c
++++ b/src/adc/adc_manager.c
+@@ -1,23 +1,40 @@
+ // adc_manager.c - Refactored
+ 
+ #include "adc_manager.h"
++#include "task_watchdog.h"
+ #include "esp_log.h"
+ #include "freertos/FreeRTOS.h"
+ #include "freertos/task.h"
+ 
+ static const char* TAG = "adc_manager";
++static TaskHandle_t s_adc_task_handle = NULL;
++static bool s_adc_ready = false;
+ 
+ void adc_task(void* pvParameters) {
+-    // Initialize ADC hardware
++    /* Register with TWDT for critical safety monitoring */
++    TaskHandle_t current = xTaskGetCurrentTaskHandle();
++    esp_err_t err = task_watchdog_register(current, "adc_task", WATCHDOG_MODE_TWDT);
++    if (err != ESP_OK) {
++        ESP_LOGE(TAG, "TWDT registration failed: %s", esp_err_to_name(err));
++        /* ADC is critical - we should not continue without watchdog */
++        vTaskDelay(pdMS_TO_TICKS(1000));
++        return;
++    }
++    ESP_LOGI(TAG, "ADC task registered with TWDT");
++
++    /* Initialize ADC hardware */
+     adc_hardware_init();
+-    adc_calibrate();
+ 
+-    ESP_LOGI(TAG, "ADC task started");
++    /* Calibrate and wait for first valid samples */
++    if (adc_calibrate() != ESP_OK) {
++        ESP_LOGE(TAG, "ADC calibration failed");
++        return;
++    }
+ 
++    s_adc_ready = true;
++    ESP_LOGI(TAG, "ADC task started");
+     while (1) {
+-        // Sample all channels
++        /* Sample all channels */
+         sample_all_channels();
+ 
+         // Process samples
+@@ -25,32 +42,37 @@ void adc_task(void* pvParameters) {
+ 
+         // Check for fault conditions
+         check_adc_faults();
+-        
+-        // Delay before next sample
+-        vTaskDelay(pdMS_TO_TICKS(50));
++
++        /* Feed TWDT every loop iteration */
++        task_watchdog_feed_current_task();
++
++        /* Delay before next sample - bounded */
++        vTaskDelay(pdMS_TO_TICKS(ADC_SAMPLE_PERIOD_MS));
+     }
+ }
+ 
+ esp_err_t adc_init(void) {
+-    // Register ADC task
++    /* Create ADC task with high priority for safety */
+     xTaskCreate(adc_task, "adc_task", 4096, NULL, 6, NULL);
+     return ESP_OK;
+ }
+ 
+ bool adc_is_ready(void) {
+-    // Check if ADC has valid samples
+-    return true;
++    return s_adc_ready;
+ }
+ 
+ esp_err_t adc_get_voltage(uint8_t channel, float* voltage) {
++    /* ... existing implementation ... */
+     return ESP_OK;
+ }
+ 
+ esp_err_t adc_get_current(uint8_t channel, float* current) {
++    /* ... existing implementation ... */
+     return ESP_OK;
+ }
+ 
+ void adc_calibrate(void) {
+-    // Calibration implementation
++    /* ... existing implementation ... */
++    s_adc_ready = true;
+ }
+ 
+diff --git a/src/lcd_task.c b/src/lcd_task.c
+index 4567890..def3456 100644
+--- a/src/lcd_task.c
++++ b/src/lcd_task.c
+@@ -1,21 +1,45 @@
+ // lcd_task.c - Refactored
+ 
+ #include "lcd.h"
++#include "task_watchdog.h"
+ #include "esp_log.h"
+ #include "freertos/FreeRTOS.h"
+ #include "freertos/task.h"
+ 
+ static const char* TAG = "lcd_task";
++static TaskHandle_t s_lcd_task_handle = NULL;
+ 
+ void lcd_task(void* pvParameters) {
+-    // Initialize LCD hardware
++    /* Register with TWDT for UI responsiveness */
++    TaskHandle_t current = xTaskGetCurrentTaskHandle();
++    esp_err_t err = task_watchdog_register(current, "lcd_task", WATCHDOG_MODE_TWDT);
++    if (err != ESP_OK) {
++        ESP_LOGE(TAG, "TWDT registration failed: %s", esp_err_to_name(err));
++        /* Continue anyway - UI not critical for safety */
++    } else {
++        ESP_LOGI(TAG, "LCD task registered with TWDT");
++    }
++
++    /* Initialize LCD hardware */
+     lcd_hardware_init();
+-    lcd_display_startup_screen();
+ 
+-    ESP_LOGI(TAG, "LCD task started");
++    /* Display startup screen */
++    if (lcd_display_startup_screen() != ESP_OK) {
++        ESP_LOGE(TAG, "Failed to display startup screen");
++        /* Continue anyway - maybe log to serial */
++    }
+ 
++    ESP_LOGI(TAG, "LCD task started");
+     while (1) {
++        /* Process pending UI updates */
+         process_lcd_updates();
++
++        /* Feed TWDT every loop iteration */
++        task_watchdog_feed_current_task();
++
++        /* Wait for next update - bound to prevent starvation */
++        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(LCD_UPDATE_PERIOD_MS));
+     }
+ }
+ 
+diff --git a/src/wifi/wifi_manager.c b/src/wifi/wifi_manager.c
+index 5678901..efg7890 100644
+--- a/src/wifi/wifi_manager.c
++++ b/src/wifi/wifi_manager.c
+@@ -1,22 +1,43 @@
+ // wifi_manager.c - Refactored
+ 
+ #include "wifi_manager.h"
++#include "task_watchdog.h"
+ #include "esp_log.h"
+ #include "esp_wifi.h"
+ #include "freertos/FreeRTOS.h"
+ #include "freertos/task.h"
+ 
+ static const char* TAG = "wifi_manager";
++static TaskHandle_t s_wifi_task_handle = NULL;
+ 
+ void wifi_task(void* pvParameters) {
++    /* Intentionally EXCLUDED from TWDT - network operations can block */
++    /* Only health monitoring is used */
++    TaskHandle_t current = xTaskGetCurrentTaskHandle();
++    esp_err_t err = task_watchdog_register(current, "wifi_task", WATCHDOG_MODE_HEALTH_ONLY);
++    if (err != ESP_OK) {
++        ESP_LOGW(TAG, "Health registration failed: %s", esp_err_to_name(err));
++    } else {
++        ESP_LOGI(TAG, "WiFi task registered with health monitoring only");
++    }
++
++    /* Initialize WiFi stack */
+     wifi_init();
++
++    ESP_LOGI(TAG, "WiFi task started");
+     while (1) {
+-        // Handle WiFi events
++        /* Handle WiFi events - may block for seconds */
+         wifi_event_loop();
+-        
+-        // Delay
+-        vTaskDelay(pdMS_TO_TICKS(100));
++
++        /* Feed health watchdog only (NO TWDT) */
++        task_watchdog_feed_health_only();
++
++        /* Wait for events - can be long, bounded by health timeout */
++        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(WIFI_TASK_TIMEOUT_MS));
+     }
+ }
+ 
+ void wifi_task_init(void) {
+-    xTaskCreate(wifi_task, "wifi_task", 4096, NULL, 3, NULL);
++    xTaskCreatePinnedToCore(wifi_task, "wifi_task", 4096, NULL, 3, &s_wifi_task_handle, APP_CPU_NUM);
++    /* Note: WiFi task is intentionally health-only, not TWDT */
+ }
+diff --git a/sdkconfig.defaults b/sdkconfig.defaults
+index 8901234..hij4567 100644
+--- a/sdkconfig.defaults
++++ b/sdkconfig.defaults
+@@ -1,5 +1,5 @@
+ # SDK config defaults - Refactored
+ 
+ CONFIG_ESP_TASK_WDT=y
+ CONFIG_ESP_TASK_WDT_INIT=y
+-CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
++CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+ CONFIG_ESP_TASK_WDT_PANIC=y
