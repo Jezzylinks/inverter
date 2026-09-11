@@ -472,6 +472,26 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("init_err = ESP_ERR_INVALID_STATE;", menu)
         self.assertIn("return init_err;", menu)
 
+        nvs_start = runtime.index("esp_err_t nvs_init(bool erase_on_fail)",
+                                   runtime.index("esp_err_t nvs_init(bool erase_on_fail)"))
+        nvs_end = runtime.index("bool nvs_is_initialized", nvs_start)
+        nvs = runtime[nvs_start:nvs_end]
+        self.assertIn("nvs_initialized = (err == ESP_OK);", nvs)
+        self.assertIn("return err;", nvs)
+
+        diagnostics = root.joinpath("src", "diagnostics", "system_diagnostics.c").read_text()
+        diagnostics_start = diagnostics.index("esp_err_t system_diagnostics_init")
+        diagnostics_body = diagnostics[diagnostics_start:diagnostics.index(
+            "void system_diagnostics_record_fault", diagnostics_start)]
+        self.assertIn("s_initialized = persist();", diagnostics_body)
+        self.assertIn("return s_initialized ? ESP_OK : ESP_FAIL;", diagnostics_body)
+
+        restore_start = runtime.index("esp_err_t restore_from_deep_sleep()",
+                                      runtime.index("// ================== RESTORE STATE ON WAKE"))
+        restore_body = runtime[restore_start:runtime.index(
+            "void enter_deep_sleep", restore_start)]
+        self.assertIn("return ESP_OK;", restore_body)
+
 
 if __name__ == "__main__":
     unittest.main()
