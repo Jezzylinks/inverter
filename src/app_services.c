@@ -28,7 +28,6 @@
 #include "server/websocket/websocket_server.h"
 #include "system/system_error_codes.h"
 
-#include "system/task_watchdog.h"
 #define APP_SERVICES_TAG "APP_SERVICES"
 #ifdef CONFIG_INVERTER_OTA_MANIFEST_URL
 #define APP_OTA_DEFAULT_MANIFEST_URL CONFIG_INVERTER_OTA_MANIFEST_URL
@@ -326,21 +325,14 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
 static void app_wifi_toggle_task(void *parameter)
 {
     (void)parameter;
-    if (!task_watchdog_register("wifi_toggle_task")) {
-        /* A TWDT task must not continue unprotected. */
-        vTaskDelete(NULL);
-        return;
-    }
 
     wifi_toggle_request_t request;
     while (true) {
-        task_watchdog_feed();
         if (xQueueReceive(s_wifi_toggle_queue, &request,
                          pdMS_TO_TICKS(APP_WIFI_TOGGLE_WATCHDOG_POLL_MS)) != pdTRUE) {
             continue;
         }
 
-        task_watchdog_feed();
         const uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
         ESP_LOGI(APP_SERVICES_TAG,
                  "Wi-Fi %s worker dispatch after %llums",
@@ -350,7 +342,6 @@ static void app_wifi_toggle_task(void *parameter)
                                           : 0U));
         (void)app_services_execute_wifi_toggle(request.enabled,
                                                 request.previous_enabled);
-        task_watchdog_feed();
     }
 }
 
@@ -680,24 +671,16 @@ static void ota_status_callback(ota_status_t status, int percent)
 
 static void ota_auto_check_task(void *parameter)
 {
-    if (!task_watchdog_register("ota_auto_check_task")) {
-        /* A TWDT task must not continue unprotected. */
-        vTaskDelete(NULL);
-        return;
-    }
     (void)parameter;
     uint32_t wait_ms = 30000U;
     while (wait_ms > 0U)
     {
-        task_watchdog_feed();
         const uint32_t slice = wait_ms > 1000U ? 1000U : wait_ms;
         vTaskDelay(pdMS_TO_TICKS(slice));
         wait_ms -= slice;
-        task_watchdog_feed();
     }
     while (true)
     {
-        task_watchdog_feed();
         app_ota_status_t status;
         app_services_get_ota_status(&status);
         if (status.auto_check_enabled &&
@@ -715,7 +698,6 @@ static void ota_auto_check_task(void *parameter)
             const uint32_t slice = wait_ms > 1000U ? 1000U : wait_ms;
             vTaskDelay(pdMS_TO_TICKS(slice));
             wait_ms -= slice;
-            task_watchdog_feed();
         }
     }
 }

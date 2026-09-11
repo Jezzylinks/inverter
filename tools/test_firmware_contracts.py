@@ -355,6 +355,25 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("sys_lcd.loading.start_ms == snap.loading.start_ms", loading_expiry.group(1))
         self.assertIn("sys_lcd.screen = sys_lcd.loading.next_screen", loading_expiry.group(1))
 
+    def test_long_waiting_network_workers_are_not_twdt_subscribed(self):
+        root = Path(__file__).parents[1]
+        services = root.joinpath("src", "app_services.c").read_text()
+
+        toggle_start = services.index("static void app_wifi_toggle_task")
+        toggle_end = services.index("/* Called by wifi_monitor_task", toggle_start)
+        toggle = services[toggle_start:toggle_end]
+        auto_start = services.index("static void ota_auto_check_task")
+        auto_end = services.index("esp_err_t app_services_init", auto_start)
+        auto_check = services[auto_start:auto_end]
+
+        self.assertNotIn("task_watchdog_register", toggle)
+        self.assertNotIn("task_watchdog_feed", toggle)
+        self.assertIn("xQueueReceive(s_wifi_toggle_queue", toggle)
+        self.assertNotIn("task_watchdog_register", auto_check)
+        self.assertNotIn("task_watchdog_feed", auto_check)
+        self.assertIn("APP_OTA_CHECK_INTERVAL_MS", auto_check)
+        self.assertIn("vTaskDelay(pdMS_TO_TICKS(slice))", auto_check)
+
 
 if __name__ == "__main__":
     unittest.main()
