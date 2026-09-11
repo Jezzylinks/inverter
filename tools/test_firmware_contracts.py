@@ -170,7 +170,9 @@ class FirmwareContracts(unittest.TestCase):
         button = root.joinpath("src", "button_controller.c").read_text()
         self.assertIn("task_watchdog_unregister_task_generation(task, generation)", button)
         self.assertIn("vTaskDelete(task);", button)
-        self.assertIn("app_buttons_deinit();\n    task_watchdog_unregister();", root.joinpath("src", "main.c").read_text())
+        main = root.joinpath("src", "main.c").read_text()
+        self.assertNotIn('task_watchdog_register("app_main")', main)
+        self.assertNotIn("task_watchdog_feed()", main)
         continuous = root.joinpath("src", "adc", "adc_continuous.c").read_text()
         self.assertIn("bool task_watchdog_init(bool enable_task_wdt, bool panic_on_hang)", watchdog)
         self.assertIn("esp_task_wdt_reconfigure(&config)", watchdog)
@@ -180,7 +182,8 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn(".timeout_ms = 15000U", watchdog)
         self.assertIn("adc_signal_failed(esp_err_to_name(init_result));\n        task_watchdog_unregister();\n        vTaskDelete(NULL);", adc)
         self.assertIn("task_watchdog_unregister();\n    vTaskDelete(NULL);", lcd_events)
-        self.assertIn("task_watchdog_unregister();\n        vTaskDelete(NULL);", ota)
+        self.assertNotIn('task_watchdog_register("ota_task")', ota)
+        self.assertNotIn("task_watchdog_unregister()", ota)
 
     def test_watchdog_rejects_duplicate_and_conflicting_registration(self):
         root = Path(__file__).parents[1]
@@ -400,6 +403,20 @@ class FirmwareContracts(unittest.TestCase):
         self.assertNotIn("task_watchdog_register", worker)
         self.assertNotIn("task_watchdog_feed", worker)
         self.assertIn("save_settings()", worker)
+
+    def test_long_startup_and_io_tasks_are_not_twdt_subscribed(self):
+        root = Path(__file__).parents[1]
+        main = root.joinpath("src", "main.c").read_text()
+        lcd = root.joinpath("src", "lcd_task.c").read_text()
+        ota = root.joinpath("src", "ota", "ota_service.c").read_text()
+
+        self.assertNotIn('task_watchdog_register("app_main")', main)
+        self.assertNotIn("task_watchdog_feed()", main)
+        self.assertNotIn('task_watchdog_register("lcd_task")', lcd)
+        self.assertNotIn("task_watchdog_feed()", lcd)
+        self.assertNotIn('task_watchdog_register("ota_task")', ota)
+        self.assertNotIn("task_watchdog_unregister()", ota)
+        self.assertIn("ota_download_firmware", ota)
 
 
 if __name__ == "__main__":

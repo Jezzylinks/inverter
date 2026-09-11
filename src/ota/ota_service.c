@@ -11,8 +11,6 @@
 #include "freertos/task.h"
 #include "ota/ota_download.h"
 #include "ota/ota_manifest.h"
-#include "system/task_watchdog.h"
-
 static const char *TAG = "OTA_SERVICE";
 
 static void secure_zero(void *ptr, size_t len)
@@ -114,15 +112,9 @@ static void download_verifying_callback(void *context)
 
 static void ota_task(void *parameter)
 {
-    if (!task_watchdog_register("ota_task")) {
-        /* A TWDT task must not continue unprotected. */
-        vTaskDelete(NULL);
-        return;
-    }
     ota_job_t *job = (ota_job_t *)parameter;
     if (!job) {
         set_job_finished();
-        task_watchdog_unregister();
         vTaskDelete(NULL);
         return;
     }
@@ -171,7 +163,6 @@ static void ota_task(void *parameter)
         secure_zero(job, sizeof(*job));
         free(job);
         set_job_finished();
-        task_watchdog_unregister();
         vTaskDelete(NULL);
         return;
     }

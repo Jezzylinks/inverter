@@ -76,23 +76,18 @@ void app_main(void)
     bool lcd_event_ready = true;
     bool post_completed = false;
     post_result_t startup_post = {0};
-    if (!init_watchdog(true, true) || !task_watchdog_register("app_main"))
+    if (!init_watchdog(true, true))
     {
-        ESP_LOGE(APP_TAG, "FATAL: watchdog initialization/registration failed");
-        task_watchdog_unregister();
+        ESP_LOGE(APP_TAG, "FATAL: watchdog initialization failed");
         return;
     }
 
     if (!system_events_init()) {
         ESP_LOGE(APP_TAG, "System event queue initialization failed");
     }
-    task_watchdog_feed();
-
     if (!event_dispatcher_init()) {
         ESP_LOGE(APP_TAG, "Event dispatcher initialization failed; sound/events degraded");
     }
-    task_watchdog_feed();
-
     sys_event_group = xEventGroupCreate();
     configASSERT(sys_event_group);
 
@@ -117,7 +112,6 @@ void app_main(void)
     system_diagnostics_init();
     init_system_state();
     init_menu_system();
-    task_watchdog_feed();
     if (security_init() != ESP_OK)
     {
         ESP_LOGE(APP_TAG, "FATAL: security initialization failed; keeping controls disabled");
@@ -134,7 +128,6 @@ void app_main(void)
     /* Service coordination restores persisted Wi-Fi intent and starts a
      * bounded CSV-manifest availability checker. It never downloads an
      * update until the user explicitly confirms from the OTA menu. */
-    task_watchdog_feed();
     if (app_services_init() != ESP_OK)
     {
         ESP_LOGW(APP_TAG, "Network/update services unavailable; continuing offline");
@@ -146,12 +139,9 @@ void app_main(void)
 
     /* Hardware-dependent battery/LCD peripherals use the validated profile. */
     init_hardware();
-    task_watchdog_feed();
     restore_from_deep_sleep();
     log_all_error_flags(sys_state.error.error_flags);
-    task_watchdog_feed();
     vTaskDelay(pdMS_TO_TICKS(2000));
-    task_watchdog_feed();
     lcd_power_init();
     LCD_power(true);
     const esp_err_t lcd_init_result = lcd_controller_init();
@@ -244,7 +234,6 @@ void app_main(void)
         {
             break;
         }
-        task_watchdog_feed();
     }
 
     const bool adc_ready = (startup_bits & APP_EVENT_ADC_READY) != 0U;
@@ -317,7 +306,6 @@ void app_main(void)
      * startup healthy. */
     while (!lcd_startup_minimum_elapsed())
     {
-        task_watchdog_feed();
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
@@ -329,7 +317,6 @@ void app_main(void)
         lcd_flash_info_to("Firmware Update", "Previous restored", 3500U,
                           LCD_SCREEN_MAIN);
     }
-    task_watchdog_feed();
     if (!startup_healthy) {
         /* Keep button_task and the event consumers alive in the latched
          * startup-fault state. They remain safety-gated by system_ready, but
@@ -340,7 +327,6 @@ void app_main(void)
     }
     while (sys_state.system_ready || !startup_healthy)
     {
-        task_watchdog_feed();
         update_lcd_activity_state();
         handle_menu_timeout();
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -349,5 +335,4 @@ void app_main(void)
     ESP_LOGW(APP_TAG, "Main loop ended");
     (void)lcd_event_receiver_stop();
     app_buttons_deinit();
-    task_watchdog_unregister();
 }

@@ -9,7 +9,6 @@
 #include "lcd/lcd_state.h"
 #include "lcd/lcd_watchdog.h"
 #include "app/app_runtime.h"
-#include "system/task_watchdog.h"
 #include "lcd/lcd_integrity.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -1959,12 +1958,6 @@ extern flash_entry_t s_queue[LCD_FLASH_QUEUE_DEPTH];
 
 void lcd_task(void *arg)
 {
-    if (!task_watchdog_register("lcd_task"))
-    {
-        /* A TWDT task must not continue unprotected. */
-        vTaskDelete(NULL);
-        return;
-    }
     lcd_watchdog_init(xTaskGetCurrentTaskHandle());
     lcd_render_state_t snap;
     static lcd_screen_id_t last_screen = LCD_SCREEN_COUNT;
@@ -1994,8 +1987,7 @@ void lcd_task(void *arg)
     while (1)
 
     {
-        /* ====== STEP 1: WATCHDOG ====== */
-        task_watchdog_feed();
+        /* ====== STEP 1: LCD health ====== */
         lcd_watchdog_feed();
 
         /* ====== STEP 2: SNAPSHOT STATE ====== */
