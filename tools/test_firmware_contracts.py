@@ -448,6 +448,15 @@ class FirmwareContracts(unittest.TestCase):
             self.assertIn(f"const esp_err_t {variable} = {function};", main)
             self.assertIn(f"{variable} != ESP_OK", main)
 
+        runtime = root.joinpath("src", "app_runtime.c").read_text()
+        writer = root.joinpath("src", "lcd_writer.c").read_text()
+        self.assertIn("const esp_err_t fan_err = post_fan_init();", runtime)
+        self.assertIn("return fan_err;", runtime)
+        self.assertIn("esp_err_t err = gpio_config(&pwr_conf);", runtime)
+        self.assertIn("ledc_timer_config(&timer_conf)", runtime)
+        self.assertIn("ledc_channel_config(&ch_conf)", runtime)
+        self.assertIn("sys_state_mutex == NULL", writer)
+
 
 if __name__ == "__main__":
     unittest.main()

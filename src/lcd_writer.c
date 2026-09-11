@@ -50,6 +50,10 @@ static void set_line(char *dst, const char *src)
 /*----------------------------------------------------------------------------*/
 esp_err_t lcd_writer_init(void)
 {
+    if (sys_state_mutex == NULL) {
+        ESP_LOGE("LCD_WRITER", "System-state mutex is unavailable");
+        return ESP_ERR_INVALID_STATE;
+    }
     s_startup_released = false;
     s_startup_started_ms = _lcd_get_time_ms();
     LCD_LOCK();

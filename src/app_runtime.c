@@ -1463,7 +1463,12 @@ esp_err_t init_hardware(void)
     led_init();
     quiet_hours_sntp_init();
     ESP_LOGI("QUIET_HOURS", "QUIET HOURS SUCCEEDED");
-    post_fan_init();
+    const esp_err_t fan_err = post_fan_init();
+    if (fan_err != ESP_OK)
+    {
+        ESP_LOGE(APP_TAG, "Fan initialization failed: %s", esp_err_to_name(fan_err));
+        return fan_err;
+    }
 #endif
 
     // ==========================================================
@@ -5437,7 +5442,13 @@ esp_err_t lcd_power_init()
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE};
-    gpio_config(&pwr_conf);
+    esp_err_t err = gpio_config(&pwr_conf);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG_SYS, "LCD power GPIO configuration failed: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
 
     // Configure PWM backlight
     ledc_timer_config_t timer_conf = {
@@ -5445,15 +5456,26 @@ esp_err_t lcd_power_init()
         .duty_resolution = LCD_PWM_RES,
         .timer_num = LCD_BACKLIGHT_LEDC_TIMER,
         .freq_hz = LCD_PWM_FREQ};
-    ledc_timer_config(&timer_conf);
+    err = ledc_timer_config(&timer_conf);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG_SYS, "LCD backlight timer configuration failed: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
 
     ledc_channel_config_t ch_conf = {
         .gpio_num = GPIO_LCD_BACKLIGHT,
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .channel = LCD_BACKLIGHT_LEDC_CHANNEL,
         .timer_sel = LCD_BACKLIGHT_LEDC_TIMER};
-    ledc_channel_config(&ch_conf);
-    return ESP_OK;
+    err = ledc_channel_config(&ch_conf);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG_SYS, "LCD backlight channel configuration failed: %s",
+                 esp_err_to_name(err));
+    }
+    return err;
 }
 
 // Control LCD power (true = on, false = off)

@@ -318,3 +318,8 @@ The host contract suite now verifies that `app_main`, `lcd_task`, and `ota_task`
 ## P. Typed startup initializer results
 
 Startup initialization APIs now return `esp_err_t` rather than silently discarding status. This includes NVS, system diagnostics, system state, menu state, hardware, wake-state restoration, LCD power, and LCD writer initialization. `app_main()` captures each result and handles failures explicitly: fatal prerequisites keep the system unavailable and return, while recoverable diagnostics/hardware warnings are logged and startup safety gates remain authoritative. Contract tests verify the typed declarations and corresponding `ESP_OK` checks.
+
+
+## Q. Initializer implementation status propagation
+
+The typed initializer refactor now propagates internal operation results rather than returning unconditional success. Hardware initialization returns fan and buzzer errors; LCD power initialization checks GPIO, LEDC timer, and LEDC channel setup; LCD writer initialization rejects a missing system-state mutex; system diagnostics returns persistence failure; system state returns protection initialization failure; and NVS returns storage initialization failure. Recoverable settings correction remains explicitly successful because safe defaults are active in RAM and flash persistence is deferred by design.
