@@ -457,6 +457,21 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("ledc_channel_config(&ch_conf)", runtime)
         self.assertIn("sys_state_mutex == NULL", writer)
 
+        hardware_start = runtime.index("esp_err_t init_hardware(void)")
+        hardware_end = runtime.index("#define NVS_FLOAT_SCALE", hardware_start)
+        hardware = runtime[hardware_start:hardware_end]
+        self.assertIn("esp_err_t init_err = ESP_OK;", hardware)
+        self.assertIn("return init_err;", hardware)
+        self.assertIn("init_err = buzzer_err;", hardware)
+        self.assertIn("init_err = ESP_ERR_NO_MEM;", hardware)
+
+        menu_start = runtime.index("esp_err_t init_menu_system()", runtime.index("// =============== INITIALIZE MENU SYSTEM"))
+        menu_end = runtime.index("esp_err_t restore_from_deep_sleep()", menu_start)
+        menu = runtime[menu_start:menu_end]
+        self.assertIn("esp_err_t init_err = ESP_OK;", menu)
+        self.assertIn("init_err = ESP_ERR_INVALID_STATE;", menu)
+        self.assertIn("return init_err;", menu)
+
 
 if __name__ == "__main__":
     unittest.main()

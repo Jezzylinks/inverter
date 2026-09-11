@@ -1456,6 +1456,7 @@ esp_err_t lcd_controller_init(void)
 // =============== HARDWARE INITIALIZATION ===============
 esp_err_t init_hardware(void)
 {
+    esp_err_t init_err = ESP_OK;
     // ==========================================================
     // Initialize LED Driver
     // ==========================================================
@@ -1521,6 +1522,7 @@ esp_err_t init_hardware(void)
     {
         ESP_LOGE(APP_TAG, "Buzzer unavailable; continuing without audio: %s",
                  esp_err_to_name(buzzer_err));
+        init_err = buzzer_err;
     }
 
     // ==========================================================
@@ -1542,9 +1544,17 @@ esp_err_t init_hardware(void)
     // ==========================================================
     // Create Display Timeout Task
     // ==========================================================
-    xTaskCreate(display_timeout_task, "Display Timeout", 2048, NULL, 5, NULL);
+    if (xTaskCreate(display_timeout_task, "Display Timeout", 2048,
+                    NULL, 5, NULL) != pdPASS)
+    {
+        ESP_LOGE(APP_TAG, "Display timeout task creation failed");
+        if (init_err == ESP_OK)
+        {
+            init_err = ESP_ERR_NO_MEM;
+        }
+    }
 #endif
-    return buzzer_err == ESP_OK ? ESP_OK : buzzer_err;
+    return init_err;
 }
 
 #define NVS_FLOAT_SCALE 100.0f
@@ -5148,6 +5158,7 @@ void save_frequency_to_nvs(int frequency)
 // =============== INITIALIZE MENU SYSTEM ===============
 esp_err_t init_menu_system()
 {
+    esp_err_t init_err = ESP_OK;
     /* Keep controls inhibited until settings, battery profile, and security
      * policy have been loaded and validated. */
     sys_state.menu_state = MENU_NONE;
@@ -5166,6 +5177,7 @@ esp_err_t init_menu_system()
     printf("Loading battery profile from NVS...\n");
     if (!load_settings())
     {
+        init_err = ESP_ERR_INVALID_STATE;
         ESP_LOGW(TAG_SYS, "Settings were missing or corrected; retaining validated defaults");
         if (profile->capacity_ah <= 0.0f || profile->nominal_voltage == 0)
         {
@@ -5178,7 +5190,7 @@ esp_err_t init_menu_system()
     quiet_hours_restore_manual_time();
     sys_state.system_ready = true;
     printf("System initialization complete. Ready for operation.\n");
-    return ESP_OK;
+    return init_err;
 }
 
 // ================== RESTORE STATE ON WAKE =================

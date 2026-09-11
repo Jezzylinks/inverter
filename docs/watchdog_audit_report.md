@@ -323,3 +323,8 @@ Startup initialization APIs now return `esp_err_t` rather than silently discardi
 ## Q. Initializer implementation status propagation
 
 The typed initializer refactor now propagates internal operation results rather than returning unconditional success. Hardware initialization returns fan and buzzer errors; LCD power initialization checks GPIO, LEDC timer, and LEDC channel setup; LCD writer initialization rejects a missing system-state mutex; system diagnostics returns persistence failure; system state returns protection initialization failure; and NVS returns storage initialization failure. Recoverable settings correction remains explicitly successful because safe defaults are active in RAM and flash persistence is deferred by design.
+
+
+## R. Explicit initializer return paths
+
+The startup initializer APIs now have explicit internal status paths. `init_hardware()` initializes `init_err` to `ESP_OK`, returns fan failures immediately, records buzzer failures, reports display-timeout task creation failure as `ESP_ERR_NO_MEM`, and returns the accumulated result. `init_menu_system()` returns `ESP_ERR_INVALID_STATE` when settings recovery required validated defaults, while continuing safely with those defaults and deferred persistence. `restore_from_deep_sleep()` explicitly returns `ESP_OK` because its current implementation only reads/logs RTC state and has no fallible operation. `lcd_power_init()` returns each GPIO/LEDC setup error immediately or the final channel result. Tests assert these internal paths rather than only checking signatures.

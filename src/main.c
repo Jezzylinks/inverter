@@ -139,10 +139,8 @@ void app_main(void)
     const esp_err_t menu_err = init_menu_system();
     if (menu_err != ESP_OK)
     {
-        ESP_LOGE(APP_TAG, "Menu initialization failed: %s",
+        ESP_LOGW(APP_TAG, "Menu initialization completed with recovered settings: %s",
                  esp_err_to_name(menu_err));
-        sys_state.system_ready = false;
-        return;
     }
     if (security_init() != ESP_OK)
     {
