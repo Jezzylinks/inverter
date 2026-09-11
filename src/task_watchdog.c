@@ -36,10 +36,13 @@ bool task_watchdog_init(bool enable_task_wdt, bool panic_on_hang)
         .idle_core_mask = (1U << portNUM_PROCESSORS) - 1U,
         .trigger_panic = panic_on_hang,
     };
-    esp_err_t err = esp_task_wdt_init(&config);
-    if (err == ESP_ERR_INVALID_STATE) {
-        err = esp_task_wdt_reconfigure(&config);
-    }
+    /* Platform startup may auto-initialize TWDT from sdkconfig. Probe first
+     * so normal auto-init does not emit a misleading esp_task_wdt_init()
+     * error before we apply the application policy. */
+    const esp_err_t status = esp_task_wdt_status(NULL);
+    esp_err_t err = status == ESP_ERR_INVALID_STATE
+                        ? esp_task_wdt_init(&config)
+                        : esp_task_wdt_reconfigure(&config);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to configure task watchdog: %s",
                  esp_err_to_name(err));

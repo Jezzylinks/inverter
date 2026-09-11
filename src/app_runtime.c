@@ -1675,6 +1675,14 @@ esp_err_t nvs_save_all(nvs_handle_t handle)
                 first_err = err;
             }
         }
+
+        /* nvs_save_all() is part of app_main startup recovery. Each group of
+         * completed settings is genuine forward progress, so keep the
+         * subscribed startup task protected without feeding during a wait. */
+        if ((i & 7U) == 7U)
+        {
+            (void)task_watchdog_feed();
+        }
     }
 
     return first_err;
@@ -1715,6 +1723,13 @@ esp_err_t nvs_load_all(nvs_handle_t handle)
                 ESP_LOGW(NVS_LOAD_TAG, "'%s' not found, using default %ld", s->key, (long)val);
             }
             *(int32_t *)s->field = val;
+        }
+
+        /* Loading is also a potentially long startup phase when a corrupt or
+         * incomplete transaction requires the validated-default path. */
+        if ((i & 7U) == 7U)
+        {
+            (void)task_watchdog_feed();
         }
     }
 
@@ -2052,6 +2067,9 @@ bool load_settings()
     if (load_error)
     {
         ESP_LOGW(NVS_LOADING_TAG, "Settings loaded with one or more defaults/corrections");
+        /* Recovery has completed the validation phase before persisting the
+         * corrected values; this is genuine startup progress. */
+        (void)task_watchdog_feed();
         save_settings();
         return false;
     }
@@ -2074,6 +2092,7 @@ bool save_settings()
         ESP_LOGE("NVS_SAVE", "Battery configuration persistence failed");
         return false;
     }
+    (void)task_watchdog_feed();
     nvs_handle_t nvs;
     const char *NVS_SAVE_TAG = "NVS_SAVE";
 
