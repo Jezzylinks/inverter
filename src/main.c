@@ -155,18 +155,6 @@ void app_main(void)
         ESP_LOGI("MAIN", "NVS ready");
     }
 
-    /* Service coordination restores persisted Wi-Fi intent and starts a
-     * bounded CSV-manifest availability checker. It never downloads an
-     * update until the user explicitly confirms from the OTA menu. */
-    if (app_services_init() != ESP_OK)
-    {
-        ESP_LOGW(APP_TAG, "Network/update services unavailable; continuing offline");
-    }
-    if (cloud_reporting_init() != ESP_OK)
-    {
-        ESP_LOGW(APP_TAG, "Cloud reporting unavailable; continuing with local operation");
-    }
-
     /* Hardware-dependent battery/LCD peripherals use the validated profile. */
     const esp_err_t hardware_err = init_hardware();
     if (hardware_err != ESP_OK)
@@ -190,6 +178,11 @@ void app_main(void)
         return;
     }
     LCD_power(true);
+    /* The LCD is now physically powered and visible to the user.  Reset the
+     * startup presentation clock here so that LCD_STARTUP_MIN_VISIBLE_DURATION_MS
+     * is measured from this moment, not from the earlier lcd_writer_init() call
+     * which happens before the 2-second hardware power-up delay. */
+    lcd_startup_mark_visible();
     const esp_err_t lcd_init_result = lcd_controller_init();
     lcd_set_brightness(200);
     if (lcd_init_result == ESP_OK)
@@ -344,6 +337,29 @@ void app_main(void)
     {
         ESP_LOGW(APP_TAG,
                  "Skipping deferred settings persistence after failed startup");
+    }
+
+    /* Start background/network services only after POST and all safety checks
+     * have completed.  These services are non-safety-critical and must not
+     * run during the startup safety window.  If POST failed, Wi-Fi, MQTT,
+     * HTTP, WebSocket, mDNS, NTP, OTA and cloud reporting are deliberately
+     * withheld — a faulted inverter must not silently appear online. */
+    if (startup_healthy)
+    {
+        ESP_LOGI(APP_TAG, "POST passed — starting background services");
+        if (app_services_init() != ESP_OK)
+        {
+            ESP_LOGW(APP_TAG, "Network/update services unavailable; continuing offline");
+        }
+        if (cloud_reporting_init() != ESP_OK)
+        {
+            ESP_LOGW(APP_TAG, "Cloud reporting unavailable; continuing with local operation");
+        }
+    }
+    else
+    {
+        ESP_LOGW(APP_TAG,
+                 "POST failed or startup unhealthy — background services suppressed");
     }
 
     const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&

@@ -2097,10 +2097,21 @@ void lcd_task(void *arg)
             const lcd_startup_stage_t stage = snap.startup_status.stage;
             const uint32_t elapsed = _lcd_get_time_ms() -
                                      snap.startup_status.stage_started_ms;
-            const bool post_ready = snap.startup_status.post_complete;
-            const bool can_advance = post_ready ||
-                                     (stage != LCD_STARTUP_STAGE_HARDWARE &&
-                                      stage != LCD_STARTUP_STAGE_SELF_CHECK);
+            const bool post_complete = snap.startup_status.post_complete;
+            const bool post_passed  = snap.startup_status.post_passed;
+
+            /* A stage may advance only when its real underlying milestone is
+             * done.  HARDWARE waits for POST to complete (post_complete).
+             * SELF_CHECK requires both POST completion AND a passing result —
+             * if POST failed, the SELF_CHECK screen must never advance to
+             * READY ("SYSTEM READY OK / INVERTER ONLINE") because that text
+             * would be factually false.  All other stages are cosmetic
+             * post-startup info screens and may advance on timer alone. */
+            const bool can_advance =
+                (stage == LCD_STARTUP_STAGE_HARDWARE)  ? post_complete :
+                (stage == LCD_STARTUP_STAGE_SELF_CHECK) ? (post_complete && post_passed) :
+                true;
+
             const uint32_t duration = stage == LCD_STARTUP_STAGE_READY
                                           ? LCD_STARTUP_READY_DURATION_MS
                                           : LCD_STARTUP_STAGE_DURATION_MS;

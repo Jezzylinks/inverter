@@ -46,6 +46,11 @@ void lcd_show_loading(const char *title,
 /* True while the boot, loading, or inverter startup sequence owns the LCD. */
 bool lcd_is_startup_active(void);
 bool lcd_startup_minimum_elapsed(void);
+/* Reset the startup presentation clock to the current time.  Call this
+ * immediately after LCD_power(true) so that LCD_STARTUP_MIN_VISIBLE_DURATION_MS
+ * is measured from the moment the display is physically visible to the user,
+ * not from the earlier lcd_writer_init() call at system boot. */
+void lcd_startup_mark_visible(void);
 
 /* Release boot-only event filtering after the power-on self-test completes. */
 void lcd_startup_release(void);

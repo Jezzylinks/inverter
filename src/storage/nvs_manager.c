@@ -29,7 +29,14 @@ static esp_err_t lock_storage(void)
             return ESP_ERR_NO_MEM;
         }
     }
-    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+    /* Use a bounded timeout rather than portMAX_DELAY.  If the TWDT-registered
+     * button_task calls save_settings() while the deferred settings persistence
+     * task holds s_mutex, portMAX_DELAY would block button_task indefinitely,
+     * starving its watchdog feed and causing a TWDT reset.  A 2-second timeout
+     * lets the caller propagate a "storage busy" error and continue, while
+     * still allowing any normal NVS operation to complete comfortably. */
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+        ESP_LOGE(TAG, "NVS mutex timeout — storage busy or deadlock suspected");
         return ESP_ERR_TIMEOUT;
     }
     return ESP_OK;

@@ -706,6 +706,17 @@ bool lcd_startup_minimum_elapsed(void)
            LCD_STARTUP_MIN_VISIBLE_DURATION_MS;
 }
 
+void lcd_startup_mark_visible(void)
+{
+    /* Reset the presentation clock to now so LCD_STARTUP_MIN_VISIBLE_DURATION_MS
+     * is counted from the moment the display is physically lit and visible,
+     * not from the earlier lcd_writer_init() call during boot setup. */
+    s_startup_started_ms = _lcd_get_time_ms();
+    ESP_LOGI("LCD_WRITER", "Startup presentation clock reset; "
+             "minimum %ums visible from now",
+             LCD_STARTUP_MIN_VISIBLE_DURATION_MS);
+}
+
 void lcd_startup_release(void)
 {
     s_startup_released = true;

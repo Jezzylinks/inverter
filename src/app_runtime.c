@@ -1628,7 +1628,14 @@ static int32_t settings_encoded_value(const nvs_setting_t *setting)
 {
     if (setting->is_scaled_float)
     {
-        return (int32_t)(*(const float *)setting->field * NVS_FLOAT_SCALE);
+        /* Use roundf() rather than truncation.  A float that round-trips
+         * through NVS (float → (int32_t)(f*100) → store → load → f/100)
+         * may differ by 1 LSB due to floating-point representation.  With
+         * truncation, (int32_t)(21.6f * 100.0f) can equal 2159 while the
+         * loaded-back value yields 2160.  roundf() makes the encoding
+         * stable across the round-trip and prevents spurious CRC mismatches
+         * in settings_fingerprint() on every boot. */
+        return (int32_t)roundf(*(const float *)setting->field * NVS_FLOAT_SCALE);
     }
     if (setting->size == sizeof(uint8_t))
     {
