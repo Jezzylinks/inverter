@@ -83,18 +83,9 @@ esp_err_t storage_nvs_init(void)
 
     err = initialize_flash_partition();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_LOGW(TAG, "NVS init requires documented recovery: %s", esp_err_to_name(err));
-        esp_err_t erase_err = nvs_flash_erase();
-        if (erase_err == ESP_OK) {
-            err = initialize_flash_partition();
-            if (err == ESP_OK) {
-                s_state = STORAGE_NVS_STATE_RECOVERED;
-                s_recovery_count++;
-                ESP_LOGW(TAG, "NVS partition erased and recovered; user NVS data was lost");
-            }
-        } else {
-            err = erase_err;
-        }
+        ESP_LOGE(TAG, "NVS partition recovery needed: %s", esp_err_to_name(err));
+        s_state = STORAGE_NVS_STATE_FAILED;
+        s_last_error = err;
     } else if (err == ESP_OK) {
         s_state = STORAGE_NVS_STATE_READY;
     }

@@ -32,6 +32,9 @@ extern SemaphoreHandle_t sys_state_mutex;
 /* Call once at startup before any task runs */
 esp_err_t lcd_writer_init(void);
 
+/* Start the startup minimum-visible timer after LCD hardware is ready. */
+void lcd_startup_timer_start(void);
+
 /* ── Boot ────────────────────────────────────────────────────────────────── */
 void lcd_show_boot_brand(void);
 void lcd_show_boot_init(uint8_t progress_pct);

@@ -204,12 +204,10 @@ static void format_wifi_scan_row(char *out, size_t out_len, char marker,
 void lcd_display_startup_screen(uint8_t progress)
 {
     (void)progress;
-    /* Startup branding is intentionally disabled. The startup screen is
-     * reserved for progress/status information, not a splash logo. */
     if (lcd_geometry_is_20x4())
-        draw_commit_rows((const char *[]){"", "", "", ""});
+        draw_commit_rows((const char *[]){"System Starting", "", "Please Wait...", ""});
     else
-        draw_commit("", "");
+        draw_commit("Starting...", "Please Wait");
 }
 
 static void format_progress_line(char *out, uint8_t pct)

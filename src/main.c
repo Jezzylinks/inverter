@@ -192,6 +192,10 @@ void app_main(void)
     LCD_power(true);
     const esp_err_t lcd_init_result = lcd_controller_init();
     lcd_set_brightness(200);
+    if (lcd_init_result == ESP_OK)
+    {
+        lcd_startup_timer_start();
+    }
 
     /* Buzzer owns its LEDC timer/channel. A buzzer failure is deliberately
      * non-fatal: physical button events must remain independent of sound. */

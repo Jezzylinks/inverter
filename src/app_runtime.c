@@ -2272,8 +2272,6 @@ bool save_settings()
     storage_nvs_close(nvs);
     if (err != ESP_OK)
     {
-        ESP_LOGE(NVS_SAVE_TAG, "Failed to commit settings: %s",
-                 esp_err_to_name(err));
         return false;
     }
     ESP_LOGI(NVS_SAVE_TAG, "Settings saved successfully");

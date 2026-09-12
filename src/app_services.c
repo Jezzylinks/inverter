@@ -1,5 +1,6 @@
 #include "storage/nvs_manager.h"
 #include "app/app_services.h"
+#include "system/task_watchdog.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -861,6 +862,7 @@ esp_err_t app_services_init(void)
             ESP_LOGW(APP_SERVICES_TAG, "Could not create Wi-Fi toggle worker");
             return ESP_ERR_NO_MEM;
         }
+        task_watchdog_register_health_only("wifi_toggle");
     }
     if (!s_wifi_operation_watch_task)
     {
@@ -873,6 +875,10 @@ esp_err_t app_services_init(void)
         {
             s_wifi_operation_watch_task = NULL;
             ESP_LOGW(APP_SERVICES_TAG, "Could not create Wi-Fi operation watcher");
+        }
+        else
+        {
+            task_watchdog_register_health_only("wifi_op_watch");
         }
     }
     return err == ESP_OK ? ota_err : err;

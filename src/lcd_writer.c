@@ -48,6 +48,14 @@ static void set_line(char *dst, const char *src)
 }
 
 /*----------------------------------------------------------------------------*/
+/* Safe helper: start the startup minimum-visible timer.
+ * Called only after the LCD hardware is actually ready,
+ * so the 5-second minimum covers the time the user can see. */
+void lcd_startup_timer_start(void)
+{
+    s_startup_started_ms = _lcd_get_time_ms();
+}
+
 esp_err_t lcd_writer_init(void)
 {
     if (sys_state_mutex == NULL) {
@@ -55,7 +63,9 @@ esp_err_t lcd_writer_init(void)
         return ESP_ERR_INVALID_STATE;
     }
     s_startup_released = false;
-    s_startup_started_ms = _lcd_get_time_ms();
+    /* s_startup_started_ms is initialized later, after LCD hardware
+     * is ready, so the minimum-visible duration actually covers the
+     * time the user can see the startup screen. */
     LCD_LOCK();
     memset(&sys_lcd, 0, sizeof(sys_lcd));
     sys_lcd.screen = LCD_SCREEN_BOOT_BRAND;
