@@ -344,6 +344,8 @@ void app_main(void)
      * run during the startup safety window.  If POST failed, Wi-Fi, MQTT,
      * HTTP, WebSocket, mDNS, NTP, OTA and cloud reporting are deliberately
      * withheld — a faulted inverter must not silently appear online. */
+    const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&
+                                 post_completed && startup_post.all_passed;
     if (startup_healthy)
     {
         ESP_LOGI(APP_TAG, "POST passed — starting background services");
@@ -362,8 +364,6 @@ void app_main(void)
                  "POST failed or startup unhealthy — background services suppressed");
     }
 
-    const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&
-                                 post_completed && startup_post.all_passed;
     sys_state.system_ready = startup_healthy;
     const esp_err_t rollback_err = ota_service_validate_running_app(startup_healthy);
     if (rollback_err != ESP_OK && rollback_err != ESP_ERR_INVALID_STATE &&
