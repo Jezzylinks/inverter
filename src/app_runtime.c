@@ -1732,8 +1732,15 @@ static esp_err_t nvs_write_setting(nvs_handle_t handle,
 {
     if (setting->is_scaled_float)
     {
-        const int32_t scaled =
-            (int32_t)(*(const float *)setting->field * NVS_FLOAT_SCALE);
+        /* MUST use settings_encoded_value() here, not a bare (int32_t)(f*scale)
+         * cast.  settings_encoded_value uses roundf(); a raw C cast truncates
+         * toward zero.  For float32 values whose product with NVS_FLOAT_SCALE
+         * is not exactly representable (e.g. 16.8 × 100 = 1679.9999... in
+         * float32), truncation writes 1679 while settings_encoded_value returns
+         * 1680.  nvs_verify_settings then compares the read-back (1679) against
+         * the pre-write snapshot (1680) and reports a mismatch, causing
+         * save_settings() to return false and the UI to show "Save Failed". */
+        const int32_t scaled = settings_encoded_value(setting);
         return nvs_set_i32(handle, setting->key, scaled);
     }
     if (setting->size == sizeof(uint8_t))
@@ -1898,7 +1905,10 @@ esp_err_t nvs_load_all(nvs_handle_t handle)
         esp_err_t err = ESP_OK;
         if (s->is_scaled_float)
         {
-            int32_t scaled = (int32_t)(s->default_val * NVS_FLOAT_SCALE);
+            /* Use roundf() for the default to match settings_encoded_value()
+             * and nvs_write_setting().  A bare (int32_t)(default * scale)
+             * truncates toward zero; roundf() is stable across round-trips. */
+            int32_t scaled = (int32_t)roundf(s->default_val * NVS_FLOAT_SCALE);
             err = nvs_get_i32(handle, s->key, &scaled);
             if (err != ESP_OK)
             {
