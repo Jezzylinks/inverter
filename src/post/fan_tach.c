@@ -154,7 +154,7 @@ static esp_err_t fan_tach_gpio_init(void)
 
     esp_err_t err =
         gpio_install_isr_service(
-            ESP_INTR_FLAG_IRAM);
+            0);
 
     /*
      * Ignore if already installed.

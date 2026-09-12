@@ -1559,7 +1559,7 @@ esp_err_t init_hardware(void)
 }
 
 #define NVS_FLOAT_SCALE 100.0f
-#define NVS_SETTINGS_TXN_VERSION 1U
+#define NVS_SETTINGS_TXN_VERSION 2U
 #define NVS_SETTINGS_TXN_VALID_KEY "settings_txn_ok"
 #define NVS_SETTINGS_TXN_GEN_KEY "settings_txn_gen"
 #define NVS_SETTINGS_TXN_CRC_KEY "settings_txn_crc"
@@ -1577,8 +1577,8 @@ typedef struct
 static nvs_setting_t g_settings[] = {
     {BATTERY_VOLTAGE_SYSTEM_KEY, &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 12, false, "Bat Volt System"},
     {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false, "Inverter Active"},
-    {"bat_type", &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false, "Battery Type"},
-    {"bat_cap_ah", &sys_state.battery_profile.capacity_ah, sizeof(int32_t), 0, true, "Battery Capacity"},
+    {BATTERY_TYPE_KEY, &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false, "Battery Type"},
+    {BATTERY_CAPACITY_KEY, &sys_state.battery_profile.capacity_ah, sizeof(float), 0, false, "Battery Capacity"},
     {"bat_charge_cur", &sys_state.battery_profile.max_charge_current_per_100ah, sizeof(int32_t), 0, true, "Max Charge Cur"},
     {"bat_disc_cur", &sys_state.battery_profile.max_discharge_current_per_100ah, sizeof(int32_t), 0, true, "Max Discharge Cur"},
     {"bat_full_volt", &sys_state.battery_profile.high_battery_voltage_v, sizeof(int32_t), 0, true, "Bat Full Volt"},
@@ -1609,27 +1609,83 @@ static nvs_setting_t g_settings[] = {
 
 #define NVS_SETTINGS_COUNT (sizeof(g_settings) / sizeof(g_settings[0]))
 
+/* Store the canonical on-NVS representation so a failed transaction can
+ * restore every setting, not only the field currently being edited. */
+typedef struct
+{
+    int32_t value;
+} settings_value_snapshot_t;
+
+static settings_value_snapshot_t s_edit_snapshot[NVS_SETTINGS_COUNT];
+static bool s_edit_snapshot_valid;
+
+static bool settings_uses_u16_storage(const nvs_setting_t *setting)
+{
+    return strcmp(setting->key, BATTERY_CAPACITY_KEY) == 0;
+}
+
+static int32_t settings_encoded_value(const nvs_setting_t *setting)
+{
+    if (setting->is_scaled_float)
+    {
+        return (int32_t)(*(const float *)setting->field * NVS_FLOAT_SCALE);
+    }
+    if (setting->size == sizeof(uint8_t))
+    {
+        return (int32_t)*(const uint8_t *)setting->field;
+    }
+    if (settings_uses_u16_storage(setting))
+    {
+        return (int32_t)*(const float *)setting->field;
+    }
+    return *(const int32_t *)setting->field;
+}
+
+static void settings_snapshot_capture(settings_value_snapshot_t *snapshot)
+{
+    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
+    {
+        snapshot[i].value = settings_encoded_value(&g_settings[i]);
+    }
+}
+
+static void settings_snapshot_restore(
+    const settings_value_snapshot_t *snapshot)
+{
+    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
+    {
+        const nvs_setting_t *setting = &g_settings[i];
+        if (setting->is_scaled_float)
+        {
+            *(float *)setting->field =
+                (float)snapshot[i].value / NVS_FLOAT_SCALE;
+        }
+        else if (setting->size == sizeof(uint8_t))
+        {
+            *(uint8_t *)setting->field = (uint8_t)snapshot[i].value;
+        }
+        else if (settings_uses_u16_storage(setting))
+        {
+            *(float *)setting->field = (float)snapshot[i].value;
+        }
+        else
+        {
+            *(int32_t *)setting->field = snapshot[i].value;
+        }
+    }
+    sync_battery_voltage_state();
+    sync_battery_protection_thresholds();
+}
+
 static uint32_t settings_fingerprint(void)
 {
     uint32_t hash = 2166136261UL;
     for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
     {
         const nvs_setting_t *setting = &g_settings[i];
-        const uint8_t *bytes = NULL;
-        int32_t scaled = 0;
-        if (setting->is_scaled_float)
-        {
-            scaled = (int32_t)(*(const float *)setting->field * NVS_FLOAT_SCALE);
-            bytes = (const uint8_t *)&scaled;
-        }
-        else
-        {
-            bytes = (const uint8_t *)setting->field;
-        }
-        const size_t length = setting->is_scaled_float
-                                  ? sizeof(scaled)
-                                  : setting->size;
-        for (size_t j = 0U; j < length; ++j)
+        const int32_t encoded = settings_encoded_value(setting);
+        const uint8_t *bytes = (const uint8_t *)&encoded;
+        for (size_t j = 0U; j < sizeof(encoded); ++j)
         {
             hash ^= bytes[j];
             hash *= 16777619UL;
@@ -1653,6 +1709,10 @@ static void nvs_apply_defaults(void)
         {
             *(uint8_t *)setting->field = (uint8_t)setting->default_val;
         }
+        else if (settings_uses_u16_storage(setting))
+        {
+            *(float *)setting->field = setting->default_val;
+        }
         else
         {
             *(int32_t *)setting->field = (int32_t)setting->default_val;
@@ -1674,8 +1734,65 @@ static esp_err_t nvs_write_setting(nvs_handle_t handle,
         return nvs_set_u8(handle, setting->key,
                           *(const uint8_t *)setting->field);
     }
+    if (settings_uses_u16_storage(setting))
+    {
+        return nvs_set_u16(handle, setting->key,
+                           (uint16_t)*(const float *)setting->field);
+    }
     return nvs_set_i32(handle, setting->key,
                        *(const int32_t *)setting->field);
+}
+
+static esp_err_t nvs_read_setting(nvs_handle_t handle,
+                                  const nvs_setting_t *setting,
+                                  int32_t *out_value)
+{
+    if (setting->is_scaled_float)
+    {
+        return nvs_get_i32(handle, setting->key, out_value);
+    }
+    if (setting->size == sizeof(uint8_t))
+    {
+        uint8_t value = 0U;
+        const esp_err_t err = nvs_get_u8(handle, setting->key, &value);
+        *out_value = (int32_t)value;
+        return err;
+    }
+    if (settings_uses_u16_storage(setting))
+    {
+        uint16_t value = 0U;
+        const esp_err_t err = nvs_get_u16(handle, setting->key, &value);
+        *out_value = (int32_t)value;
+        return err;
+    }
+    return nvs_get_i32(handle, setting->key, out_value);
+}
+
+static esp_err_t nvs_verify_settings(nvs_handle_t handle,
+                                     const settings_value_snapshot_t *expected)
+{
+    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
+    {
+        int32_t actual = 0;
+        const esp_err_t err = nvs_read_setting(handle, &g_settings[i], &actual);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE("NVS_SAVE",
+                     "Read-back failed namespace='%s' key='%s': %s (0x%x)",
+                     NVS_NS_SYSTEM, g_settings[i].key,
+                     esp_err_to_name(err), err);
+            return err;
+        }
+        if (actual != expected[i].value)
+        {
+            ESP_LOGE("NVS_SAVE",
+                     "Read-back mismatch namespace='%s' key='%s': expected=%ld actual=%ld",
+                     NVS_NS_SYSTEM, g_settings[i].key,
+                     (long)expected[i].value, (long)actual);
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+    return ESP_OK;
 }
 
 static esp_err_t nvs_set_u8_compat(nvs_handle_t handle, const char *key,
@@ -1793,6 +1910,17 @@ esp_err_t nvs_load_all(nvs_handle_t handle)
                          s->key, esp_err_to_name(err), err, val);
             }
             *(uint8_t *)s->field = val;
+        }
+        else if (settings_uses_u16_storage(s))
+        {
+            uint16_t val = (uint16_t)s->default_val;
+            err = nvs_get_u16(handle, s->key, &val);
+            if (err != ESP_OK)
+            {
+                ESP_LOGW(NVS_LOAD_TAG, "Failed to load key '%s': %s (0x%x); using default %u",
+                         s->key, esp_err_to_name(err), err, (unsigned)val);
+            }
+            *(float *)s->field = (float)val;
         }
         else
         {
@@ -2177,9 +2305,9 @@ bool load_settings()
 bool save_settings()
 {
     esp_err_t err;
-    if (!nvs_initialized)
+    if (!storage_nvs_is_ready())
     {
-        err = nvs_init(false);
+        err = storage_nvs_init();
         if (err != ESP_OK)
         {
             ESP_LOGE("NVS_SAVE", "Cannot save settings: NVS initialization failed: %s (0x%x)",
@@ -2188,6 +2316,8 @@ bool save_settings()
         }
     }
     nvs_handle_t nvs;
+    settings_value_snapshot_t expected[NVS_SETTINGS_COUNT];
+    settings_snapshot_capture(expected);
     const char *NVS_SAVE_TAG = "NVS_SAVE";
 
     err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs);
@@ -2272,6 +2402,26 @@ bool save_settings()
     storage_nvs_close(nvs);
     if (err != ESP_OK)
     {
+        return false;
+    }
+
+    /* A successful commit means the flash transaction completed. Reopen the
+     * namespace read-only and verify every canonical setting representation so
+     * the UI never reports success for a partial or incompatible write. */
+    nvs_handle_t verify_handle;
+    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &verify_handle);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(NVS_SAVE_TAG, "Failed to reopen settings for read-back: %s (0x%x)",
+                 esp_err_to_name(err), err);
+        return false;
+    }
+    err = nvs_verify_settings(verify_handle, expected);
+    storage_nvs_close(verify_handle);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(NVS_SAVE_TAG, "Settings read-back verification failed: %s (0x%x)",
+                 esp_err_to_name(err), err);
         return false;
     }
     ESP_LOGI(NVS_SAVE_TAG, "Settings saved successfully");
@@ -4356,6 +4506,8 @@ void enter_value_edit_mode(value_edit_context_t *value_type)
     sys_state.value_changed = false;
     sys_state.pending_confirmation = false;
     sys_state.repeat_count = 0;
+    settings_snapshot_capture(s_edit_snapshot);
+    s_edit_snapshot_valid = true;
 
     // Backup current value
     float *current_value = get_current_value_pointer();
@@ -4413,7 +4565,14 @@ bool exit_value_edit_mode(bool save_changes)
         }
         else
         {
-            reset_value_to_backup();
+            if (s_edit_snapshot_valid)
+            {
+                settings_snapshot_restore(s_edit_snapshot);
+            }
+            else
+            {
+                reset_value_to_backup();
+            }
             ESP_LOGE("VALUE_EDIT", "Failed to persist setting; restored previous value");
         }
     }
@@ -4431,6 +4590,7 @@ bool exit_value_edit_mode(bool save_changes)
     sys_state.fast_increment_active = false;
     sys_state.hold_start_time = 0;
     sys_state.edit_backup_value = 0.0f;
+    s_edit_snapshot_valid = false;
     return saved;
 }
 
