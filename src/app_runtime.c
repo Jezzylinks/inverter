@@ -2265,13 +2265,21 @@ bool load_settings()
                     NVS_SETTINGS_TXN_CRC_KEY,
                     &stored_crc) == ESP_OK;
 
-    if (txn_present &&
-        (txn_marker != NVS_SETTINGS_TXN_VERSION ||
-         !crc_present ||
-         stored_crc != settings_fingerprint()))
+    if (txn_present && txn_marker != NVS_SETTINGS_TXN_VERSION)
+    {
+        /* An older marker is a migration signal, not proof that the decoded
+         * settings are corrupt. Preserve compatible values and rewrite the
+         * current marker after startup. */
+        ESP_LOGW(NVS_LOADING_TAG,
+                 "Settings transaction schema %u -> %u; preserving compatible values",
+                 (unsigned)txn_marker, (unsigned)NVS_SETTINGS_TXN_VERSION);
+        load_error = true;
+    }
+    else if (txn_present &&
+             (!crc_present || stored_crc != settings_fingerprint()))
     {
         ESP_LOGE(NVS_LOADING_TAG,
-                 "Settings transaction invalid; restoring validated defaults");
+                 "Settings transaction checksum invalid; restoring validated defaults");
 
         nvs_apply_defaults();
         load_error = true;

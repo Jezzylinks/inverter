@@ -24,6 +24,7 @@
 #include "lcd/lcd.h"
 #include "lcd/lcd_watchdog.h"
 #include "lcd/lcd_writer.h"
+#include "lcd/lcd_startup_config.h"
 #include "ota/ota_service.h"
 #include "post/post_manager.h"
 #include "security/change_pin_flow.h"
@@ -33,6 +34,21 @@
 #include "utility/led.h"
 
 static const char *APP_TAG = "APP_INIT";
+
+static void startup_show_stage(lcd_startup_stage_t stage,
+                               bool post_complete,
+                               bool post_passed,
+                               bool lcd_ok,
+                               bool adc_ok,
+                               bool fan_ok)
+{
+    lcd_show_startup_status(stage, post_complete, post_passed,
+                            lcd_ok, adc_ok, fan_ok);
+    /* This is a minimum readable presentation window, not a readiness
+     * substitute. The caller only advances after the real milestone for the
+     * stage has completed. */
+    vTaskDelay(pdMS_TO_TICKS(LCD_STARTUP_STAGE_DURATION_MS));
+}
 
 static void post_show_result_and_notify(const post_result_t result)
 {
@@ -218,6 +234,10 @@ void app_main(void)
         ESP_LOGE(APP_TAG, "Failed to create LCD task");
         xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
     }
+    startup_show_stage(LCD_STARTUP_STAGE_HARDWARE, false, false,
+                       lcd_init_result == ESP_OK, false, false);
+    startup_show_stage(LCD_STARTUP_STAGE_ADC_INIT, false, false,
+                       lcd_init_result == ESP_OK, false, false);
     if (lcd_event_receiver_start() != ESP_OK)
     {
         lcd_event_ready = false;
@@ -282,6 +302,12 @@ void app_main(void)
     const bool lcd_ready = (startup_bits & APP_EVENT_LCD_READY) != 0U;
     if (adc_ready && lcd_ready)
     {
+        startup_show_stage(LCD_STARTUP_STAGE_ADC_READY, false, false,
+                           lcd_ready, true, false);
+        startup_show_stage(LCD_STARTUP_STAGE_SETTINGS, false, false,
+                           lcd_ready, true, false);
+        startup_show_stage(LCD_STARTUP_STAGE_POST, false, false,
+                           lcd_ready, true, false);
         startup_post = post_run_all();
         post_completed = true;
         post_show_result_and_notify(startup_post);
@@ -347,6 +373,8 @@ void app_main(void)
                                  post_completed && startup_post.all_passed;
     if (startup_healthy)
     {
+        startup_show_stage(LCD_STARTUP_STAGE_SERVICES, true, true,
+                           true, true, startup_post.fan_ok);
         ESP_LOGI(APP_TAG, "POST passed — starting background services");
         if (app_services_init() != ESP_OK)
         {
@@ -356,6 +384,9 @@ void app_main(void)
         {
             ESP_LOGW(APP_TAG, "Cloud reporting unavailable; continuing with local operation");
         }
+        startup_show_stage(LCD_STARTUP_STAGE_READY, true, true,
+                           true, true, startup_post.fan_ok);
+        lcd_boot_complete();
     }
     else
     {

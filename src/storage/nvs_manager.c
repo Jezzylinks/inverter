@@ -22,8 +22,6 @@ static esp_err_t initialize_flash_partition(void)
     return nvs_flash_init();
 }
 
-static portMUX_TYPE s_mutex_init_lock = portMUX_INITIALIZER_UNLOCKED;
-
 /*
  * Every NVS open/write/commit/close cycle in this firmware runs under this
  * single mutex (see storage_nvs_open/close/commit_close below): it is

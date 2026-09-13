@@ -814,28 +814,10 @@ static const char *startup_result_label(bool complete, bool ok)
     return ok ? "OK" : "FAIL";
 }
 
-static void format_startup_ip(char *out, size_t out_len,
-                              const wifi_monitor_status_t *wifi)
-{
-    if (!out || out_len == 0U)
-    {
-        return;
-    }
-    if (!wifi || !wifi->got_ip)
-    {
-        snprintf(out, out_len, "WAIT");
-        return;
-    }
-    snprintf(out, out_len, IPSTR, IP2STR(&wifi->ip));
-}
-
 static void draw_startup_status(const lcd_render_state_t *snap)
 {
     const lcd_startup_status_data_t *d = &snap->startup_status;
     const uint32_t elapsed = _lcd_get_time_ms() - d->stage_started_ms;
-    const wifi_monitor_status_t *wifi = wifi_monitor_get_status();
-    char ip[20] = {0};
-    format_startup_ip(ip, sizeof(ip), wifi);
 
     if (d->stage == LCD_STARTUP_STAGE_HARDWARE)
     {
@@ -865,68 +847,40 @@ static void draw_startup_status(const lcd_render_state_t *snap)
         return;
     }
 
-    if (d->stage == LCD_STARTUP_STAGE_POWER)
+    if (d->stage == LCD_STARTUP_STAGE_ADC_INIT ||
+        d->stage == LCD_STARTUP_STAGE_ADC_READY)
     {
-        const bool battery_valid = snap->main.battery_voltage > 0.1f;
-        const unsigned pct = snap->main.battery_pct;
-        const char *inv = snap->main.inverter_active ? "ON" : "READY";
+        const bool ready = d->stage == LCD_STARTUP_STAGE_ADC_READY && d->adc_ok;
         if (lcd_geometry_is_20x4())
         {
             char rows[4][LCD_LINE_SIZE];
-            snprintf(rows[0], LCD_LINE_SIZE, "POWER SYSTEM");
-            snprintf(rows[1], LCD_LINE_SIZE, "BAT %s",
-                     battery_valid ? "MEASURED" : "WAITING");
-            if (battery_valid)
-            {
-                snprintf(rows[1], LCD_LINE_SIZE, "BAT %4.1fV %3u%%",
-                         snap->main.battery_voltage, pct);
-            }
-            snprintf(rows[2], LCD_LINE_SIZE, "INV       %-6.6s", inv);
-            snprintf(rows[3], LCD_LINE_SIZE, "OUTPUT    %-6.6s",
-                     snap->main.inverter_active ? "ON" : "OFF");
+            snprintf(rows[0], LCD_LINE_SIZE, "ADC / SENSORS");
+            snprintf(rows[1], LCD_LINE_SIZE, "CHANNELS       OK");
+            snprintf(rows[2], LCD_LINE_SIZE, "CALIBRATION %-4.4s", ready ? "OK" : "WAIT");
+            snprintf(rows[3], LCD_LINE_SIZE, "SAMPLES    %-4.4s", ready ? "VALID" : "WAIT");
             draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
         }
         else
         {
-            char row[LCD_LINE_SIZE];
-            if (battery_valid)
-            {
-                snprintf(row, sizeof(row), "BAT %4.1fV %3u%%",
-                         snap->main.battery_voltage, pct);
-            }
-            else
-            {
-                snprintf(row, sizeof(row), "BAT WAIT INV %-.3s", inv);
-            }
-            draw_commit("POWER SYSTEM", row);
+            draw_commit("ADC / SENSORS", ready ? "SAMPLES    OK" : "SAMPLES  WAIT");
         }
         return;
     }
 
-    if (d->stage == LCD_STARTUP_STAGE_NETWORK)
+    if (d->stage == LCD_STARTUP_STAGE_SETTINGS)
     {
-        const bool connected = wifi && wifi->connected;
-        const char *state = connected ? "CONNECTED" : (wifi && wifi->got_ip ? "ONLINE" : "WAITING");
-        const int rssi = wifi ? (int)wifi->rssi : -127;
-        const char *bars = connected ? rssi_bars((int8_t)rssi) : "-";
         if (lcd_geometry_is_20x4())
         {
             char rows[4][LCD_LINE_SIZE];
-            snprintf(rows[0], LCD_LINE_SIZE, "NETWORK");
-            snprintf(rows[1], LCD_LINE_SIZE, "WiFi %-9.9s %s", state, bars);
-            snprintf(rows[2], LCD_LINE_SIZE, "RSSI %4d dBm", rssi);
-            snprintf(rows[3], LCD_LINE_SIZE, "IP %-16.16s", ip);
+            snprintf(rows[0], LCD_LINE_SIZE, "SETTINGS");
+            snprintf(rows[1], LCD_LINE_SIZE, "NVS        LOADED");
+            snprintf(rows[2], LCD_LINE_SIZE, "PROFILE    VALID");
+            snprintf(rows[3], LCD_LINE_SIZE, "SAFETY        READY");
             draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
-        }
-        else if ((elapsed / 700U) % 2U == 0U)
-        {
-            char row[LCD_LINE_SIZE];
-            snprintf(row, sizeof(row), "WiFi %-9.9s %s", state, bars);
-            draw_commit("NETWORK", row);
         }
         else
         {
-            draw_commit("WiFi IP", ip);
+            draw_commit("SETTINGS", "NVS       LOADED");
         }
         return;
     }
@@ -961,7 +915,7 @@ static void draw_startup_status(const lcd_render_state_t *snap)
         return;
     }
 
-    if (d->stage == LCD_STARTUP_STAGE_SELF_CHECK)
+    if (d->stage == LCD_STARTUP_STAGE_POST)
     {
         const char *result = d->post_complete ? (d->post_passed ? "OK" : "FAIL") : "WAIT";
         if (lcd_geometry_is_20x4())
@@ -2094,44 +2048,8 @@ void lcd_task(void *arg)
         case LCD_SCREEN_STARTUP_STATUS:
         {
             draw_startup_status(&snap);
-            const lcd_startup_stage_t stage = snap.startup_status.stage;
-            const uint32_t elapsed = _lcd_get_time_ms() -
-                                     snap.startup_status.stage_started_ms;
-            const bool post_complete = snap.startup_status.post_complete;
-            const bool post_passed  = snap.startup_status.post_passed;
-
-            /* A stage may advance only when its real underlying milestone is
-             * done.  HARDWARE waits for POST to complete (post_complete).
-             * SELF_CHECK requires both POST completion AND a passing result —
-             * if POST failed, the SELF_CHECK screen must never advance to
-             * READY ("SYSTEM READY OK / INVERTER ONLINE") because that text
-             * would be factually false.  All other stages are cosmetic
-             * post-startup info screens and may advance on timer alone. */
-            const bool can_advance =
-                (stage == LCD_STARTUP_STAGE_HARDWARE)  ? post_complete :
-                (stage == LCD_STARTUP_STAGE_SELF_CHECK) ? (post_complete && post_passed) :
-                true;
-
-            const uint32_t duration = stage == LCD_STARTUP_STAGE_READY
-                                          ? LCD_STARTUP_READY_DURATION_MS
-                                          : LCD_STARTUP_STAGE_DURATION_MS;
-            if (can_advance && elapsed >= duration)
-            {
-                if (stage == LCD_STARTUP_STAGE_READY)
-                {
-                    lcd_boot_complete();
-                }
-                else
-                {
-                    lcd_show_startup_status(
-                        (lcd_startup_stage_t)((stage + 1U) % LCD_STARTUP_STAGE_COUNT),
-                        snap.startup_status.post_complete,
-                        snap.startup_status.post_passed,
-                        snap.startup_status.lcd_ok,
-                        snap.startup_status.adc_ok,
-                        snap.startup_status.fan_ok);
-                }
-            }
+            /* app_main owns startup transitions. Timer expiry must never imply
+             * that ADC, settings, POST, or services have completed. */
             break;
         }
 
