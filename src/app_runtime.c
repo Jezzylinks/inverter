@@ -295,6 +295,12 @@ EventGroupHandle_t sys_event_group;
 SemaphoreHandle_t sys_state_mutex;
 TaskHandle_t lcd_task_handle = NULL;
 static atomic_bool s_settings_persistence_pending;
+/* Serialises concurrent calls to save_settings().
+ * button_task and settings_persistence_task can both call save_settings()
+ * at the same time.  Without serialisation the second caller hits the
+ * 2-second lock_storage() timeout → storage_nvs_open() returns
+ * ESP_ERR_TIMEOUT → save_settings() returns false → "Save Failed". */
+static SemaphoreHandle_t s_save_mutex;
 static atomic_bool s_settings_persistence_active;
 
 #define SETTINGS_PERSISTENCE_TASK_STACK_SIZE 4096U
@@ -970,6 +976,7 @@ adc_cali_handle_t handle = NULL;
 esp_err_t init_hardware();
 esp_err_t nvs_init(bool erase_on_fail);
 bool save_settings();
+static bool save_settings_locked(void);
 bool load_settings();
 void lcd_show_bt_edit_screen(const char *label, const char *value);
 void lcd_show_value_edit_screen(void);
@@ -2320,6 +2327,35 @@ bool load_settings()
 }
 
 bool save_settings()
+{
+    /* Serialise concurrent callers.  button_task (TWDT-registered) and
+     * settings_persistence_task can both call save_settings() at the same
+     * time.  Without this gate the second caller hits the 2-second
+     * lock_storage() timeout, storage_nvs_open() returns ESP_ERR_TIMEOUT,
+     * save_settings() returns false, and the UI shows "Save Failed". */
+    if (!s_save_mutex)
+    {
+        s_save_mutex = xSemaphoreCreateMutex();
+        if (!s_save_mutex)
+        {
+            ESP_LOGE("NVS_SAVE", "Could not create save mutex; aborting save");
+            return false;
+        }
+    }
+    /* 4-second timeout: generous for any concurrent NVS write to finish,
+     * but still far inside the 15-second TWDT window. */
+    if (xSemaphoreTake(s_save_mutex, pdMS_TO_TICKS(4000)) != pdTRUE)
+    {
+        ESP_LOGE("NVS_SAVE",
+                 "Timed out waiting for save lock — concurrent save in progress");
+        return false;
+    }
+    const bool result = save_settings_locked();
+    xSemaphoreGive(s_save_mutex);
+    return result;
+}
+
+static bool save_settings_locked(void)
 {
     esp_err_t err;
     if (!storage_nvs_is_ready())
