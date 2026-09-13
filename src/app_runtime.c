@@ -6210,6 +6210,34 @@ static void begin_setting_edit(value_edit_param_t param, float current_value)
 {
     value_edit_context_t *ctx = &value_edit[param];
     ctx->current_value = current_value;
+
+    /* For SELECT and LIST types, selection_index / list_index must match the
+     * current value at the moment the edit opens.  value_edit[] is a static
+     * global — its index fields retain whatever the previous edit session left
+     * there.  Without this initialisation, UP/DOWN starts from the stale index
+     * (often 0) instead of from the current battery type, voltage system, etc.,
+     * making option changes appear to not work or jump to the wrong value. */
+    if (ctx->edit_type == VALUE_EDIT_SELECT)
+    {
+        ctx->selection_index = (int)current_value;
+        /* Clamp within range in case current_value comes from a partially
+         * migrated NVS entry or a default that exceeds the option count. */
+        if (ctx->max_selection > 0 &&
+            ctx->selection_index >= (int)ctx->max_selection)
+        {
+            ctx->selection_index = 0;
+        }
+    }
+    else if (ctx->edit_type == VALUE_EDIT_LIST)
+    {
+        ctx->list_index = (int)current_value;
+        if (ctx->list_size > 0 &&
+            ctx->list_index >= (int)ctx->list_size)
+        {
+            ctx->list_index = 0;
+        }
+    }
+
     sys_state.current_value_type = ctx;
     sys_state.edit_backup_value = current_value;
     sys_state.pending_confirmation = true;
