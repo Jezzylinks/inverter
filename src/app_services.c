@@ -46,7 +46,15 @@
 #define APP_OTA_CHECK_TASK_PRIORITY 5U
 #define APP_WIFI_OPERATION_WATCH_STACK_SIZE 3072U
 #define APP_WIFI_OPERATION_WATCH_PRIORITY 5U
-#define APP_WIFI_TOGGLE_TASK_STACK_SIZE 4096U
+/* The toggle task runs the complete Wi-Fi start AND stop sequence, including:
+ *   ON:  wifi_manager_configure_apsta() (two wifi_config_t on stack ≈ 440B)
+ *        + esp_wifi_start() + wifi_monitor_start() + persist_u8()
+ *   OFF: network_services_stop() (HTTP/httpd_stop, MQTT, mDNS, NTP teardown)
+ *        + wifi_controller_stop() + esp_wifi_stop() + wifi_monitor_stop()
+ * The OFF path is the deeper one; httpd_stop() + esp_mqtt_client_stop() both
+ * have deep lwIP/FreeRTOS call chains.  6144B provides safe headroom without
+ * over-allocating; verified against uxTaskGetStackHighWaterMark telemetry. */
+#define APP_WIFI_TOGGLE_TASK_STACK_SIZE 6144U
 #define APP_WIFI_TOGGLE_TASK_PRIORITY 5U
 #define APP_WIFI_TOGGLE_QUEUE_LENGTH 1U
 #define APP_WIFI_TOGGLE_WATCHDOG_POLL_MS 500U
@@ -351,6 +359,21 @@ static void app_wifi_toggle_task(void *parameter)
         (void)app_services_execute_wifi_toggle(request.enabled,
                                                 request.previous_enabled);
         __atomic_store_n(&s_wifi_toggle_executing, 0U, __ATOMIC_SEQ_CST);
+
+        /* Stack high-water telemetry: log remaining headroom so that any
+         * future call-chain growth that risks overflow is caught in logs
+         * before it becomes a crash.  A value below ~512 words is a warning. */
+        const UBaseType_t stack_words = uxTaskGetStackHighWaterMark(NULL);
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "wifi_toggle stack high-water: %u words remaining (task stack=%u)",
+                 (unsigned)stack_words,
+                 (unsigned)(APP_WIFI_TOGGLE_TASK_STACK_SIZE / sizeof(StackType_t)));
+        if (stack_words < 128U) {
+            ESP_LOGE(APP_SERVICES_TAG,
+                     "wifi_toggle stack critically low (%u words) — "
+                     "increase APP_WIFI_TOGGLE_TASK_STACK_SIZE",
+                     (unsigned)stack_words);
+        }
     }
 }
 
