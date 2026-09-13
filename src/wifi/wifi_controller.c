@@ -217,25 +217,38 @@ esp_err_t wifi_controller_start(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    /* The whole operation -- not just the s_state bookkeeping -- must be
+     * serialized against wifi_controller_stop()/reconnect()/disconnect().
+     * Those functions call straight through to the real esp_wifi_start()/
+     * esp_wifi_stop() driver calls, and ESP-IDF's own Wi-Fi stack panics if
+     * a start and a stop overlap. This function can be entered from the
+     * app_services Wi-Fi-toggle worker task, while wifi_controller_stop()/
+     * disconnect() can also be entered independently from an HTTP request
+     * task (POST /api/v1/wifi/disconnect is reachable by default, not
+     * gated behind runtime provisioning) -- so without holding the lock
+     * across the whole call, two tasks really can race here. */
+    wifi_controller_lock();
+
     /* Wi-Fi On starts the selected radio architecture only. Station
      * association is an explicit Connect action, never a side effect of
      * enabling the radio. */
     wifi_manager_enable_auto_reconnect(false);
-    wifi_controller_lock();
     s_state = WIFI_CONTROLLER_STARTING;
-    wifi_controller_unlock();
 
     const esp_err_t err = wifi_manager_start();
     if (err != ESP_OK && err != ESP_ERR_WIFI_CONN)
     {
         ESP_LOGE(TAG, "Failed to start WiFi manager: %s", esp_err_to_name(err));
+        s_state = WIFI_CONTROLLER_IDLE;
+        wifi_controller_unlock();
         return err;
     }
 
-    wifi_controller_lock();
     s_state = WIFI_CONTROLLER_IDLE;
+    const bool is_ap_mode = wifi_manager_get_mode() == WIFI_MODE_AP;
     wifi_controller_unlock();
-    if (wifi_manager_get_mode() != WIFI_MODE_AP) {
+
+    if (!is_ap_mode) {
         (void)wifi_monitor_start();
     }
     ESP_LOGI(TAG, "WiFi architecture started in %s mode; station connect awaits user action",
@@ -249,6 +262,11 @@ esp_err_t wifi_controller_stop(void)
     {
         return ESP_ERR_INVALID_STATE;
     }
+
+    /* See wifi_controller_start(): held for the whole operation, not just
+     * the state assignment, so this can never overlap a concurrent
+     * wifi_manager_start()/stop() from another task. */
+    wifi_controller_lock();
 
     /* User-requested stop must win over any pending disconnect retry. */
     wifi_manager_enable_auto_reconnect(false);
@@ -279,7 +297,6 @@ esp_err_t wifi_controller_stop(void)
         ESP_LOGW(TAG, "Failed to stop manager: %s", esp_err_to_name(err));
     }
 
-    wifi_controller_lock();
     s_state = WIFI_CONTROLLER_IDLE;
     wifi_controller_unlock();
 
@@ -296,14 +313,16 @@ esp_err_t wifi_controller_reconnect(void)
     if (wifi_manager_get_mode() == WIFI_MODE_AP) {
         return ESP_ERR_NOT_SUPPORTED;
     }
+
+    /* See wifi_controller_start(). */
+    wifi_controller_lock();
     wifi_manager_enable_auto_reconnect(true);
     esp_err_t err = wifi_manager_reconnect();
     if (err == ESP_OK)
     {
-        wifi_controller_lock();
         s_state = WIFI_CONTROLLER_CONNECTING;
-        wifi_controller_unlock();
     }
+    wifi_controller_unlock();
     return err;
 }
 
@@ -315,14 +334,20 @@ esp_err_t wifi_controller_disconnect(void)
     if (wifi_manager_get_mode() == WIFI_MODE_AP) {
         return ESP_ERR_NOT_SUPPORTED;
     }
+
+    /* See wifi_controller_start(). This is the path reachable from
+     * POST /api/v1/wifi/disconnect, which is NOT gated behind the runtime
+     * provisioning flag -- it is the most likely source of an overlapping
+     * start/stop from an HTTP worker task racing the menu-driven toggle. */
+    wifi_controller_lock();
     wifi_manager_enable_auto_reconnect(false);
     const esp_err_t err = wifi_manager_disconnect();
     if (err == ESP_OK || err == ESP_ERR_WIFI_NOT_CONNECT) {
-        wifi_controller_lock();
         s_state = WIFI_CONTROLLER_IDLE;
         wifi_controller_unlock();
         return ESP_OK;
     }
+    wifi_controller_unlock();
     return err;
 }
 
@@ -333,18 +358,20 @@ esp_err_t wifi_controller_start_provisioning(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    /* See wifi_controller_start(). */
+    wifi_controller_lock();
     wifi_manager_enable_auto_reconnect(false);
     (void)wifi_manager_stop();
 #if WIFI_RUNTIME_PROVISIONING_ENABLED
     esp_err_t err = wifi_provision_start();
     if (err == ESP_OK)
     {
-        wifi_controller_lock();
         s_state = WIFI_CONTROLLER_PROVISIONING;
-        wifi_controller_unlock();
     }
+    wifi_controller_unlock();
     return err;
 #else
+    wifi_controller_unlock();
     ESP_LOGW(TAG, "Runtime Wi-Fi provisioning is disabled; use menuconfig");
     return ESP_ERR_NOT_SUPPORTED;
 #endif

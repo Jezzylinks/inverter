@@ -7,6 +7,7 @@
 static const char *TAG = "NVS_MANAGER";
 static SemaphoreHandle_t s_mutex;
 static StaticSemaphore_t s_mutex_storage;
+static portMUX_TYPE s_mutex_init_lock = portMUX_INITIALIZER_UNLOCKED;
 static storage_nvs_state_t s_state = STORAGE_NVS_STATE_UNINITIALIZED;
 static esp_err_t s_last_error = ESP_OK;
 static unsigned s_recovery_count;
@@ -21,22 +22,62 @@ static esp_err_t initialize_flash_partition(void)
     return nvs_flash_init();
 }
 
+static portMUX_TYPE s_mutex_init_lock = portMUX_INITIALIZER_UNLOCKED;
+
+/*
+ * Every NVS open/write/commit/close cycle in this firmware runs under this
+ * single mutex (see storage_nvs_open/close/commit_close below): it is
+ * acquired on open and only released on the matching close, so it is held
+ * across the actual flash write. This lock is shared by every caller in the
+ * firmware, synchronous (button/menu-driven settings saves) and
+ * asynchronous (the Wi-Fi enable/disable worker, cloud reporting,
+ * diagnostics, event/fault logging) alike.
+ *
+ * Root-cause note: this previously waited with portMAX_DELAY. NVS flash
+ * commits are not constant-time (wear-leveling/page compaction can make an
+ * individual commit take far longer than the common case), and while one
+ * task holds this lock during its commit, every other task that touches NVS
+ * blocks unboundedly waiting for it. If that other task is a task_watchdog
+ * subscriber (e.g. the button/menu task performing a settings save while a
+ * Wi-Fi enable/disable commit is in flight, or vice versa) an unbounded wait
+ * here can starve it long enough to trip the task watchdog and reboot the
+ * whole system -- which matches "Save failed" being followed by a reboot,
+ * and Wi-Fi enable occasionally rebooting the system, without either path
+ * containing an explicit esp_restart()/abort() itself.
+ *
+ * Bounding the wait converts that unbounded stall into a fast, graceful
+ * failure: callers already treat any non-ESP_OK return from
+ * storage_nvs_open() as a normal, recoverable error (logged and reported to
+ * the user), never a crash. A few seconds is generous for even a slow NVS
+ * commit while staying safely below the watchdog timeout.
+ */
+#define NVS_MANAGER_LOCK_TIMEOUT_MS 3000U
+
 static esp_err_t lock_storage(void)
 {
     if (!s_mutex) {
-        s_mutex = xSemaphoreCreateMutexStatic(&s_mutex_storage);
+        /* Guard lazy creation of the static mutex itself: without this,
+         * two tasks racing to initialize storage for the first time could
+         * both call xSemaphoreCreateMutexStatic() on the same backing
+         * storage concurrently. In the current boot sequence this is
+         * initialized once, single-threaded, in app_main() before any
+         * other task exists, so it is not believed to be reachable today --
+         * but it is cheap to close off permanently rather than leave it as
+         * a latent trap for future callers. */
+        taskENTER_CRITICAL(&s_mutex_init_lock);
+        if (!s_mutex) {
+            s_mutex = xSemaphoreCreateMutexStatic(&s_mutex_storage);
+        }
+        taskEXIT_CRITICAL(&s_mutex_init_lock);
         if (!s_mutex) {
             return ESP_ERR_NO_MEM;
         }
     }
-    /* Use a bounded timeout rather than portMAX_DELAY.  If the TWDT-registered
-     * button_task calls save_settings() while the deferred settings persistence
-     * task holds s_mutex, portMAX_DELAY would block button_task indefinitely,
-     * starving its watchdog feed and causing a TWDT reset.  A 2-second timeout
-     * lets the caller propagate a "storage busy" error and continue, while
-     * still allowing any normal NVS operation to complete comfortably. */
-    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
-        ESP_LOGE(TAG, "NVS mutex timeout — storage busy or deadlock suspected");
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(NVS_MANAGER_LOCK_TIMEOUT_MS)) != pdTRUE) {
+        ESP_LOGE(TAG,
+                 "Timed out after %ums waiting for the NVS lock; another "
+                 "operation is holding it open too long",
+                 NVS_MANAGER_LOCK_TIMEOUT_MS);
         return ESP_ERR_TIMEOUT;
     }
     return ESP_OK;

@@ -178,17 +178,16 @@ void app_main(void)
         return;
     }
     LCD_power(true);
-    /* The LCD is now physically powered and visible to the user.  Reset the
-     * startup presentation clock here so that LCD_STARTUP_MIN_VISIBLE_DURATION_MS
-     * is measured from this moment, not from the earlier lcd_writer_init() call
-     * which happens before the 2-second hardware power-up delay. */
-    lcd_startup_mark_visible();
     const esp_err_t lcd_init_result = lcd_controller_init();
     lcd_set_brightness(200);
-    if (lcd_init_result == ESP_OK)
-    {
-        lcd_startup_timer_start();
-    }
+    /* Start the user-visible "minimum startup duration" clock only now that
+     * the panel is actually powered and initialized, rather than back at
+     * lcd_writer_init(). Anchoring it there previously burned several
+     * seconds of the visible-duration budget on invisible boot work (NVS,
+     * security, hardware init, and the earlier fixed startup delay above),
+     * so the boot screen could appear to flash by even though a "minimum
+     * visible" mechanism already existed. */
+    lcd_startup_timer_begin();
 
     /* Buzzer owns its LEDC timer/channel. A buzzer failure is deliberately
      * non-fatal: physical button events must remain independent of sound. */

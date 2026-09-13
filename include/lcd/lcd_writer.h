@@ -32,8 +32,19 @@ extern SemaphoreHandle_t sys_state_mutex;
 /* Call once at startup before any task runs */
 esp_err_t lcd_writer_init(void);
 
-/* Start the startup minimum-visible timer after LCD hardware is ready. */
-void lcd_startup_timer_start(void);
+/* True while the boot, loading, or inverter startup sequence owns the LCD. */
+bool lcd_is_startup_active(void);
+
+/* Anchors the user-visible minimum-startup-duration clock. Call this once,
+ * right after the physical LCD is powered and initialized (LCD_power(true)
+ * + lcd_controller_init()) and just before lcd_task starts rendering --
+ * not at lcd_writer_init(), which runs long before the panel can display
+ * anything. */
+void lcd_startup_timer_begin(void);
+bool lcd_startup_minimum_elapsed(void);
+
+/* Release boot-only event filtering after the power-on self-test completes. */
+void lcd_startup_release(void);
 
 /* ── Boot ────────────────────────────────────────────────────────────────── */
 void lcd_show_boot_brand(void);
@@ -42,18 +53,6 @@ void lcd_boot_complete(void); /* switches to LCD_SCREEN_MAIN    */
 void lcd_show_loading(const char *title,
                       uint32_t duration_ms,
                       lcd_screen_id_t next_screen);
-
-/* True while the boot, loading, or inverter startup sequence owns the LCD. */
-bool lcd_is_startup_active(void);
-bool lcd_startup_minimum_elapsed(void);
-/* Reset the startup presentation clock to the current time.  Call this
- * immediately after LCD_power(true) so that LCD_STARTUP_MIN_VISIBLE_DURATION_MS
- * is measured from the moment the display is physically visible to the user,
- * not from the earlier lcd_writer_init() call at system boot. */
-void lcd_startup_mark_visible(void);
-
-/* Release boot-only event filtering after the power-on self-test completes. */
-void lcd_startup_release(void);
 
 /* ── OTA status ───────────────────────────────────────────────────────────── */
 void lcd_show_ota_status(lcd_ota_view_state_t state, uint8_t progress_pct,

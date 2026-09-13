@@ -43,7 +43,14 @@ static fan_tach_ctx_t s_ctx =
  * Private Functions
  *---------------------------------------------------------*/
 
-static void fan_tach_buffer_push(uint64_t value)
+/*
+ * IRAM_ATTR: this helper is called from fan_tach_gpio_isr(), which is
+ * installed with ESP_INTR_FLAG_IRAM. Every function reachable from that ISR
+ * must stay IRAM-resident, or a tachometer pulse that fires while the flash
+ * cache is disabled (e.g. during an NVS commit) will panic with
+ * "Cache disabled but cached memory region accessed".
+ */
+static void IRAM_ATTR fan_tach_buffer_push(uint64_t value)
 {
     portENTER_CRITICAL_ISR(&s_ctx.lock);
 

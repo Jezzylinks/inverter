@@ -46,14 +46,15 @@
 #define APP_OTA_CHECK_TASK_PRIORITY 5U
 #define APP_WIFI_OPERATION_WATCH_STACK_SIZE 3072U
 #define APP_WIFI_OPERATION_WATCH_PRIORITY 5U
-/* The toggle task runs the complete Wi-Fi start AND stop sequence, including:
- *   ON:  wifi_manager_configure_apsta() (two wifi_config_t on stack ≈ 440B)
- *        + esp_wifi_start() + wifi_monitor_start() + persist_u8()
- *   OFF: network_services_stop() (HTTP/httpd_stop, MQTT, mDNS, NTP teardown)
- *        + wifi_controller_stop() + esp_wifi_stop() + wifi_monitor_stop()
- * The OFF path is the deeper one; httpd_stop() + esp_mqtt_client_stop() both
- * have deep lwIP/FreeRTOS call chains.  6144B provides safe headroom without
- * over-allocating; verified against uxTaskGetStackHighWaterMark telemetry. */
+/* This task's call chain runs the full Wi-Fi driver start/stop path
+ * (wifi_controller_start/stop -> wifi_manager -> esp_wifi_*) and, on
+ * disable, network_services_stop() (HTTP/WebSocket/mDNS/NTP/MQTT teardown),
+ * plus an NVS commit to persist the enabled/disabled intent. 4096 bytes was
+ * not observed to overflow in this review, but it is a tight margin for
+ * that combined call depth and could not be confirmed against hardware
+ * stack high-water-mark data (uxTaskGetStackHighWaterMark) in this
+ * environment. Sized up defensively; verify on-device and tune down if
+ * headroom data supports it. */
 #define APP_WIFI_TOGGLE_TASK_STACK_SIZE 6144U
 #define APP_WIFI_TOGGLE_TASK_PRIORITY 5U
 #define APP_WIFI_TOGGLE_QUEUE_LENGTH 1U

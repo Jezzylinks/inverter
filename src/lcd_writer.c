@@ -47,25 +47,24 @@ static void set_line(char *dst, const char *src)
              src ? src : "");
 }
 
-/*----------------------------------------------------------------------------*/
-/* Safe helper: start the startup minimum-visible timer.
- * Called only after the LCD hardware is actually ready,
- * so the 5-second minimum covers the time the user can see. */
-void lcd_startup_timer_start(void)
-{
-    s_startup_started_ms = _lcd_get_time_ms();
-}
-
-esp_err_t lcd_writer_init(void)
+/*----------------------------------------------------------------------------*/esp_err_t lcd_writer_init(void)
 {
     if (sys_state_mutex == NULL) {
         ESP_LOGE("LCD_WRITER", "System-state mutex is unavailable");
         return ESP_ERR_INVALID_STATE;
     }
     s_startup_released = false;
-    /* s_startup_started_ms is initialized later, after LCD hardware
-     * is ready, so the minimum-visible duration actually covers the
-     * time the user can see the startup screen. */
+    /* The user-visible minimum-duration timer is intentionally NOT started
+     * here. lcd_writer_init() runs at the very start of app_main(), before
+     * NVS/security/hardware init, before the LCD is physically powered
+     * (lcd_power_init()/LCD_power(true)), and before lcd_task exists to draw
+     * anything. Anchoring the "minimum visible" clock to this point meant
+     * several seconds of real, invisible boot work were silently consumed
+     * out of the visible-duration budget before the user could see anything
+     * on the panel, so by the time content actually appeared the gate had
+     * often already elapsed -- the boot screen could look like it flashed
+     * by. Call lcd_startup_timer_begin() once the LCD is actually powered
+     * and about to start rendering instead; see main.c. */
     LCD_LOCK();
     memset(&sys_lcd, 0, sizeof(sys_lcd));
     sys_lcd.screen = LCD_SCREEN_BOOT_BRAND;
@@ -700,21 +699,15 @@ bool lcd_is_startup_active(void)
     return active;
 }
 
+void lcd_startup_timer_begin(void)
+{
+    s_startup_started_ms = _lcd_get_time_ms();
+}
+
 bool lcd_startup_minimum_elapsed(void)
 {
     return (_lcd_get_time_ms() - s_startup_started_ms) >=
            LCD_STARTUP_MIN_VISIBLE_DURATION_MS;
-}
-
-void lcd_startup_mark_visible(void)
-{
-    /* Reset the presentation clock to now so LCD_STARTUP_MIN_VISIBLE_DURATION_MS
-     * is counted from the moment the display is physically lit and visible,
-     * not from the earlier lcd_writer_init() call during boot setup. */
-    s_startup_started_ms = _lcd_get_time_ms();
-    ESP_LOGI("LCD_WRITER", "Startup presentation clock reset; "
-             "minimum %ums visible from now",
-             LCD_STARTUP_MIN_VISIBLE_DURATION_MS);
 }
 
 void lcd_startup_release(void)

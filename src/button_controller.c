@@ -63,7 +63,14 @@ static const button_mapping_t g_button_mappings[] = {
     {GPIO_BUTTON_BACK, BTN_BACK, "Back"},
 };
 
-static button_handle_t find_controller(gpio_num_t gpio_pin)
+/*
+ * IRAM_ATTR: this helper is called from button_gpio_isr_handler(), which is
+ * installed with ESP_INTR_FLAG_IRAM. Every function reachable from that ISR
+ * must stay IRAM-resident, or a GPIO edge that fires while the flash cache
+ * is disabled (e.g. during an NVS commit) will panic with
+ * "Cache disabled but cached memory region accessed".
+ */
+static button_handle_t IRAM_ATTR find_controller(gpio_num_t gpio_pin)
 {
     if (gpio_pin < GPIO_NUM_0 || gpio_pin >= GPIO_NUM_MAX) {
         return NULL;
