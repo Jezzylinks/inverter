@@ -492,6 +492,41 @@ class FirmwareContracts(unittest.TestCase):
             "void enter_deep_sleep", restore_start)]
         self.assertIn("return ESP_OK;", restore_body)
 
+    def test_startup_to_normal_transition_occurs_only_after_startup_release(self):
+        root = Path(__file__).parents[1]
+        main = root.joinpath("src", "main.c").read_text()
+        release = main.index("lcd_startup_release();")
+        boot_complete = main.index("lcd_boot_complete();")
+        self.assertLess(release, boot_complete)
+        self.assertIn("if (startup_healthy)", main[release:boot_complete])
+
+    def test_normal_lcd_writer_screen_changes_are_guarded_until_release(self):
+        writer = Path(__file__).parents[1].joinpath("src", "lcd_writer.c").read_text()
+        for screen in (
+            "LCD_SCREEN_MAIN", "LCD_SCREEN_MENU", "LCD_SCREEN_VALUE_EDIT",
+            "LCD_SCREEN_MONITORING_DETAIL", "LCD_SCREEN_DIAGNOSTIC",
+            "LCD_SCREEN_SETTINGS_VIEW", "LCD_SCREEN_WIFI_SCAN",
+            "LCD_SCREEN_WIFI_NETWORK_DETAILS", "LCD_SCREEN_WIFI_PASSWORD",
+            "LCD_SCREEN_WIFI_STATUS", "LCD_SCREEN_WIFI_CONNECTING",
+            "LCD_SCREEN_WIFI_CLIENTS", "LCD_SCREEN_CONFIRMATION",
+            "LCD_SCREEN_STANDBY", "LCD_SCREEN_FACTORY_RESET", "LCD_SCREEN_OTA",
+        ):
+            assignment = f"sys_lcd.screen = {screen};"
+            if assignment in writer:
+                pos = writer.index(assignment)
+                self.assertIn("if (s_startup_released)", writer[max(0, pos - 80):pos])
+
+    def test_button_ui_handlers_respect_startup_ownership(self):
+        source = Path(__file__).parents[1].joinpath("src", "app_input.c").read_text()
+        for handler in (
+            "handle_power_button_event", "handle_enter_menu_button_event",
+            "handle_up_button_event", "handle_down_button_event",
+            "handle_back_button_event",
+        ):
+            start = source.index(f"void {handler}")
+            next_handler = source.find("\nvoid ", start + 6)
+            body = source[start:] if next_handler < 0 else source[start:next_handler]
+            self.assertIn("lcd_is_startup_active()", body)
 
 if __name__ == "__main__":
     unittest.main()

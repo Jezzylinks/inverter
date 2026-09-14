@@ -92,7 +92,8 @@ void lcd_show_boot_init(uint8_t pct)
 void lcd_boot_complete(void)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_MAIN;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_MAIN;
     LCD_UNLOCK();
 }
 
@@ -121,7 +122,8 @@ void lcd_update_main_data(float bat_v, float out_v, float out_a,
 void lcd_show_main(void)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_MAIN;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_MAIN;
     LCD_UNLOCK();
 }
 
@@ -163,7 +165,8 @@ void lcd_update_main_power(float pv_kw, float grid_kw, float load_kw,
 void lcd_show_menu_rows(const char *const rows[], uint8_t row_count)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_MENU;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_MENU;
     if (row_count > LCD_ROWS)
         row_count = LCD_ROWS;
     sys_lcd.menu.row_count = row_count;
@@ -184,7 +187,8 @@ void lcd_show_value_edit(const char *label, const char *value_str,
                          bool pending_confirm)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_VALUE_EDIT;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_VALUE_EDIT;
     set_line(sys_lcd.value_edit.label, label);
     set_line(sys_lcd.value_edit.value_str, value_str);
     sys_lcd.value_edit.pending_confirm = pending_confirm;
@@ -195,7 +199,8 @@ void lcd_show_value_edit(const char *label, const char *value_str,
 void lcd_show_monitor_detail(const char *label, const char *value_str)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_MONITORING_DETAIL;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_MONITORING_DETAIL;
     set_line(sys_lcd.monitor_detail.label, label);
     set_line(sys_lcd.monitor_detail.value_str, value_str);
     LCD_UNLOCK();
@@ -204,7 +209,8 @@ void lcd_show_monitor_detail(const char *label, const char *value_str)
 void lcd_show_diagnostic_detail(const char *label, const char *value_str)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_DIAGNOSTIC;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_DIAGNOSTIC;
     set_line(sys_lcd.diagnostic.label, label);
     set_line(sys_lcd.diagnostic.value_str, value_str);
     LCD_UNLOCK();
@@ -213,7 +219,8 @@ void lcd_show_diagnostic_detail(const char *label, const char *value_str)
 void lcd_show_settings_view_detail(const char *label, const char *value_str)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_SETTINGS_VIEW;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_SETTINGS_VIEW;
     set_line(sys_lcd.settings_view.label, label);
     set_line(sys_lcd.settings_view.value_str, value_str);
     LCD_UNLOCK();
@@ -309,7 +316,8 @@ void lcd_show_inverter_start_error(inverter_start_error_code_t code,
 void lcd_clear_fault(void)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_MAIN;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_MAIN;
     memset(&sys_lcd.fault, 0, sizeof(sys_lcd.fault));
     LCD_UNLOCK();
 }
@@ -318,7 +326,8 @@ void lcd_clear_fault(void)
 void lcd_show_factory_confirm(void)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
     sys_lcd.factory_reset.phase = FACTORY_PHASE_CONFIRM;
     sys_lcd.factory_reset.progress_pct = 0;
     LCD_UNLOCK();
@@ -327,7 +336,8 @@ void lcd_show_factory_confirm(void)
 void lcd_show_factory_progress()
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
     sys_lcd.factory_reset.phase = FACTORY_PHASE_PROGRESS;
     LCD_UNLOCK();
 }
@@ -335,7 +345,8 @@ void lcd_show_factory_progress()
 void lcd_show_factory_done(void)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_FACTORY_RESET;
     sys_lcd.factory_reset.phase = FACTORY_PHASE_DONE;
     LCD_UNLOCK();
 }
@@ -344,7 +355,8 @@ void lcd_show_factory_done(void)
 void lcd_show_wifi_scan_start(void)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_WIFI_SCAN;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_WIFI_SCAN;
     memset(&sys_lcd.wifi_scan, 0, sizeof(sys_lcd.wifi_scan));
     sys_lcd.wifi_scan.stage = LCD_WIFI_SCAN_SCANNING;
     sys_lcd.wifi_scan.entered_ms = _lcd_get_time_ms();
@@ -355,7 +367,8 @@ void lcd_show_wifi_scan_start(void)
 void lcd_show_wifi_scan_failed(void)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_WIFI_SCAN;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_WIFI_SCAN;
     memset(&sys_lcd.wifi_scan, 0, sizeof(sys_lcd.wifi_scan));
     sys_lcd.wifi_scan.stage = LCD_WIFI_SCAN_FAILED;
     sys_lcd.wifi_scan.entered_ms = _lcd_get_time_ms();
@@ -417,7 +430,8 @@ void lcd_show_wifi_scan(uint8_t count,
                         const uint8_t authmode[], uint8_t selected, uint8_t top)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_WIFI_SCAN;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_WIFI_SCAN;
     lcd_wifi_scan_data_t *w = &sys_lcd.wifi_scan;
     uint8_t n = count < LCD_WIFI_MAX_AP ? count : LCD_WIFI_MAX_AP;
     w->count = n;
@@ -454,7 +468,8 @@ void lcd_show_wifi_network_details(const char *ssid, int8_t rssi,
                                    uint8_t channel, uint8_t authmode)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_WIFI_NETWORK_DETAILS;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_WIFI_NETWORK_DETAILS;
     memset(&sys_lcd.wifi_network_detail, 0, sizeof(sys_lcd.wifi_network_detail));
     snprintf(sys_lcd.wifi_network_detail.ssid,
              sizeof(sys_lcd.wifi_network_detail.ssid), "%s", ssid ? ssid : "");
@@ -481,7 +496,8 @@ void lcd_show_wifi_password(const char *ssid, int8_t rssi,
                             uint8_t authmode)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_WIFI_PASSWORD;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_WIFI_PASSWORD;
     memset(&sys_lcd.wifi_password, 0, sizeof(sys_lcd.wifi_password));
     strncpy(sys_lcd.wifi_password.ssid, ssid ? ssid : "",
             LCD_WIFI_SSID_MAX_LEN);
@@ -514,7 +530,8 @@ void lcd_show_wifi_status(const char *state, const char *ssid, const char *ip,
                           bool got_ip, bool internet_available)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_WIFI_STATUS;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_WIFI_STATUS;
     lcd_wifi_status_data_t *w = &sys_lcd.wifi_status;
     memset(w, 0, sizeof(*w));
     snprintf(w->state, sizeof(w->state), "%s", state ? state : "Unknown");
@@ -541,7 +558,8 @@ void lcd_update_wifi_status_page(uint8_t page)
 void lcd_show_wifi_connecting(const char *ssid, int8_t rssi)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_WIFI_CONNECTING;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_WIFI_CONNECTING;
     strncpy(sys_lcd.wifi_connect.ssid, ssid ? ssid : "",
             LCD_WIFI_SSID_MAX_LEN);
     sys_lcd.wifi_connect.ssid[LCD_WIFI_SSID_MAX_LEN] = '\0';
@@ -559,7 +577,8 @@ void lcd_show_wifi_result(bool connected, bool failed, bool timed_out,
                           const char *ssid, int8_t rssi, const char *detail)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_WIFI_CONNECTING;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_WIFI_CONNECTING;
     strncpy(sys_lcd.wifi_connect.ssid, ssid ? ssid : "",
             LCD_WIFI_SSID_MAX_LEN);
     sys_lcd.wifi_connect.ssid[LCD_WIFI_SSID_MAX_LEN] = '\0';
@@ -579,7 +598,8 @@ void lcd_show_wifi_clients(uint8_t count,
                            uint8_t selected)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_WIFI_CLIENTS;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_WIFI_CLIENTS;
     lcd_wifi_clients_data_t *clients = &sys_lcd.wifi_clients;
     memset(clients, 0, sizeof(*clients));
     clients->count = count > LCD_WIFI_MAX_CLIENTS ? LCD_WIFI_MAX_CLIENTS : count;
@@ -607,7 +627,8 @@ void lcd_update_wifi_client_selection(uint8_t selected)
 void lcd_show_confirm(const char *line0, const char *line1)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_CONFIRMATION;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_CONFIRMATION;
     set_line(sys_lcd.confirm.row0, line0);
     set_line(sys_lcd.confirm.row1, line1);
     LCD_UNLOCK();
@@ -640,7 +661,8 @@ void lcd_show_standby(float bat_v, uint8_t bat_pct, bool ac_connected)
     LCD_LOCK();
     if (sys_lcd.screen != LCD_SCREEN_STANDBY)
         sys_lcd.standby.page = LCD_STANDBY_PAGE_STATUS;
-    sys_lcd.screen = LCD_SCREEN_STANDBY;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_STANDBY;
     sys_lcd.standby.battery_voltage = bat_v;
     sys_lcd.standby.low_voltage_threshold =
         sys_state.battery_profile.low_voltage_warning_v;
@@ -721,7 +743,8 @@ void lcd_show_ota_status(lcd_ota_view_state_t state, uint8_t progress_pct,
                          const char *detail, bool retry_available)
 {
     LCD_LOCK();
-    sys_lcd.screen = LCD_SCREEN_OTA;
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_OTA;
     lcd_ota_data_t *ota = &sys_lcd.ota;
     const uint8_t clamped = progress_pct > 100U ? 100U : progress_pct;
     if (ota->state == state && ota->progress_pct == clamped &&

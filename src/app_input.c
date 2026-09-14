@@ -410,6 +410,14 @@ void handle_power_button_event(button_event_info_t *event_info,
         return;
     }
 
+    /* Power actions still emit their normal safety event above, but their
+     * display/navigation side effects are deferred until startup releases the
+     * LCD. */
+    if (lcd_is_startup_active())
+    {
+        return;
+    }
+
     if (event_info->event == BUTTON_EVENT_CLICK && ota_confirmation_is_pending()) {
         (void)app_services_cancel_update();
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
@@ -719,6 +727,13 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
     }
 
     if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_PROGRESS)
+    {
+        return;
+    }
+
+    /* Keep button delivery intact, but do not let normal navigation take
+     * ownership of the LCD before app_main performs STARTUP -> NORMAL. */
+    if (lcd_is_startup_active())
     {
         return;
     }
@@ -1407,6 +1422,10 @@ void handle_up_button_event(button_event_info_t *event_info,
                             void *user_data)
 {
     log_button_callback("Up", event_info, sys_state.system_ready);
+    if (lcd_is_startup_active())
+    {
+        return;
+    }
 
     if (event_info->event == BUTTON_EVENT_PRESS)
     {
@@ -1661,6 +1680,10 @@ void handle_down_button_event(button_event_info_t *event_info,
                               void *user_data)
 {
     log_button_callback("Down", event_info, sys_state.system_ready);
+    if (lcd_is_startup_active())
+    {
+        return;
+    }
 
     if (event_info->event == BUTTON_EVENT_PRESS)
     {
@@ -1934,6 +1957,10 @@ void handle_back_button_event(button_event_info_t *event_info,
                               void *user_data)
 {
     log_button_callback("Back", event_info, sys_state.system_ready);
+    if (lcd_is_startup_active())
+    {
+        return;
+    }
 
     if (event_info->event == BUTTON_EVENT_PRESS)
     {

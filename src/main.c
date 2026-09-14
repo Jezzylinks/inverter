@@ -386,7 +386,6 @@ void app_main(void)
         }
         startup_show_stage(LCD_STARTUP_STAGE_READY, true, true,
                            true, true, startup_post.fan_ok);
-        lcd_boot_complete();
     }
     else
     {
@@ -414,8 +413,13 @@ void app_main(void)
     }
 
     /* Release startup filtering only after POST has reported and the visible
-     * startup minimum has elapsed. */
+     * startup minimum has elapsed. This is the single authoritative
+     * STARTUP -> NORMAL transition. */
     lcd_startup_release();
+    if (startup_healthy)
+    {
+        lcd_boot_complete();
+    }
     if (ota_service_rollback_notification_pending())
     {
         lcd_flash_info_to("Firmware Update", "Previous restored", 3500U,
