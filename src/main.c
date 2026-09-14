@@ -160,9 +160,17 @@ void app_main(void)
     }
     if (security_init() != ESP_OK)
     {
-        ESP_LOGE(APP_TAG, "FATAL: security initialization failed; keeping controls disabled");
-        sys_state.system_ready = false;
-        return;
+        /* Security init failure means PIN-based access control cannot be
+         * enforced, but it must NOT prevent the inverter from starting.
+         * The most common cause is a first-flash NVS state where
+         * persist_pin() cannot write the default PIN (e.g. NVS not yet
+         * formatted for the namespace, or a type-mismatch from an older
+         * firmware).  Log it clearly and continue; the inverter's core
+         * power-conversion function is independent of panel PIN security. */
+        ESP_LOGE(APP_TAG, "Security initialization failed — panel PIN "
+                          "protection unavailable; inverter will continue "
+                          "without access control");
+        sys_state.security.enabled = false;
     }
     fault_log_init();
     nvs_print_stats();

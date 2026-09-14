@@ -181,7 +181,15 @@ esp_err_t security_init(void)
     size_t hash_len = sizeof(stored_hash);
     size_t salt_len = sizeof(stored_salt);
     err = nvs_get_blob(handle, NVS_KEY_HASH, stored_hash, &hash_len);
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
+    if (err == ESP_ERR_NVS_NOT_FOUND || err == ESP_ERR_NVS_TYPE_MISMATCH) {
+        /* Key missing or stored as wrong type (e.g. leftover from older
+         * firmware).  Erase and provision the default PIN. */
+        if (err == ESP_ERR_NVS_TYPE_MISMATCH) {
+            nvs_erase_key(handle, NVS_KEY_HASH);
+            nvs_erase_key(handle, NVS_KEY_SALT);
+            nvs_commit(handle);
+            ESP_LOGW(TAG, "PIN key type mismatch erased; reprovisioning default PIN");
+        }
         storage_nvs_close(handle);
         const uint8_t default_pin[SECURITY_PIN_LEN] = SECURITY_DEFAULT_PIN;
         err = persist_pin(default_pin, true);
