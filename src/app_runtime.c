@@ -1465,14 +1465,16 @@ esp_err_t lcd_controller_init(void)
 esp_err_t init_hardware(void)
 {
     esp_err_t init_err = ESP_OK;
+    ESP_LOGI("STARTUP", "init_hardware(): BEGIN");
     // ==========================================================
     // Initialize LED Driver
     // ==========================================================
 #if CONFIG_USE_LED_PWM
     led_init();
-    quiet_hours_sntp_init();
-    ESP_LOGI("QUIET_HOURS", "QUIET HOURS SUCCEEDED");
+    ESP_LOGI("STARTUP", "LED initialized");
+    ESP_LOGI("STARTUP", "fan initialization begins");
     const esp_err_t fan_err = post_fan_init();
+    ESP_LOGI("STARTUP", "fan initialization complete: %s", esp_err_to_name(fan_err));
     if (fan_err != ESP_OK)
     {
         ESP_LOGE(APP_TAG, "Fan initialization failed: %s", esp_err_to_name(fan_err));
@@ -1481,15 +1483,17 @@ esp_err_t init_hardware(void)
 #endif
 
     // ==========================================================
-    // Initialize Buzzer Driver
+    // Initialize Battery Estimator and restore persistent state
     // ==========================================================
     battery_chemistry_t bat_chemistry = sys_state.battery_profile.chemistry;
     voltage_system_t nominal_voltage = sys_state.battery_profile.nominal_voltage;
     float capacity_ah = sys_state.battery_profile.capacity_ah;
 
-    // Battery Management Initialization
+    ESP_LOGI("STARTUP", "battery estimator initialization begins");
     battery_estimator_init(&bat_estimate, bat_chemistry, nominal_voltage, capacity_ah);
+    ESP_LOGI("STARTUP", "battery estimator initialization complete");
 
+    ESP_LOGI("STARTUP", "battery storage load begins");
     if (battery_storage_load(&battery.storage))
     {
         /* Restore into bat_estimate -- the estimator actually driven by
@@ -1510,8 +1514,11 @@ esp_err_t init_hardware(void)
             battery.storage.measured_capacity_ah,
             battery.storage.equivalent_full_cycles);
 
-        bat_estimate.health.rated_capacity_ah =
-            battery.storage.rated_capacity_ah;
+        /* The persisted profile contains the user-configured rated capacity.
+         * Keep every estimator capacity field aligned after reboot. */
+        bat_estimate.rated_capacity_ah = battery.storage.rated_capacity_ah;
+        bat_estimate.counter.rated_capacity_ah = battery.storage.rated_capacity_ah;
+        bat_estimate.health.rated_capacity_ah = battery.storage.rated_capacity_ah;
 
         bat_chemistry =
             (battery_chemistry_t)battery.storage.chemistry;
@@ -1524,8 +1531,15 @@ esp_err_t init_hardware(void)
         battery.soc = battery.storage.soc;
         battery.soh = battery.storage.soh;
     }
+    ESP_LOGI("STARTUP", "battery storage load complete");
 
+    // ==========================================================
+    // Initialize Buzzer Driver
+    // ==========================================================
+    ESP_LOGI("STARTUP", "buzzer initialization begins");
     const esp_err_t buzzer_err = buzzer_init();
+    ESP_LOGI("STARTUP", "buzzer initialization complete: %s",
+             esp_err_to_name(buzzer_err));
     if (buzzer_err != ESP_OK)
     {
         ESP_LOGE(APP_TAG, "Buzzer unavailable; continuing without audio: %s",
@@ -1552,6 +1566,7 @@ esp_err_t init_hardware(void)
     // ==========================================================
     // Create Display Timeout Task
     // ==========================================================
+    ESP_LOGI("STARTUP", "display timeout task creation");
     if (xTaskCreate(display_timeout_task, "Display Timeout", 2048,
                     NULL, 5, NULL) != pdPASS)
     {
@@ -1562,6 +1577,7 @@ esp_err_t init_hardware(void)
         }
     }
 #endif
+    ESP_LOGI("STARTUP", "init_hardware(): COMPLETE");
     return init_err;
 }
 

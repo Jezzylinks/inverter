@@ -13,6 +13,7 @@
 #include "server/mqtt/mqtt_client_manager.h"
 #include "server/websocket/websocket_server.h"
 #include "server/web/web_dashboard_server.h"
+#include "utility/quiet_hours.h"
 #include "wifi/wifi_config.h"
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_controller.h"
@@ -322,6 +323,9 @@ esp_err_t network_services_start(void)
                  "NTP startup failed; local services continue: %s",
                  esp_err_to_name(ntp_err));
     }
+    /* SNTP must only be configured after Wi-Fi has reported a ready network
+     * interface.  init_hardware() deliberately has no network dependency. */
+    quiet_hours_sntp_init();
 
     services_lock();
     s_running = true;

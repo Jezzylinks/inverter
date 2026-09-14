@@ -180,7 +180,10 @@ void app_main(void)
     }
 
     /* Hardware-dependent battery/LCD peripherals use the validated profile. */
+    ESP_LOGI("STARTUP", "BEFORE init_hardware()");
     const esp_err_t hardware_err = init_hardware();
+    ESP_LOGI("STARTUP", "AFTER init_hardware(): %s",
+             esp_err_to_name(hardware_err));
     if (hardware_err != ESP_OK)
     {
         ESP_LOGW(APP_TAG, "Hardware initialization completed with warnings: %s",
