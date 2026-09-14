@@ -289,6 +289,11 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
         /* Service shutdown can include MQTT, mDNS, HTTP, and WebSocket
          * teardown. Keep it off the button and panel-input task. */
         (void)network_services_stop();
+    } else {
+        /* Clear the teardown flag so network_services_start() (called from
+         * network_services_sync_task when Wi-Fi connects and gets an IP)
+         * is allowed to run again after a previous disable cycle set it. */
+        (void)network_services_allow_start();
     }
 
     esp_err_t controller_err = enabled ? wifi_controller_start()

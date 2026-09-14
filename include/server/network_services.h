@@ -27,6 +27,10 @@ esp_err_t network_services_init(void);
 esp_err_t network_services_deinit(void);
 esp_err_t network_services_start(void);
 esp_err_t network_services_stop(void);
+/* Clear the teardown-pending flag so network_services_start() is allowed
+ * after a previous disable cycle.  Call on the Wi-Fi enable path before
+ * wifi_controller_start(). */
+void network_services_allow_start(void);
 bool network_services_is_running(void);
 void network_services_get_status(network_services_status_t *status);
 

@@ -35,6 +35,13 @@ static bool s_websocket_running;
 static bool s_dashboard_running;
 static bool s_station_ready;
 static bool s_sync_scheduled;
+/* Set atomically by network_services_begin_teardown() before any Wi-Fi
+ * disable sequence.  Prevents network_services_sync_task from calling
+ * network_services_start() after teardown has been initiated, which would
+ * race esp_wifi_stop() destroying the lwIP TCP/IP mailbox and cause:
+ *   assert failed: tcpip_callback ... (Invalid mbox)
+ * Cleared only by network_services_init() on re-initialisation. */
+static volatile bool s_teardown_pending;
 
 static void services_lock(void)
 {
@@ -66,6 +73,18 @@ static void mqtt_status_callback(mqtt_status_t status)
 static void network_services_sync_task(void *arg)
 {
     (void)arg;
+
+    /* If a Wi-Fi disable sequence has set s_teardown_pending, the TCP/IP
+     * stack may already be partially torn down.  Starting network services
+     * from here would call tcpip_callback() on a destroyed mailbox and
+     * assert.  Skip the sync and exit; the teardown path owns cleanup. */
+    if (s_teardown_pending) {
+        services_lock();
+        s_sync_scheduled = false;
+        services_unlock();
+        vTaskDelete(NULL);
+        return;
+    }
 
     services_lock();
     const bool ready = s_station_ready;
@@ -198,6 +217,7 @@ esp_err_t network_services_init(void)
     s_dashboard_running = false;
     s_station_ready = false;
     s_sync_scheduled = false;
+    s_teardown_pending = false;
     const esp_err_t callback_err = wifi_events_register_status_callback(network_wifi_status_callback);
     if (callback_err != ESP_OK) {
         vSemaphoreDelete(s_mutex);
@@ -228,6 +248,15 @@ esp_err_t network_services_deinit(void)
 esp_err_t network_services_start(void)
 {
     if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    /* Refuse to start if a Wi-Fi disable sequence has set s_teardown_pending.
+     * At this point esp_wifi_stop() may already be running or may have already
+     * destroyed the lwIP TCP/IP mailbox; calling httpd_start() or any other
+     * network API would invoke tcpip_callback() on an invalid mbox and assert. */
+    if (s_teardown_pending) {
+        ESP_LOGW(NETWORK_SERVICES_TAG,
+                 "network_services_start() suppressed: teardown in progress");
         return ESP_ERR_INVALID_STATE;
     }
     services_lock();
@@ -303,11 +332,28 @@ esp_err_t network_services_start(void)
     return ESP_OK;
 }
 
+void network_services_allow_start(void)
+{
+    /* Clear the teardown flag so network_services_start() can run again
+     * after a previous Wi-Fi disable cycle set s_teardown_pending.
+     * Called from execute_wifi_toggle() on the enable path, before
+     * wifi_controller_start(), so the flag is clear by the time Wi-Fi
+     * connects and the sync task fires network_services_start(). */
+    s_teardown_pending = false;
+}
+
 esp_err_t network_services_stop(void)
 {
     if (!s_initialized) {
         return ESP_OK;
     }
+    /* Signal teardown intent before touching any service state.
+     * network_services_sync_task and network_services_start() check this
+     * flag and refuse to start services while it is set, preventing the
+     * race where a Wi-Fi-event-driven sync task calls network_services_start()
+     * → httpd_start() → tcpip_callback() after esp_wifi_stop() has already
+     * destroyed the lwIP TCP/IP mailbox, causing the 'Invalid mbox' assert. */
+    s_teardown_pending = true;
     services_lock();
     const bool was_running = s_running;
     s_running = false;
