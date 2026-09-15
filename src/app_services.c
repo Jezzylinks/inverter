@@ -1614,6 +1614,11 @@ static void ota_manifest_check_task(void *parameter)
 esp_err_t app_services_check_for_update(bool user_initiated)
 {
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
+    if (s_services_mutex == NULL) {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Update check requested before app services initialization");
+        return ESP_ERR_INVALID_STATE;
+    }
     if (!wifi_controller_is_connected()) {
         if (user_initiated) {
             const bool enabled = app_services_wifi_enabled();
@@ -1689,6 +1694,11 @@ esp_err_t app_services_check_for_update(bool user_initiated)
 
 esp_err_t app_services_request_update_confirmation(void)
 {
+    if (s_services_mutex == NULL) {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Update confirmation requested before app services initialization");
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool available = s_ota_status.update_available;
     const bool busy = s_ota_status.state == APP_OTA_PREPARING ||
@@ -1715,6 +1725,11 @@ esp_err_t app_services_confirm_update(void)
 {
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
     app_ota_status_t snapshot = {0};
+    if (s_services_mutex == NULL) {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Update confirmation received before app services initialization");
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool confirmed = s_ota_status.confirmation_pending;
     if (confirmed)
@@ -1762,6 +1777,11 @@ esp_err_t app_services_confirm_update(void)
 
 esp_err_t app_services_request_cancel_update(void)
 {
+    if (s_services_mutex == NULL) {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Cancel update requested before app services initialization");
+        return ESP_ERR_INVALID_STATE;
+    }
     const bool service_busy = ota_service_in_progress();
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool check_busy = s_ota_manifest_check_active;
@@ -1779,6 +1799,11 @@ esp_err_t app_services_request_cancel_update(void)
 
 esp_err_t app_services_confirm_cancel_update(void)
 {
+    if (s_services_mutex == NULL) {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Cancel confirmation received before app services initialization");
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool pending = s_ota_cancel_confirmation_pending;
     s_ota_cancel_confirmation_pending = false;
@@ -1791,6 +1816,9 @@ esp_err_t app_services_confirm_cancel_update(void)
 
 void app_services_cancel_cancel_update(void)
 {
+    if (s_services_mutex == NULL) {
+        return;
+    }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_ota_cancel_confirmation_pending = false;
     xSemaphoreGive(s_services_mutex);
@@ -1798,6 +1826,9 @@ void app_services_cancel_cancel_update(void)
 
 bool app_services_ota_cancel_confirmation_pending(void)
 {
+    if (s_services_mutex == NULL) {
+        return false;
+    }
     bool pending = false;
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     pending = s_ota_cancel_confirmation_pending;
@@ -1807,6 +1838,11 @@ bool app_services_ota_cancel_confirmation_pending(void)
 
 esp_err_t app_services_cancel_update(void)
 {
+    if (s_services_mutex == NULL) {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Cancel update requested before app services initialization");
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool pending = s_ota_status.confirmation_pending;
     const bool checking = s_ota_manifest_check_active;
