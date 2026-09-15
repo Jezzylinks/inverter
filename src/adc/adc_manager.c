@@ -104,6 +104,7 @@ static adc_driver_channel_t adc_driver_channels[ADC_MANAGER_CHANNEL_COUNT];
 static void *adc_driver_context;
 static adc_driver_status_t adc_driver_status;
 static adc_manager_measurement_t adc_manager_measurements[ADC_MANAGER_CHANNEL_COUNT];
+static uint32_t adc_last_read_warning_ms[ADC_MANAGER_CHANNEL_COUNT];
 
 static const adc_channel_config_t adc_manager_channel_configs[] = {
     {.channel = ADC1_CHANNEL_LOW_BATTERY,
@@ -361,9 +362,14 @@ static bool process_adc_reading(const adc_channel_config_t *config,
         measurement_record_read_error(config->channel_id, sample_time_ms,
                                       driver_channel->channel_state.is_calibrated);
         telemetry_health_record_invalid(health_channel, sample_time_ms);
-        ESP_LOGW(ADC_MANAGER_DRIVER_TAG,
-                 "%s sample acquisition failed: %s",
-                 config->name, esp_err_to_name(read_result));
+        const uint32_t last_warning = adc_last_read_warning_ms[config->channel_id];
+        if (last_warning == 0U ||
+            (uint32_t)(sample_time_ms - last_warning) >= 5000U) {
+            adc_last_read_warning_ms[config->channel_id] = sample_time_ms;
+            ESP_LOGW(ADC_MANAGER_DRIVER_TAG,
+                     "%s sample acquisition failed: %s (retrying)",
+                     config->name, esp_err_to_name(read_result));
+        }
         return false;
     }
     if (config->voltage_divider_ratio <= 0.0f || !isfinite(adc_voltage))

@@ -2,11 +2,12 @@ menu "Inverter Hardware Configuration"
 
 choice ADC_MANAGER_MODE
     prompt "ADC acquisition mode"
-    default ADC_MANAGER_MODE_CONTINUOUS
+    default ADC_MANAGER_MODE_ONESHOT
     help
-        Select the ADC acquisition driver. Continuous/DMA is the default and
-        is recommended for normal operation. Oneshot is the compatibility
-        fallback. Exactly one driver is selected at compile time.
+        Select the ADC acquisition driver. Oneshot is the default because it
+        is reliable for the four low-rate voltage channels used by this
+        inverter. Continuous/DMA remains available for hardware that has been
+        verified to produce complete frames. Exactly one driver is selected.
 
 config ADC_MANAGER_MODE_CONTINUOUS
     bool "Continuous / DMA"

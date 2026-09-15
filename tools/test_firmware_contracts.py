@@ -133,7 +133,7 @@ class FirmwareContracts(unittest.TestCase):
         root = Path(__file__).parents[1]
         kconfig = root.joinpath("src", "Kconfig.projbuild").read_text()
         self.assertIn("choice ADC_MANAGER_MODE", kconfig)
-        self.assertIn("default ADC_MANAGER_MODE_CONTINUOUS", kconfig)
+        self.assertIn("default ADC_MANAGER_MODE_ONESHOT", kconfig)
         self.assertIn("config ADC_MANAGER_MODE_ONESHOT", kconfig)
         self.assertIn("choice INVERTER_LCD_GEOMETRY", kconfig)
         self.assertIn("default INVERTER_LCD_20X4", kconfig)
