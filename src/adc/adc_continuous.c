@@ -41,6 +41,8 @@ typedef struct
     bool using_oneshot_fallback;
     adc_oneshot_unit_handle_t oneshot_handle;
     adc_driver_channel_t *channel_states;
+    float cached_voltage[SOC_ADC_MAX_CHANNEL_NUM];
+    bool cached_valid[SOC_ADC_MAX_CHANNEL_NUM];
 } adc_continuous_context_t;
 
 void adc_continuous_driver_deinit(void *driver_context,
@@ -289,14 +291,19 @@ esp_err_t adc_continuous_driver_read_sample(
             out_voltage, ADC_CONTINUOUS_SAMPLES);
     }
 
+    const uint8_t requested_channel = channel_state->channel & 0x7U;
+    if (requested_channel < SOC_ADC_MAX_CHANNEL_NUM &&
+        context->cached_valid[requested_channel]) {
+        *out_voltage = context->cached_voltage[requested_channel];
+        context->cached_valid[requested_channel] = false;
+        return ESP_OK;
+    }
+
     uint8_t buffer[ADC_CONTINUOUS_FRAME_SIZE];
-    uint32_t valid_samples = 0U;
-    int64_t sum_voltage_mv = 0;
-    int64_t sum_raw = 0;
     uint32_t attempts = 0U;
     bool timeout_reported = false;
 
-    while (valid_samples < ADC_CONTINUOUS_SAMPLES && attempts < 4U) {
+    while (attempts < 4U) {
         uint32_t bytes_read = 0U;
         const esp_err_t result = adc_continuous_read(
             context->handle, buffer, sizeof(buffer), &bytes_read, 100U);
@@ -313,49 +320,65 @@ esp_err_t adc_continuous_driver_read_sample(
             return result;
         }
 
+        int64_t sum_voltage_mv[SOC_ADC_MAX_CHANNEL_NUM] = {0};
+        int64_t sum_raw[SOC_ADC_MAX_CHANNEL_NUM] = {0};
+        uint32_t sample_counts[SOC_ADC_MAX_CHANNEL_NUM] = {0};
         for (uint32_t offset = 0U;
              offset + SOC_ADC_DIGI_DATA_BYTES_PER_CONV <= bytes_read;
              offset += SOC_ADC_DIGI_DATA_BYTES_PER_CONV) {
             const adc_digi_output_data_t *sample =
                 (const adc_digi_output_data_t *)(buffer + offset);
-            if (sample->type1.channel != (channel_state->channel & 0x7U)) {
+            const uint8_t sample_channel = sample->type1.channel & 0x7U;
+            if (sample_channel >= SOC_ADC_MAX_CHANNEL_NUM) {
                 continue;
             }
-
+            adc_driver_channel_t *sample_state = NULL;
+            for (size_t i = 0U; i < context->channel_count; ++i) {
+                if ((context->channel_states[i].channel & 0x7U) == sample_channel) {
+                    sample_state = &context->channel_states[i];
+                    break;
+                }
+            }
+            if (sample_state == NULL) continue;
             const int raw_value = sample->type1.data;
-            if (channel_state->channel_state.is_calibrated &&
-                channel_state->channel_state.cali_handle != NULL) {
+            if (sample_state->channel_state.is_calibrated &&
+                sample_state->channel_state.cali_handle != NULL) {
                 int voltage_mv = 0;
                 const esp_err_t conversion_result = adc_cali_raw_to_voltage(
-                    channel_state->channel_state.cali_handle, raw_value, &voltage_mv);
+                    sample_state->channel_state.cali_handle, raw_value, &voltage_mv);
                 if (conversion_result != ESP_OK) {
                     continue;
                 }
-                sum_voltage_mv += voltage_mv;
+                sum_voltage_mv[sample_channel] += voltage_mv;
             } else {
-                sum_raw += raw_value;
+                sum_raw[sample_channel] += raw_value;
             }
-            ++valid_samples;
-            if (valid_samples >= ADC_CONTINUOUS_SAMPLES) {
-                break;
+            ++sample_counts[sample_channel];
+        }
+        for (size_t i = 0U; i < context->channel_count; ++i) {
+            const uint8_t channel = context->channel_states[i].channel & 0x7U;
+            if (sample_counts[channel] == 0U) continue;
+            if (context->channel_states[i].channel_state.is_calibrated &&
+                context->channel_states[i].channel_state.cali_handle != NULL) {
+                context->cached_voltage[channel] =
+                    (float)sum_voltage_mv[channel] /
+                    ((float)sample_counts[channel] * 1000.0f);
+            } else {
+                context->cached_voltage[channel] =
+                    ((float)sum_raw[channel] / (float)sample_counts[channel]) *
+                    ADC_DRIVER_REFERENCE_VOLTAGE / ADC_DRIVER_RAW_FULL_SCALE;
             }
+            context->cached_valid[channel] = true;
+        }
+        if (requested_channel < SOC_ADC_MAX_CHANNEL_NUM &&
+            context->cached_valid[requested_channel]) {
+            *out_voltage = context->cached_voltage[requested_channel];
+            context->cached_valid[requested_channel] = false;
+            return ESP_OK;
         }
         ++attempts;
     }
-
-    if (valid_samples == 0U) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (channel_state->channel_state.is_calibrated &&
-        channel_state->channel_state.cali_handle != NULL) {
-        *out_voltage = (float)sum_voltage_mv /
-                       ((float)valid_samples * 1000.0f);
-    } else {
-        *out_voltage = ((float)sum_raw / (float)valid_samples) *
-                       ADC_DRIVER_REFERENCE_VOLTAGE /
-                       ADC_DRIVER_RAW_FULL_SCALE;
-    }
-    return ESP_OK;
+    return ESP_ERR_INVALID_STATE;
 }
 
 void adc_continuous_driver_deinit(void *driver_context,

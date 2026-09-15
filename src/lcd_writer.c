@@ -50,8 +50,15 @@ static void set_line(char *dst, const char *src)
 /*----------------------------------------------------------------------------*/esp_err_t lcd_writer_init(void)
 {
     if (sys_state_mutex == NULL) {
-        ESP_LOGE("LCD_WRITER", "System-state mutex is unavailable");
-        return ESP_ERR_INVALID_STATE;
+        /* The button/menu path uses LCD_LOCK(), so recover defensively if an
+         * integration path reached LCD initialization without creating the
+         * application mutex first. */
+        sys_state_mutex = xSemaphoreCreateMutex();
+        if (sys_state_mutex == NULL) {
+            ESP_LOGE("LCD_WRITER", "System-state mutex creation failed");
+            return ESP_ERR_NO_MEM;
+        }
+        ESP_LOGW("LCD_WRITER", "System-state mutex was missing; created during LCD init");
     }
     s_startup_released = false;
     /* The user-visible minimum-duration timer is intentionally NOT started

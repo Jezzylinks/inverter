@@ -25,9 +25,19 @@ extern "C" {
 extern lcd_render_state_t sys_lcd;
 extern SemaphoreHandle_t sys_state_mutex;
 
-/* Helper: take mutex, guaranteed short hold */
-#define LCD_LOCK() xSemaphoreTake(sys_state_mutex, portMAX_DELAY)
-#define LCD_UNLOCK() xSemaphoreGive(sys_state_mutex)
+/* Helper: take mutex, guaranteed short hold.  The NULL check prevents a
+ * corrupted or incomplete startup path from reaching FreeRTOS's fatal
+ * xQueueSemaphoreTake assertion in the menu renderer. */
+#define LCD_LOCK() do { \
+    if (sys_state_mutex != NULL) { \
+        (void)xSemaphoreTake(sys_state_mutex, portMAX_DELAY); \
+    } \
+} while (0)
+#define LCD_UNLOCK() do { \
+    if (sys_state_mutex != NULL) { \
+        (void)xSemaphoreGive(sys_state_mutex); \
+    } \
+} while (0)
 
 /* Call once at startup before any task runs */
 esp_err_t lcd_writer_init(void);
