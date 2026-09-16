@@ -298,28 +298,6 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
 
     esp_err_t controller_err = enabled ? wifi_controller_start()
                                        : wifi_controller_stop();
-    /* wifi_controller_start() only brings up the radio driver; it never
-     * initiates a station connection by design.  APP_WIFI_OPERATION_ENABLE
-     * however expects the async status callback to fire CONNECTED+IP before
-     * it closes the operation.  Without an explicit connect call the state
-     * stalls at AP_ACTIVE or IDLE for 30 s then times out.
-     * Fix: after a successful radio start, also call reconnect() to kick
-     * off the station association so the ENABLE operation completes
-     * normally via the CONNECTED event. */
-    if (controller_err == ESP_OK && enabled) {
-        const esp_err_t reconnect_err = wifi_controller_reconnect();
-        if (reconnect_err != ESP_OK && reconnect_err != ESP_ERR_WIFI_CONN) {
-            ESP_LOGW(APP_SERVICES_TAG,
-                     "Wi-Fi ON: connect attempt after radio start failed: %s",
-                     esp_err_to_name(reconnect_err));
-            /* Not fatal: the radio is up and the AP is active; the user
-             * can reach the portal.  The operation watch task will close
-             * the ENABLE op via timeout if CONNECTED never fires. */
-        }
-    }
-    if (controller_err == ESP_ERR_INVALID_STATE && enabled) {
-        controller_err = wifi_controller_reconnect();
-    }
     if (!enabled && (controller_err == ESP_ERR_INVALID_STATE ||
                      controller_err == ESP_ERR_WIFI_NOT_INIT ||
                      controller_err == ESP_ERR_WIFI_NOT_STARTED)) {
@@ -465,18 +443,29 @@ static void app_wifi_status_callback(const wifi_status_t *status)
 
     switch (operation) {
     case APP_WIFI_OPERATION_ENABLE:
-        if (status->state == WIFI_STATE_CONNECTED && status->got_ip) {
+        /* Wi-Fi ON means the radio is running -- not that STA connected.
+         * AP_ACTIVE fires from WIFI_EVENT_AP_START inside esp_wifi_start(),
+         * so it is the earliest reliable signal that the radio is up.
+         * In APSTA mode the AP always starts; STA connection is a separate
+         * user action and its outcome must not collapse the ENABLE result. */
+        if (status->state == WIFI_STATE_AP_ACTIVE) {
+            terminal = true;
+            connected = false;
+            message = "Wi-Fi ON";
+        } else if (status->state == WIFI_STATE_CONNECTED && status->got_ip) {
+            /* In STA-only mode there is no AP_ACTIVE event; CONNECTED is
+             * the first terminal state we see after a successful start. */
             terminal = true;
             connected = true;
             message = ssid[0] != '\0' ? ssid : "Connected";
         } else if (status->state == WIFI_STATE_PROVISIONING) {
             terminal = true;
             message = "Setup AP Active";
-        } else if (status->state == WIFI_STATE_FAILED) {
-            terminal = true;
-            failed = true;
-            message = "Wi-Fi unavailable";
         }
+        /* WIFI_STATE_FAILED after an ENABLE means STA could not connect,
+         * NOT that the radio failed to start.  Do not close the ENABLE
+         * operation on FAILED -- execute_wifi_toggle() will close it via
+         * app_wifi_end_operation() once wifi_controller_start() returns. */
         break;
     case APP_WIFI_OPERATION_CONNECT_SAVED:
         if (status->state == WIFI_STATE_CONNECTED && status->got_ip) {
