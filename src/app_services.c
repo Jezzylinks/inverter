@@ -298,6 +298,25 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
 
     esp_err_t controller_err = enabled ? wifi_controller_start()
                                        : wifi_controller_stop();
+    /* wifi_controller_start() only brings up the radio driver; it never
+     * initiates a station connection by design.  APP_WIFI_OPERATION_ENABLE
+     * however expects the async status callback to fire CONNECTED+IP before
+     * it closes the operation.  Without an explicit connect call the state
+     * stalls at AP_ACTIVE or IDLE for 30 s then times out.
+     * Fix: after a successful radio start, also call reconnect() to kick
+     * off the station association so the ENABLE operation completes
+     * normally via the CONNECTED event. */
+    if (controller_err == ESP_OK && enabled) {
+        const esp_err_t reconnect_err = wifi_controller_reconnect();
+        if (reconnect_err != ESP_OK && reconnect_err != ESP_ERR_WIFI_CONN) {
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Wi-Fi ON: connect attempt after radio start failed: %s",
+                     esp_err_to_name(reconnect_err));
+            /* Not fatal: the radio is up and the AP is active; the user
+             * can reach the portal.  The operation watch task will close
+             * the ENABLE op via timeout if CONNECTED never fires. */
+        }
+    }
     if (controller_err == ESP_ERR_INVALID_STATE && enabled) {
         controller_err = wifi_controller_reconnect();
     }
