@@ -434,9 +434,13 @@ esp_err_t wifi_manager_start(void)
         ESP_LOGE(TAG, "Invalid WiFi configuration");
         return ESP_ERR_INVALID_ARG;
     }
-    if ((s_config.mode == WIFI_MODE_STA || s_config.mode == WIFI_MODE_APSTA) &&
-        s_config.ssid[0] == '\0') {
-        ESP_LOGW(TAG, "Station mode selected but no compile-time STA SSID is configured");
+    /* In STA-only mode there is nothing to bring up without an SSID. In APSTA
+     * mode the AP interface is still valid and useful (it is how the user
+     * reaches the provisioning portal), so allow the start to proceed; the AP
+     * will come up and STA connect will simply be skipped when connect() is
+     * called with an empty SSID. */
+    if (s_config.mode == WIFI_MODE_STA && s_config.ssid[0] == '\0') {
+        ESP_LOGW(TAG, "STA-only mode but no STA SSID is configured; cannot start");
         return ESP_ERR_NOT_FOUND;
     }
 
