@@ -251,8 +251,27 @@ esp_err_t wifi_controller_start(void)
     if (!is_ap_mode) {
         (void)wifi_monitor_start();
     }
-    ESP_LOGI(TAG, "WiFi architecture started in %s mode; station connect awaits user action",
-             WIFI_COMPILED_OPERATION_MODE_NAME);
+
+    /* If a station SSID is configured, enable auto-reconnect and kick off an
+     * initial connection attempt.  This is the Wi-Fi ON path: the user expects
+     * the radio to come up and connect, not just start the driver silently. */
+    if (!is_ap_mode) {
+        wifi_manager_config_t cfg = {0};
+        if (wifi_manager_get_config(&cfg) == ESP_OK && cfg.ssid[0] != '\0') {
+            wifi_manager_enable_auto_reconnect(true);
+            const esp_err_t connect_err = wifi_manager_connect();
+            if (connect_err != ESP_OK && connect_err != ESP_ERR_WIFI_CONN) {
+                ESP_LOGW(TAG, "Initial STA connect attempt failed: %s (will retry via auto-reconnect)",
+                         esp_err_to_name(connect_err));
+            } else {
+                ESP_LOGI(TAG, "Wi-Fi ON: STA connect initiated for SSID %s", cfg.ssid);
+            }
+        } else {
+            ESP_LOGI(TAG, "Wi-Fi ON: no STA SSID configured; AP ready but STA connect skipped");
+        }
+    }
+
+    ESP_LOGI(TAG, "Wi-Fi ON complete (mode: %s)", WIFI_COMPILED_OPERATION_MODE_NAME);
     return ESP_OK;
 }
 
@@ -268,7 +287,10 @@ esp_err_t wifi_controller_stop(void)
      * wifi_manager_start()/stop() from another task. */
     wifi_controller_lock();
 
-    /* User-requested stop must win over any pending disconnect retry. */
+    /* User-requested stop must win over any pending disconnect retry.
+     * Incrementing s_reconnect_generation (inside wifi_manager_enable_auto_reconnect)
+     * cancels any in-flight reconnect task so it exits without calling esp_wifi_connect. */
+    ESP_LOGI(TAG, "Wi-Fi OFF requested: suppressing auto-reconnect and stopping radio");
     wifi_manager_enable_auto_reconnect(false);
     esp_err_t first_err = ESP_OK;
 
@@ -294,7 +316,9 @@ esp_err_t wifi_controller_stop(void)
         if (first_err == ESP_OK) {
             first_err = err;
         }
-        ESP_LOGW(TAG, "Failed to stop manager: %s", esp_err_to_name(err));
+        ESP_LOGW(TAG, "Wi-Fi OFF: radio stop failed: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "Wi-Fi OFF: radio stopped (auto-reconnect suppressed)");
     }
 
     s_state = WIFI_CONTROLLER_IDLE;

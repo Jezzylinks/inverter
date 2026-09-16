@@ -256,7 +256,7 @@ esp_err_t wifi_manager_init(void)
         ESP_LOGW(TAG, "Station SSID is empty; STA mode is disabled");
     }
     if (s_config.ap_password[0] == '\0') {
-        ESP_LOGI(TAG, "AP password is empty; AP mode is disabled");
+        ESP_LOGI(TAG, "AP password is empty; AP will run as open (no-password) network");
     }
 
     err = esp_netif_init();
@@ -427,6 +427,7 @@ esp_err_t wifi_manager_start(void)
     {
         return ESP_ERR_INVALID_STATE;
     }
+    ESP_LOGI(TAG, "Wi-Fi enable requested (current started=%d)", (int)s_started);
 
     if (!wifi_manager_config_valid(&s_config))
     {
@@ -439,8 +440,8 @@ esp_err_t wifi_manager_start(void)
         return ESP_ERR_NOT_FOUND;
     }
     if ((s_config.mode == WIFI_MODE_AP || s_config.mode == WIFI_MODE_APSTA) &&
-        (s_config.ap_ssid[0] == '\0' || s_config.ap_password[0] == '\0')) {
-        ESP_LOGW(TAG, "AP mode selected but AP SSID/password is not configured");
+        s_config.ap_ssid[0] == '\0') {
+        ESP_LOGW(TAG, "AP mode selected but AP SSID is not configured; open AP requires at least an SSID");
         return ESP_ERR_NOT_FOUND;
     }
 
@@ -483,10 +484,14 @@ esp_err_t wifi_manager_stop(void)
         return ESP_ERR_INVALID_STATE;
     }
 
+    ESP_LOGI(TAG, "Wi-Fi disable requested (current started=%d)", (int)s_started);
+
     if (!s_started) {
+        ESP_LOGI(TAG, "Wi-Fi already stopped");
         return ESP_OK;
     }
 
+    ESP_LOGI(TAG, "Wi-Fi stopping radio");
     esp_err_t err = esp_wifi_stop();
     if (err == ESP_OK || err == ESP_ERR_WIFI_NOT_STARTED)
     {
@@ -891,15 +896,20 @@ static esp_err_t wifi_manager_configure_apsta(void)
         sta_config.sta.threshold.authmode = s_config.authmode;
     }
 
-    if (s_config.ap_ssid[0] != '\0' && s_config.ap_password[0] != '\0')
+    if (s_config.ap_ssid[0] != '\0')
     {
         strncpy((char *)ap_config.ap.ssid, s_config.ap_ssid, sizeof(ap_config.ap.ssid) - 1U);
-        strncpy((char *)ap_config.ap.password, s_config.ap_password, sizeof(ap_config.ap.password) - 1U);
+        if (s_config.ap_password[0] != '\0') {
+            strncpy((char *)ap_config.ap.password, s_config.ap_password, sizeof(ap_config.ap.password) - 1U);
+            ap_config.ap.authmode = s_config.ap_authmode;
+        } else {
+            /* Empty password means open AP (no authentication). */
+            ap_config.ap.authmode = WIFI_AUTH_OPEN;
+        }
         ap_config.ap.channel = s_config.ap_channel;
         ap_config.ap.max_connection = s_config.ap_max_connection > WIFI_AP_MAX_CONNECTION
                                            ? WIFI_AP_MAX_CONNECTION
                                            : s_config.ap_max_connection;
-        ap_config.ap.authmode = s_config.ap_authmode;
     }
 
     /* Determine mode based on what's configured */
