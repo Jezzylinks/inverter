@@ -439,11 +439,6 @@ esp_err_t wifi_manager_start(void)
         ESP_LOGW(TAG, "Station mode selected but no compile-time STA SSID is configured");
         return ESP_ERR_NOT_FOUND;
     }
-    if ((s_config.mode == WIFI_MODE_AP || s_config.mode == WIFI_MODE_APSTA) &&
-        s_config.ap_ssid[0] == '\0') {
-        ESP_LOGW(TAG, "AP mode selected but AP SSID is not configured; open AP requires at least an SSID");
-        return ESP_ERR_NOT_FOUND;
-    }
 
     esp_err_t err = wifi_manager_configure_apsta();
     if (err != ESP_OK)
