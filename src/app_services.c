@@ -316,14 +316,37 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
         }
     }
 
-    if (controller_err == ESP_OK && app_wifi_operation_pending()) {
-        /* Radio start/stop is the ON/OFF transition. Station association and
-         * DHCP are separate operations and must not hold this operation open. */
+    /* Update state and LCD unconditionally based on controller result.
+     *
+     * Previously this block was gated on app_wifi_operation_pending(), but
+     * that flag is also cleared by app_wifi_status_callback() which fires
+     * from the ESP-IDF event task during esp_wifi_start/stop -- for example
+     * WIFI_EVENT_AP_START fires WIFI_STATE_AP_ACTIVE, and WIFI_EVENT_STA_STOP
+     * fires WIFI_STATE_IDLE which matches the DISABLE terminal condition.
+     * The callback reaches app_wifi_end_operation() before this task returns
+     * from wifi_controller_start/stop, so app_wifi_operation_pending() is
+     * already false by the time we check it here -- and the state/NVS update
+     * never happened. The LCD showed "Wi-Fi Disabled" from the callback but
+     * sys_state.wifi.enabled was never written, causing the menu to show the
+     * wrong state and subsequent toggles to behave incorrectly.
+     *
+     * Fix: decouple the state update from the operation-pending flag. The
+     * controller result is the authoritative signal for whether ON/OFF
+     * succeeded. The callback still updates the LCD with its own message
+     * ("Wi-Fi Disabled" / "Setup AP Active" / connection result) -- that is
+     * intentional asynchronous feedback and is kept. We suppress the
+     * synchronous "Wi-Fi ON/OFF" flash here only if the callback already
+     * closed the operation (it already showed something). */
+    if (controller_err == ESP_OK) {
         sys_state.wifi.enabled = enabled;
         sys_state.inverter.wifi_enabled = enabled;
-        app_wifi_end_operation();
-        lcd_flash_message(enabled ? "Wi-Fi ON" : "Wi-Fi OFF", "Ready", 900U);
-    } else if (controller_err != ESP_OK && controller_err != ESP_ERR_WIFI_CONN) {
+        /* Only flash the generic ON/OFF confirmation if the async status
+         * callback has not already closed the operation with its own message. */
+        if (app_wifi_operation_pending()) {
+            app_wifi_end_operation();
+            lcd_flash_message(enabled ? "Wi-Fi ON" : "Wi-Fi OFF", "Ready", 900U);
+        }
+    } else if (controller_err != ESP_ERR_WIFI_CONN) {
         sys_state.wifi.enabled = previous_enabled;
         sys_state.inverter.wifi_enabled = previous_enabled;
         app_wifi_end_operation();

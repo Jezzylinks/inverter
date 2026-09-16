@@ -251,27 +251,8 @@ esp_err_t wifi_controller_start(void)
     if (!is_ap_mode) {
         (void)wifi_monitor_start();
     }
-
-    /* If a station SSID is configured, enable auto-reconnect and kick off an
-     * initial connection attempt.  This is the Wi-Fi ON path: the user expects
-     * the radio to come up and connect, not just start the driver silently. */
-    if (!is_ap_mode) {
-        wifi_manager_config_t cfg = {0};
-        if (wifi_manager_get_config(&cfg) == ESP_OK && cfg.ssid[0] != '\0') {
-            wifi_manager_enable_auto_reconnect(true);
-            const esp_err_t connect_err = wifi_manager_connect();
-            if (connect_err != ESP_OK && connect_err != ESP_ERR_WIFI_CONN) {
-                ESP_LOGW(TAG, "Initial STA connect attempt failed: %s (will retry via auto-reconnect)",
-                         esp_err_to_name(connect_err));
-            } else {
-                ESP_LOGI(TAG, "Wi-Fi ON: STA connect initiated for SSID %s", cfg.ssid);
-            }
-        } else {
-            ESP_LOGI(TAG, "Wi-Fi ON: no STA SSID configured; AP ready but STA connect skipped");
-        }
-    }
-
-    ESP_LOGI(TAG, "Wi-Fi ON complete (mode: %s)", WIFI_COMPILED_OPERATION_MODE_NAME);
+    ESP_LOGI(TAG, "WiFi architecture started in %s mode; station connect awaits user action",
+             WIFI_COMPILED_OPERATION_MODE_NAME);
     return ESP_OK;
 }
 
