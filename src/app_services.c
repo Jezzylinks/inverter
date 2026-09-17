@@ -81,7 +81,10 @@ static QueueHandle_t s_wifi_toggle_queue;
  * start/stop sequence is still in progress.  esp_wifi_start/stop are
  * not re-entrant; calling one while the other is running causes an
  * assert/panic in the ESP-IDF Wi-Fi stack. */
-static volatile uint32_t s_wifi_toggle_executing = 0U;
+/* Atomic admission flag: 0 = free, 1 = a toggle is pending or executing.
+ * Set by the caller BEFORE queuing the request; cleared by the worker AFTER
+ * execute_wifi_toggle() returns.  Only one toggle can be live at any time. */
+static volatile uint32_t s_wifi_toggle_admitted = 0U;
 static TaskHandle_t s_wifi_scan_task;
 static bool s_wifi_forget_pending;
 static bool s_wifi_disconnect_pending;
@@ -296,8 +299,12 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
         (void)network_services_allow_start();
     }
 
+    ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle worker calling %s",
+             enabled ? "wifi_controller_start()" : "wifi_controller_stop()");
     esp_err_t controller_err = enabled ? wifi_controller_start()
                                        : wifi_controller_stop();
+    ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi controller %s result: %s",
+             enabled ? "start" : "stop", esp_err_to_name(controller_err));
     if (!enabled && (controller_err == ESP_ERR_INVALID_STATE ||
                      controller_err == ESP_ERR_WIFI_NOT_INIT ||
                      controller_err == ESP_ERR_WIFI_NOT_STARTED)) {
@@ -308,8 +315,12 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
     if (controller_err == ESP_OK) {
         nvs_err = persist_u8(APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
         if (nvs_err != ESP_OK) {
-            ESP_LOGE(APP_SERVICES_TAG, "Could not persist Wi-Fi intent: %s",
+            ESP_LOGE(APP_SERVICES_TAG,
+                     "Wi-Fi NVS persistence failed (%s); runtime state is correct",
                      esp_err_to_name(nvs_err));
+        } else {
+            ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi NVS persistence: OK (%s=%u)",
+                     APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
         }
     }
 
@@ -337,8 +348,12 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
     if (controller_err == ESP_OK) {
         sys_state.wifi.enabled = enabled;
         sys_state.inverter.wifi_enabled = enabled;
+        ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi runtime state updated: %s",
+                 enabled ? "ON" : "OFF");
         /* Only flash the generic ON/OFF confirmation if the async status
-         * callback has not already closed the operation with its own message. */
+         * callback has not already closed the operation with its own message.
+         * (In APSTA mode WIFI_EVENT_AP_START fires during esp_wifi_start and
+         * the callback closes the ENABLE op before we return here.) */
         if (app_wifi_operation_pending()) {
             app_wifi_end_operation();
             lcd_flash_message(enabled ? "Wi-Fi ON" : "Wi-Fi OFF", "Ready", 900U);
@@ -346,6 +361,8 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
     } else if (controller_err != ESP_ERR_WIFI_CONN) {
         sys_state.wifi.enabled = previous_enabled;
         sys_state.inverter.wifi_enabled = previous_enabled;
+        ESP_LOGE(APP_SERVICES_TAG, "Wi-Fi %s failed: %s",
+                 enabled ? "ON" : "OFF", esp_err_to_name(controller_err));
         app_wifi_end_operation();
         if (enabled && controller_err == ESP_ERR_NOT_FOUND) {
             lcd_flash_message("Wi-Fi Not Config", "Use menuconfig", 1800U);
@@ -381,10 +398,18 @@ static void app_wifi_toggle_task(void *parameter)
                  (unsigned long long)(now_ms >= request.requested_ms
                                           ? now_ms - request.requested_ms
                                           : 0U));
-        __atomic_store_n(&s_wifi_toggle_executing, 1U, __ATOMIC_SEQ_CST);
+        /* s_wifi_toggle_admitted was set by the caller; it remains set
+         * throughout execution and is released here -- after the complete
+         * start/stop sequence -- so no new toggle can enter while the
+         * radio driver is running. */
+        ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle worker started: %s",
+                 request.enabled ? "ON" : "OFF");
         (void)app_services_execute_wifi_toggle(request.enabled,
                                                 request.previous_enabled);
-        __atomic_store_n(&s_wifi_toggle_executing, 0U, __ATOMIC_SEQ_CST);
+        ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle worker completed: %s",
+                 request.enabled ? "ON" : "OFF");
+        __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
+        ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle admission released");
 
         /* Stack high-water telemetry: log remaining headroom so that any
          * future call-chain growth that risks overflow is caught in logs
@@ -950,6 +975,28 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
         return ESP_ERR_INVALID_STATE;
     }
 
+    ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle request: %s",
+             enabled ? "ON" : "OFF");
+
+    /* Atomic admission: only one toggle may be pending or executing at a
+     * time.  The compare-and-swap atomically checks that no toggle is live
+     * and marks one as admitted in a single indivisible operation, so a
+     * second concurrent caller cannot slip in between the check and the
+     * mark.  The flag is released by the worker AFTER execute_wifi_toggle
+     * returns -- never before. */
+    uint32_t expected = 0U;
+    if (!__atomic_compare_exchange_n(&s_wifi_toggle_admitted,
+                                     &expected, 1U,
+                                     false,
+                                     __ATOMIC_SEQ_CST,
+                                     __ATOMIC_SEQ_CST)) {
+        ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi toggle rejected: operation already pending");
+        lcd_flash_message("Wi-Fi Busy", "Please wait", 900U);
+        return ESP_ERR_TIMEOUT;
+    }
+    ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle admitted");
+
+    /* Build request and operation state now that admission is guaranteed. */
     char ssid[WIFI_MAX_SSID_LEN + 1U] = {0};
     if (enabled) {
         strncpy(ssid, WIFI_COMPILED_STA_SSID, sizeof(ssid) - 1U);
@@ -966,30 +1013,16 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
                              ssid, -127);
 
     if (xQueueSend(s_wifi_toggle_queue, &request, 0) != pdTRUE) {
+        /* Queue full -- should not happen (queue length 1 and admitted flag
+         * prevents concurrent senders), but handle defensively. */
         app_wifi_end_operation();
+        __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
         lcd_flash_message("Wi-Fi Busy", "Please wait", 900U);
+        ESP_LOGE(APP_SERVICES_TAG, "Wi-Fi toggle queue send failed (full?)");
         return ESP_ERR_TIMEOUT;
     }
 
-    /* Also reject if the toggle task is actively inside execute_wifi_toggle().
-     * The queue can accept the item (it was just emptied by the task picking
-     * up the previous request) while the radio start/stop sequence is still
-     * running.  Calling esp_wifi_start() or esp_wifi_stop() while the other
-     * is in progress causes a panic in the ESP-IDF Wi-Fi stack. */
-    if (__atomic_load_n(&s_wifi_toggle_executing, __ATOMIC_SEQ_CST)) {
-        /* Remove the item we just sent — the task hasn't dequeued it yet. */
-        wifi_toggle_request_t discard;
-        (void)xQueueReceive(s_wifi_toggle_queue, &discard, 0);
-        app_wifi_end_operation();
-        lcd_flash_message("Wi-Fi Busy", "Please wait", 900U);
-        ESP_LOGW(APP_SERVICES_TAG,
-                 "Wi-Fi toggle rejected: previous toggle still executing");
-        return ESP_ERR_TIMEOUT;
-    }
-
-    /* This is an operation-progress indication, not a claim that the radio
-     * or station connection is already complete. Actual Wi-Fi events update
-     * the terminal result asynchronously. */
+    /* Immediate progress feedback to the LCD. */
     lcd_flash_message(enabled ? "Wi-Fi STARTING" : "Wi-Fi STOPPING",
                       "Please wait", 900U);
     ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi %s request queued",
