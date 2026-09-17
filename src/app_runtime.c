@@ -300,6 +300,12 @@ static atomic_bool s_settings_persistence_pending;
  * at the same time.  Without serialisation the second caller hits the
  * 2-second lock_storage() timeout → storage_nvs_open() returns
  * ESP_ERR_TIMEOUT → save_settings() returns false → "Save Failed". */
+/* Save-serialisation mutex.  Initialised as a static semaphore so it is
+ * available before any task calls save_settings(), eliminating the
+ * lazy-creation race between button_task and settings_persistence_task
+ * that previously allowed both tasks to enter save_settings_locked()
+ * concurrently and hit a 3-second NVS lock timeout. */
+static StaticSemaphore_t s_save_mutex_storage;
 static SemaphoreHandle_t s_save_mutex;
 static atomic_bool s_settings_persistence_active;
 
@@ -1881,7 +1887,12 @@ esp_err_t nvs_save_all(nvs_handle_t handle)
     {
         nvs_setting_t *s = &g_settings[i];
 
+        ESP_LOGI(NVS_SAVING_TAG, "SETTINGS_SAVE: key=%s", s->key);
         err = nvs_write_setting(handle, s);
+        if (err == ESP_OK)
+        {
+            ESP_LOGI(NVS_SAVING_TAG, "SETTINGS_SAVE: key=%s nvs_set OK", s->key);
+        }
         if (err == ESP_ERR_NVS_TYPE_MISMATCH)
         {
             /* NVS fixes a key's type when it is first created. Older
@@ -2352,30 +2363,32 @@ bool load_settings()
 
 bool save_settings()
 {
-    /* Serialise concurrent callers.  button_task (TWDT-registered) and
-     * settings_persistence_task can both call save_settings() at the same
-     * time.  Without this gate the second caller hits the 2-second
-     * lock_storage() timeout, storage_nvs_open() returns ESP_ERR_TIMEOUT,
-     * save_settings() returns false, and the UI shows "Save Failed". */
+    /* s_save_mutex is created in init_menu_system() before any task that
+     * could call save_settings() is started.  A NULL handle here means
+     * init_menu_system() was never called, which is a firmware logic error. */
     if (!s_save_mutex)
     {
-        s_save_mutex = xSemaphoreCreateMutex();
-        if (!s_save_mutex)
-        {
-            ESP_LOGE("NVS_SAVE", "Could not create save mutex; aborting save");
-            return false;
-        }
+        ESP_LOGE("NVS_SAVE", "save_settings() called before init_menu_system(); aborting");
+        return false;
     }
     /* 4-second timeout: generous for any concurrent NVS write to finish,
-     * but still far inside the 15-second TWDT window. */
+     * but still far inside the 15-second TWDT window.
+     * This serialises button_task (foreground save) against
+     * settings_persistence_task (deferred boot-time save) so both never
+     * enter save_settings_locked() at the same time and race for the
+     * NVS manager lock, which would cause a 3-second timeout and
+     * a false "Save Failed" result. */
+    ESP_LOGI("NVS_SAVE", "Settings save requested");
     if (xSemaphoreTake(s_save_mutex, pdMS_TO_TICKS(4000)) != pdTRUE)
     {
         ESP_LOGE("NVS_SAVE",
-                 "Timed out waiting for save lock — concurrent save in progress");
+                 "Timed out waiting for save serialisation lock (concurrent save in progress)");
         return false;
     }
+    ESP_LOGI("NVS_SAVE", "Save lock acquired");
     const bool result = save_settings_locked();
     xSemaphoreGive(s_save_mutex);
+    ESP_LOGI("NVS_SAVE", "Save lock released; result=%s", result ? "OK" : "FAIL");
     return result;
 }
 
@@ -2471,10 +2484,16 @@ static bool save_settings_locked(void)
         return false;
     }
 
+    ESP_LOGI(NVS_SAVE_TAG, "SETTINGS_COMMIT: calling nvs_commit");
     err = nvs_commit(nvs);
     if (err != ESP_OK)
     {
-        ESP_LOGE(NVS_SAVE_TAG, "Failed to commit settings: %s", esp_err_to_name(err));
+        ESP_LOGE(NVS_SAVE_TAG, "SETTINGS_COMMIT: FAILED error=%s (0x%x)",
+                 esp_err_to_name(err), err);
+    }
+    else
+    {
+        ESP_LOGI(NVS_SAVE_TAG, "SETTINGS_COMMIT: OK");
     }
     storage_nvs_close(nvs);
     if (err != ESP_OK)
@@ -2486,10 +2505,11 @@ static bool save_settings_locked(void)
      * namespace read-only and verify every canonical setting representation so
      * the UI never reports success for a partial or incompatible write. */
     nvs_handle_t verify_handle;
+    ESP_LOGI(NVS_SAVE_TAG, "SETTINGS_READBACK: opening NVS for verification");
     err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &verify_handle);
     if (err != ESP_OK)
     {
-        ESP_LOGE(NVS_SAVE_TAG, "Failed to reopen settings for read-back: %s (0x%x)",
+        ESP_LOGE(NVS_SAVE_TAG, "SETTINGS_READBACK: failed to open: %s (0x%x)",
                  esp_err_to_name(err), err);
         return false;
     }
@@ -2497,11 +2517,11 @@ static bool save_settings_locked(void)
     storage_nvs_close(verify_handle);
     if (err != ESP_OK)
     {
-        ESP_LOGE(NVS_SAVE_TAG, "Settings read-back verification failed: %s (0x%x)",
+        ESP_LOGE(NVS_SAVE_TAG, "SETTINGS_READBACK: verification FAILED: %s (0x%x)",
                  esp_err_to_name(err), err);
         return false;
     }
-    ESP_LOGI(NVS_SAVE_TAG, "Settings saved successfully");
+    ESP_LOGI(NVS_SAVE_TAG, "SETTINGS_TRANSACTION: SUCCESS");
     return true;
 }
 
@@ -4801,14 +4821,21 @@ void handle_value_confirmation(void)
 
     bool safety_check_passed = true;
 
-    // ======== Handle based on edit type ========
+    /* ======== Validate based on edit type ========
+     * NOTE: do NOT call update_system_parameter() here.
+     * exit_value_edit_mode(true) -> apply_value_change() already calls it
+     * exactly once via ctx->apply(value). Calling it here too fires the
+     * apply callback TWICE: for WiFi that hits the atomic admission lock
+     * on the second call; for other settings it double-applies hardware
+     * changes. Validation only in this block; application happens in
+     * exit_value_edit_mode below. */
     switch (ctx->edit_type)
     {
     case VALUE_EDIT_NUMERIC:
     {
         float *current_value = (float *)current_value_ptr;
 
-        // Perform category-based safety checks
+        /* Category-based safety range checks (validation only). */
         if (strstr(ctx->label, "Voltage"))
         {
             if (*current_value < 10.0f || *current_value > 260.0f)
@@ -4829,7 +4856,7 @@ void handle_value_confirmation(void)
         {
             if (*current_value < 20.0f || *current_value > 80.0f)
             {
-                printf("Temperature alarm outside reasonable range: %.1f°C\n", *current_value);
+                printf("Temperature alarm outside reasonable range: %.1f C\n", *current_value);
                 safety_check_passed = false;
             }
         }
@@ -4844,62 +4871,73 @@ void handle_value_confirmation(void)
 
         if (safety_check_passed)
         {
-            update_system_parameter(ctx, *current_value);
-            printf("Numeric value confirmed: %s = %.3f %s\n",
-                   ctx->label, *current_value, ctx->unit);
+            ESP_LOGI("SETTINGS_EDIT", "type=NUMERIC label=%s old=%.3f new=%.3f %s",
+                     ctx->label, sys_state.edit_backup_value, *current_value,
+                     ctx->unit ? ctx->unit : "");
         }
         break;
     }
 
     case VALUE_EDIT_SELECT:
     {
-        int selected_index = ctx->selection_index;
-        printf("Selected option for %s: %d (%s)\n",
-               ctx->label, selected_index, ctx->options[selected_index]);
-
-        update_system_parameter(ctx, (float)selected_index);
+        if (safety_check_passed)
+        {
+            ESP_LOGI("SETTINGS_EDIT", "type=SELECT label=%s index=%d option=%s",
+                     ctx->label, ctx->selection_index,
+                     ctx->options ? ctx->options[ctx->selection_index] : "?");
+        }
         break;
     }
 
     case VALUE_EDIT_BOOL:
     {
-        bool state = (*(float *)current_value_ptr != 0.0f);
-        printf("%s set to: %s\n", ctx->label, state ? "ON" : "OFF");
-
-        update_system_parameter(ctx, (float)state);
+        if (safety_check_passed)
+        {
+            bool state = (*(float *)current_value_ptr != 0.0f);
+            ESP_LOGI("SETTINGS_EDIT", "type=BOOL label=%s old=%s new=%s",
+                     ctx->label,
+                     sys_state.edit_backup_value != 0.0f ? "ON" : "OFF",
+                     state ? "ON" : "OFF");
+        }
         break;
     }
 
     case VALUE_EDIT_LIST:
     {
-        const char *selected_str = (const char *)current_value_ptr;
-        printf("%s selected: %s\n", ctx->label, selected_str);
-
-        update_system_parameter(ctx, 0); // store index if needed
-        // eeprom_save_string(config->eeprom_addr, selected_str);
+        if (safety_check_passed)
+        {
+            ESP_LOGI("SETTINGS_EDIT", "type=LIST label=%s index=%d",
+                     ctx->label, ctx->list_index);
+        }
         break;
     }
 
     default:
-        printf("Unknown value edit type for %s\n", ctx->label);
+        ESP_LOGE("SETTINGS_VALIDATE", "Unknown edit type for %s", ctx->label);
         safety_check_passed = false;
         break;
     }
 
-    // ======== Post-confirmation handling ========
+    /* ======== Post-confirmation: apply + persist ========
+     * exit_value_edit_mode(true) calls apply_value_change() (which calls
+     * ctx->apply() exactly once) and then save_settings().  The return
+     * value is false only on a real NVS persistence failure; a snapshot
+     * restore is performed inside exit_value_edit_mode on failure. */
     if (safety_check_passed)
     {
-        /* exit_value_edit_mode(true) applies and persists the accepted value. */
+        ESP_LOGI("SETTINGS_APPLY", "Applying and persisting %s", ctx->label);
         const bool saved = exit_value_edit_mode(true);
 
         show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
         if (saved)
         {
+            ESP_LOGI("SETTINGS_TRANSACTION", "SUCCESS label=%s", ctx->label);
             lcd_flash_info_to(ctx->label, "Value Saved!    ", 1000, LCD_SCREEN_MENU);
             printf("AUDIT: Parameter changed - %s\n", ctx->label);
         }
         else
         {
+            ESP_LOGE("SETTINGS_TRANSACTION", "ROLLBACK label=%s", ctx->label);
             post_buzzer_event(false);
             lcd_flash_info_to("Save Failed     ", "Previous restored", 1200, LCD_SCREEN_MENU);
         }
@@ -5479,6 +5517,19 @@ void save_frequency_to_nvs(int frequency)
 esp_err_t init_menu_system()
 {
     esp_err_t init_err = ESP_OK;
+    /* Create the save-serialisation mutex with static backing storage so it
+     * is available before load_settings() runs.  Using a static semaphore
+     * avoids a heap allocation and, crucially, eliminates the race where two
+     * concurrent first-callers both see s_save_mutex == NULL and each create
+     * their own private mutex, rendering the serialisation useless. */
+    if (!s_save_mutex) {
+        s_save_mutex = xSemaphoreCreateMutexStatic(&s_save_mutex_storage);
+        if (!s_save_mutex) {
+            ESP_LOGE(TAG_SYS, "FATAL: could not create settings save mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
     /* Keep controls inhibited until settings, battery profile, and security
      * policy have been loaded and validated. */
     sys_state.menu_state = MENU_NONE;
