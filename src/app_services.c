@@ -1,5 +1,6 @@
 #include "storage/nvs_manager.h"
 #include "app/app_services.h"
+#include "app/app_menu.h"
 #include "system/task_watchdog.h"
 
 #include <stdio.h>
@@ -283,6 +284,34 @@ static bool app_wifi_operation_pending(void)
     return pending;
 }
 
+static void app_wifi_sync_menu_if_visible(void)
+{
+    menu_state_t menu_state;
+    uint8_t selection;
+    bool visible;
+
+    LCD_LOCK();
+    visible = sys_lcd.screen == LCD_SCREEN_MENU;
+    LCD_UNLOCK();
+    if (!visible) {
+        return;
+    }
+
+    if (sys_state_mutex != NULL) {
+        xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+    }
+    menu_state = sys_state.menu_state;
+    selection = sys_state.menu_selection;
+    if (sys_state_mutex != NULL) {
+        xSemaphoreGive(sys_state_mutex);
+    }
+
+    if (menu_state == MENU_WIFI_CONFIG) {
+        show_menu_screen(menu_state, selection);
+        ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi menu synchronized from runtime state");
+    }
+}
+
 static esp_err_t app_services_execute_wifi_toggle(bool enabled,
                                                     bool previous_enabled)
 {
@@ -308,15 +337,25 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
     if (!enabled && (controller_err == ESP_ERR_INVALID_STATE ||
                      controller_err == ESP_ERR_WIFI_NOT_INIT ||
                      controller_err == ESP_ERR_WIFI_NOT_STARTED)) {
+        /* OFF is idempotent when the radio is already stopped.  This
+         * normalization is deliberately limited to OFF: no non-OK start
+         * result is treated as a successful ON transition. */
         controller_err = ESP_OK;
     }
 
     esp_err_t nvs_err = ESP_OK;
     if (controller_err == ESP_OK) {
+        /* The controller result is the sole authority for the actual radio
+         * transition.  Event callbacks only report status and never commit
+         * this user setting. */
+        sys_state.wifi.enabled = enabled;
+        sys_state.inverter.wifi_enabled = enabled;
+        ESP_LOGI(APP_SERVICES_TAG, "Committing Wi-Fi runtime state: %s",
+                 enabled ? "ON" : "OFF");
         nvs_err = persist_u8(APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
         if (nvs_err != ESP_OK) {
             ESP_LOGE(APP_SERVICES_TAG,
-                     "Wi-Fi NVS persistence failed (%s); runtime state is correct",
+                     "Wi-Fi NVS persistence failed (%s); runtime state remains actual",
                      esp_err_to_name(nvs_err));
         } else {
             ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi NVS persistence: OK (%s=%u)",
@@ -324,46 +363,21 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
         }
     }
 
-    /* Update state and LCD unconditionally based on controller result.
-     *
-     * Previously this block was gated on app_wifi_operation_pending(), but
-     * that flag is also cleared by app_wifi_status_callback() which fires
-     * from the ESP-IDF event task during esp_wifi_start/stop -- for example
-     * WIFI_EVENT_AP_START fires WIFI_STATE_AP_ACTIVE, and WIFI_EVENT_STA_STOP
-     * fires WIFI_STATE_IDLE which matches the DISABLE terminal condition.
-     * The callback reaches app_wifi_end_operation() before this task returns
-     * from wifi_controller_start/stop, so app_wifi_operation_pending() is
-     * already false by the time we check it here -- and the state/NVS update
-     * never happened. The LCD showed "Wi-Fi Disabled" from the callback but
-     * sys_state.wifi.enabled was never written, causing the menu to show the
-     * wrong state and subsequent toggles to behave incorrectly.
-     *
-     * Fix: decouple the state update from the operation-pending flag. The
-     * controller result is the authoritative signal for whether ON/OFF
-     * succeeded. The callback still updates the LCD with its own message
-     * ("Wi-Fi Disabled" / "Setup AP Active" / connection result) -- that is
-     * intentional asynchronous feedback and is kept. We suppress the
-     * synchronous "Wi-Fi ON/OFF" flash here only if the callback already
-     * closed the operation (it already showed something). */
     if (controller_err == ESP_OK) {
-        sys_state.wifi.enabled = enabled;
-        sys_state.inverter.wifi_enabled = enabled;
-        ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi runtime state updated: %s",
-                 enabled ? "ON" : "OFF");
-        /* Only flash the generic ON/OFF confirmation if the async status
-         * callback has not already closed the operation with its own message.
-         * (In APSTA mode WIFI_EVENT_AP_START fires during esp_wifi_start and
-         * the callback closes the ENABLE op before we return here.) */
-        if (app_wifi_operation_pending()) {
-            app_wifi_end_operation();
+        app_wifi_end_operation();
+        app_wifi_sync_menu_if_visible();
+        if (nvs_err == ESP_OK) {
             lcd_flash_message(enabled ? "Wi-Fi ON" : "Wi-Fi OFF", "Ready", 900U);
+        } else {
+            lcd_flash_message(enabled ? "Wi-Fi ON" : "Wi-Fi OFF", "Save failed", 1500U);
         }
-    } else if (controller_err != ESP_ERR_WIFI_CONN) {
+    } else {
         sys_state.wifi.enabled = previous_enabled;
         sys_state.inverter.wifi_enabled = previous_enabled;
         ESP_LOGE(APP_SERVICES_TAG, "Wi-Fi %s failed: %s",
                  enabled ? "ON" : "OFF", esp_err_to_name(controller_err));
         app_wifi_end_operation();
+        app_wifi_sync_menu_if_visible();
         if (enabled && controller_err == ESP_ERR_NOT_FOUND) {
             lcd_flash_message("Wi-Fi Not Config", "Use menuconfig", 1800U);
         } else {
@@ -468,29 +482,9 @@ static void app_wifi_status_callback(const wifi_status_t *status)
 
     switch (operation) {
     case APP_WIFI_OPERATION_ENABLE:
-        /* Wi-Fi ON means the radio is running -- not that STA connected.
-         * AP_ACTIVE fires from WIFI_EVENT_AP_START inside esp_wifi_start(),
-         * so it is the earliest reliable signal that the radio is up.
-         * In APSTA mode the AP always starts; STA connection is a separate
-         * user action and its outcome must not collapse the ENABLE result. */
-        if (status->state == WIFI_STATE_AP_ACTIVE) {
-            terminal = true;
-            connected = false;
-            message = "Wi-Fi ON";
-        } else if (status->state == WIFI_STATE_CONNECTED && status->got_ip) {
-            /* In STA-only mode there is no AP_ACTIVE event; CONNECTED is
-             * the first terminal state we see after a successful start. */
-            terminal = true;
-            connected = true;
-            message = ssid[0] != '\0' ? ssid : "Connected";
-        } else if (status->state == WIFI_STATE_PROVISIONING) {
-            terminal = true;
-            message = "Setup AP Active";
-        }
-        /* WIFI_STATE_FAILED after an ENABLE means STA could not connect,
-         * NOT that the radio failed to start.  Do not close the ENABLE
-         * operation on FAILED -- execute_wifi_toggle() will close it via
-         * app_wifi_end_operation() once wifi_controller_start() returns. */
+        /* ON/OFF completion belongs to app_services_execute_wifi_toggle(),
+         * after wifi_controller_start() returns.  AP/STA status events are
+         * informational and must not race the runtime/NVS commit. */
         break;
     case APP_WIFI_OPERATION_CONNECT_SAVED:
         if (status->state == WIFI_STATE_CONNECTED && status->got_ip) {
@@ -504,11 +498,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         }
         break;
     case APP_WIFI_OPERATION_DISABLE:
-        if (status->state == WIFI_STATE_IDLE ||
-            (status->state == WIFI_STATE_FAILED && !status->connected)) {
-            terminal = true;
-            message = "Wi-Fi Disabled";
-        }
+        /* The controller return value, not WIFI_STATE_IDLE, proves STOP. */
         break;
     case APP_WIFI_OPERATION_DISCONNECT:
         if (!status->connected &&

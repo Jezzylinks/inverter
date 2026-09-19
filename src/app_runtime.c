@@ -6351,7 +6351,11 @@ static void begin_setting_edit(value_edit_param_t param, float current_value)
 
     sys_state.current_value_type = ctx;
     sys_state.edit_backup_value = current_value;
-    sys_state.pending_confirmation = true;
+    /* A newly opened editor is not awaiting confirmation yet.  Critical
+     * settings set this flag after UP/DOWN changes the candidate value; this
+     * keeps the edit flow as ENTER -> adjust -> ENTER and prevents an initial
+     * ENTER-without-change from being mistaken for a confirmed transaction. */
+    sys_state.pending_confirmation = false;
     sys_state.value_changed = false;
     sys_state.repeat_count = 0;
     sys_state.fast_increment_active = false;
