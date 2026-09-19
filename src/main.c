@@ -245,6 +245,31 @@ void app_main(void)
         ESP_LOGE(APP_TAG, "Failed to create LCD task");
         xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
     }
+
+    /* Company logo / brand screen visibility window.
+     *
+     * lcd_writer_init() set sys_lcd.screen = LCD_SCREEN_BOOT_BRAND before
+     * lcd_task existed. Without this wait the very next call --
+     * startup_show_stage(HARDWARE) -> lcd_show_startup_status() -- overwrites
+     * BOOT_BRAND with LCD_SCREEN_STARTUP_STATUS before the lcd_task has had
+     * a single scheduler tick to render even one frame of the logo. The user
+     * therefore never sees the company logo on the physical ESP32.
+     *
+     * All hardware initialisation above this point has already completed;
+     * this delay is purely a user-visible presentation window and does NOT
+     * slow down any actual hardware milestone. The lcd_task is scheduled at
+     * priority 4 with a 100 ms yield; waiting LCD_STARTUP_IDENTITY_DURATION_MS
+     * gives it enough time to render and display the brand screen.
+     *
+     * The lcd_task own BOOT_BRAND -> lcd_show_loading() self-advance fires
+     * at the end of this window; the subsequent startup_show_stage overwrites
+     * loading with STARTUP_STATUS immediately, so there is no visible gap
+     * between the logo and the hardware stage. */
+    ESP_LOGI("STARTUP", "Company logo: displaying for %u ms",
+             LCD_STARTUP_IDENTITY_DURATION_MS);
+    vTaskDelay(pdMS_TO_TICKS(LCD_STARTUP_IDENTITY_DURATION_MS));
+    ESP_LOGI("STARTUP", "Company logo: visibility window complete");
+
     startup_show_stage(LCD_STARTUP_STAGE_HARDWARE, false, false,
                        lcd_init_result == ESP_OK, false, false);
     startup_show_stage(LCD_STARTUP_STAGE_ADC_INIT, false, false,
