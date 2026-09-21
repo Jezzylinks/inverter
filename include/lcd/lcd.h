@@ -14,8 +14,8 @@ extern "C"
 // --------------------------------------------------
 // LCD CONFIGURATION
 // --------------------------------------------------
-#define CHAR_BAR_0 0 /* empty / legacy bar  */
-#define CHAR_BAR_1 1
+#define CHAR_BAR_0 0 /* empty / legacy bar */
+#define CHAR_BAR_1 1 /* legacy bar; sine-wave slot on 20x4 */
 #define CHAR_BAR_2 2 /* legacy slot; also used for the filled progress block */
 #define CHAR_PROGRESS_BLOCK 2
 #define CHAR_BAR_3 3
@@ -32,6 +32,9 @@ extern "C"
 #define CHAR_WIFI_ALERT 7
 #define CHAR_WIFI_DEVICE_LOCAL 6
 #define CHAR_WIFI_DEVICE_REMOTE 7
+
+/* Slot zero is NUL in C strings, so the identity uses slot one. */
+#define CHAR_SINE_WAVE 1
 
     // --------------------------------------------------
     // LCD STATE STRUCTURE
