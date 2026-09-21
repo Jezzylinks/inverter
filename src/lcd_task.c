@@ -793,6 +793,13 @@ static void draw_ota(const lcd_ota_data_t *d)
     draw_commit(row0, row1);
 }
 
+/* Slot 1 is normally the legacy 20x4 BAR_1 glyph.  It is borrowed only for
+ * the short identity presentation and restored by lcd_init_cgram() before
+ * the progress/loading screen or any normal UI is rendered. */
+static const uint8_t cgram_startup_sine_wave[8] = {
+    0x00, 0x01, 0x03, 0x06, 0x0C, 0x18, 0x10, 0x00};
+static bool s_startup_sine_loaded;
+
 static void draw_startup_identity(void)
 {
     if (lcd_geometry_is_20x4())
@@ -2014,9 +2021,22 @@ void lcd_task(void *arg)
             {
                 s_identity_started_ms = _lcd_get_time_ms();
             }
+            if (!s_startup_sine_loaded && lcd_geometry_is_20x4())
+            {
+                lcd_create_custom_char(CHAR_SINE_WAVE,
+                                       cgram_startup_sine_wave);
+                s_startup_sine_loaded = true;
+            }
             draw_startup_identity();
             if (_lcd_get_time_ms() - s_identity_started_ms >= LCD_STARTUP_IDENTITY_DURATION_MS)
             {
+                /* Restore BAR_0/BAR_1, the progress block, and Wi-Fi glyphs
+                 * before the next screen uses the shared CGRAM slots. */
+                if (s_startup_sine_loaded)
+                {
+                    lcd_init_cgram();
+                    s_startup_sine_loaded = false;
+                }
                 lcd_show_loading("System Starting", LCD_STARTUP_LOADING_DURATION_MS,
                                  LCD_SCREEN_STARTUP_STATUS);
             }

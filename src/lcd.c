@@ -556,10 +556,6 @@ static const uint8_t cgram_wifi_link[8] = {0x00, 0x04, 0x0E, 0x1F, 0x0E, 0x04, 0
 static const uint8_t cgram_wifi_device_local[8] = {0x1F, 0x11, 0x15, 0x11, 0x1F, 0x04, 0x0E, 0x04};
 static const uint8_t cgram_wifi_device_remote[8] = {0x1F, 0x11, 0x1B, 0x11, 0x1F, 0x04, 0x0E, 0x04};
 
-/* A smooth sinusoid using only HD44780's 5x8 custom-character pixels. */
-static const uint8_t cgram_sine_wave[8] = {
-    0x00, 0x01, 0x03, 0x06, 0x0C, 0x18, 0x10, 0x00};
-
 /**
  * @brief Load all CGRAM slots.  Call once at startup, after lcd_init().
  *        Each individual lcd_create_custom_char() call already restores
@@ -569,12 +565,13 @@ void lcd_init_cgram(void)
 {
     if (lcd_geometry_is_20x4())
     {
-        lcd_create_custom_char(CHAR_SINE_WAVE, cgram_sine_wave);
         lcd_create_custom_char(CHAR_WIFI_TX, cgram_wifi_tx);
         lcd_create_custom_char(CHAR_WIFI_RX, cgram_wifi_rx);
         lcd_create_custom_char(CHAR_WIFI_LINK, cgram_wifi_link);
         lcd_create_custom_char(CHAR_WIFI_DEVICE_LOCAL, cgram_wifi_device_local);
         lcd_create_custom_char(CHAR_WIFI_DEVICE_REMOTE, cgram_wifi_device_remote);
+        lcd_create_custom_char(CHAR_BAR_0, cgram_bar[0]);
+        lcd_create_custom_char(CHAR_BAR_1, cgram_bar[1]);
         lcd_create_custom_char(CHAR_BAR_2, cgram_bar[2]);
     }
     else
