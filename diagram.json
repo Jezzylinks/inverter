@@ -30,7 +30,7 @@
       "top": 221.8,
       "left": -178.4,
       "rotate": 90,
-      "attrs": { "color": "yellow", "xray": "1" }
+      "attrs": { "color": "yellow" }
     },
     {
       "type": "wokwi-pushbutton-6mm",
@@ -38,7 +38,7 @@
       "top": 231.4,
       "left": -130.4,
       "rotate": 90,
-      "attrs": { "color": "grey", "xray": "1" }
+      "attrs": { "color": "grey" }
     },
     {
       "type": "wokwi-pushbutton-6mm",
@@ -46,7 +46,7 @@
       "top": 221.8,
       "left": -82.4,
       "rotate": 90,
-      "attrs": { "color": "red", "xray": "1" }
+      "attrs": { "color": "red" }
     },
     {
       "type": "wokwi-pushbutton-6mm",
@@ -54,7 +54,7 @@
       "top": 289,
       "left": -130.4,
       "rotate": 90,
-      "attrs": { "color": "black", "xray": "1" }
+      "attrs": { "color": "black" }
     },
     {
       "type": "wokwi-pushbutton-6mm",
@@ -62,7 +62,7 @@
       "top": 183.4,
       "left": -130.4,
       "rotate": 90,
-      "attrs": { "color": "blue", "xray": "1" }
+      "attrs": { "color": "blue" }
     },
     {
       "type": "wokwi-led",
@@ -83,7 +83,7 @@
       "id": "led3",
       "top": 121.2,
       "left": 225,
-      "attrs": { "color": "limegreen", "flip": "1" }
+      "attrs": { "color": "green", "flip": "1" }
     },
     { "type": "wokwi-potentiometer", "id": "pot1", "top": 238.7, "left": 28.6, "attrs": {} },
     { "type": "wokwi-potentiometer", "id": "pot2", "top": 238.7, "left": 134.2, "attrs": {} },

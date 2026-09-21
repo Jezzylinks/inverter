@@ -797,7 +797,12 @@ static void draw_startup_identity(void)
 {
     if (lcd_geometry_is_20x4())
     {
-        draw_commit_rows((const char *[]){"", "   JEZZYLINKS", " SOLAR INVERTER", ""});
+        char sine_row[LCD_LINE_SIZE];
+        snprintf(sine_row, sizeof(sine_row), "       %c%c%c%c%c%c",
+                 CHAR_SINE_WAVE, CHAR_SINE_WAVE, CHAR_SINE_WAVE,
+                 CHAR_SINE_WAVE, CHAR_SINE_WAVE, CHAR_SINE_WAVE);
+        draw_commit_rows((const char *[]){sine_row, "   JEZZYLINKS",
+                                          " SOLAR INVERTER", ""});
     }
     else
     {
