@@ -2027,7 +2027,12 @@ void lcd_task(void *arg)
                                        cgram_startup_sine_wave);
                 s_startup_sine_loaded = true;
             }
+
             draw_startup_identity();
+            ESP_LOGI(TAG, "Startup identity screen drawn, elapsed=%ums",
+                     (unsigned)(_lcd_get_time_ms() - s_identity_started_ms));
+            // delay for a fixed duration before transitioning to the next screen
+            vTaskDelay(pdMS_TO_TICKS(3000));
             if (_lcd_get_time_ms() - s_identity_started_ms >= LCD_STARTUP_IDENTITY_DURATION_MS)
             {
                 /* Restore BAR_0/BAR_1, the progress block, and Wi-Fi glyphs

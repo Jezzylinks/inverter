@@ -1917,8 +1917,7 @@ esp_err_t nvs_save_all(nvs_handle_t handle)
             ESP_LOGE(NVS_SAVING_TAG,
                      "Failed to save namespace='%s' key='%s' type=%s: %s (0x%x)",
                      NVS_NS_SYSTEM, s->key,
-                     s->is_scaled_float ? "i32_scaled" :
-                         (s->size == sizeof(uint8_t) ? "u8" : "i32"),
+                     s->is_scaled_float ? "i32_scaled" : (s->size == sizeof(uint8_t) ? "u8" : "i32"),
                      esp_err_to_name(err), err);
             if (first_err == ESP_OK)
             {
@@ -5522,9 +5521,11 @@ esp_err_t init_menu_system()
      * avoids a heap allocation and, crucially, eliminates the race where two
      * concurrent first-callers both see s_save_mutex == NULL and each create
      * their own private mutex, rendering the serialisation useless. */
-    if (!s_save_mutex) {
+    if (!s_save_mutex)
+    {
         s_save_mutex = xSemaphoreCreateMutexStatic(&s_save_mutex_storage);
-        if (!s_save_mutex) {
+        if (!s_save_mutex)
+        {
             ESP_LOGE(TAG_SYS, "FATAL: could not create settings save mutex");
             return ESP_ERR_NO_MEM;
         }

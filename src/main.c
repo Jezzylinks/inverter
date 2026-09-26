@@ -98,10 +98,12 @@ void app_main(void)
         return;
     }
 
-    if (!system_events_init()) {
+    if (!system_events_init())
+    {
         ESP_LOGE(APP_TAG, "System event queue initialization failed");
     }
-    if (!event_dispatcher_init()) {
+    if (!event_dispatcher_init())
+    {
         ESP_LOGE(APP_TAG, "Event dispatcher initialization failed; sound/events degraded");
     }
     sys_event_group = xEventGroupCreate();
@@ -160,13 +162,7 @@ void app_main(void)
     }
     if (security_init() != ESP_OK)
     {
-        /* Security init failure means PIN-based access control cannot be
-         * enforced, but it must NOT prevent the inverter from starting.
-         * The most common cause is a first-flash NVS state where
-         * persist_pin() cannot write the default PIN (e.g. NVS not yet
-         * formatted for the namespace, or a type-mismatch from an older
-         * firmware).  Log it clearly and continue; the inverter's core
-         * power-conversion function is independent of panel PIN security. */
+
         ESP_LOGE(APP_TAG, "Security initialization failed — panel PIN "
                           "protection unavailable; inverter will continue "
                           "without access control");
@@ -207,19 +203,13 @@ void app_main(void)
     LCD_power(true);
     const esp_err_t lcd_init_result = lcd_controller_init();
     lcd_set_brightness(200);
-    /* Start the user-visible "minimum startup duration" clock only now that
-     * the panel is actually powered and initialized, rather than back at
-     * lcd_writer_init(). Anchoring it there previously burned several
-     * seconds of the visible-duration budget on invisible boot work (NVS,
-     * security, hardware init, and the earlier fixed startup delay above),
-     * so the boot screen could appear to flash by even though a "minimum
-     * visible" mechanism already existed. */
     lcd_startup_timer_begin();
 
     /* Buzzer owns its LEDC timer/channel. A buzzer failure is deliberately
      * non-fatal: physical button events must remain independent of sound. */
     const esp_err_t buzzer_init_result = buzzer_init();
-    if (buzzer_init_result != ESP_OK) {
+    if (buzzer_init_result != ESP_OK)
+    {
         ESP_LOGE(APP_TAG, "Buzzer unavailable; continuing without sound: %s",
                  esp_err_to_name(buzzer_init_result));
     }
@@ -227,8 +217,9 @@ void app_main(void)
     /* Boot screen starts on LCD_SCREEN_BOOT_BRAND (set by lcd_writer_init). */
     xEventGroupClearBits(sys_event_group,
                          APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED |
-                         APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED);
-    if (lcd_init_result != ESP_OK) {
+                             APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED);
+    if (lcd_init_result != ESP_OK)
+    {
         xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
     }
     const esp_err_t adc_start_result = adc_manager_start();
@@ -245,6 +236,7 @@ void app_main(void)
         ESP_LOGE(APP_TAG, "Failed to create LCD task");
         xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
     }
+
     startup_show_stage(LCD_STARTUP_STAGE_HARDWARE, false, false,
                        lcd_init_result == ESP_OK, false, false);
     startup_show_stage(LCD_STARTUP_STAGE_ADC_INIT, false, false,
@@ -346,14 +338,10 @@ void app_main(void)
                                 lcd_ready, adc_ready, false);
         ESP_LOGI("POST", "Startup prerequisite result propagated: complete=1 passed=0 lcd=%d adc=%d",
                  lcd_ready, adc_ready);
-        /* Startup begins with the inverter OFF and system_ready false. A
-         * shutdown sequence is only needed after an operational start; keep
-         * this POST failure latched without invoking that runtime path. */
+
         if (lcd_ready)
         {
-            const char *fault = lcd_failed ? "LCD INIT FAIL   " :
-                                (adc_failed ? "ADC INIT FAIL   " :
-                                               "ADC TIMEOUT     ");
+            const char *fault = lcd_failed ? "LCD INIT FAIL   " : (adc_failed ? "ADC INIT FAIL   " : "ADC TIMEOUT     ");
             lcd_show_fault("SENSOR STARTUP ", fault);
         }
         else
@@ -362,9 +350,6 @@ void app_main(void)
         }
     }
 
-    /* Safe settings defaults are already active. Defer flash persistence until
-     * the ADC/LCD prerequisite decision and POST have completed, so app_main
-     * is not held inside a potentially long NVS commit during recovery. */
     if (startup_post.all_passed && nvs_is_initialized())
     {
         app_runtime_start_deferred_settings_persistence();
@@ -375,11 +360,6 @@ void app_main(void)
                  "Skipping deferred settings persistence after failed startup");
     }
 
-    /* Start background/network services only after POST and all safety checks
-     * have completed.  These services are non-safety-critical and must not
-     * run during the startup safety window.  If POST failed, Wi-Fi, MQTT,
-     * HTTP, WebSocket, mDNS, NTP, OTA and cloud reporting are deliberately
-     * withheld — a faulted inverter must not silently appear online. */
     const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&
                                  post_completed && startup_post.all_passed;
     if (startup_healthy)
@@ -436,7 +416,8 @@ void app_main(void)
         lcd_flash_info_to("Firmware Update", "Previous restored", 3500U,
                           LCD_SCREEN_MAIN);
     }
-    if (!startup_healthy) {
+    if (!startup_healthy)
+    {
         /* Keep button_task and the event consumers alive in the latched
          * startup-fault state. They remain safety-gated by system_ready, but
          * deinitializing them here made the physical inputs impossible to
