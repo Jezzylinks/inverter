@@ -35,6 +35,63 @@
 
 static const char *APP_TAG = "APP_INIT";
 
+static void startup_show_identity(void)
+{
+    static const uint8_t cgram_startup_sine_wave[8] = {
+        0x00, 0x01, 0x03, 0x06, 0x0C, 0x18, 0x10, 0x00};
+    const uint32_t identity_started_ms =
+        (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+
+    if (lcd_geometry_is_20x4())
+    {
+        lcd_create_custom_char(CHAR_SINE_WAVE, cgram_startup_sine_wave);
+
+        lcd_clear();
+        lcd_set_cursor(0, 0);
+        lcd_print_str("       ");
+        for (int i = 0; i < 6; ++i)
+        {
+            lcd_print_char(CHAR_SINE_WAVE);
+        }
+
+        lcd_set_cursor(1, 0);
+        lcd_print_str("   JEZZYLINKS");
+
+        lcd_set_cursor(2, 0);
+        lcd_print_str(" SOLAR INVERTER");
+
+        lcd_set_cursor(3, 0);
+        lcd_print_str("                    ");
+    }
+    else
+    {
+        lcd_show_message("   JEZZYLINKS", " SOLAR INVERTER");
+    }
+
+    ESP_LOGI(APP_TAG, "Startup identity screen drawn, elapsed=%ums",
+             (unsigned)(((uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS)) -
+                        identity_started_ms));
+
+    /*
+     * The identity presentation is owned by app_main, not lcd_task.
+     * This is presentation time only; readiness/POST transitions remain
+     * controlled by the startup coordinator below.
+     */
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
+    if ((uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS) -
+            identity_started_ms >= LCD_STARTUP_IDENTITY_DURATION_MS)
+    {
+        /*
+         * Restore BAR_0/BAR_1, the progress block, and Wi-Fi glyphs before
+         * the normal startup/loading renderer uses the shared CGRAM slots.
+         */
+        lcd_init_cgram();
+        lcd_show_loading("System Starting", LCD_STARTUP_LOADING_DURATION_MS,
+                         LCD_SCREEN_STARTUP_STATUS);
+    }
+}
+
 static void startup_show_stage(lcd_startup_stage_t stage,
                                bool post_complete,
                                bool post_passed,
@@ -214,7 +271,13 @@ void app_main(void)
                  esp_err_to_name(buzzer_init_result));
     }
 
-    /* Boot screen starts on LCD_SCREEN_BOOT_BRAND (set by lcd_writer_init). */
+    /*
+     * The startup identity is rendered and timed by app_main. This keeps
+     * startup progression under the single startup coordinator instead of
+     * allowing lcd_task to block and autonomously transition screens.
+     */
+    startup_show_identity();
+
     xEventGroupClearBits(sys_event_group,
                          APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED |
                              APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED);
