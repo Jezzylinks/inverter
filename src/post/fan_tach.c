@@ -65,11 +65,10 @@ static void IRAM_ATTR fan_tach_buffer_push(uint64_t value)
          * Remove the oldest timestamp.
          */
 
-        memmove(
-            (void *)&s_ctx.timestamp[0],
-            (const void *)&s_ctx.timestamp[1],
-            sizeof(uint64_t) *
-                (FAN_TACH_HISTORY_SIZE - 1));
+        for (uint8_t i = 1U; i < FAN_TACH_HISTORY_SIZE; ++i)
+        {
+            s_ctx.timestamp[i - 1U] = s_ctx.timestamp[i];
+        }
 
         s_ctx.timestamp[FAN_TACH_HISTORY_SIZE - 1] = value;
     }
@@ -161,7 +160,7 @@ static esp_err_t fan_tach_gpio_init(void)
 
     esp_err_t err =
         gpio_install_isr_service(
-            0);
+            ESP_INTR_FLAG_IRAM);
 
     /*
      * Ignore if already installed.
