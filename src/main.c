@@ -1,5 +1,6 @@
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdint.h>
 
 #include "esp_err.h"
 #include "esp_log.h"
@@ -42,12 +43,36 @@ static void startup_show_stage(lcd_startup_stage_t stage,
                                bool adc_ok,
                                bool fan_ok)
 {
-    lcd_show_startup_status(stage, post_complete, post_passed,
-                            lcd_ok, adc_ok, fan_ok);
-    /* This is a minimum readable presentation window, not a readiness
-     * substitute. The caller only advances after the real milestone for the
-     * stage has completed. */
+    lcd_show_startup_status(stage,
+                            post_complete,
+                            post_passed,
+                            lcd_ok,
+                            adc_ok,
+                            fan_ok);
+
     vTaskDelay(pdMS_TO_TICKS(LCD_STARTUP_STAGE_DURATION_MS));
+}
+
+static uint8_t startup_bounded_progress(uint8_t confirmed_pct,
+                                        uint8_t next_milestone_pct,
+                                        uint32_t elapsed_ms,
+                                        uint32_t interpolation_window_ms)
+{
+    if (next_milestone_pct <= confirmed_pct + 1U ||
+        interpolation_window_ms == 0U)
+    {
+        return confirmed_pct;
+    }
+
+    const uint8_t ceiling = (uint8_t)(next_milestone_pct - 1U);
+    const uint8_t span = (uint8_t)(ceiling - confirmed_pct);
+    if (elapsed_ms >= interpolation_window_ms)
+    {
+        return ceiling;
+    }
+    return (uint8_t)(confirmed_pct +
+                     ((uint32_t)span * elapsed_ms) /
+                         interpolation_window_ms);
 }
 
 static void post_show_result_and_notify(const post_result_t result)
@@ -98,10 +123,12 @@ void app_main(void)
         return;
     }
 
-    if (!system_events_init()) {
+    if (!system_events_init())
+    {
         ESP_LOGE(APP_TAG, "System event queue initialization failed");
     }
-    if (!event_dispatcher_init()) {
+    if (!event_dispatcher_init())
+    {
         ESP_LOGE(APP_TAG, "Event dispatcher initialization failed; sound/events degraded");
     }
     sys_event_group = xEventGroupCreate();
@@ -127,6 +154,14 @@ void app_main(void)
         ESP_LOGE(APP_TAG, "LCD writer initialization failed: %s",
                  esp_err_to_name(lcd_writer_err));
         return;
+    }
+
+    /* Start the Wi-Fi toggle infrastructure (mutex + queue + worker) before
+     * POST so the user can toggle Wi-Fi from the menu regardless of whether
+     * POST passes.  app_services_init() is POST-gated; this is not. */
+    if (app_services_wifi_toggle_init() != ESP_OK)
+    {
+        ESP_LOGW(APP_TAG, "Wi-Fi toggle init failed; toggle will be unavailable");
     }
 
     /* NVS and system defaults must be ready before loading profiles or security. */
@@ -160,13 +195,7 @@ void app_main(void)
     }
     if (security_init() != ESP_OK)
     {
-        /* Security init failure means PIN-based access control cannot be
-         * enforced, but it must NOT prevent the inverter from starting.
-         * The most common cause is a first-flash NVS state where
-         * persist_pin() cannot write the default PIN (e.g. NVS not yet
-         * formatted for the namespace, or a type-mismatch from an older
-         * firmware).  Log it clearly and continue; the inverter's core
-         * power-conversion function is independent of panel PIN security. */
+
         ESP_LOGE(APP_TAG, "Security initialization failed — panel PIN "
                           "protection unavailable; inverter will continue "
                           "without access control");
@@ -207,30 +236,25 @@ void app_main(void)
     LCD_power(true);
     const esp_err_t lcd_init_result = lcd_controller_init();
     lcd_set_brightness(200);
-    /* Start the user-visible "minimum startup duration" clock only now that
-     * the panel is actually powered and initialized, rather than back at
-     * lcd_writer_init(). Anchoring it there previously burned several
-     * seconds of the visible-duration budget on invisible boot work (NVS,
-     * security, hardware init, and the earlier fixed startup delay above),
-     * so the boot screen could appear to flash by even though a "minimum
-     * visible" mechanism already existed. */
     lcd_startup_timer_begin();
 
     /* Buzzer owns its LEDC timer/channel. A buzzer failure is deliberately
      * non-fatal: physical button events must remain independent of sound. */
     const esp_err_t buzzer_init_result = buzzer_init();
-    if (buzzer_init_result != ESP_OK) {
+    if (buzzer_init_result != ESP_OK)
+    {
         ESP_LOGE(APP_TAG, "Buzzer unavailable; continuing without sound: %s",
                  esp_err_to_name(buzzer_init_result));
     }
 
-    /* Boot screen starts on LCD_SCREEN_BOOT_BRAND (set by lcd_writer_init). */
     xEventGroupClearBits(sys_event_group,
                          APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED |
-                         APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED);
-    if (lcd_init_result != ESP_OK) {
+                             APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED);
+    if (lcd_init_result != ESP_OK)
+    {
         xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
     }
+    xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_READY);
     const esp_err_t adc_start_result = adc_manager_start();
     if (adc_start_result != ESP_OK)
     {
@@ -238,47 +262,35 @@ void app_main(void)
                  esp_err_to_name(adc_start_result));
         xEventGroupSetBits(sys_event_group, APP_EVENT_ADC_FAILED);
     }
+
+    if (lcd_event_receiver_start() != ESP_OK)
+    {
+        lcd_event_ready = false;
+        ESP_LOGE(APP_TAG, "Failed to start LCD event receiver");
+    }
+
+    // Create the LCD task before running POST so that the status screen can be drawn. The LCD task must be created before POST so that the status screen can be drawn.
     const BaseType_t lcd_task_status =
-        xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
+        xTaskCreate(lcd_task, "lcd_task", 8192, NULL, 4, &lcd_task_handle);
     if (lcd_task_status != pdPASS)
     {
         ESP_LOGE(APP_TAG, "Failed to create LCD task");
         xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
     }
 
-    /* Company logo / brand screen visibility window.
-     *
-     * lcd_writer_init() set sys_lcd.screen = LCD_SCREEN_BOOT_BRAND before
-     * lcd_task existed. Without this wait the very next call --
-     * startup_show_stage(HARDWARE) -> lcd_show_startup_status() -- overwrites
-     * BOOT_BRAND with LCD_SCREEN_STARTUP_STATUS before the lcd_task has had
-     * a single scheduler tick to render even one frame of the logo. The user
-     * therefore never sees the company logo on the physical ESP32.
-     *
-     * All hardware initialisation above this point has already completed;
-     * this delay is purely a user-visible presentation window and does NOT
-     * slow down any actual hardware milestone. The lcd_task is scheduled at
-     * priority 4 with a 100 ms yield; waiting LCD_STARTUP_IDENTITY_DURATION_MS
-     * gives it enough time to render and display the brand screen.
-     *
-     * The lcd_task own BOOT_BRAND -> lcd_show_loading() self-advance fires
-     * at the end of this window; the subsequent startup_show_stage overwrites
-     * loading with STARTUP_STATUS immediately, so there is no visible gap
-     * between the logo and the hardware stage. */
-    ESP_LOGI("STARTUP", "Company logo: displaying for %u ms",
-             LCD_STARTUP_IDENTITY_DURATION_MS);
-    vTaskDelay(pdMS_TO_TICKS(LCD_STARTUP_IDENTITY_DURATION_MS));
-    ESP_LOGI("STARTUP", "Company logo: visibility window complete");
+    // Wait for the LCD and ADC subsystems to report readiness or failure before proceeding with POST. The LCD task must be created before POST so that the status screen can be drawn.
+    startup_show_stage(LCD_STARTUP_STAGE_IDENTITY, false, false,
+                       lcd_init_result == ESP_OK, false, false);
 
     startup_show_stage(LCD_STARTUP_STAGE_HARDWARE, false, false,
                        lcd_init_result == ESP_OK, false, false);
+
     startup_show_stage(LCD_STARTUP_STAGE_ADC_INIT, false, false,
                        lcd_init_result == ESP_OK, false, false);
-    if (lcd_event_receiver_start() != ESP_OK)
-    {
-        lcd_event_ready = false;
-        ESP_LOGE(APP_TAG, "Failed to start LCD event receiver");
-    }
+
+    startup_show_stage(LCD_STARTUP_STAGE_LOADING, false, false,
+                       lcd_init_result == ESP_OK, false, false);
+
     xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, 1);
     const BaseType_t buzzer_task_status =
         xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, 1);
@@ -316,6 +328,7 @@ void app_main(void)
         APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED;
     EventBits_t startup_bits = 0U;
     const TickType_t startup_wait_start = xTaskGetTickCount();
+    uint8_t spinner_frame = 0U;
     while ((xTaskGetTickCount() - startup_wait_start) < pdMS_TO_TICKS(10000))
     {
         startup_bits = xEventGroupWaitBits(
@@ -328,6 +341,19 @@ void app_main(void)
         const bool lcd_ready = (startup_bits & APP_EVENT_LCD_READY) != 0U;
         const bool startup_failed =
             (startup_bits & (APP_EVENT_ADC_FAILED | APP_EVENT_LCD_FAILED)) != 0U;
+        const uint32_t wait_elapsed_ms =
+            (uint32_t)((xTaskGetTickCount() - startup_wait_start) *
+                       portTICK_PERIOD_MS);
+        if (adc_ready && lcd_ready)
+        {
+            lcd_update_loading_progress(60U, spinner_frame++, "ADC READY");
+        }
+        else if (!startup_failed)
+        {
+            lcd_update_loading_progress(
+                startup_bounded_progress(40U, 60U, wait_elapsed_ms, 10000U),
+                spinner_frame++, "ADC / SENSORS");
+        }
         if (startup_failed || (adc_ready && lcd_ready))
         {
             break;
@@ -353,6 +379,7 @@ void app_main(void)
     else
     {
         const bool adc_failed = (startup_bits & APP_EVENT_ADC_FAILED) != 0U;
+        /* Startup begins with the inverter OFF and system_ready false. */
         const bool lcd_failed = (startup_bits & APP_EVENT_LCD_FAILED) != 0U;
         ESP_LOGE(APP_TAG, "Startup prerequisite %s; inhibiting inverter output",
                  (adc_failed || lcd_failed) ? "failed" : "timed out");
@@ -371,14 +398,10 @@ void app_main(void)
                                 lcd_ready, adc_ready, false);
         ESP_LOGI("POST", "Startup prerequisite result propagated: complete=1 passed=0 lcd=%d adc=%d",
                  lcd_ready, adc_ready);
-        /* Startup begins with the inverter OFF and system_ready false. A
-         * shutdown sequence is only needed after an operational start; keep
-         * this POST failure latched without invoking that runtime path. */
+
         if (lcd_ready)
         {
-            const char *fault = lcd_failed ? "LCD INIT FAIL   " :
-                                (adc_failed ? "ADC INIT FAIL   " :
-                                               "ADC TIMEOUT     ");
+            const char *fault = lcd_failed ? "LCD INIT FAIL   " : (adc_failed ? "ADC INIT FAIL   " : "ADC TIMEOUT     ");
             lcd_show_fault("SENSOR STARTUP ", fault);
         }
         else
@@ -387,9 +410,6 @@ void app_main(void)
         }
     }
 
-    /* Safe settings defaults are already active. Defer flash persistence until
-     * the ADC/LCD prerequisite decision and POST have completed, so app_main
-     * is not held inside a potentially long NVS commit during recovery. */
     if (startup_post.all_passed && nvs_is_initialized())
     {
         app_runtime_start_deferred_settings_persistence();
@@ -400,11 +420,6 @@ void app_main(void)
                  "Skipping deferred settings persistence after failed startup");
     }
 
-    /* Start background/network services only after POST and all safety checks
-     * have completed.  These services are non-safety-critical and must not
-     * run during the startup safety window.  If POST failed, Wi-Fi, MQTT,
-     * HTTP, WebSocket, mDNS, NTP, OTA and cloud reporting are deliberately
-     * withheld — a faulted inverter must not silently appear online. */
     const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&
                                  post_completed && startup_post.all_passed;
     if (startup_healthy)
@@ -461,7 +476,8 @@ void app_main(void)
         lcd_flash_info_to("Firmware Update", "Previous restored", 3500U,
                           LCD_SCREEN_MAIN);
     }
-    if (!startup_healthy) {
+    if (!startup_healthy)
+    {
         /* Keep button_task and the event consumers alive in the latched
          * startup-fault state. They remain safety-gated by system_ready, but
          * deinitializing them here made the physical inputs impossible to
