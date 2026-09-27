@@ -42,6 +42,11 @@ static void startup_show_identity(void)
     const uint32_t identity_started_ms =
         (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
 
+    if (lcd_task_handle != NULL)
+    {
+        vTaskSuspend(lcd_task_handle);
+    }
+
     if (lcd_geometry_is_20x4())
     {
         lcd_create_custom_char(CHAR_SINE_WAVE, cgram_startup_sine_wave);
@@ -68,6 +73,11 @@ static void startup_show_identity(void)
         lcd_show_message("   JEZZYLINKS", " SOLAR INVERTER");
     }
 
+    if (lcd_task_handle != NULL)
+    {
+        vTaskResume(lcd_task_handle);
+    }
+
     ESP_LOGI(APP_TAG, "Startup identity screen drawn, elapsed=%ums",
              (unsigned)(((uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS)) -
                         identity_started_ms));
@@ -86,9 +96,18 @@ static void startup_show_identity(void)
          * Restore BAR_0/BAR_1, the progress block, and Wi-Fi glyphs before
          * the normal startup/loading renderer uses the shared CGRAM slots.
          */
+        if (lcd_task_handle != NULL)
+        {
+            vTaskSuspend(lcd_task_handle);
+        }
         lcd_init_cgram();
         lcd_show_loading("System Starting", LCD_STARTUP_LOADING_DURATION_MS,
                          LCD_SCREEN_STARTUP_STATUS);
+        if (lcd_task_handle != NULL)
+        {
+            vTaskResume(lcd_task_handle);
+        }
+        vTaskDelay(pdMS_TO_TICKS(LCD_STARTUP_LOADING_DURATION_MS));
     }
 }
 
@@ -99,6 +118,21 @@ static void startup_show_stage(lcd_startup_stage_t stage,
                                bool adc_ok,
                                bool fan_ok)
 {
+    if (stage == LCD_STARTUP_STAGE_IDENTITY)
+    {
+        const EventBits_t lcd_bits = xEventGroupWaitBits(
+            sys_event_group,
+            APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED,
+            pdFALSE,
+            pdFALSE,
+            pdMS_TO_TICKS(1000));
+        if ((lcd_bits & APP_EVENT_LCD_READY) != 0U)
+        {
+            startup_show_identity();
+        }
+        return;
+    }
+
     lcd_show_startup_status(stage, post_complete, post_passed,
                             lcd_ok, adc_ok, fan_ok);
     /* This is a minimum readable presentation window, not a readiness
@@ -271,13 +305,6 @@ void app_main(void)
                  esp_err_to_name(buzzer_init_result));
     }
 
-    /*
-     * The startup identity is rendered and timed by app_main. This keeps
-     * startup progression under the single startup coordinator instead of
-     * allowing lcd_task to block and autonomously transition screens.
-     */
-    startup_show_identity();
-
     xEventGroupClearBits(sys_event_group,
                          APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED |
                              APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED);
@@ -300,6 +327,8 @@ void app_main(void)
         xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
     }
 
+    startup_show_stage(LCD_STARTUP_STAGE_IDENTITY, false, false,
+                       lcd_init_result == ESP_OK, false, false);
     startup_show_stage(LCD_STARTUP_STAGE_HARDWARE, false, false,
                        lcd_init_result == ESP_OK, false, false);
     startup_show_stage(LCD_STARTUP_STAGE_ADC_INIT, false, false,
@@ -383,6 +412,7 @@ void app_main(void)
     else
     {
         const bool adc_failed = (startup_bits & APP_EVENT_ADC_FAILED) != 0U;
+        /* Startup begins with the inverter OFF and system_ready false. */
         const bool lcd_failed = (startup_bits & APP_EVENT_LCD_FAILED) != 0U;
         ESP_LOGE(APP_TAG, "Startup prerequisite %s; inhibiting inverter output",
                  (adc_failed || lcd_failed) ? "failed" : "timed out");
