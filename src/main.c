@@ -36,79 +36,6 @@
 
 static const char *APP_TAG = "APP_INIT";
 
-static void startup_show_identity(void)
-{
-    static const uint8_t cgram_startup_sine_wave[8] = {
-        0x00, 0x01, 0x03, 0x06, 0x0C, 0x18, 0x10, 0x00};
-    const uint32_t identity_started_ms =
-        (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
-
-    if (lcd_task_handle != NULL)
-    {
-        vTaskSuspend(lcd_task_handle);
-    }
-
-    if (lcd_geometry_is_20x4())
-    {
-        lcd_create_custom_char(CHAR_SINE_WAVE, cgram_startup_sine_wave);
-
-        lcd_clear();
-        lcd_set_cursor(0, 0);
-        lcd_print_str("       ");
-        for (int i = 0; i < 6; ++i)
-        {
-            lcd_print_char(CHAR_SINE_WAVE);
-        }
-
-        lcd_set_cursor(1, 0);
-        lcd_print_str("   JEZZYLINKS");
-
-        lcd_set_cursor(2, 0);
-        lcd_print_str(" SOLAR INVERTER");
-
-        lcd_set_cursor(3, 0);
-        lcd_print_str("                    ");
-    }
-    else
-    {
-        lcd_show_message("   JEZZYLINKS", " SOLAR INVERTER");
-    }
-
-    if (lcd_task_handle != NULL)
-    {
-        vTaskResume(lcd_task_handle);
-    }
-
-    ESP_LOGI(APP_TAG, "Startup identity screen drawn, elapsed=%ums",
-             (unsigned)(((uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS)) -
-                        identity_started_ms));
-
-    /*
-     * The identity presentation is owned by app_main, not lcd_task.
-     * This is presentation time only; readiness/POST transitions remain
-     * controlled by the startup coordinator below.
-     */
-    vTaskDelay(pdMS_TO_TICKS(3000));
-
-    if ((uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS) -
-            identity_started_ms >= LCD_STARTUP_IDENTITY_DURATION_MS)
-    {
-        /*
-         * Restore BAR_0/BAR_1, the progress block, and Wi-Fi glyphs before
-         * the normal startup/loading renderer uses the shared CGRAM slots.
-         */
-        if (lcd_task_handle != NULL)
-        {
-            vTaskSuspend(lcd_task_handle);
-        }
-        lcd_init_cgram();
-        if (lcd_task_handle != NULL)
-        {
-            vTaskResume(lcd_task_handle);
-        }
-    }
-}
-
 static void startup_show_stage(lcd_startup_stage_t stage,
                                bool post_complete,
                                bool post_passed,
@@ -116,26 +43,13 @@ static void startup_show_stage(lcd_startup_stage_t stage,
                                bool adc_ok,
                                bool fan_ok)
 {
-    if (stage == LCD_STARTUP_STAGE_IDENTITY)
-    {
-        const EventBits_t lcd_bits = xEventGroupWaitBits(
-            sys_event_group,
-            APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED,
-            pdFALSE,
-            pdFALSE,
-            pdMS_TO_TICKS(1000));
-        if ((lcd_bits & APP_EVENT_LCD_READY) != 0U)
-        {
-            startup_show_identity();
-        }
-        return;
-    }
+    lcd_show_startup_status(stage,
+                            post_complete,
+                            post_passed,
+                            lcd_ok,
+                            adc_ok,
+                            fan_ok);
 
-    lcd_show_startup_status(stage, post_complete, post_passed,
-                            lcd_ok, adc_ok, fan_ok);
-    /* This is a minimum readable presentation window, not a readiness
-     * substitute. The caller only advances after the real milestone for the
-     * stage has completed. */
     vTaskDelay(pdMS_TO_TICKS(LCD_STARTUP_STAGE_DURATION_MS));
 }
 
@@ -332,6 +246,7 @@ void app_main(void)
     {
         xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
     }
+    xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_READY);
     const esp_err_t adc_start_result = adc_manager_start();
     if (adc_start_result != ESP_OK)
     {
@@ -339,28 +254,35 @@ void app_main(void)
                  esp_err_to_name(adc_start_result));
         xEventGroupSetBits(sys_event_group, APP_EVENT_ADC_FAILED);
     }
+
+    if (lcd_event_receiver_start() != ESP_OK)
+    {
+        lcd_event_ready = false;
+        ESP_LOGE(APP_TAG, "Failed to start LCD event receiver");
+    }
+
+    // Create the LCD task before running POST so that the status screen can be drawn. The LCD task must be created before POST so that the status screen can be drawn.
     const BaseType_t lcd_task_status =
-        xTaskCreate(lcd_task, "lcd_task", 4096, NULL, 4, &lcd_task_handle);
+        xTaskCreate(lcd_task, "lcd_task", 8192, NULL, 4, &lcd_task_handle);
     if (lcd_task_status != pdPASS)
     {
         ESP_LOGE(APP_TAG, "Failed to create LCD task");
         xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
     }
 
+    // Wait for the LCD and ADC subsystems to report readiness or failure before proceeding with POST. The LCD task must be created before POST so that the status screen can be drawn.
     startup_show_stage(LCD_STARTUP_STAGE_IDENTITY, false, false,
                        lcd_init_result == ESP_OK, false, false);
+
     startup_show_stage(LCD_STARTUP_STAGE_HARDWARE, false, false,
                        lcd_init_result == ESP_OK, false, false);
+
     startup_show_stage(LCD_STARTUP_STAGE_ADC_INIT, false, false,
                        lcd_init_result == ESP_OK, false, false);
-    lcd_show_loading("System Starting", UINT32_MAX,
-                     LCD_SCREEN_STARTUP_STATUS);
-    lcd_update_loading_progress(40U, 0U, "ADC / SENSORS");
-    if (lcd_event_receiver_start() != ESP_OK)
-    {
-        lcd_event_ready = false;
-        ESP_LOGE(APP_TAG, "Failed to start LCD event receiver");
-    }
+
+    startup_show_stage(LCD_STARTUP_STAGE_LOADING, false, false,
+                       lcd_init_result == ESP_OK, false, false);
+
     xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, 1);
     const BaseType_t buzzer_task_status =
         xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, 1);
