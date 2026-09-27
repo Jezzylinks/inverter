@@ -74,7 +74,9 @@ static void set_line(char *dst, const char *src)
      * and about to start rendering instead; see main.c. */
     LCD_LOCK();
     memset(&sys_lcd, 0, sizeof(sys_lcd));
-    sys_lcd.screen = LCD_SCREEN_BOOT_BRAND;
+    /* main.c explicitly activates the boot-brand screen after lcd_task is
+     * created; keep the writer neutral until that startup call. */
+    sys_lcd.screen = LCD_SCREEN_COUNT;
     sys_lcd.main.sub_page_interval_ms = 3000;
     LCD_UNLOCK();
     return ESP_OK;
