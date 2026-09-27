@@ -118,6 +118,7 @@ typedef struct {
 } wifi_toggle_request_t;
 
 static esp_err_t persist_u8(const char *key, uint8_t value);
+static void app_wifi_toggle_task(void *parameter);
 
 static bool app_manifest_url_is_valid(const char *url)
 {
@@ -808,8 +809,6 @@ esp_err_t app_services_init(void)
     s_wifi_operation_ssid[0] = '\0';
     s_wifi_operation_generation = 0U;
     s_wifi_operation_started_tick = 0U;
-    s_wifi_toggle_task = NULL;
-    s_wifi_toggle_queue = NULL;
     s_wifi_scan_active = false;
     s_wifi_scan_cancel_requested = false;
     s_wifi_scan_task = NULL;
@@ -913,6 +912,10 @@ esp_err_t app_services_init(void)
             ESP_LOGW(APP_SERVICES_TAG, "Could not create OTA availability task");
         }
     }
+    /* Wi-Fi toggle control is initialized independently of the optional
+     * network/OTA services.  This keeps the panel ON/OFF action available
+     * whenever Wi-Fi itself can be initialized, including a startup-fault
+     * state where the broader background-service startup is suppressed. */
     if (!s_wifi_toggle_queue)
     {
         s_wifi_toggle_queue = xQueueCreate(APP_WIFI_TOGGLE_QUEUE_LENGTH,
@@ -961,8 +964,54 @@ esp_err_t app_services_init(void)
 
 esp_err_t app_services_set_wifi_enabled(bool enabled)
 {
-    if (s_services_mutex == NULL || s_wifi_toggle_queue == NULL) {
-        return ESP_ERR_INVALID_STATE;
+    /* The Wi-Fi ON/OFF control path must not depend on the broader
+     * app_services startup having completed.  In particular, main.c
+     * deliberately suppresses background services when POST/startup is
+     * unhealthy, while the button/event tasks remain alive for safe
+     * diagnostics and recovery.  Lazily establish only the mutex, toggle
+     * queue/worker, and Wi-Fi controller required by this action. */
+    if (s_services_mutex == NULL) {
+        s_services_mutex = xSemaphoreCreateMutex();
+        if (s_services_mutex == NULL) {
+            ESP_LOGE(APP_SERVICES_TAG,
+                     "Wi-Fi toggle rejected: could not create services mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    if (s_wifi_toggle_queue == NULL) {
+        s_wifi_toggle_queue = xQueueCreate(APP_WIFI_TOGGLE_QUEUE_LENGTH,
+                                           sizeof(wifi_toggle_request_t));
+        if (s_wifi_toggle_queue == NULL) {
+            ESP_LOGE(APP_SERVICES_TAG,
+                     "Wi-Fi toggle rejected: could not create toggle queue");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    if (s_wifi_toggle_task == NULL) {
+        if (xTaskCreate(app_wifi_toggle_task,
+                        "wifi_toggle",
+                        APP_WIFI_TOGGLE_TASK_STACK_SIZE,
+                        NULL,
+                        APP_WIFI_TOGGLE_TASK_PRIORITY,
+                        &s_wifi_toggle_task) != pdPASS) {
+            vQueueDelete(s_wifi_toggle_queue);
+            s_wifi_toggle_queue = NULL;
+            s_wifi_toggle_task = NULL;
+            ESP_LOGE(APP_SERVICES_TAG,
+                     "Wi-Fi toggle rejected: could not create toggle worker");
+            return ESP_ERR_NO_MEM;
+        }
+        task_watchdog_register_health_only("wifi_toggle");
+    }
+
+    const esp_err_t controller_init_err = wifi_controller_init();
+    if (controller_init_err != ESP_OK) {
+        ESP_LOGE(APP_SERVICES_TAG,
+                 "Wi-Fi toggle rejected: controller initialization failed: %s",
+                 esp_err_to_name(controller_init_err));
+        return controller_init_err;
     }
 
     ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle request: %s",
