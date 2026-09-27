@@ -716,6 +716,26 @@ void lcd_show_loading(const char *title,
     xSemaphoreGive(sys_state_mutex);
 }
 
+void lcd_update_loading_progress(uint8_t progress_pct,
+                                 uint8_t spinner_frame,
+                                 const char *status)
+{
+    if (progress_pct > 100U)
+    {
+        progress_pct = 100U;
+    }
+    LCD_LOCK();
+    if (sys_lcd.screen == LCD_SCREEN_LOADING)
+    {
+        sys_lcd.loading.progress_pct = progress_pct;
+        sys_lcd.loading.spinner_frame = spinner_frame;
+        snprintf(sys_lcd.loading.status, sizeof(sys_lcd.loading.status),
+                 "%-20.20s", status ? status : "WAIT");
+        sys_lcd.loading.live_progress = true;
+    }
+    LCD_UNLOCK();
+}
+
 bool lcd_is_startup_active(void)
 {
     bool active;

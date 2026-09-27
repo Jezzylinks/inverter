@@ -944,14 +944,25 @@ static const char *startup_stage_label(uint8_t pct)
 static void draw_loading(const lcd_loading_data_t *d)
 {
     uint32_t elapsed = _lcd_get_time_ms() - d->start_ms;
-    uint8_t pct = loading_progress(elapsed, d->duration_ms);
+    uint8_t pct = d->live_progress ? d->progress_pct
+                                   : loading_progress(elapsed, d->duration_ms);
     char bar[LCD_LINE_SIZE];
     format_loading_bar(bar, sizeof(bar), pct);
 
     if (lcd_geometry_is_20x4())
     {
         char status[LCD_LINE_SIZE];
-        snprintf(status, sizeof(status), "  %s", startup_stage_label(pct));
+        if (d->live_progress)
+        {
+            static const char spinner[] = "|/-\\";
+            snprintf(status, sizeof(status), "  %-16.16s%c",
+                     d->status[0] ? d->status : "WAIT",
+                     spinner[d->spinner_frame % (sizeof(spinner) - 1U)]);
+        }
+        else
+        {
+            snprintf(status, sizeof(status), "  %s", startup_stage_label(pct));
+        }
         char progress[LCD_LINE_SIZE];
         snprintf(progress, sizeof(progress), "SYSTEM STARTING %3u%%", pct);
         const char *rows[] = {progress, bar, status, ""};
@@ -960,7 +971,16 @@ static void draw_loading(const lcd_loading_data_t *d)
     else
     {
         char row0[LCD_LINE_SIZE];
-        snprintf(row0, sizeof(row0), "STARTING %3u%%", pct);
+        if (d->live_progress)
+        {
+            static const char spinner[] = "|/-\\";
+            snprintf(row0, sizeof(row0), "STARTING %3u%% %c", pct,
+                     spinner[d->spinner_frame % (sizeof(spinner) - 1U)]);
+        }
+        else
+        {
+            snprintf(row0, sizeof(row0), "STARTING %3u%%", pct);
+        }
         draw_commit(row0, bar);
     }
 }
@@ -2151,15 +2171,18 @@ void lcd_task(void *arg)
             uint32_t elapsed = _lcd_get_time_ms() - snap.loading.start_ms;
             if (elapsed >= snap.loading.duration_ms)
             {
-                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
-
-                if (sys_lcd.screen == LCD_SCREEN_LOADING &&
-                    sys_lcd.loading.start_ms == snap.loading.start_ms)
+                if (!snap.loading.live_progress)
                 {
-                    sys_lcd.loading.active = false;
-                    sys_lcd.screen = sys_lcd.loading.next_screen;
+                    xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+
+                    if (sys_lcd.screen == LCD_SCREEN_LOADING &&
+                        sys_lcd.loading.start_ms == snap.loading.start_ms)
+                    {
+                        sys_lcd.loading.active = false;
+                        sys_lcd.screen = sys_lcd.loading.next_screen;
+                    }
+                    xSemaphoreGive(sys_state_mutex);
                 }
-                xSemaphoreGive(sys_state_mutex);
             }
             break;
         }

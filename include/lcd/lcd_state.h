@@ -113,6 +113,10 @@ extern "C"
 
         lcd_screen_id_t next_screen;
 
+        uint8_t progress_pct;
+        uint8_t spinner_frame;
+        char status[LCD_LINE_SIZE];
+        bool live_progress;
         bool active;
 
     } lcd_loading_data_t;

@@ -1,5 +1,6 @@
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdint.h>
 
 #include "esp_err.h"
 #include "esp_log.h"
@@ -101,13 +102,10 @@ static void startup_show_identity(void)
             vTaskSuspend(lcd_task_handle);
         }
         lcd_init_cgram();
-        lcd_show_loading("System Starting", LCD_STARTUP_LOADING_DURATION_MS,
-                         LCD_SCREEN_STARTUP_STATUS);
         if (lcd_task_handle != NULL)
         {
             vTaskResume(lcd_task_handle);
         }
-        vTaskDelay(pdMS_TO_TICKS(LCD_STARTUP_LOADING_DURATION_MS));
     }
 }
 
@@ -139,6 +137,28 @@ static void startup_show_stage(lcd_startup_stage_t stage,
      * substitute. The caller only advances after the real milestone for the
      * stage has completed. */
     vTaskDelay(pdMS_TO_TICKS(LCD_STARTUP_STAGE_DURATION_MS));
+}
+
+static uint8_t startup_bounded_progress(uint8_t confirmed_pct,
+                                        uint8_t next_milestone_pct,
+                                        uint32_t elapsed_ms,
+                                        uint32_t interpolation_window_ms)
+{
+    if (next_milestone_pct <= confirmed_pct + 1U ||
+        interpolation_window_ms == 0U)
+    {
+        return confirmed_pct;
+    }
+
+    const uint8_t ceiling = (uint8_t)(next_milestone_pct - 1U);
+    const uint8_t span = (uint8_t)(ceiling - confirmed_pct);
+    if (elapsed_ms >= interpolation_window_ms)
+    {
+        return ceiling;
+    }
+    return (uint8_t)(confirmed_pct +
+                     ((uint32_t)span * elapsed_ms) /
+                         interpolation_window_ms);
 }
 
 static void post_show_result_and_notify(const post_result_t result)
@@ -333,6 +353,9 @@ void app_main(void)
                        lcd_init_result == ESP_OK, false, false);
     startup_show_stage(LCD_STARTUP_STAGE_ADC_INIT, false, false,
                        lcd_init_result == ESP_OK, false, false);
+    lcd_show_loading("System Starting", UINT32_MAX,
+                     LCD_SCREEN_STARTUP_STATUS);
+    lcd_update_loading_progress(40U, 0U, "ADC / SENSORS");
     if (lcd_event_receiver_start() != ESP_OK)
     {
         lcd_event_ready = false;
@@ -375,6 +398,7 @@ void app_main(void)
         APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED;
     EventBits_t startup_bits = 0U;
     const TickType_t startup_wait_start = xTaskGetTickCount();
+    uint8_t spinner_frame = 0U;
     while ((xTaskGetTickCount() - startup_wait_start) < pdMS_TO_TICKS(10000))
     {
         startup_bits = xEventGroupWaitBits(
@@ -387,6 +411,19 @@ void app_main(void)
         const bool lcd_ready = (startup_bits & APP_EVENT_LCD_READY) != 0U;
         const bool startup_failed =
             (startup_bits & (APP_EVENT_ADC_FAILED | APP_EVENT_LCD_FAILED)) != 0U;
+        const uint32_t wait_elapsed_ms =
+            (uint32_t)((xTaskGetTickCount() - startup_wait_start) *
+                       portTICK_PERIOD_MS);
+        if (adc_ready && lcd_ready)
+        {
+            lcd_update_loading_progress(60U, spinner_frame++, "ADC READY");
+        }
+        else if (!startup_failed)
+        {
+            lcd_update_loading_progress(
+                startup_bounded_progress(40U, 60U, wait_elapsed_ms, 10000U),
+                spinner_frame++, "ADC / SENSORS");
+        }
         if (startup_failed || (adc_ready && lcd_ready))
         {
             break;
