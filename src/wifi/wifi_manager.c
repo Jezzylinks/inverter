@@ -20,6 +20,7 @@
 #include "wifi/wifi_storage.h"
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_config.h"
+#include "storage/nvs_manager.h"
 
 static const char *TAG = "wifi_manager";
 
@@ -457,7 +458,20 @@ esp_err_t wifi_manager_start(void)
         ESP_LOGW(TAG, "Static IP config failed: %s", esp_err_to_name(err));
     }
 
+    /* Hold the NVS flash-cache exclusion lock across esp_wifi_start().
+     * nvs_commit() disables the ESP32 flash cache during its erase/write
+     * cycle; if esp_wifi_start() executes concurrently on any task it
+     * accesses code from flash through the (disabled) cache and causes a
+     * "Cache disabled but cached memory region accessed" Guru Meditation.
+     * Acquiring the NVS mutex here ensures no commit runs during start. */
+    const esp_err_t flash_lock_err = storage_nvs_lock(0U);
+    if (flash_lock_err != ESP_OK) {
+        ESP_LOGW(TAG, "Could not acquire NVS flash lock before esp_wifi_start: %s "
+                      "(proceeding anyway -- commit may be finishing)",
+                 esp_err_to_name(flash_lock_err));
+    }
     err = esp_wifi_start();
+    if (flash_lock_err == ESP_OK) { storage_nvs_unlock(); }
     if (err != ESP_OK && err != ESP_ERR_WIFI_STATE)
     {
         ESP_LOGE(TAG, "WiFi start failed: %s", esp_err_to_name(err));
@@ -491,7 +505,13 @@ esp_err_t wifi_manager_stop(void)
     }
 
     ESP_LOGI(TAG, "Wi-Fi stopping radio");
+    const esp_err_t stop_lock_err = storage_nvs_lock(0U);
+    if (stop_lock_err != ESP_OK) {
+        ESP_LOGW(TAG, "Could not acquire NVS flash lock before esp_wifi_stop: %s",
+                 esp_err_to_name(stop_lock_err));
+    }
     esp_err_t err = esp_wifi_stop();
+    if (stop_lock_err == ESP_OK) { storage_nvs_unlock(); }
     if (err == ESP_OK || err == ESP_ERR_WIFI_NOT_STARTED)
     {
         s_started = false;

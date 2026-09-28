@@ -238,3 +238,21 @@ esp_err_t storage_nvs_factory_reset(void)
     xSemaphoreGive(s_mutex);
     return err;
 }
+
+esp_err_t storage_nvs_lock(uint32_t timeout_ms)
+{
+    /* Ensure the mutex exists (calls storage_nvs_init internally). */
+    esp_err_t err = storage_nvs_init();
+    if (err != ESP_OK) return err;
+    uint32_t ms = (timeout_ms == 0U) ? NVS_MANAGER_LOCK_TIMEOUT_MS : timeout_ms;
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(ms)) != pdTRUE) {
+        ESP_LOGE(TAG, "storage_nvs_lock: timed out after %lums", (unsigned long)ms);
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
+}
+
+void storage_nvs_unlock(void)
+{
+    if (s_mutex) xSemaphoreGive(s_mutex);
+}
