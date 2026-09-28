@@ -63,6 +63,9 @@ void lcd_boot_complete(void); /* switches to LCD_SCREEN_MAIN    */
 void lcd_show_loading(const char *title,
                       uint32_t duration_ms,
                       lcd_screen_id_t next_screen);
+void lcd_update_loading_progress(uint8_t progress_pct,
+                                 uint8_t spinner_frame,
+                                 const char *status);
 
 /* ── OTA status ───────────────────────────────────────────────────────────── */
 void lcd_show_ota_status(lcd_ota_view_state_t state, uint8_t progress_pct,

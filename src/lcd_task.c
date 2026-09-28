@@ -37,7 +37,7 @@
 #include "server/network_services.h"
 
 #define BOOT_TOTAL_STEPS 3
-
+#define APP_TAG "LCD_TASK"
 static uint32_t _lcd_get_time_ms(void);
 
 /* Defined in main.c */
@@ -60,7 +60,6 @@ extern led_pattern_t pattern;
 #define SYSTEM_STARTUP_DISPLAY_DURATION_MS 1500U
 
 static uint8_t loading_progress(uint32_t elapsed, uint32_t duration);
-static uint32_t s_identity_started_ms;
 
 static const char *TAG = "LCD_TASK";
 
@@ -793,30 +792,6 @@ static void draw_ota(const lcd_ota_data_t *d)
     draw_commit(row0, row1);
 }
 
-/* Slot 1 is normally the legacy 20x4 BAR_1 glyph.  It is borrowed only for
- * the short identity presentation and restored by lcd_init_cgram() before
- * the progress/loading screen or any normal UI is rendered. */
-static const uint8_t cgram_startup_sine_wave[8] = {
-    0x00, 0x01, 0x03, 0x06, 0x0C, 0x18, 0x10, 0x00};
-static bool s_startup_sine_loaded;
-
-static void draw_startup_identity(void)
-{
-    if (lcd_geometry_is_20x4())
-    {
-        char sine_row[LCD_LINE_SIZE];
-        snprintf(sine_row, sizeof(sine_row), "       %c%c%c%c%c%c",
-                 CHAR_SINE_WAVE, CHAR_SINE_WAVE, CHAR_SINE_WAVE,
-                 CHAR_SINE_WAVE, CHAR_SINE_WAVE, CHAR_SINE_WAVE);
-        draw_commit_rows((const char *[]){sine_row, "   JEZZYLINKS",
-                                          " SOLAR INVERTER", ""});
-    }
-    else
-    {
-        draw_commit("   JEZZYLINKS", " SOLAR INVERTER");
-    }
-}
-
 static const char *startup_result_label(bool complete, bool ok)
 {
     if (!complete)
@@ -826,10 +801,193 @@ static const char *startup_result_label(bool complete, bool ok)
     return ok ? "OK" : "FAIL";
 }
 
+#define CHAR_SINE_0 0
+#define CHAR_SINE_1 1
+#define CHAR_SINE_2 2
+#define CHAR_SINE_3 3
+#define CHAR_SINE_4 4
+#define CHAR_SINE_5 5
+
+static const uint8_t cgram_startup_sine_wave[6][8] = {
+
+    /* CHAR_SINE_0 */
+    {
+        0x04, /* ..#.. */
+        0x06, /* ..##. */
+        0x03, /* ...## */
+        0x01, /* ....# */
+        0x01, /* ....# */
+        0x03, /* ...## */
+        0x06, /* ..##. */
+        0x04  /* ..#.. */
+    },
+
+    /* CHAR_SINE_1 */
+    {
+        0x08, /* ...#. */
+        0x18, /* ...## */
+        0x10, /* ...#. */
+        0x10, /* ...#. */
+        0x10, /* ...#. */
+        0x10, /* ...#. */
+        0x18, /* ...## */
+        0x08  /* ...#. */
+    },
+
+    /* CHAR_SINE_2 */
+    {
+        0x10, /* ....# */
+        0x18, /* ...## */
+        0x0C, /* ..##. */
+        0x06, /* ..##. */
+        0x03, /* ...## */
+        0x06, /* ..##. */
+        0x0C, /* ..##. */
+        0x18  /* ...## */
+    },
+
+    /* CHAR_SINE_3 */
+    {
+        0x08, /* ...#. */
+        0x0C, /* ..##. */
+        0x06, /* ..##. */
+        0x03, /* ...## */
+        0x03, /* ...## */
+        0x06, /* ..##. */
+        0x0C, /* ..##. */
+        0x08  /* ...#. */
+    },
+
+    /* CHAR_SINE_4 */
+    {
+        0x01, /* ....# */
+        0x03, /* ...## */
+        0x06, /* ..##. */
+        0x0C, /* ..##. */
+        0x18, /* ...## */
+        0x0C, /* ..##. */
+        0x06, /* ..##. */
+        0x03  /* ...## */
+    },
+
+    /* CHAR_SINE_5 */
+    {
+        0x08, /* ...#. */
+        0x18, /* ...## */
+        0x10, /* ...#. */
+        0x10, /* ...#. */
+        0x10, /* ...#. */
+        0x10, /* ...#. */
+        0x18, /* ...## */
+        0x08  /* ...#. */
+    }};
+
+static void lcd_create_startup_sine_wave(void)
+{
+    for (uint8_t i = 0; i < 6; ++i)
+    {
+        lcd_create_custom_char(
+            i,
+            cgram_startup_sine_wave[i]);
+    }
+}
+
+static void lcd_draw_startup_sine_wave(void)
+{
+    lcd_set_cursor(0, 0);
+
+    /*
+     * Six adjacent custom characters form the
+     * startup pure-sine-wave logo.
+     */
+    for (uint8_t i = 0; i < 6; ++i)
+    {
+        lcd_print_char(i);
+    }
+}
+
 static void draw_startup_status(const lcd_render_state_t *snap)
 {
+
     const lcd_startup_status_data_t *d = &snap->startup_status;
     const uint32_t elapsed = _lcd_get_time_ms() - d->stage_started_ms;
+
+    static lcd_startup_stage_t previous_stage = LCD_STARTUP_STAGE_INVALID;
+
+    const bool stage_changed = (d->stage != previous_stage);
+
+    if (stage_changed)
+    {
+        ESP_LOGI(APP_TAG, "Startup LCD stage changed: %d -> %d", previous_stage, d->stage);
+
+        previous_stage = d->stage;
+    }
+    if (d->stage == LCD_STARTUP_STAGE_IDENTITY)
+    {
+        // static const uint8_t cgram_startup_sine_wave[8] = {
+        //     0x00, 0x01, 0x03, 0x06,
+        //     0x0C, 0x18, 0x10, 0x00};
+
+        if (stage_changed)
+        {
+            ESP_LOGI(APP_TAG, "Showing startup identity screen");
+
+            if (lcd_geometry_is_20x4())
+            {
+                lcd_create_startup_sine_wave();
+
+                lcd_clear();
+
+                lcd_draw_startup_sine_wave();
+
+                lcd_print_centered(1, "JEZZYLINKS");
+                lcd_print_centered(2, "SOLAR INVERTER");
+                lcd_print_centered(3, "       ");
+            }
+            else
+            {
+                lcd_show_message(
+                    "   JEZZYLINKS",
+                    " SOLAR INVERTER");
+            }
+
+            ESP_LOGI(APP_TAG, "Startup identity screen drawn");
+        }
+        return;
+    }
+
+    if (d->stage == LCD_STARTUP_STAGE_LOADING)
+    {
+        lcd_init_cgram();
+        const uint8_t pct =
+            loading_progress(elapsed, LCD_STARTUP_LOADING_DURATION_MS);
+
+        char bar[LCD_LINE_SIZE];
+
+        format_loading_bar(bar, sizeof(bar), pct);
+
+        if (lcd_geometry_is_20x4())
+        {
+            char rows[4][LCD_LINE_SIZE];
+
+            snprintf(rows[0], LCD_LINE_SIZE, "SYSTEM STARTING");
+            snprintf(rows[1], LCD_LINE_SIZE, "PLEASE WAIT...");
+            snprintf(rows[2], LCD_LINE_SIZE, "%s", bar);
+            snprintf(rows[3], LCD_LINE_SIZE, " ");
+
+            draw_commit_rows((const char *[]){
+                rows[0],
+                rows[1],
+                rows[2],
+                rows[3]});
+        }
+        else
+        {
+            draw_commit("SYSTEM STARTING", bar);
+        }
+
+        return;
+    }
 
     if (d->stage == LCD_STARTUP_STAGE_HARDWARE)
     {
@@ -969,14 +1127,25 @@ static const char *startup_stage_label(uint8_t pct)
 static void draw_loading(const lcd_loading_data_t *d)
 {
     uint32_t elapsed = _lcd_get_time_ms() - d->start_ms;
-    uint8_t pct = loading_progress(elapsed, d->duration_ms);
+    uint8_t pct = d->live_progress ? d->progress_pct
+                                   : loading_progress(elapsed, d->duration_ms);
     char bar[LCD_LINE_SIZE];
     format_loading_bar(bar, sizeof(bar), pct);
 
     if (lcd_geometry_is_20x4())
     {
         char status[LCD_LINE_SIZE];
-        snprintf(status, sizeof(status), "  %s", startup_stage_label(pct));
+        if (d->live_progress)
+        {
+            static const char spinner[] = "|/-\\";
+            snprintf(status, sizeof(status), "  %-16.16s%c",
+                     d->status[0] ? d->status : "WAIT",
+                     spinner[d->spinner_frame % (sizeof(spinner) - 1U)]);
+        }
+        else
+        {
+            snprintf(status, sizeof(status), "  %s", startup_stage_label(pct));
+        }
         char progress[LCD_LINE_SIZE];
         snprintf(progress, sizeof(progress), "SYSTEM STARTING %3u%%", pct);
         const char *rows[] = {progress, bar, status, ""};
@@ -985,7 +1154,16 @@ static void draw_loading(const lcd_loading_data_t *d)
     else
     {
         char row0[LCD_LINE_SIZE];
-        snprintf(row0, sizeof(row0), "STARTING %3u%%", pct);
+        if (d->live_progress)
+        {
+            static const char spinner[] = "|/-\\";
+            snprintf(row0, sizeof(row0), "STARTING %3u%% %c", pct,
+                     spinner[d->spinner_frame % (sizeof(spinner) - 1U)]);
+        }
+        else
+        {
+            snprintf(row0, sizeof(row0), "STARTING %3u%%", pct);
+        }
         draw_commit(row0, bar);
     }
 }
@@ -2016,32 +2194,6 @@ void lcd_task(void *arg)
         /* ====== STEP 7: DRAW CURRENT SCREEN ====== */
         switch (snap.screen)
         {
-        case LCD_SCREEN_BOOT_BRAND:
-            if (s_identity_started_ms == 0U)
-            {
-                s_identity_started_ms = _lcd_get_time_ms();
-            }
-            if (!s_startup_sine_loaded && lcd_geometry_is_20x4())
-            {
-                lcd_create_custom_char(CHAR_SINE_WAVE,
-                                       cgram_startup_sine_wave);
-                s_startup_sine_loaded = true;
-            }
-            draw_startup_identity();
-            if (_lcd_get_time_ms() - s_identity_started_ms >= LCD_STARTUP_IDENTITY_DURATION_MS)
-            {
-                /* Restore BAR_0/BAR_1, the progress block, and Wi-Fi glyphs
-                 * before the next screen uses the shared CGRAM slots. */
-                if (s_startup_sine_loaded)
-                {
-                    lcd_init_cgram();
-                    s_startup_sine_loaded = false;
-                }
-                lcd_show_loading("System Starting", LCD_STARTUP_LOADING_DURATION_MS,
-                                 LCD_SCREEN_STARTUP_STATUS);
-            }
-            break;
-
         case LCD_SCREEN_MAIN:
             draw_main(&snap.main);
             break;
@@ -2202,15 +2354,18 @@ void lcd_task(void *arg)
             uint32_t elapsed = _lcd_get_time_ms() - snap.loading.start_ms;
             if (elapsed >= snap.loading.duration_ms)
             {
-                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
-
-                if (sys_lcd.screen == LCD_SCREEN_LOADING &&
-                    sys_lcd.loading.start_ms == snap.loading.start_ms)
+                if (!snap.loading.live_progress)
                 {
-                    sys_lcd.loading.active = false;
-                    sys_lcd.screen = sys_lcd.loading.next_screen;
+                    xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+
+                    if (sys_lcd.screen == LCD_SCREEN_LOADING &&
+                        sys_lcd.loading.start_ms == snap.loading.start_ms)
+                    {
+                        sys_lcd.loading.active = false;
+                        sys_lcd.screen = sys_lcd.loading.next_screen;
+                    }
+                    xSemaphoreGive(sys_state_mutex);
                 }
-                xSemaphoreGive(sys_state_mutex);
             }
             break;
         }

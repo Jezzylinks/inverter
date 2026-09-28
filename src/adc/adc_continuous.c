@@ -6,6 +6,7 @@
 #include "adc/adc_continuous.h"
 #include "esp_adc/adc_continuous.h"
 #include "esp_attr.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -32,11 +33,17 @@ _Static_assert((ADC_CONTINUOUS_FRAME_SIZE % SOC_ADC_DIGI_DATA_BYTES_PER_CONV) ==
 
 typedef struct
 {
-    adc_continuous_handle_t handle;
-    size_t channel_count;
+    /* ISR user_data: explicitly allocated in internal DRAM. */
     volatile uint32_t frames_produced;
     volatile uint32_t pool_overflows;
     volatile uint32_t last_frame_size;
+} adc_continuous_isr_state_t;
+
+typedef struct
+{
+    adc_continuous_handle_t handle;
+    size_t channel_count;
+    adc_continuous_isr_state_t *isr_state;
     int64_t started_at_us;
     bool using_oneshot_fallback;
     adc_oneshot_unit_handle_t oneshot_handle;
@@ -55,10 +62,10 @@ static bool IRAM_ATTR continuous_on_conv_done(
     void *user_data)
 {
     (void)handle;
-    adc_continuous_context_t *context = user_data;
-    if (context != NULL && event != NULL) {
-        context->last_frame_size = event->size;
-        context->frames_produced++;
+    adc_continuous_isr_state_t *state = user_data;
+    if (state != NULL && event != NULL) {
+        state->last_frame_size = event->size;
+        state->frames_produced++;
     }
     return false;
 }
@@ -70,9 +77,9 @@ static bool IRAM_ATTR continuous_on_pool_overflow(
 {
     (void)handle;
     (void)event;
-    adc_continuous_context_t *context = user_data;
-    if (context != NULL) {
-        context->pool_overflows++;
+    adc_continuous_isr_state_t *state = user_data;
+    if (state != NULL) {
+        state->pool_overflows++;
     }
     return false;
 }
@@ -97,6 +104,14 @@ esp_err_t adc_continuous_driver_init(const adc_channel_t *channels,
         return ESP_ERR_NO_MEM;
     }
 
+    context->isr_state = heap_caps_calloc(
+        1U, sizeof(*context->isr_state), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (context->isr_state == NULL) {
+        free(pattern);
+        free(context);
+        return ESP_ERR_NO_MEM;
+    }
+
     const adc_continuous_handle_cfg_t handle_config = {
         .max_store_buf_size = ADC_CONTINUOUS_FRAME_SIZE * ADC_CONTINUOUS_FRAME_COUNT,
         .conv_frame_size = ADC_CONTINUOUS_FRAME_SIZE,
@@ -108,6 +123,7 @@ esp_err_t adc_continuous_driver_init(const adc_channel_t *channels,
         ESP_LOGE(ADC_CONTINUOUS_TAG, "Continuous handle creation failed: %s",
                  esp_err_to_name(result));
         free(pattern);
+        heap_caps_free(context->isr_state);
         free(context);
         return result;
     }
@@ -166,7 +182,7 @@ esp_err_t adc_continuous_driver_init(const adc_channel_t *channels,
         .on_pool_ovf = continuous_on_pool_overflow,
     };
     result = adc_continuous_register_event_callbacks(
-        context->handle, &callbacks, context);
+        context->handle, &callbacks, context->isr_state);
     if (result != ESP_OK) {
         ESP_LOGE(ADC_CONTINUOUS_TAG,
                  "Continuous callback registration failed: %s",
@@ -274,7 +290,7 @@ esp_err_t adc_continuous_driver_read_sample(
             out_voltage, ADC_CONTINUOUS_SAMPLES);
     }
 
-    if (context->frames_produced == 0U &&
+    if (context->isr_state->frames_produced == 0U &&
         (esp_timer_get_time() - context->started_at_us) >=
             ((int64_t)ADC_CONTINUOUS_STARTUP_GRACE_MS * 1000LL)) {
         const esp_err_t fallback_result = continuous_switch_to_oneshot(context);
@@ -312,9 +328,9 @@ esp_err_t adc_continuous_driver_read_sample(
                 ESP_LOGW(ADC_CONTINUOUS_TAG,
                          "DMA read failed: %s (frames=%lu overflows=%lu last_frame=%lu)",
                          esp_err_to_name(result),
-                         (unsigned long)context->frames_produced,
-                         (unsigned long)context->pool_overflows,
-                         (unsigned long)context->last_frame_size);
+                         (unsigned long)context->isr_state->frames_produced,
+                         (unsigned long)context->isr_state->pool_overflows,
+                         (unsigned long)context->isr_state->last_frame_size);
                 timeout_reported = (result == ESP_ERR_TIMEOUT);
             }
             return result;
@@ -419,6 +435,8 @@ void adc_continuous_driver_deinit(void *driver_context,
             }
         }
     }
+    heap_caps_free(context->isr_state);
+    context->isr_state = NULL;
     free(context);
 }
 
@@ -437,9 +455,9 @@ esp_err_t adc_continuous_driver_get_runtime(
     out->driver_state = context->using_oneshot_fallback
                      ? ADC_DRIVER_FALLBACK
                      : ADC_DRIVER_CONTINUOUS;
-    out->frames_received = context->frames_produced;
+    out->frames_received = context->isr_state->frames_produced;
     out->frames_dropped = 0U;
-    out->pool_overflows = context->pool_overflows;
+    out->pool_overflows = context->isr_state->pool_overflows;
     return ESP_OK;
 }
 

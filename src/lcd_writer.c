@@ -74,7 +74,9 @@ static void set_line(char *dst, const char *src)
      * and about to start rendering instead; see main.c. */
     LCD_LOCK();
     memset(&sys_lcd, 0, sizeof(sys_lcd));
-    sys_lcd.screen = LCD_SCREEN_BOOT_BRAND;
+    /* main.c explicitly activates the boot-brand screen after lcd_task is
+     * created; keep the writer neutral until that startup call. */
+    sys_lcd.screen = LCD_SCREEN_COUNT;
     sys_lcd.main.sub_page_interval_ms = 3000;
     LCD_UNLOCK();
     return ESP_OK;
@@ -712,6 +714,26 @@ void lcd_show_loading(const char *title,
     sys_lcd.screen = LCD_SCREEN_LOADING;
 
     xSemaphoreGive(sys_state_mutex);
+}
+
+void lcd_update_loading_progress(uint8_t progress_pct,
+                                 uint8_t spinner_frame,
+                                 const char *status)
+{
+    if (progress_pct > 100U)
+    {
+        progress_pct = 100U;
+    }
+    LCD_LOCK();
+    if (sys_lcd.screen == LCD_SCREEN_LOADING)
+    {
+        sys_lcd.loading.progress_pct = progress_pct;
+        sys_lcd.loading.spinner_frame = spinner_frame;
+        snprintf(sys_lcd.loading.status, sizeof(sys_lcd.loading.status),
+                 "%-20.20s", status ? status : "WAIT");
+        sys_lcd.loading.live_progress = true;
+    }
+    LCD_UNLOCK();
 }
 
 bool lcd_is_startup_active(void)

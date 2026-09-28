@@ -113,6 +113,10 @@ extern "C"
 
         lcd_screen_id_t next_screen;
 
+        uint8_t progress_pct;
+        uint8_t spinner_frame;
+        char status[LCD_LINE_SIZE];
+        bool live_progress;
         bool active;
 
     } lcd_loading_data_t;
@@ -179,7 +183,10 @@ extern "C"
 
     typedef enum
     {
-        LCD_STARTUP_STAGE_HARDWARE = 0,
+        LCD_STARTUP_STAGE_INVALID = 0,
+        LCD_STARTUP_STAGE_IDENTITY,
+        LCD_STARTUP_STAGE_LOADING,
+        LCD_STARTUP_STAGE_HARDWARE,
         LCD_STARTUP_STAGE_ADC_INIT,
         LCD_STARTUP_STAGE_ADC_READY,
         LCD_STARTUP_STAGE_SETTINGS,

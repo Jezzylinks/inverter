@@ -33,6 +33,10 @@ esp_err_t storage_nvs_open(const char *namespace_name, nvs_open_mode_t mode,
 esp_err_t storage_nvs_close(nvs_handle_t handle);
 esp_err_t storage_nvs_commit_close(nvs_handle_t handle);
 
+/* Serialize Wi-Fi start/stop with application NVS flash transactions. */
+esp_err_t storage_nvs_lock(void);
+void storage_nvs_unlock(void);
+
 /* Safe diagnostics and deliberately explicit destructive operations. */
 esp_err_t storage_nvs_get_stats(nvs_stats_t *out_stats);
 esp_err_t storage_nvs_erase_namespace(const char *namespace_name);
