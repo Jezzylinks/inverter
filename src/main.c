@@ -156,14 +156,6 @@ void app_main(void)
         return;
     }
 
-    /* Start the Wi-Fi toggle infrastructure (mutex + queue + worker) before
-     * POST so the user can toggle Wi-Fi from the menu regardless of whether
-     * POST passes.  app_services_init() is POST-gated; this is not. */
-    if (app_services_wifi_toggle_init() != ESP_OK)
-    {
-        ESP_LOGW(APP_TAG, "Wi-Fi toggle init failed; toggle will be unavailable");
-    }
-
     /* NVS and system defaults must be ready before loading profiles or security. */
     const esp_err_t nvs_err = nvs_init(false);
     if (nvs_err != ESP_OK)

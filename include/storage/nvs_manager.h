@@ -39,21 +39,10 @@ esp_err_t storage_nvs_erase_namespace(const char *namespace_name);
 esp_err_t storage_nvs_factory_reset(void);
 
 /* Flash-cache exclusion lock.
- *
- * Any code path that calls esp_wifi_start() or esp_wifi_stop() must
- * hold this lock for the duration of that call.  nvs_commit() disables
- * the ESP32 flash cache while it erases and writes a flash page; if
- * esp_wifi_start/stop() is executing on another core or task at the
- * same instant it will attempt to fetch instructions from flash through
- * the (now-disabled) cache and trigger a "Cache disabled but cached
- * memory region accessed" Guru Meditation panic.
- *
- * Acquiring this lock before esp_wifi_start/stop() and releasing it
- * afterwards ensures that no nvs_commit() can run concurrently, and
- * that if a commit is already in progress the Wi-Fi call waits until
- * the cache is safely re-enabled before touching flash itself.
- *
- * timeout_ms: how long to wait; pass 0 for the default (3 s). */
+ * Must be held around esp_wifi_start() / esp_wifi_stop() so that
+ * nvs_commit() (which disables the flash cache) cannot run concurrently
+ * and cause a "Cache disabled but cached memory region accessed" panic.
+ * Pass timeout_ms=0 to use the default 3-second timeout. */
 esp_err_t storage_nvs_lock(uint32_t timeout_ms);
 void      storage_nvs_unlock(void);
 

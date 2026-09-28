@@ -241,7 +241,6 @@ esp_err_t storage_nvs_factory_reset(void)
 
 esp_err_t storage_nvs_lock(uint32_t timeout_ms)
 {
-    /* Ensure the mutex exists (calls storage_nvs_init internally). */
     esp_err_t err = storage_nvs_init();
     if (err != ESP_OK) return err;
     uint32_t ms = (timeout_ms == 0U) ? NVS_MANAGER_LOCK_TIMEOUT_MS : timeout_ms;
@@ -254,5 +253,5 @@ esp_err_t storage_nvs_lock(uint32_t timeout_ms)
 
 void storage_nvs_unlock(void)
 {
-    if (s_mutex) xSemaphoreGive(s_mutex);
+    if (s_mutex) { xSemaphoreGive(s_mutex); }
 }
