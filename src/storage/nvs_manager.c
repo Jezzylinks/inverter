@@ -152,6 +152,24 @@ esp_err_t storage_nvs_init(void)
     return err;
 }
 
+/*
+ * Public flash-operation lock for subsystems that perform ESP-IDF operations
+ * which may touch flash while NVS transactions can also be active. This is
+ * deliberately the same mutex used by storage_nvs_open(), so Wi-Fi
+ * start/stop cannot overlap an application NVS commit.
+ */
+esp_err_t storage_nvs_lock(void)
+{
+    return lock_storage();
+}
+
+void storage_nvs_unlock(void)
+{
+    if (s_mutex) {
+        xSemaphoreGive(s_mutex);
+    }
+}
+
 storage_nvs_state_t storage_nvs_state(void) { return s_state; }
 bool storage_nvs_is_ready(void)
 {
