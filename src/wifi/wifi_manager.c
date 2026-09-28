@@ -20,6 +20,7 @@
 #include "wifi/wifi_storage.h"
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_config.h"
+#include "storage/nvs_manager.h"
 
 static const char *TAG = "wifi_manager";
 
@@ -369,7 +370,20 @@ esp_err_t wifi_manager_deinit(void)
 
     wifi_events_unregister_event_callback(wifi_manager_event_update);
 
-    err = esp_wifi_stop();
+    err = storage_nvs_lock();
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Could not acquire NVS/flash lock before Wi-Fi deinit stop: %s",
+                 esp_err_to_name(err));
+        if (first_err == ESP_OK)
+            first_err = err;
+    }
+    else
+    {
+        err = esp_wifi_stop();
+        storage_nvs_unlock();
+    }
+
     if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT)
     {
         ESP_LOGW(TAG, "WiFi stop failed: %s", esp_err_to_name(err));
@@ -457,7 +471,22 @@ esp_err_t wifi_manager_start(void)
         ESP_LOGW(TAG, "Static IP config failed: %s", esp_err_to_name(err));
     }
 
+    /*
+     * Serialize Wi-Fi startup with application NVS flash transactions.
+     * PHY calibration and Wi-Fi startup may touch flash while another task
+     * could otherwise be committing NVS and disabling the flash cache.
+     */
+    err = storage_nvs_lock();
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Could not acquire NVS/flash lock before Wi-Fi start: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
     err = esp_wifi_start();
+    storage_nvs_unlock();
+
     if (err != ESP_OK && err != ESP_ERR_WIFI_STATE)
     {
         ESP_LOGE(TAG, "WiFi start failed: %s", esp_err_to_name(err));
@@ -491,7 +520,19 @@ esp_err_t wifi_manager_stop(void)
     }
 
     ESP_LOGI(TAG, "Wi-Fi stopping radio");
-    esp_err_t err = esp_wifi_stop();
+
+    /* Serialize Wi-Fi stop with application NVS flash transactions. */
+    esp_err_t err = storage_nvs_lock();
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Could not acquire NVS/flash lock before Wi-Fi stop: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_wifi_stop();
+    storage_nvs_unlock();
+
     if (err == ESP_OK || err == ESP_ERR_WIFI_NOT_STARTED)
     {
         s_started = false;
