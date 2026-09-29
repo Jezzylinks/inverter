@@ -848,7 +848,7 @@ void select_battery_type(button_id_t btn)
     if (updated)
     {
         char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
-        snprintf(r0, LCD_LINE_SIZE, "%-16s", "Select Battery:");
+        snprintf(r0, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, "Select Battery:");
         snprintf(r1, LCD_LINE_SIZE, "> %-14.14s", battery_type_names[selected]);
         lcd_show_menu(r0, r1);
         updated = false;
@@ -3232,7 +3232,7 @@ void lcd_show_value_edit_screen(void)
 void lcd_show_bt_connecting_screen(const char *device_name)
 {
     char r1[LCD_LINE_SIZE];
-    snprintf(r1, LCD_LINE_SIZE, "%-16.16s", device_name ? device_name : "");
+    snprintf(r1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, device_name ? device_name : "");
     lcd_show_wifi_connecting(device_name ? device_name : "", -127);
     /* reuse wifi_connecting screen — same layout */
 }
@@ -3295,7 +3295,7 @@ void lcd_show_bt_edit_screen(const char *label, const char *value)
     }
     else
     {
-        snprintf(v, LCD_LINE_SIZE, "%-16.16s", value ? value : "");
+        snprintf(v, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, value ? value : "");
     }
     lcd_show_value_edit(l, v, false);
 }
@@ -6072,25 +6072,25 @@ void handle_critical_error(void)
     char l0[LCD_LINE_SIZE], l1[LCD_LINE_SIZE];
     if (sys_state.error.error_flags & ERR_OVER_TEMP)
     {
-        snprintf(l0, LCD_LINE_SIZE, "%-16s", "Error: Over Temp");
+        snprintf(l0, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, lcd_geometry_is_20x4() ? "Error: Over Temperature" : "Error: Over Temp");
         snprintf(l1, LCD_LINE_SIZE, "%.1fC Max:%.1fC  ",
                  sys_state.inverter.temperature, MAX_TEMPERATURE);
     }
     else if (sys_state.error.error_flags & ERR_OVERLOAD)
     {
-        snprintf(l0, LCD_LINE_SIZE, "%-16s", "Error: Overload ");
+        snprintf(l0, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, "Error: Overload");
         snprintf(l1, LCD_LINE_SIZE, "%.1fA Max:%.1fA  ",
                  sys_state.inverter.output_current, MAX_CURRENT);
     }
     else if (sys_state.error.error_flags & ERR_UNDER_VOLTAGE)
     {
-        snprintf(l0, LCD_LINE_SIZE, "%-16s", "Critical Error  ");
+        snprintf(l0, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, "Critical Error");
         snprintf(l1, LCD_LINE_SIZE, "Code: 0x%02X      ",
                  sys_state.error.error_flags);
     }
     else
     {
-        snprintf(l0, LCD_LINE_SIZE, "%-16s", "Unknown Error   ");
+        snprintf(l0, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, "Unknown Error");
         snprintf(l1, LCD_LINE_SIZE, "Code: 0x%02X      ",
                  sys_state.error.error_flags);
     }
@@ -6105,7 +6105,7 @@ void handle_critical_error(void)
 void display_battery_settings(void)
 {
     char l[LCD_LINE_SIZE], v[LCD_LINE_SIZE];
-    snprintf(l, LCD_LINE_SIZE, "%-16s", "Battery Settings");
+    snprintf(l, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, "Battery Settings");
     snprintf(v, LCD_LINE_SIZE, "Cutoff: %5.2fV  ",
              menu_edit.edit_step ? menu_edit.temp_value
                                  : sys_state.battery_profile.cutoff_voltage_v);
