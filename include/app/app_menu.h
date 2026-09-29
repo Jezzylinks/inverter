@@ -4,6 +4,7 @@
 #include <stddef.h>
 
 #include "system/system_state.h"
+#include "esp_wifi.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,6 +22,26 @@ void push_menu_history(menu_state_t state, uint8_t selection);
 bool pop_menu_history(menu_state_t *state, int *selection);
 void clear_menu_history(void);
 size_t app_settings_count(void);
+
+typedef enum {
+    APP_WIFI_MENU_TOGGLE = 0,
+    APP_WIFI_MENU_STATUS,
+    APP_WIFI_MENU_CONNECT,
+    APP_WIFI_MENU_SCAN,
+    APP_WIFI_MENU_AP_CLIENTS,
+    APP_WIFI_MENU_SETTINGS
+} app_wifi_menu_action_t;
+
+typedef enum {
+    APP_WIFI_SETTINGS_SAVED_NETWORK = 0,
+    APP_WIFI_SETTINGS_MODE,
+    APP_WIFI_SETTINGS_DHCP,
+    APP_WIFI_SETTINGS_AP_CLIENTS
+} app_wifi_settings_action_t;
+
+app_wifi_menu_action_t app_menu_wifi_config_action_at(int index);
+app_wifi_settings_action_t app_menu_wifi_settings_action_at(int index);
+int app_menu_wifi_settings_mode_index(void);
 
 #ifdef __cplusplus
 }
