@@ -16,6 +16,7 @@
 #define WIFI_KEY_AUTORECONNECT "autorec"
 #define WIFI_KEY_RECONNECT_TIME "rectime"
 #define WIFI_KEY_DHCP "dhcp"
+#define WIFI_KEY_AP_DHCP "apdhcp"
 #define WIFI_KEY_AP_SSID "apssid"
 #define WIFI_KEY_AP_PASS "appass"
 #define WIFI_KEY_AP_CHANNEL "apchan"
@@ -58,6 +59,7 @@ void wifi_storage_set_default_network_config(wifi_network_config_t *config)
     config->auto_reconnect = true;
     config->reconnect_interval_ms = WIFI_RECONNECT_DELAY_MS;
     config->dhcp = true;
+    config->ap_dhcp = true;
     config->ap_channel = WIFI_COMPILED_AP_CHANNEL;
     config->ap_max_connection = WIFI_PROVISION_MAX_CONN;
     config->ap_authmode = INVERTER_WIFI_AUTH_MODE;
@@ -512,6 +514,16 @@ esp_err_t wifi_storage_save_network_config(
         return err;
     }
 
+    err = nvs_set_u8(
+        handle,
+        WIFI_KEY_AP_DHCP,
+        config->ap_dhcp);
+    if (err != ESP_OK)
+    {
+        storage_nvs_close(handle);
+        return err;
+    }
+
     err = nvs_set_blob(
         handle,
         WIFI_KEY_IP_INFO,
@@ -655,6 +667,15 @@ esp_err_t wifi_storage_load_network_config(
             value;
     }
 
+    if (nvs_get_u8(
+            handle,
+            WIFI_KEY_AP_DHCP,
+            &value) == ESP_OK)
+    {
+        config->ap_dhcp =
+            value;
+    }
+
     size_t ip_info_size =
         sizeof(esp_netif_ip_info_t);
 
@@ -781,6 +802,10 @@ esp_err_t wifi_storage_reset_network_config(void)
     erase_key_if_exists(
         handle,
         WIFI_KEY_DHCP);
+
+    erase_key_if_exists(
+        handle,
+        WIFI_KEY_AP_DHCP);
 
     erase_key_if_exists(
         handle,
