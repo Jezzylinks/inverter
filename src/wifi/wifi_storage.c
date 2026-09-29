@@ -31,7 +31,7 @@ static const char *TAG = "WIFI_STORAGE";
 
 static bool wifi_storage_network_config_valid(const wifi_network_config_t *config)
 {
-    if (config == NULL || config->mode > WIFI_MODE_APSTA ||
+    if (config == NULL || config->mode < WIFI_MODE_STA || config->mode > WIFI_MODE_APSTA ||
         config->ap_channel < 1U || config->ap_channel > 13U ||
         config->ap_max_connection < 1U || config->ap_max_connection > 10U ||
         strnlen(config->ap_ssid, sizeof(config->ap_ssid)) >= sizeof(config->ap_ssid) ||
@@ -54,7 +54,7 @@ void wifi_storage_set_default_network_config(wifi_network_config_t *config)
         return;
     }
     memset(config, 0, sizeof(*config));
-    config->mode = WIFI_MODE_NULL;
+    config->mode = WIFI_COMPILED_OPERATION_MODE;
     config->auto_reconnect = true;
     config->reconnect_interval_ms = WIFI_RECONNECT_DELAY_MS;
     config->dhcp = true;
@@ -616,14 +616,19 @@ esp_err_t wifi_storage_load_network_config(
     }
 
     uint8_t value;
+    bool defaults_used = false;
 
-    if (nvs_get_u8(
-            handle,
-            WIFI_KEY_MODE,
-            &value) == ESP_OK)
+    const esp_err_t mode_err = nvs_get_u8(handle, WIFI_KEY_MODE, &value);
+    if (mode_err == ESP_OK)
     {
-        config->mode =
-            value;
+        config->mode = value;
+    }
+    else if (mode_err == ESP_ERR_NVS_NOT_FOUND ||
+             mode_err == ESP_ERR_NVS_TYPE_MISMATCH)
+    {
+        /* No user-selected mode yet: retain the build-time default. */
+        config->mode = WIFI_COMPILED_OPERATION_MODE;
+        defaults_used = true;
     }
 
     if (nvs_get_u8(
@@ -674,7 +679,6 @@ esp_err_t wifi_storage_load_network_config(
         return err;
     }
 
-    bool defaults_used = false;
     char stored_ap_ssid[sizeof(config->ap_ssid)] = {0};
     size_t size = sizeof(stored_ap_ssid);
     if (nvs_get_str(handle, WIFI_KEY_AP_SSID, stored_ap_ssid, &size) == ESP_OK &&
