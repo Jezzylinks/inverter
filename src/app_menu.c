@@ -112,16 +112,54 @@ static const menu_item_t diagnostic_items[] = {
     {"Uptime", MENU_DIAGNOSTIC},
     {"Memory Usage", MENU_DIAGNOSTIC}};
 
-// The top-level Wi-Fi menu stays focused on everyday actions. Technical
-// configuration lives in the nested Settings menu below.
-static const menu_item_t wifi_items[] = {
+typedef enum {
+    APP_WIFI_MENU_TOGGLE = 0,
+    APP_WIFI_MENU_STATUS,
+    APP_WIFI_MENU_CONNECT,
+    APP_WIFI_MENU_SCAN,
+    APP_WIFI_MENU_AP_CLIENTS,
+    APP_WIFI_MENU_SETTINGS
+} app_wifi_menu_action_t;
+
+typedef enum {
+    APP_WIFI_SETTINGS_SAVED_NETWORK = 0,
+    APP_WIFI_SETTINGS_MODE,
+    APP_WIFI_SETTINGS_DHCP,
+    APP_WIFI_SETTINGS_AP_CLIENTS
+} app_wifi_settings_action_t;
+
+static const menu_item_t wifi_sta_items[] = {
     {"ON/OFF", MENU_WIFI_CONFIG},
     {"Status", MENU_WIFI_CONFIG},
     {"Connect", MENU_WIFI_CONFIG},
     {"Networks", MENU_WIFI_CONFIG},
     {"Settings", MENU_WIFI_SETTINGS}};
 
-static const menu_item_t wifi_settings_items[] = {
+static const menu_item_t wifi_ap_items[] = {
+    {"ON/OFF", MENU_WIFI_CONFIG},
+    {"Status", MENU_WIFI_CONFIG},
+    {"AP Clients", MENU_WIFI_CONFIG},
+    {"Settings", MENU_WIFI_SETTINGS}};
+
+static const menu_item_t wifi_apsta_items[] = {
+    {"ON/OFF", MENU_WIFI_CONFIG},
+    {"Status", MENU_WIFI_CONFIG},
+    {"Connect", MENU_WIFI_CONFIG},
+    {"Networks", MENU_WIFI_CONFIG},
+    {"AP Clients", MENU_WIFI_CONFIG},
+    {"Settings", MENU_WIFI_SETTINGS}};
+
+static const menu_item_t wifi_settings_sta_items[] = {
+    {"Saved Network", MENU_WIFI_SETTINGS},
+    {"Network Mode", MENU_WIFI_SETTINGS},
+    {"DHCP", MENU_WIFI_SETTINGS}};
+
+static const menu_item_t wifi_settings_ap_items[] = {
+    {"Network Mode", MENU_WIFI_SETTINGS},
+    {"DHCP", MENU_WIFI_SETTINGS},
+    {"AP Clients", MENU_WIFI_SETTINGS}};
+
+static const menu_item_t wifi_settings_apsta_items[] = {
     {"Saved Network", MENU_WIFI_SETTINGS},
     {"Network Mode", MENU_WIFI_SETTINGS},
     {"DHCP", MENU_WIFI_SETTINGS},
@@ -144,14 +182,25 @@ static const menu_item_t security_items[] = {
 
 static const char *wifi_menu_label(int index)
 {
-    switch (index) {
-    case 0:
+    const wifi_mode_t mode = app_services_wifi_get_mode();
+    const app_wifi_menu_action_t action = app_menu_wifi_config_action_at(index);
+    if (action == APP_WIFI_MENU_TOGGLE) {
         return app_services_wifi_enabled() ? "Wi-Fi: ON" : "Wi-Fi: OFF";
-    case 2:
-        return app_services_wifi_connect_action_label();
-    default:
-        return wifi_items[index].label;
     }
+    if (action == APP_WIFI_MENU_CONNECT) {
+        return app_services_wifi_connect_action_label();
+    }
+    if (action == APP_WIFI_MENU_AP_CLIENTS) {
+        return "AP Clients";
+    }
+    if (action == APP_WIFI_MENU_SETTINGS) {
+        return "Settings";
+    }
+    if (action == APP_WIFI_MENU_STATUS) {
+        return "Status";
+    }
+    (void)mode;
+    return "Networks";
 }
 
 static const char *ota_menu_label(int index)
@@ -182,20 +231,59 @@ static const char *ota_menu_label(int index)
 
 static const char *wifi_settings_menu_label(int index)
 {
-    switch (index) {
-    case 0:
+    const app_wifi_settings_action_t action = app_menu_wifi_settings_action_at(index);
+    if (action == APP_WIFI_SETTINGS_SAVED_NETWORK) {
         return app_services_wifi_saved_network_label();
-    case 1:
-    {
+    }
+    if (action == APP_WIFI_SETTINGS_MODE) {
         static char mode[LCD_LINE_SIZE];
         snprintf(mode, sizeof(mode), "Mode: %s", app_services_wifi_mode_name());
         return mode;
     }
-    case 2:
+    if (action == APP_WIFI_SETTINGS_DHCP) {
         return app_services_wifi_dhcp_enabled() ? "DHCP: ON" : "DHCP: OFF";
-    default:
-        return wifi_settings_items[index].label;
     }
+    return "AP Clients";
+}
+
+
+app_wifi_menu_action_t app_menu_wifi_config_action_at(int index)
+{
+    const wifi_mode_t mode = app_services_wifi_get_mode();
+    if (index == 0) return APP_WIFI_MENU_TOGGLE;
+    if (index == 1) return APP_WIFI_MENU_STATUS;
+    if (mode == WIFI_MODE_AP) {
+        if (index == 2) return APP_WIFI_MENU_AP_CLIENTS;
+        if (index == 3) return APP_WIFI_MENU_SETTINGS;
+    } else {
+        if (index == 2) return APP_WIFI_MENU_CONNECT;
+        if (index == 3) return APP_WIFI_MENU_SCAN;
+        if (index == 4 && mode == WIFI_MODE_STA) return APP_WIFI_MENU_SETTINGS;
+        if (index == 4 && mode == WIFI_MODE_APSTA) return APP_WIFI_MENU_AP_CLIENTS;
+        if (index == 5 && mode == WIFI_MODE_APSTA) return APP_WIFI_MENU_SETTINGS;
+    }
+    return APP_WIFI_MENU_STATUS;
+}
+
+app_wifi_settings_action_t app_menu_wifi_settings_action_at(int index)
+{
+    const wifi_mode_t mode = app_services_wifi_get_mode();
+    if (mode == WIFI_MODE_AP) {
+        if (index == 0) return APP_WIFI_SETTINGS_MODE;
+        if (index == 1) return APP_WIFI_SETTINGS_DHCP;
+        if (index == 2) return APP_WIFI_SETTINGS_AP_CLIENTS;
+    } else {
+        if (index == 0) return APP_WIFI_SETTINGS_SAVED_NETWORK;
+        if (index == 1) return APP_WIFI_SETTINGS_MODE;
+        if (index == 2) return APP_WIFI_SETTINGS_DHCP;
+        if (index == 3 && mode == WIFI_MODE_APSTA) return APP_WIFI_SETTINGS_AP_CLIENTS;
+    }
+    return APP_WIFI_SETTINGS_MODE;
+}
+
+int app_menu_wifi_settings_mode_index(void)
+{
+    return app_services_wifi_get_mode() == WIFI_MODE_AP ? 0 : 1;
 }
 
 const menu_item_t *get_menu_items(menu_state_t state, int *item_count)
@@ -221,12 +309,34 @@ const menu_item_t *get_menu_items(menu_state_t state, int *item_count)
         return diagnostic_items;
 
     case MENU_WIFI_CONFIG:
-        *item_count = sizeof(wifi_items) / sizeof(wifi_items[0]);
-        return wifi_items;
+    {
+        const wifi_mode_t mode = app_services_wifi_get_mode();
+        if (mode == WIFI_MODE_AP) {
+            *item_count = sizeof(wifi_ap_items) / sizeof(wifi_ap_items[0]);
+            return wifi_ap_items;
+        }
+        if (mode == WIFI_MODE_APSTA) {
+            *item_count = sizeof(wifi_apsta_items) / sizeof(wifi_apsta_items[0]);
+            return wifi_apsta_items;
+        }
+        *item_count = sizeof(wifi_sta_items) / sizeof(wifi_sta_items[0]);
+        return wifi_sta_items;
+    }
 
     case MENU_WIFI_SETTINGS:
-        *item_count = sizeof(wifi_settings_items) / sizeof(wifi_settings_items[0]);
-        return wifi_settings_items;
+    {
+        const wifi_mode_t mode = app_services_wifi_get_mode();
+        if (mode == WIFI_MODE_AP) {
+            *item_count = sizeof(wifi_settings_ap_items) / sizeof(wifi_settings_ap_items[0]);
+            return wifi_settings_ap_items;
+        }
+        if (mode == WIFI_MODE_APSTA) {
+            *item_count = sizeof(wifi_settings_apsta_items) / sizeof(wifi_settings_apsta_items[0]);
+            return wifi_settings_apsta_items;
+        }
+        *item_count = sizeof(wifi_settings_sta_items) / sizeof(wifi_settings_sta_items[0]);
+        return wifi_settings_sta_items;
+    }
 
     case MENU_OTA:
         *item_count = sizeof(ota_items) / sizeof(ota_items[0]);
