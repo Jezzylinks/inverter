@@ -35,6 +35,7 @@ static bool s_ntp_running;
 static bool s_websocket_running;
 static bool s_dashboard_running;
 static bool s_station_ready;
+static bool s_station_services_running;
 static bool s_sync_scheduled;
 /* Set atomically by network_services_begin_teardown() before any Wi-Fi
  * disable sequence.  Prevents network_services_sync_task from calling
@@ -75,10 +76,9 @@ static void network_services_sync_task(void *arg)
 {
     (void)arg;
 
-    /* If a Wi-Fi disable sequence has set s_teardown_pending, the TCP/IP
-     * stack may already be partially torn down.  Starting network services
-     * from here would call tcpip_callback() on a destroyed mailbox and
-     * assert.  Skip the sync and exit; the teardown path owns cleanup. */
+    /* Synchronize local/AP services and station/internet services separately.
+     * AP readiness is sufficient for the local HTTP/WebSocket/mDNS layer, but
+     * it must never be treated as station/internet readiness for NTP or MQTT. */
     if (s_teardown_pending) {
         services_lock();
         s_sync_scheduled = false;
@@ -88,14 +88,27 @@ static void network_services_sync_task(void *arg)
     }
 
     services_lock();
-    const bool ready = s_station_ready;
-    const bool running = s_running;
+    const bool station_ready = s_station_ready;
+    const bool local_running = s_running;
+    const bool station_services_running = s_station_services_running;
     services_unlock();
 
-    if (ready && !running) {
+    const wifi_mode_t mode = wifi_manager_get_mode();
+    const bool station_capable = mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA;
+    const bool ap_capable = mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA;
+    const bool ap_ready = ap_capable && wifi_events_get_state() == WIFI_STATE_AP_ACTIVE;
+    const bool local_ready = station_ready || ap_ready;
+
+    if (local_ready && !local_running) {
         (void)network_services_start();
-    } else if (!ready && running) {
+    } else if (!local_ready && local_running) {
         (void)network_services_stop();
+    }
+
+    if (station_capable && station_ready && !station_services_running) {
+        (void)network_services_start_station_services();
+    } else if ((!station_capable || !station_ready) && station_services_running) {
+        (void)network_services_stop_station_services();
     }
 
     services_lock();
@@ -115,18 +128,18 @@ static void network_wifi_status_callback(const wifi_status_t *status)
     const bool ap_ready = !provisioning &&
                           (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) &&
                           status->state == WIFI_STATE_AP_ACTIVE;
-    const bool ready = !provisioning && (station_ready || ap_ready);
+    const bool local_ready = !provisioning && (station_ready || ap_ready);
     bool mdns_running = false;
     services_lock();
     mdns_running = s_mdns_running;
     services_unlock();
     if (mdns_running) {
-        const char *state = ready ? "connected" : "offline";
+        const char *state = local_ready ? "connected" : "offline";
         (void)mdns_service_update_status(state, status->rssi);
     }
     bool schedule = false;
     services_lock();
-    s_station_ready = ready;
+    s_station_ready = !provisioning && station_ready;
     if (!s_sync_scheduled) {
         s_sync_scheduled = true;
         schedule = true;
@@ -195,6 +208,73 @@ static esp_err_t start_mqtt_if_enabled(void)
     return err;
 }
 
+static esp_err_t network_services_start_station_services(void)
+{
+    if (!s_initialized || s_teardown_pending) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    services_lock();
+    if (s_station_services_running) {
+        services_unlock();
+        return ESP_OK;
+    }
+    services_unlock();
+
+    esp_err_t first_err = ESP_OK;
+    const esp_err_t ntp_err = ntp_client_init(NULL);
+    if (ntp_err == ESP_OK) {
+        services_lock();
+        s_ntp_running = true;
+        services_unlock();
+        quiet_hours_sntp_init();
+    } else {
+        ESP_LOGW(NETWORK_SERVICES_TAG,
+                 "NTP startup failed; station services continue: %s",
+                 esp_err_to_name(ntp_err));
+        first_err = ntp_err;
+    }
+
+    const esp_err_t mqtt_err = start_mqtt_if_enabled();
+    if (mqtt_err != ESP_OK && first_err == ESP_OK) {
+        first_err = mqtt_err;
+    }
+
+    services_lock();
+    s_station_services_running = true;
+    services_unlock();
+    return first_err;
+}
+
+static esp_err_t network_services_stop_station_services(void)
+{
+    if (!s_initialized) {
+        return ESP_OK;
+    }
+
+    services_lock();
+    const bool running = s_station_services_running;
+    const bool ntp_running = s_ntp_running;
+    s_station_services_running = false;
+    s_ntp_running = false;
+    services_unlock();
+
+    if (!running) {
+        return ESP_OK;
+    }
+
+    esp_err_t first_err = ESP_OK;
+    (void)mqtt_client_disconnect();
+    (void)mqtt_client_deinit();
+    if (ntp_running) {
+        const esp_err_t err = ntp_client_deinit();
+        if (err != ESP_OK) {
+            first_err = err;
+        }
+    }
+    return first_err;
+}
+
 esp_err_t network_services_init(void)
 {
     if (s_initialized) {
@@ -217,6 +297,7 @@ esp_err_t network_services_init(void)
     s_websocket_running = false;
     s_dashboard_running = false;
     s_station_ready = false;
+    s_station_services_running = false;
     s_sync_scheduled = false;
     s_teardown_pending = false;
     const esp_err_t callback_err = wifi_events_register_status_callback(network_wifi_status_callback);
@@ -315,24 +396,21 @@ esp_err_t network_services_start(void)
         ESP_LOGW(NETWORK_SERVICES_TAG, "mDNS startup failed: %s", esp_err_to_name(err));
     }
 
-    const esp_err_t ntp_err = ntp_client_init(NULL);
-    if (ntp_err == ESP_OK) {
-        s_ntp_running = true;
-    } else {
-        ESP_LOGW(NETWORK_SERVICES_TAG,
-                 "NTP startup failed; local services continue: %s",
-                 esp_err_to_name(ntp_err));
-    }
-    /* SNTP must only be configured after Wi-Fi has reported a ready network
-     * interface.  init_hardware() deliberately has no network dependency. */
-    quiet_hours_sntp_init();
-
+    /* Local services are architecture-neutral: they can run on STA, AP, or
+     * APSTA once a usable local interface exists. Station/internet services
+     * are started separately only after STA has a valid IP. */
     services_lock();
     s_running = true;
+    const bool station_ready = s_station_ready;
     services_unlock();
-    (void)start_mqtt_if_enabled();
-    ESP_LOGI(NETWORK_SERVICES_TAG, "%s network services started",
-             WIFI_COMPILED_OPERATION_MODE_NAME);
+
+    if (station_ready) {
+        (void)network_services_start_station_services();
+    }
+
+    ESP_LOGI(NETWORK_SERVICES_TAG, "Local network services started for %s mode",
+             wifi_manager_get_mode() == WIFI_MODE_STA ? "STA" :
+             wifi_manager_get_mode() == WIFI_MODE_AP ? "AP" : "APSTA");
     return ESP_OK;
 }
 
@@ -360,28 +438,23 @@ esp_err_t network_services_stop(void)
     s_teardown_pending = true;
     services_lock();
     const bool was_running = s_running;
-    s_running = false;
     const bool mdns_running = s_mdns_running;
-    const bool ntp_running = s_ntp_running;
+    s_running = false;
     s_mdns_running = false;
-    s_ntp_running = false;
     s_websocket_running = false;
     services_unlock();
+
+    (void)network_services_stop_station_services();
+
     if (!was_running) {
         return ESP_OK;
     }
 
-    (void)mqtt_client_disconnect();
-    (void)mqtt_client_deinit();
     if (mdns_running) {
         (void)mdns_service_deinit();
     }
-    if (ntp_running) {
-        (void)ntp_client_deinit();
-    }
     cleanup_http_services();
-    ESP_LOGI(NETWORK_SERVICES_TAG, "%s network services stopped",
-             WIFI_COMPILED_OPERATION_MODE_NAME);
+    ESP_LOGI(NETWORK_SERVICES_TAG, "Local network services stopped");
     return ESP_OK;
 }
 
