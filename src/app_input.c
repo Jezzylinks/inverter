@@ -342,8 +342,22 @@ static void handle_wifi_settings_action(uint8_t selection)
         (void)app_services_wifi_request_forget_saved();
         break;
     case 1:
-        s_wifi_settings_child_active = true;
-        lcd_flash_message("Network Mode", app_services_wifi_mode_name(), 1200U);
+        if (!app_services_wifi_mode_edit_active()) {
+            const err = app_services_wifi_mode_edit_begin();
+            if (err != ESP_OK) {
+                lcd_flash_message("Mode Unavailable", "Try again", 1200U);
+                break;
+            }
+            s_wifi_settings_child_active = true;
+            show_menu_screen(MENU_WIFI_SETTINGS, selection);
+        } else {
+            const err = app_services_wifi_mode_edit_confirm();
+            if (err != ESP_OK) {
+                lcd_flash_message("Mode Not Saved", "Try again", 1200U);
+            } else {
+                s_wifi_settings_child_active = false;
+            }
+        }
         break;
     case 2:
         s_wifi_settings_child_active = false;
@@ -1432,6 +1446,16 @@ void handle_up_button_event(button_event_info_t *event_info,
         post_button_click_event();
     }
     int64_t current_time = event_info->timestamp_us / 1000;
+    if (sys_state.menu_state == MENU_WIFI_SETTINGS &&
+        sys_state.menu_selection == 1U &&
+        app_services_wifi_mode_edit_active() &&
+        event_info->event == BUTTON_EVENT_CLICK)
+    {
+        (void)app_services_wifi_mode_edit_step(+1);
+        show_menu_screen(MENU_WIFI_SETTINGS, sys_state.menu_selection);
+        return;
+    }
+
     value_edit_context_t *config = get_current_value_config();
 
     // handle_up_button_event():
@@ -1690,6 +1714,16 @@ void handle_down_button_event(button_event_info_t *event_info,
         post_button_click_event();
     }
     int64_t current_time = event_info->timestamp_us / 1000;
+    if (sys_state.menu_state == MENU_WIFI_SETTINGS &&
+        sys_state.menu_selection == 1U &&
+        app_services_wifi_mode_edit_active() &&
+        event_info->event == BUTTON_EVENT_CLICK)
+    {
+        (void)app_services_wifi_mode_edit_step(-1);
+        show_menu_screen(MENU_WIFI_SETTINGS, sys_state.menu_selection);
+        return;
+    }
+
     value_edit_context_t *config = get_current_value_config();
 
     if (sys_state.menu_state == MENU_FACTORY_RESET &&
@@ -1965,6 +1999,16 @@ void handle_back_button_event(button_event_info_t *event_info,
     if (event_info->event == BUTTON_EVENT_PRESS)
     {
         post_button_click_event();
+    }
+
+    if (event_info->event == BUTTON_EVENT_CLICK &&
+        sys_state.menu_state == MENU_WIFI_SETTINGS &&
+        app_services_wifi_mode_edit_active())
+    {
+        app_services_wifi_mode_edit_cancel();
+        s_wifi_settings_child_active = false;
+        show_menu_screen(MENU_WIFI_SETTINGS, sys_state.menu_selection);
+        return;
     }
 
     if (event_info->event == BUTTON_EVENT_CLICK && ota_confirmation_is_pending()) {
