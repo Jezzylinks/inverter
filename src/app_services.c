@@ -103,6 +103,7 @@ typedef enum {
     APP_WIFI_OPERATION_DISABLE,
     APP_WIFI_OPERATION_DISCONNECT,
     APP_WIFI_OPERATION_PROVISION,
+    APP_WIFI_OPERATION_MODE_CHANGE,
 } app_wifi_operation_t;
 
 static app_wifi_operation_t s_wifi_operation;
@@ -114,11 +115,17 @@ static int8_t s_wifi_operation_rssi = -127;
 typedef struct {
     bool enabled;
     bool previous_enabled;
+    bool mode_change;
+    wifi_mode_t mode;
     uint64_t requested_ms;
 } wifi_toggle_request_t;
 
+static bool s_wifi_mode_edit_active = false;
+static wifi_mode_t s_wifi_mode_edit_value = WIFI_COMPILED_OPERATION_MODE;
+
 static esp_err_t persist_u8(const char *key, uint8_t value);
 static void app_wifi_toggle_task(void *parameter);
+static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode);
 
 static bool app_manifest_url_is_valid(const char *url)
 {
@@ -407,6 +414,28 @@ static void app_wifi_toggle_task(void *parameter)
         }
 
         const uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
+        if (request.mode_change) {
+            ESP_LOGI(APP_SERVICES_TAG,
+                     "Wi-Fi mode worker dispatch after %llums",
+                     (unsigned long long)(now_ms >= request.requested_ms
+                                              ? now_ms - request.requested_ms
+                                              : 0U));
+            const esp_err_t mode_err =
+                app_services_execute_wifi_mode_change(request.mode);
+            if (mode_err != ESP_OK) {
+                ESP_LOGE(APP_SERVICES_TAG, "Wi-Fi mode change failed: %s",
+                         esp_err_to_name(mode_err));
+                lcd_flash_message("Mode Change Failed", "Previous kept", 1400U);
+            } else {
+                lcd_flash_message("Wi-Fi Mode Saved",
+                                  request.mode == WIFI_MODE_STA ? "STA" :
+                                  request.mode == WIFI_MODE_AP ? "AP" : "APSTA",
+                                  1200U);
+            }
+            __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
+            continue;
+        }
+
         ESP_LOGI(APP_SERVICES_TAG,
                  "Wi-Fi %s worker dispatch after %llums",
                  request.enabled ? "ON" : "OFF",
@@ -441,6 +470,84 @@ static void app_wifi_toggle_task(void *parameter)
                      (unsigned)stack_words);
         }
     }
+}
+
+static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode)
+{
+    if (mode < WIFI_MODE_STA || mode > WIFI_MODE_APSTA) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    wifi_manager_config_t old_config = {0};
+    esp_err_t err = wifi_manager_get_config(&old_config);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (old_config.mode == mode) {
+        return ESP_OK;
+    }
+
+    const bool was_enabled = sys_state.wifi.enabled;
+
+    if (was_enabled) {
+        (void)network_services_stop();
+        err = wifi_controller_stop();
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+
+    wifi_manager_config_t new_config = old_config;
+    new_config.mode = mode;
+
+    err = wifi_manager_set_config(&new_config);
+    if (err != ESP_OK) {
+        if (was_enabled) {
+            (void)wifi_controller_start();
+        }
+        return err;
+    }
+
+    wifi_network_config_t stored = {0};
+    if (wifi_storage_load_network_config(&stored) != ESP_OK) {
+        wifi_storage_set_default_network_config(&stored);
+    }
+    const wifi_mode_t previous_mode = stored.mode;
+    stored.mode = mode;
+
+    err = wifi_storage_save_network_config(&stored);
+    if (err != ESP_OK) {
+        (void)wifi_manager_set_config(&old_config);
+        if (was_enabled) {
+            (void)wifi_controller_start();
+        }
+        return err;
+    }
+
+    if (was_enabled) {
+        err = wifi_controller_start();
+        if (err != ESP_OK) {
+            /* Roll back both runtime and persistent mode if the selected
+             * architecture cannot be started. */
+            stored.mode = previous_mode;
+            (void)wifi_storage_save_network_config(&stored);
+            (void)wifi_manager_set_config(&old_config);
+            const esp_err_t restore_err = wifi_controller_start();
+            if (restore_err != ESP_OK) {
+                ESP_LOGE(APP_SERVICES_TAG,
+                         "Wi-Fi mode rollback could not restart previous mode: %s",
+                         esp_err_to_name(restore_err));
+            }
+            return err;
+        }
+    }
+
+    ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi mode changed to %s",
+             mode == WIFI_MODE_STA ? "STA" :
+             mode == WIFI_MODE_AP ? "AP" : "APSTA");
+    app_wifi_sync_menu_if_visible();
+    return ESP_OK;
 }
 
 /* Called by wifi_monitor_task whenever Wi-Fi state changes.  Pushes the
@@ -1044,6 +1151,8 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
     wifi_toggle_request_t request = {
         .enabled = enabled,
         .previous_enabled = sys_state.wifi.enabled,
+        .mode_change = false,
+        .mode = WIFI_MODE_NULL,
         .requested_ms = (uint64_t)(esp_timer_get_time() / 1000ULL),
     };
 
@@ -1076,16 +1185,120 @@ bool app_services_wifi_enabled(void)
 
 const char *app_services_wifi_mode_name(void)
 {
-    switch (wifi_manager_get_mode()) {
-    case WIFI_MODE_STA:
-        return "STA";
-    case WIFI_MODE_AP:
-        return "AP";
-    case WIFI_MODE_APSTA:
-        return "APSTA";
-    default:
-        return "OFF";
+    if (s_wifi_mode_edit_active) {
+        switch (s_wifi_mode_edit_value) {
+        case WIFI_MODE_STA: return "STA";
+        case WIFI_MODE_AP: return "AP";
+        case WIFI_MODE_APSTA: return "APSTA";
+        default: break;
+        }
     }
+
+    wifi_mode_t mode = wifi_manager_get_mode();
+    if (mode == WIFI_MODE_NULL) {
+        wifi_network_config_t stored = {0};
+        if (wifi_storage_load_network_config(&stored) == ESP_OK) {
+            mode = stored.mode;
+        }
+    }
+
+    switch (mode) {
+    case WIFI_MODE_STA: return "STA";
+    case WIFI_MODE_AP: return "AP";
+    case WIFI_MODE_APSTA: return "APSTA";
+    default: return "OFF";
+    }
+}
+
+esp_err_t app_services_wifi_mode_edit_begin(void)
+{
+    esp_err_t err = wifi_controller_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    wifi_manager_config_t config = {0};
+    err = wifi_manager_get_config(&config);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (config.mode < WIFI_MODE_STA || config.mode > WIFI_MODE_APSTA) {
+        config.mode = WIFI_COMPILED_OPERATION_MODE;
+    }
+
+    s_wifi_mode_edit_value = config.mode;
+    s_wifi_mode_edit_active = true;
+    return ESP_OK;
+}
+
+esp_err_t app_services_wifi_mode_edit_step(int direction)
+{
+    if (!s_wifi_mode_edit_active || direction == 0) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    static const wifi_mode_t modes[] = {
+        WIFI_MODE_STA, WIFI_MODE_AP, WIFI_MODE_APSTA
+    };
+    size_t index = 0U;
+    for (size_t i = 0U; i < sizeof(modes) / sizeof(modes[0]); ++i) {
+        if (modes[i] == s_wifi_mode_edit_value) {
+            index = i;
+            break;
+        }
+    }
+
+    const size_t count = sizeof(modes) / sizeof(modes[0]);
+    if (direction > 0) {
+        index = (index + 1U) % count;
+    } else {
+        index = (index + count - 1U) % count;
+    }
+    s_wifi_mode_edit_value = modes[index];
+    return ESP_OK;
+}
+
+esp_err_t app_services_wifi_mode_edit_confirm(void)
+{
+    if (!s_wifi_mode_edit_active) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const wifi_mode_t mode = s_wifi_mode_edit_value;
+    s_wifi_mode_edit_active = false;
+
+    uint32_t expected = 0U;
+    if (!__atomic_compare_exchange_n(&s_wifi_toggle_admitted, &expected, 1U,
+                                     false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    wifi_toggle_request_t request = {
+        .enabled = false,
+        .previous_enabled = sys_state.wifi.enabled,
+        .mode_change = true,
+        .mode = mode,
+        .requested_ms = (uint64_t)(esp_timer_get_time() / 1000ULL),
+    };
+
+    if (xQueueSend(s_wifi_toggle_queue, &request, 0) != pdTRUE) {
+        __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    lcd_flash_message("Wi-Fi MODE", "Saving...", 900U);
+    return ESP_OK;
+}
+
+void app_services_wifi_mode_edit_cancel(void)
+{
+    s_wifi_mode_edit_active = false;
+}
+
+bool app_services_wifi_mode_edit_active(void)
+{
+    return s_wifi_mode_edit_active;
 }
 
 const char *app_services_wifi_connect_action_label(void)
