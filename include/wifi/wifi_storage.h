@@ -32,6 +32,7 @@ extern "C"
         bool auto_reconnect;
         uint32_t reconnect_interval_ms;
         bool dhcp;
+        bool ap_dhcp;
         esp_netif_ip_info_t ip_info;
         esp_ip4_addr_t dns;
         char ap_ssid[33];
