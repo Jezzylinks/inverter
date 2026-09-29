@@ -987,7 +987,11 @@ static esp_err_t wifi_manager_configure_apsta(void)
         return err;
     }
 
-    if (sta_config.sta.ssid[0] != '\0')
+    /* Only configure interfaces that are enabled by the selected mode.
+     * ESP-IDF rejects esp_wifi_set_config() for an interface that is not
+     * enabled by the current Wi-Fi mode. */
+    if ((mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA) &&
+        sta_config.sta.ssid[0] != '\0')
     {
         err = esp_wifi_set_config(WIFI_IF_STA, &sta_config);
         if (err != ESP_OK)
@@ -997,7 +1001,8 @@ static esp_err_t wifi_manager_configure_apsta(void)
         }
     }
 
-    if (ap_config.ap.ssid[0] != '\0')
+    if ((mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) &&
+        ap_config.ap.ssid[0] != '\0')
     {
         err = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
         if (err != ESP_OK)
