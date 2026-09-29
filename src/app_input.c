@@ -343,7 +343,7 @@ static void handle_wifi_settings_action(uint8_t selection)
         break;
     case 1:
         if (!app_services_wifi_mode_edit_active()) {
-            const err = app_services_wifi_mode_edit_begin();
+            const esp_err_t err = app_services_wifi_mode_edit_begin();
             if (err != ESP_OK) {
                 lcd_flash_message("Mode Unavailable", "Try again", 1200U);
                 break;
@@ -351,7 +351,7 @@ static void handle_wifi_settings_action(uint8_t selection)
             s_wifi_settings_child_active = true;
             show_menu_screen(MENU_WIFI_SETTINGS, selection);
         } else {
-            const err = app_services_wifi_mode_edit_confirm();
+            const esp_err_t err = app_services_wifi_mode_edit_confirm();
             if (err != ESP_OK) {
                 lcd_flash_message("Mode Not Saved", "Try again", 1200U);
             } else {
