@@ -898,6 +898,47 @@ static void ota_auto_check_task(void *parameter)
     }
 }
 
+esp_err_t app_services_wifi_toggle_init(void)
+{
+    if (s_services_mutex == NULL) {
+        s_services_mutex = xSemaphoreCreateMutex();
+        if (s_services_mutex == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    if (s_wifi_toggle_queue == NULL) {
+        s_wifi_toggle_queue = xQueueCreate(APP_WIFI_TOGGLE_QUEUE_LENGTH,
+                                           sizeof(wifi_toggle_request_t));
+        if (s_wifi_toggle_queue == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    if (s_wifi_toggle_task == NULL) {
+        if (xTaskCreate(app_wifi_toggle_task,
+                        "wifi_toggle",
+                        APP_WIFI_TOGGLE_TASK_STACK_SIZE,
+                        NULL,
+                        APP_WIFI_TOGGLE_TASK_PRIORITY,
+                        &s_wifi_toggle_task) != pdPASS) {
+            vQueueDelete(s_wifi_toggle_queue);
+            s_wifi_toggle_queue = NULL;
+            s_wifi_toggle_task = NULL;
+            return ESP_ERR_NO_MEM;
+        }
+        task_watchdog_register_health_only("wifi_toggle");
+    }
+
+    const esp_err_t controller_err = wifi_controller_init();
+    if (controller_err != ESP_OK) {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Wi-Fi controller initialization deferred: %s",
+                 esp_err_to_name(controller_err));
+    }
+    return controller_err;
+}
+
 esp_err_t app_services_init(void)
 {
     if (!s_services_mutex)
