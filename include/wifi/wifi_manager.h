@@ -35,6 +35,7 @@ extern "C"
 
         /* Network options */
         bool dhcp;
+        bool ap_dhcp;
         bool auto_reconnect;
         uint32_t reconnect_interval_ms;
 
@@ -126,6 +127,9 @@ extern "C"
      * Auto Reconnect
      *---------------------------------------------------------*/
     void wifi_manager_enable_auto_reconnect(bool enable);
+
+    bool wifi_manager_ap_dhcp_enabled(void);
+    esp_err_t wifi_manager_set_ap_dhcp(bool enabled);
 
     bool wifi_manager_auto_reconnect_enabled(void);
 
