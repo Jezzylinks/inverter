@@ -2927,7 +2927,7 @@ void lcd_show_monitoring_detail(const char *label, float value,
                                 const char *unit)
 {
     char l[LCD_LINE_SIZE], v[LCD_LINE_SIZE];
-    snprintf(l, LCD_LINE_SIZE, "%-16.16s", label);
+    snprintf(l, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, label ? label : "");
     snprintf(v, LCD_LINE_SIZE, "%.2f %-6.6s", value, unit ? unit : "");
     lcd_show_monitor_detail(l, v);
 }
@@ -3214,17 +3214,17 @@ void lcd_show_value_edit_screen(void)
                  config->current_value, config->unit ? config->unit : "");
         break;
     case VALUE_EDIT_BOOL:
-        snprintf(v, LCD_LINE_SIZE, "%-16s", config->current_value != 0.0f ? "ON" : "OFF");
+        snprintf(v, LCD_LINE_SIZE, "%-*s", LCD_COLS, config->current_value != 0.0f ? "ON" : "OFF");
         break;
     case VALUE_EDIT_SELECT:
         snprintf(v, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS,
                  config->options[config->selection_index]);
         break;
     default:
-        snprintf(v, LCD_LINE_SIZE, "%-16s", "");
+        snprintf(v, LCD_LINE_SIZE, "%-*s", LCD_COLS, "");
         break;
     }
-    lcd_show_value_edit(config->label ? config->label : "Param",
+    lcd_show_value_edit(value_edit_display_label(config),
                         v, sys_state.pending_confirmation);
 }
 
@@ -3783,7 +3783,7 @@ void lcd_draw_diagnostics_screen(uint8_t index)
 
     const char *label = items[index].label ? items[index].label : "(no label)";
     char row0[LCD_LINE_SIZE], row1[LCD_LINE_SIZE];
-    snprintf(row0, LCD_LINE_SIZE, "%-16.16s", label);
+    snprintf(row0, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, label);
 
     switch (index)
     {
@@ -3812,9 +3812,9 @@ void lcd_draw_diagnostics_screen(uint8_t index)
     {
         const error_log_entry_t *latest = error_log_get_latest();
         if (!latest)
-            snprintf(row1, LCD_LINE_SIZE, "%-16s", "No errors logged");
+            snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, "No errors logged");
         else
-            snprintf(row1, LCD_LINE_SIZE, "%-16.16s", latest->description);
+            snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, latest->description);
         break;
     }
 
@@ -3823,7 +3823,7 @@ void lcd_draw_diagnostics_screen(uint8_t index)
         break;
 
     case 3: /* Firmware Version */
-        snprintf(row1, LCD_LINE_SIZE, "%-16.16s", "C-01 Rev A");
+        snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, "C-01 Rev A");
         break;
 
     case 4: /* Uptime */
@@ -3846,13 +3846,46 @@ void lcd_draw_diagnostics_screen(uint8_t index)
         break;
 
     default:
-        snprintf(row1, LCD_LINE_SIZE, "%-16s", "Unknown item");
+        snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, "Unknown item");
         break;
     }
 
-    row0[16] = '\0';
-    row1[16] = '\0';
     lcd_show_diagnostic_detail(row0, row1);
+}
+
+/* Geometry-aware display labels. The 16×2 strings remain unchanged;
+ * the 20×4 build uses the available width to show the full setting name. */
+static const char *settings_display_label(const nvs_setting_t *setting)
+{
+    if (setting == NULL || setting->label == NULL || !lcd_geometry_is_20x4()) {
+        return setting != NULL && setting->label != NULL ? setting->label : "(unnamed)";
+    }
+
+    if (strcmp(setting->key, BATTERY_VOLTAGE_SYSTEM_KEY) == 0) return "Battery Voltage Sys.";
+    if (strcmp(setting->key, "bat_charge_cur") == 0) return "Max Charge Current";
+    if (strcmp(setting->key, "bat_disc_cur") == 0) return "Discharge Current";
+    if (strcmp(setting->key, "bat_full_volt") == 0) return "Battery Full Voltage";
+    if (strcmp(setting->key, "bat_cutoff_volt") == 0) return "Cutoff Voltage";
+    if (strcmp(setting->key, "bat_rech_volt") == 0) return "Recharge Voltage";
+    if (strcmp(setting->key, "backlight_time") == 0) return "Backlight Timeout";
+    if (strcmp(setting->key, "out_freq") == 0) return "Output Frequency";
+    if (strcmp(setting->key, "volt_threshold") == 0) return "Voltage Threshold";
+    if (strcmp(setting->key, "temp_alarm") == 0) return "Temperature Alarm";
+    if (strcmp(setting->key, "frequency_range") == 0) return "Frequency Range";
+    if (strcmp(setting->key, "system_timeout") == 0) return "System Timeout";
+    if (strcmp(setting->key, "security_en") == 0) return "Security Enable";
+    return setting->label;
+}
+
+/* 20×4 value-edit labels can use the full physical width. */
+static const char *value_edit_display_label(const value_edit_context_t *config)
+{
+    if (config == NULL || config->label == NULL || !lcd_geometry_is_20x4()) {
+        return config != NULL && config->label != NULL ? config->label : "Param";
+    }
+    if (strcmp(config->label, "Frequency") == 0) return "Frequency Range";
+    if (strcmp(config->label, "Temperature Limit") == 0) return "Temperature Alarm";
+    return config->label;
 }
 
 /* ── lcd_draw_settings_view_screen() ─────────────────────────────────────
@@ -3892,7 +3925,12 @@ void lcd_draw_settings_view_screen(uint8_t index)
 
     char counter[8];
     snprintf(counter, sizeof(counter), "%u/%u", (unsigned)(index + 1), (unsigned)NVS_SETTINGS_COUNT);
-    snprintf(row0, LCD_LINE_SIZE, "%-11.11s%5.5s", s->label ? s->label : "(unnamed)", counter);
+    const char *display_label = settings_display_label(s);
+    if (lcd_geometry_is_20x4()) {
+        snprintf(row0, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, display_label);
+    } else {
+        snprintf(row0, LCD_LINE_SIZE, "%-11.11s%5.5s", display_label, counter);
+    }
 
     if (s->is_scaled_float)
     {
@@ -3905,7 +3943,7 @@ void lcd_draw_settings_view_screen(uint8_t index)
 
         if (strcmp(s->key, "bat_type") == 0 && val < BATTERY_TYPE_COUNT)
         {
-            snprintf(row1, LCD_LINE_SIZE, "%-16.16s", battery_type_names[val]);
+            snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, battery_type_names[val]);
         }
         else if (val == 0 || val == 1)
         {
@@ -3922,8 +3960,6 @@ void lcd_draw_settings_view_screen(uint8_t index)
         snprintf(row1, LCD_LINE_SIZE, "%ld%-3s           ", (long)val, settings_view_unit_for(s->label));
     }
 
-    row0[16] = '\0';
-    row1[16] = '\0';
     lcd_show_settings_view_detail(row0, row1);
 }
 
