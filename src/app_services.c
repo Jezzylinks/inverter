@@ -1824,34 +1824,55 @@ void app_services_wifi_cancel_disconnect(void)
 
 bool app_services_wifi_dhcp_enabled(void)
 {
+    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+        return wifi_manager_ap_dhcp_enabled();
+    }
+
     wifi_manager_config_t config = {0};
     return wifi_manager_get_config(&config) == ESP_OK ? config.dhcp : true;
 }
 
 esp_err_t app_services_wifi_toggle_dhcp(void)
 {
-    wifi_manager_config_t config = {0};
+    wifi_network_config_t config = {0};
     esp_err_t err = wifi_manager_get_config(&config);
     if (err != ESP_OK) {
         return err;
     }
-    config.dhcp = !config.dhcp;
-    err = wifi_manager_set_config(&config);
-    if (err != ESP_OK) {
-        return err;
+
+    const bool ap_mode = config.mode == WIFI_MODE_AP;
+    const bool new_value = ap_mode ? !config.ap_dhcp : !config.dhcp;
+
+    if (ap_mode) {
+        err = wifi_manager_set_ap_dhcp(new_value);
+        if (err != ESP_OK) {
+            return err;
+        }
+        config.ap_dhcp = new_value;
+    } else {
+        config.dhcp = new_value;
+        err = wifi_manager_set_config(&config);
+        if (err != ESP_OK) {
+            return err;
+        }
     }
 
     wifi_network_config_t stored = {0};
     if (wifi_storage_load_network_config(&stored) != ESP_OK) {
         wifi_storage_set_default_network_config(&stored);
     }
-    stored.dhcp = config.dhcp;
-    stored.ip_info = config.ip_info;
-    stored.dns = config.dns;
+    if (ap_mode) {
+        stored.ap_dhcp = new_value;
+    } else {
+        stored.dhcp = new_value;
+        stored.ip_info = config.ip_info;
+        stored.dns = config.dns;
+    }
     err = wifi_storage_save_network_config(&stored);
     if (err == ESP_OK) {
-        lcd_flash_message(config.dhcp ? "DHCP ON" : "DHCP OFF",
-                          wifi_controller_is_connected() ? "Reconnect needed" : "Saved",
+        lcd_flash_message(new_value ? "DHCP ON" : "DHCP OFF",
+                          ap_mode ? "AP DHCP" :
+                          (wifi_controller_is_connected() ? "Reconnect needed" : "Saved"),
                           1400U);
     }
     return err;
