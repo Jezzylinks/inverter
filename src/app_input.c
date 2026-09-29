@@ -302,27 +302,29 @@ static void handle_wifi_client_delete(void)
 
 static void handle_wifi_menu_action(uint8_t selection)
 {
-    switch (selection) {
-    case 0:
+    switch (app_menu_wifi_config_action_at(selection)) {
+    case APP_WIFI_MENU_TOGGLE:
         show_menu_screen(MENU_WIFI_CONFIG, selection);
         (void)app_services_set_wifi_enabled(!app_services_wifi_enabled());
         break;
-    case 1:
+    case APP_WIFI_MENU_STATUS:
         app_services_show_wifi_status();
         break;
-    case 2:
-        if (app_services_wifi_is_ap_only()) {
-            lcd_flash_message("AP mode active", "No STA connect", 1200U);
-        } else if (wifi_controller_is_connected()) {
+    case APP_WIFI_MENU_CONNECT:
+        if (wifi_controller_is_connected()) {
             (void)app_services_wifi_request_disconnect();
         } else {
             (void)app_services_wifi_reconnect();
         }
         break;
-    case 3:
+    case APP_WIFI_MENU_SCAN:
         (void)app_services_wifi_scan();
         break;
-    case 4:
+    case APP_WIFI_MENU_AP_CLIENTS:
+        s_wifi_settings_child_active = true;
+        app_services_show_ap_clients();
+        break;
+    case APP_WIFI_MENU_SETTINGS:
         s_wifi_settings_child_active = false;
         push_menu_history(MENU_WIFI_CONFIG, selection);
         sys_state.menu_state = MENU_WIFI_SETTINGS;
@@ -336,12 +338,12 @@ static void handle_wifi_menu_action(uint8_t selection)
 
 static void handle_wifi_settings_action(uint8_t selection)
 {
-    switch (selection) {
-    case 0:
+    switch (app_menu_wifi_settings_action_at(selection)) {
+    case APP_WIFI_SETTINGS_SAVED_NETWORK:
         s_wifi_settings_child_active = false;
         (void)app_services_wifi_request_forget_saved();
         break;
-    case 1:
+    case APP_WIFI_SETTINGS_MODE:
         if (!app_services_wifi_mode_edit_active()) {
             const esp_err_t err = app_services_wifi_mode_edit_begin();
             if (err != ESP_OK) {
@@ -359,12 +361,12 @@ static void handle_wifi_settings_action(uint8_t selection)
             }
         }
         break;
-    case 2:
+    case APP_WIFI_SETTINGS_DHCP:
         s_wifi_settings_child_active = false;
         (void)app_services_wifi_toggle_dhcp();
         show_menu_screen(MENU_WIFI_SETTINGS, selection);
         break;
-    case 3:
+    case APP_WIFI_SETTINGS_AP_CLIENTS:
         s_wifi_settings_child_active = true;
         app_services_show_ap_clients();
         break;
@@ -1447,7 +1449,7 @@ void handle_up_button_event(button_event_info_t *event_info,
     }
     int64_t current_time = event_info->timestamp_us / 1000;
     if (sys_state.menu_state == MENU_WIFI_SETTINGS &&
-        sys_state.menu_selection == 1U &&
+        sys_state.menu_selection == (uint8_t)app_menu_wifi_settings_mode_index() &&
         app_services_wifi_mode_edit_active() &&
         event_info->event == BUTTON_EVENT_CLICK)
     {
