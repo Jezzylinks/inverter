@@ -129,6 +129,7 @@ static void wifi_manager_load_network_config(void)
     s_config.mode = net_cfg.mode;
     s_config.authmode = INVERTER_WIFI_AUTH_MODE;
     s_config.dhcp = net_cfg.dhcp;
+    s_config.ap_dhcp = net_cfg.ap_dhcp;
     s_config.auto_reconnect = net_cfg.auto_reconnect;
     s_config.reconnect_interval_ms = net_cfg.reconnect_interval_ms;
     s_config.ip_info = net_cfg.ip_info;
@@ -494,6 +495,17 @@ esp_err_t wifi_manager_start(void)
         ESP_LOGE(TAG, "WiFi start failed: %s", esp_err_to_name(err));
         return err;
     }
+    if (s_config.mode == WIFI_MODE_AP || s_config.mode == WIFI_MODE_APSTA) {
+        esp_err_t dhcp_err = s_config.ap_dhcp
+            ? esp_netif_dhcps_start(s_ap_netif)
+            : esp_netif_dhcps_stop(s_ap_netif);
+        if (dhcp_err != ESP_OK &&
+            dhcp_err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED &&
+            dhcp_err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+            ESP_LOGW(TAG, "AP DHCP configuration failed: %s", esp_err_to_name(dhcp_err));
+        }
+    }
+
     s_started = true;
     ESP_LOGI(TAG, "WiFi %s (mode: %s)",
              err == ESP_ERR_WIFI_STATE ? "already started" : "started",
@@ -773,6 +785,39 @@ const wifi_status_t *wifi_manager_get_status(void)
 wifi_mode_t wifi_manager_get_mode(void)
 {
     return s_config.mode;
+}
+
+bool wifi_manager_ap_dhcp_enabled(void)
+{
+    return s_config.ap_dhcp;
+}
+
+esp_err_t wifi_manager_set_ap_dhcp(bool enabled)
+{
+    if (s_manager_mutex != NULL) {
+        xSemaphoreTake(s_manager_mutex, portMAX_DELAY);
+    }
+    s_config.ap_dhcp = enabled;
+    const bool apply_now = s_started &&
+                           (s_config.mode == WIFI_MODE_AP ||
+                            s_config.mode == WIFI_MODE_APSTA);
+    if (s_manager_mutex != NULL) {
+        xSemaphoreGive(s_manager_mutex);
+    }
+
+    if (!apply_now || s_ap_netif == NULL) {
+        return ESP_OK;
+    }
+
+    const esp_err_t err = enabled
+        ? esp_netif_dhcps_start(s_ap_netif)
+        : esp_netif_dhcps_stop(s_ap_netif);
+    if (err == ESP_OK ||
+        (enabled && err == ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED) ||
+        (!enabled && err == ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED)) {
+        return ESP_OK;
+    }
+    return err;
 }
 
 esp_err_t wifi_manager_get_ap_clients(wifi_ap_client_info_t clients[],
