@@ -619,14 +619,15 @@ esp_err_t wifi_storage_load_network_config(
     bool defaults_used = false;
 
     const esp_err_t mode_err = nvs_get_u8(handle, WIFI_KEY_MODE, &value);
-    if (mode_err == ESP_OK)
+    if (mode_err == ESP_OK && value >= WIFI_MODE_STA && value <= WIFI_MODE_APSTA)
     {
         config->mode = value;
     }
-    else if (mode_err == ESP_ERR_NVS_NOT_FOUND ||
+    else if (mode_err == ESP_OK || mode_err == ESP_ERR_NVS_NOT_FOUND ||
              mode_err == ESP_ERR_NVS_TYPE_MISMATCH)
     {
-        /* No user-selected mode yet: retain the build-time default. */
+        /* NULL is the legacy pre-selector value. Preserve all other network
+         * settings and migrate only the mode to the build-time default. */
         config->mode = WIFI_COMPILED_OPERATION_MODE;
         defaults_used = true;
     }
