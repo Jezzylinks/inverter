@@ -1838,40 +1838,6 @@ static esp_err_t nvs_verify_settings(nvs_handle_t handle,
     return ESP_OK;
 }
 
-static esp_err_t nvs_set_u8_compat(nvs_handle_t handle, const char *key,
-                                   uint8_t value)
-{
-    esp_err_t err = nvs_set_u8(handle, key, value);
-    if (err == ESP_ERR_NVS_TYPE_MISMATCH)
-    {
-        ESP_LOGW("NVS_SAVE", "Migrating legacy type for namespace='%s' key='%s'",
-                 NVS_NS_SYSTEM, key);
-        err = nvs_erase_key(handle, key);
-        if (err == ESP_OK || err == ESP_ERR_NVS_NOT_FOUND)
-        {
-            err = nvs_set_u8(handle, key, value);
-        }
-    }
-    return err;
-}
-
-static esp_err_t nvs_set_u16_compat(nvs_handle_t handle, const char *key,
-                                    uint16_t value)
-{
-    esp_err_t err = nvs_set_u16(handle, key, value);
-    if (err == ESP_ERR_NVS_TYPE_MISMATCH)
-    {
-        ESP_LOGW("NVS_SAVE", "Migrating legacy type for namespace='%s' key='%s'",
-                 NVS_NS_SYSTEM, key);
-        err = nvs_erase_key(handle, key);
-        if (err == ESP_OK || err == ESP_ERR_NVS_NOT_FOUND)
-        {
-            err = nvs_set_u16(handle, key, value);
-        }
-    }
-    return err;
-}
-
 size_t app_settings_count(void)
 {
     return NVS_SETTINGS_COUNT;
