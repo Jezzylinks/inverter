@@ -18,6 +18,7 @@
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_controller.h"
 #include "wifi/wifi_manager.h"
+#include "wifi/wifi_dns_server.h"
 
 #define NETWORK_SERVICES_TAG "NET_SERVICES"
 #define NETWORK_HTTP_PORT 80U
@@ -33,6 +34,7 @@ static network_mqtt_config_t s_mqtt_config;
 static bool s_initialized;
 static bool s_running;
 static bool s_mdns_running;
+static bool s_captive_dns_running;
 static bool s_ntp_running;
 static bool s_websocket_running;
 static bool s_dashboard_running;
@@ -105,6 +107,28 @@ static void network_services_sync_task(void *arg)
         (void)network_services_start();
     } else if (!local_ready && local_running) {
         (void)network_services_stop();
+    }
+
+    /* AP/APSTA owns the captive-DNS side of the local portal.  The
+     * normal HTTP/API/dashboard server remains shared with the local service
+     * layer, so we start only the DNS redirector here rather than creating a
+     * second HTTP server on port 80. */
+    services_lock();
+    const bool captive_dns_running = s_captive_dns_running;
+    services_unlock();
+    if (ap_ready && !captive_dns_running) {
+        if (wifi_dns_server_start() == ESP_OK) {
+            services_lock();
+            s_captive_dns_running = true;
+            services_unlock();
+            ESP_LOGI(NETWORK_SERVICES_TAG, "Captive portal DNS started for AP");
+        }
+    } else if (!ap_ready && captive_dns_running) {
+        (void)wifi_dns_server_stop();
+        services_lock();
+        s_captive_dns_running = false;
+        services_unlock();
+        ESP_LOGI(NETWORK_SERVICES_TAG, "Captive portal DNS stopped");
     }
 
     if (station_capable && station_ready && !station_services_running) {
@@ -295,6 +319,7 @@ esp_err_t network_services_init(void)
     s_http_server = NULL;
     s_running = false;
     s_mdns_running = false;
+    s_captive_dns_running = false;
     s_ntp_running = false;
     s_websocket_running = false;
     s_dashboard_running = false;
@@ -302,8 +327,15 @@ esp_err_t network_services_init(void)
     s_station_services_running = false;
     s_sync_scheduled = false;
     s_teardown_pending = false;
+    const esp_err_t dns_init_err = wifi_dns_server_init();
+    if (dns_init_err != ESP_OK) {
+        vSemaphoreDelete(s_mutex);
+        s_mutex = NULL;
+        return dns_init_err;
+    }
     const esp_err_t callback_err = wifi_events_register_status_callback(network_wifi_status_callback);
     if (callback_err != ESP_OK) {
+        (void)wifi_dns_server_deinit();
         vSemaphoreDelete(s_mutex);
         s_mutex = NULL;
         return callback_err;
@@ -318,6 +350,8 @@ esp_err_t network_services_deinit(void)
         return ESP_OK;
     }
     (void)network_services_stop();
+    (void)wifi_dns_server_stop();
+    (void)wifi_dns_server_deinit();
     (void)wifi_events_unregister_status_callback(network_wifi_status_callback);
     services_lock();
     s_initialized = false;
@@ -447,6 +481,14 @@ esp_err_t network_services_stop(void)
     services_unlock();
 
     (void)network_services_stop_station_services();
+
+    services_lock();
+    const bool captive_dns_running = s_captive_dns_running;
+    s_captive_dns_running = false;
+    services_unlock();
+    if (captive_dns_running) {
+        (void)wifi_dns_server_stop();
+    }
 
     if (!was_running) {
         return ESP_OK;
