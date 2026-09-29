@@ -547,6 +547,10 @@ static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode)
              mode == WIFI_MODE_STA ? "STA" :
              mode == WIFI_MODE_AP ? "AP" : "APSTA");
     app_wifi_sync_menu_if_visible();
+    if (sys_state.menu_state == MENU_WIFI_SETTINGS) {
+        sys_state.menu_selection = (uint8_t)app_menu_wifi_settings_mode_index();
+        show_menu_screen(MENU_WIFI_SETTINGS, sys_state.menu_selection);
+    }
     return ESP_OK;
 }
 
@@ -1837,7 +1841,7 @@ esp_err_t app_services_disconnect_ap_client_at(uint8_t index)
 void app_services_show_ap_clients(void)
 {
     if (!app_services_wifi_can_manage_clients()) {
-        lcd_flash_message("AP Clients", "STA mode only", 1400U);
+        lcd_flash_message("AP Clients", "AP mode required", 1400U);
         return;
     }
     wifi_ap_client_info_t clients[WIFI_AP_MAX_CLIENTS] = {0};
