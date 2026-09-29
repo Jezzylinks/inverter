@@ -3195,6 +3195,9 @@ void lcd_draw_menu_scroll(menu_state_t menu_st, int selection)
 // VALUE EDIT MODE DISPLAY
 // ============================================================================
 
+/* Geometry-aware value-edit label helper is defined with the other display helpers below. */
+static const char *value_edit_display_label(const value_edit_context_t *config);
+
 // Display value edit mode screen while editing
 /* ── lcd_show_value_edit_screen() ──────────────────────────────────────── */
 void lcd_show_value_edit_screen(void)
