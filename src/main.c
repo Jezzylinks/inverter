@@ -414,6 +414,17 @@ void app_main(void)
 
     const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&
                                  post_completed && startup_post.all_passed;
+
+    /* Initialize only the Wi-Fi panel/control path after POST.  This does
+     * not start the radio or any network service; it makes the selected
+     * STA/AP/APSTA architecture and its menu actions available even when
+     * broader background services are suppressed by a startup fault. */
+    const esp_err_t wifi_panel_init_err = app_services_wifi_toggle_init();
+    if (wifi_panel_init_err != ESP_OK) {
+        ESP_LOGW(APP_TAG, "Wi-Fi panel initialization deferred: %s",
+                 esp_err_to_name(wifi_panel_init_err));
+    }
+
     if (startup_healthy)
     {
         startup_show_stage(LCD_STARTUP_STAGE_SERVICES, true, true,
