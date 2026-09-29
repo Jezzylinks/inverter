@@ -729,8 +729,7 @@ void lcd_update_loading_progress(uint8_t progress_pct,
     {
         sys_lcd.loading.progress_pct = progress_pct;
         sys_lcd.loading.spinner_frame = spinner_frame;
-        snprintf(sys_lcd.loading.status, sizeof(sys_lcd.loading.status),
-                 "%-20.20s", status ? status : "WAIT");
+        set_line(sys_lcd.loading.status, status ? status : "WAIT");
         sys_lcd.loading.live_progress = true;
     }
     LCD_UNLOCK();
