@@ -252,7 +252,9 @@ esp_err_t wifi_controller_start(void)
         (void)wifi_monitor_start();
     }
     ESP_LOGI(TAG, "WiFi architecture started in %s mode; station connect awaits user action",
-             WIFI_COMPILED_OPERATION_MODE_NAME);
+             (wifi_manager_get_mode() == WIFI_MODE_STA) ? "STA" :
+             (wifi_manager_get_mode() == WIFI_MODE_AP) ? "AP" :
+             (wifi_manager_get_mode() == WIFI_MODE_APSTA) ? "APSTA" : "UNKNOWN");
     return ESP_OK;
 }
 
