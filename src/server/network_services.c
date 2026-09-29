@@ -24,6 +24,8 @@
 #define NETWORK_HTTP_STACK_SIZE 8192U
 #define NETWORK_SYNC_TASK_STACK_SIZE 8192U
 #define NETWORK_HTTP_MAX_URI_HANDLERS 64U
+static esp_err_t network_services_start_station_services(void);
+static esp_err_t network_services_stop_station_services(void);
 
 static SemaphoreHandle_t s_mutex;
 static httpd_handle_t s_http_server;
