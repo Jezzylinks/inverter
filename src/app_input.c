@@ -1717,7 +1717,7 @@ void handle_down_button_event(button_event_info_t *event_info,
     }
     int64_t current_time = event_info->timestamp_us / 1000;
     if (sys_state.menu_state == MENU_WIFI_SETTINGS &&
-        sys_state.menu_selection == 1U &&
+        sys_state.menu_selection == (uint8_t)app_menu_wifi_settings_mode_index() &&
         app_services_wifi_mode_edit_active() &&
         event_info->event == BUTTON_EVENT_CLICK)
     {
