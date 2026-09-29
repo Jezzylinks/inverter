@@ -124,7 +124,9 @@ static void wifi_manager_load_network_config(void)
         wifi_storage_set_default_network_config(&net_cfg);
     }
 
-    s_config.mode = WIFI_COMPILED_OPERATION_MODE;
+    /* NVS-selected mode is the runtime source of truth. The storage layer
+     * supplies WIFI_COMPILED_OPERATION_MODE only when no user mode exists. */
+    s_config.mode = net_cfg.mode;
     s_config.authmode = INVERTER_WIFI_AUTH_MODE;
     s_config.dhcp = net_cfg.dhcp;
     s_config.auto_reconnect = net_cfg.auto_reconnect;
