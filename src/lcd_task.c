@@ -1138,7 +1138,7 @@ static void draw_loading(const lcd_loading_data_t *d)
         if (d->live_progress)
         {
             static const char spinner[] = "|/-\\";
-            snprintf(status, sizeof(status), "  %-16.16s%c",
+            snprintf(status, sizeof(status), "  %-17.17s%c",
                      d->status[0] ? d->status : "WAIT",
                      spinner[d->spinner_frame % (sizeof(spinner) - 1U)]);
         }
