@@ -49,6 +49,28 @@ static const menu_item_t main_menu_items[] = {
     {"View Settings", MENU_SYSTEM_INFO}};
 
 // SETTINGS MENU (5 items)
+#if LCD_GEOMETRY_20X4
+static const menu_item_t settings_items[] = {
+    {"Voltage Threshold", MENU_SETTINGS},
+    {"Current Limit", MENU_SETTINGS},
+    {"Frequency Range", MENU_SETTINGS},
+    {"Temperature Alarm", MENU_SETTINGS},
+    {"System Timeout", MENU_SETTINGS},
+    {"Auto Shutdown", MENU_SETTINGS},
+    {"Scroll Enable", MENU_SETTINGS},
+    {"Scroll Speed", MENU_SETTINGS},
+    {"Battery Type", MENU_SETTINGS},
+    {"Voltage System", MENU_SETTINGS},
+    {"Sound", MENU_SETTINGS},
+    {"Quiet Hours", MENU_SETTINGS},
+    {"Quiet Start", MENU_SETTINGS},
+    {"Quiet End", MENU_SETTINGS},
+    {"UTC Offset", MENU_SETTINGS},
+    {"Set Hour", MENU_SETTINGS},
+    {"Set Minute", MENU_SETTINGS},
+    {"Battery Cutoff", MENU_SETTINGS}};
+#else
+/* Preserve the established 16×2 menu labels exactly. */
 static const menu_item_t settings_items[] = {
     {"Voltage Thresh", MENU_SETTINGS},
     {"Current Limit", MENU_SETTINGS},
@@ -68,6 +90,7 @@ static const menu_item_t settings_items[] = {
     {"Set Hour", MENU_SETTINGS},
     {"Set Minute", MENU_SETTINGS},
     {"Bat Cutoff", MENU_SETTINGS}};
+#endif
 
 // MONITORING MENU (8 items)
 static const menu_item_t monitoring_items[] = {
