@@ -28,6 +28,7 @@ static SemaphoreHandle_t s_mutex;
 static TaskHandle_t s_reconnect_task;
 static uint32_t s_reconnect_generation;
 static bool s_initialized;
+static bool s_ap_active;
 static bool s_auto_reconnect = true;
 static uint8_t s_retry_limit = WIFI_MAXIMUM_RETRY;
 
@@ -202,11 +203,13 @@ esp_err_t wifi_events_init(void)
         return ESP_ERR_NO_MEM;
     }
 
+    s_ap_active = false;
     memset(&s_status, 0, sizeof(s_status));
     memset(s_status_callbacks, 0, sizeof(s_status_callbacks));
     memset(s_event_callbacks, 0, sizeof(s_event_callbacks));
     s_status.state = WIFI_STATE_IDLE;
     s_reconnect_generation = 0U;
+    s_ap_active = false;
 
     esp_err_t err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                          &wifi_event_handler, NULL,
@@ -299,7 +302,11 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
             retry_count = s_status.retry_count;
             retry = s_auto_reconnect && retry_count < s_retry_limit;
             events_unlock();
-            wifi_publish_state(retry ? WIFI_STATE_DISCONNECTED : WIFI_STATE_FAILED);
+            if (s_ap_active) {
+                wifi_publish_state(WIFI_STATE_AP_ACTIVE);
+            } else {
+                wifi_publish_state(retry ? WIFI_STATE_DISCONNECTED : WIFI_STATE_FAILED);
+            }
             if (event_data != NULL) {
                 const wifi_event_sta_disconnected_t *disc = event_data;
                 ESP_LOGW(WIFI_EVENTS_TAG, "STA disconnect reason=%d retry=%u/%u",
@@ -310,22 +317,33 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
             }
             break;
         }
-        case WIFI_EVENT_STA_STOP:
+        case WIFI_EVENT_STA_STOP: {
+            bool ap_active;
             events_lock();
             s_status.connected = false;
             s_status.got_ip = false;
             s_status.internet_available = false;
+            ap_active = s_ap_active;
             events_unlock();
-            wifi_publish_state(WIFI_STATE_IDLE);
+            wifi_publish_state(ap_active ? WIFI_STATE_AP_ACTIVE : WIFI_STATE_IDLE);
             break;
+        }
         case WIFI_EVENT_AP_START:
+            events_lock();
+            s_ap_active = true;
+            events_unlock();
             wifi_publish_state(WIFI_STATE_AP_ACTIVE);
             break;
-        case WIFI_EVENT_AP_STOP:
-            if (!wifi_events_is_connected()) {
+        case WIFI_EVENT_AP_STOP: {
+            bool sta_connected = wifi_events_is_connected();
+            events_lock();
+            s_ap_active = false;
+            events_unlock();
+            if (!sta_connected) {
                 wifi_publish_state(WIFI_STATE_IDLE);
             }
             break;
+        }
         case WIFI_EVENT_AP_STACONNECTED:
             if (event_data != NULL) {
                 const wifi_event_ap_staconnected_t *evt = event_data;
