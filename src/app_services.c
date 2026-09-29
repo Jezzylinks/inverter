@@ -1268,6 +1268,30 @@ esp_err_t app_services_wifi_mode_edit_confirm(void)
     const wifi_mode_t mode = s_wifi_mode_edit_value;
     s_wifi_mode_edit_active = false;
 
+    /* The selector must remain usable even when the broader application
+     * services were suppressed during startup recovery. Establish only the
+     * existing Wi-Fi mode-change worker path; do not start unrelated services. */
+    if (s_wifi_toggle_queue == NULL) {
+        s_wifi_toggle_queue = xQueueCreate(APP_WIFI_TOGGLE_QUEUE_LENGTH,
+                                           sizeof(wifi_toggle_request_t));
+        if (s_wifi_toggle_queue == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    if (s_wifi_toggle_task == NULL) {
+        if (xTaskCreate(app_wifi_toggle_task,
+                        "wifi_toggle",
+                        APP_WIFI_TOGGLE_TASK_STACK_SIZE,
+                        NULL,
+                        APP_WIFI_TOGGLE_TASK_PRIORITY,
+                        &s_wifi_toggle_task) != pdPASS) {
+            vQueueDelete(s_wifi_toggle_queue);
+            s_wifi_toggle_queue = NULL;
+            return ESP_ERR_NO_MEM;
+        }
+        task_watchdog_register_health_only("wifi_toggle");
+    }
+
     uint32_t expected = 0U;
     if (!__atomic_compare_exchange_n(&s_wifi_toggle_admitted, &expected, 1U,
                                      false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
