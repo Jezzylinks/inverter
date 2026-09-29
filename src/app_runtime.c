@@ -2417,29 +2417,8 @@ static bool save_settings_locked(void)
     }
 
     ESP_LOGI(NVS_SAVE_TAG, "Saving settings to NVS...");
-    /* Battery and general settings share NVS_NS_SYSTEM. Keep them in the
-     * same transaction so a failed save cannot leave only the battery keys
-     * updated while the rest of the configuration remains old. */
-    err = nvs_set_u8_compat(nvs, BATTERY_TYPE_KEY,
-                            (uint8_t)sys_state.battery_profile.profile_id);
-    if (err == ESP_OK)
-    {
-        err = nvs_set_u8_compat(nvs, BATTERY_VOLTAGE_SYSTEM_KEY,
-                                (uint8_t)sys_state.battery_profile.nominal_voltage);
-    }
-    if (err == ESP_OK)
-    {
-        err = nvs_set_u16_compat(nvs, BATTERY_CAPACITY_KEY,
-                                 (uint16_t)sys_state.battery_profile.capacity_ah);
-    }
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(NVS_SAVE_TAG,
-                 "Failed to save namespace='%s' battery key(s): %s (0x%x)",
-                 NVS_NS_SYSTEM, esp_err_to_name(err), err);
-        storage_nvs_close(nvs);
-        return false;
-    }
+    /* g_settings is the single canonical settings table. Battery profile
+     * keys are already represented there, so write them through one path. */
     err = nvs_save_all(nvs);
     if (err != ESP_OK)
     {
@@ -3587,7 +3566,15 @@ static void apply_temperature_limit(float v)
     sys_state.temperature_limit = v;
     thermal_protection_set_limit(v);
 }
-static void apply_battery_cutoff(float v) { battery_monitor_set_cutoff(v); }
+static void apply_battery_cutoff(float v)
+{
+    /* Keep the persistent source of truth and the live protection monitor
+     * synchronized. */
+    sys_state.battery_profile.cutoff_voltage_v = v;
+    sys_state.battery_cutoff = v;
+    battery_monitor_set_cutoff(v);
+    sync_battery_protection_thresholds();
+}
 static void apply_wifi(float v)
 {
     const esp_err_t err = app_services_set_wifi_enabled(v != 0.0f);
@@ -6399,6 +6386,12 @@ static void begin_setting_edit(value_edit_param_t param, float current_value)
     sys_state.value_changed = false;
     sys_state.repeat_count = 0;
     sys_state.fast_increment_active = false;
+
+    /* Capture the complete canonical NVS representation when the editor
+     * opens so a failed transaction can restore all settings consistently. */
+    settings_snapshot_capture(s_edit_snapshot);
+    s_edit_snapshot_valid = true;
+
     sys_state.value_edit_mode = true;
     lcd_show_value_edit_screen();
 }
