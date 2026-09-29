@@ -48,6 +48,9 @@ typedef struct {
 } app_ota_status_t;
 
 /** Initialize Wi-Fi and OTA application coordination after system settings load. */
+/* Must be called early (before POST) to enable Wi-Fi ON/OFF from the menu
+ * regardless of startup outcome. Creates mutex, toggle queue, and worker task. */
+esp_err_t app_services_wifi_toggle_init(void);
 esp_err_t app_services_init(void);
 
 /** Queue user Wi-Fi intent for asynchronous controller start/stop and persistence. */
