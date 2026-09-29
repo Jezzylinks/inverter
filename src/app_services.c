@@ -496,6 +496,10 @@ static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode)
         if (err != ESP_OK) {
             return err;
         }
+        /* network_services_stop() latches teardown. Clear that latch before
+         * starting the newly selected architecture so AP/STA events can
+         * legitimately bring the correct service set back online. */
+        (void)network_services_allow_start();
     }
 
     wifi_manager_config_t new_config = old_config;
