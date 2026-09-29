@@ -10,6 +10,7 @@
 #include "lcd/lcd.h"
 #include "security/security.h"
 #include "app/app_services.h"
+#include "wifi/wifi_manager.h"
 
 #define APP_MENU_TAG "APP_MENU"
 #define APP_MENU_HISTORY_DEPTH 10
@@ -112,22 +113,6 @@ static const menu_item_t diagnostic_items[] = {
     {"Uptime", MENU_DIAGNOSTIC},
     {"Memory Usage", MENU_DIAGNOSTIC}};
 
-typedef enum {
-    APP_WIFI_MENU_TOGGLE = 0,
-    APP_WIFI_MENU_STATUS,
-    APP_WIFI_MENU_CONNECT,
-    APP_WIFI_MENU_SCAN,
-    APP_WIFI_MENU_AP_CLIENTS,
-    APP_WIFI_MENU_SETTINGS
-} app_wifi_menu_action_t;
-
-typedef enum {
-    APP_WIFI_SETTINGS_SAVED_NETWORK = 0,
-    APP_WIFI_SETTINGS_MODE,
-    APP_WIFI_SETTINGS_DHCP,
-    APP_WIFI_SETTINGS_AP_CLIENTS
-} app_wifi_settings_action_t;
-
 static const menu_item_t wifi_sta_items[] = {
     {"ON/OFF", MENU_WIFI_CONFIG},
     {"Status", MENU_WIFI_CONFIG},
@@ -182,7 +167,7 @@ static const menu_item_t security_items[] = {
 
 static const char *wifi_menu_label(int index)
 {
-    const wifi_mode_t mode = app_services_wifi_get_mode();
+    const wifi_mode_t mode = wifi_manager_get_mode();
     const app_wifi_menu_action_t action = app_menu_wifi_config_action_at(index);
     if (action == APP_WIFI_MENU_TOGGLE) {
         return app_services_wifi_enabled() ? "Wi-Fi: ON" : "Wi-Fi: OFF";
@@ -249,7 +234,7 @@ static const char *wifi_settings_menu_label(int index)
 
 app_wifi_menu_action_t app_menu_wifi_config_action_at(int index)
 {
-    const wifi_mode_t mode = app_services_wifi_get_mode();
+    const wifi_mode_t mode = wifi_manager_get_mode();
     if (index == 0) return APP_WIFI_MENU_TOGGLE;
     if (index == 1) return APP_WIFI_MENU_STATUS;
     if (mode == WIFI_MODE_AP) {
@@ -267,7 +252,7 @@ app_wifi_menu_action_t app_menu_wifi_config_action_at(int index)
 
 app_wifi_settings_action_t app_menu_wifi_settings_action_at(int index)
 {
-    const wifi_mode_t mode = app_services_wifi_get_mode();
+    const wifi_mode_t mode = wifi_manager_get_mode();
     if (mode == WIFI_MODE_AP) {
         if (index == 0) return APP_WIFI_SETTINGS_MODE;
         if (index == 1) return APP_WIFI_SETTINGS_DHCP;
@@ -283,7 +268,7 @@ app_wifi_settings_action_t app_menu_wifi_settings_action_at(int index)
 
 int app_menu_wifi_settings_mode_index(void)
 {
-    return app_services_wifi_get_mode() == WIFI_MODE_AP ? 0 : 1;
+    return wifi_manager_get_mode() == WIFI_MODE_AP ? 0 : 1;
 }
 
 const menu_item_t *get_menu_items(menu_state_t state, int *item_count)
@@ -310,7 +295,7 @@ const menu_item_t *get_menu_items(menu_state_t state, int *item_count)
 
     case MENU_WIFI_CONFIG:
     {
-        const wifi_mode_t mode = app_services_wifi_get_mode();
+        const wifi_mode_t mode = wifi_manager_get_mode();
         if (mode == WIFI_MODE_AP) {
             *item_count = sizeof(wifi_ap_items) / sizeof(wifi_ap_items[0]);
             return wifi_ap_items;
@@ -325,7 +310,7 @@ const menu_item_t *get_menu_items(menu_state_t state, int *item_count)
 
     case MENU_WIFI_SETTINGS:
     {
-        const wifi_mode_t mode = app_services_wifi_get_mode();
+        const wifi_mode_t mode = wifi_manager_get_mode();
         if (mode == WIFI_MODE_AP) {
             *item_count = sizeof(wifi_settings_ap_items) / sizeof(wifi_settings_ap_items[0]);
             return wifi_settings_ap_items;
