@@ -2122,6 +2122,7 @@ esp_err_t nvs_load_all(nvs_handle_t handle)
             {
                 ESP_LOGW(NVS_LOAD_TAG, "Failed to load key '%s': %s (0x%x); using default %u",
                          s->key, esp_err_to_name(err), err, val);
+                err = ESP_OK; /* missing/legacy bool falls back to its default */
             }
             *(bool *)s->field = val != 0U;
         }
