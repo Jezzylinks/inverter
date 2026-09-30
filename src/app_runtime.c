@@ -1651,7 +1651,7 @@ static nvs_setting_t g_settings[] = {
 static size_t settings_index_for_editor(const value_edit_context_t *ctx)
 {
     if (ctx == &value_edit[VALUE_TYPE_VOLTAGE]) return 24U;              /* volt_threshold */
-    if (ctx == &value_edit[VALUE_TYPE_FREQUENCY]) return 23U;           /* frequency_range */
+    if (ctx == &value_edit[VALUE_TYPE_FREQUENCY]) return 27U;           /* frequency_range */
     if (ctx == &value_edit[VALUE_TYPE_CURRENT]) return 25U;             /* current_limit */
     if (ctx == &value_edit[VALUE_TYPE_TEMPERATURE]) return 26U;         /* temp_alarm */
     if (ctx == &value_edit[VALUE_TYPE_BATTERY_VOLTAGE]) return 7U;      /* bat_cutoff_volt */
@@ -1668,7 +1668,7 @@ static size_t settings_index_for_editor(const value_edit_context_t *ctx)
     if (ctx == &value_edit[VALUE_TYPE_UTC_OFFSET]) return 17U;
     if (ctx == &value_edit[VALUE_TYPE_SET_TIME_HOUR]) return 18U;
     if (ctx == &value_edit[VALUE_TYPE_SET_TIME_MINUTE]) return 19U;
-    if (ctx == &value_edit[VALUE_TYPE_BLUETOOTH]) return 29U;
+    if (ctx == &value_edit[VALUE_TYPE_BLUETOOTH]) return 30U;
     return (size_t)-1;
 }
 
@@ -2098,7 +2098,7 @@ esp_err_t nvs_load_all(nvs_handle_t handle)
         esp_err_t err = ESP_OK;
         if (s->is_bool)
         {
-            uint8_t val = setting->default_val != 0.0f ? 1U : 0U;
+            uint8_t val = s->default_val != 0.0f ? 1U : 0U;
             err = nvs_get_u8(handle, s->key, &val);
             if (err != ESP_OK)
             {
