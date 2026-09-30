@@ -1649,6 +1649,17 @@ typedef struct
 static settings_value_snapshot_t s_edit_snapshot[NVS_SETTINGS_COUNT];
 static bool s_edit_snapshot_valid;
 
+/* Runtime state that is derived from persistent settings but is not itself
+ * represented by the compact NVS settings table.  A failed transaction must
+ * restore both flash-facing values and live runtime state. */
+static battery_profile_t s_edit_battery_profile_snapshot;
+static float s_edit_current_limit_snapshot;
+static float s_edit_temperature_limit_snapshot;
+static uint64_t s_edit_system_timeout_snapshot;
+static float s_edit_output_voltage_snapshot;
+static float s_edit_output_frequency_snapshot;
+static bool s_edit_runtime_snapshot_valid;
+
 static bool settings_uses_u16_storage(const nvs_setting_t *setting)
 {
     return strcmp(setting->key, BATTERY_CAPACITY_KEY) == 0;
@@ -1695,6 +1706,41 @@ static void settings_snapshot_capture(settings_value_snapshot_t *snapshot)
     }
 }
 
+static void settings_runtime_snapshot_capture(void)
+{
+    s_edit_battery_profile_snapshot = sys_state.battery_profile;
+    s_edit_current_limit_snapshot = sys_state.current_limit;
+    s_edit_temperature_limit_snapshot = sys_state.temperature_limit;
+    s_edit_system_timeout_snapshot = sys_state.system_timeout;
+    s_edit_output_voltage_snapshot = sys_state.inverter.output_voltage;
+    s_edit_output_frequency_snapshot = sys_state.inverter.output_frequency;
+    s_edit_runtime_snapshot_valid = true;
+}
+
+static void settings_runtime_snapshot_restore(void)
+{
+    if (!s_edit_runtime_snapshot_valid)
+        return;
+
+    sys_state.battery_profile = s_edit_battery_profile_snapshot;
+    sys_state.current_limit = s_edit_current_limit_snapshot;
+    sys_state.temperature_limit = s_edit_temperature_limit_snapshot;
+    sys_state.system_timeout = s_edit_system_timeout_snapshot;
+    sys_state.inverter.output_voltage = s_edit_output_voltage_snapshot;
+    sys_state.inverter.output_frequency = s_edit_output_frequency_snapshot;
+
+    sys_state.battery_cutoff = sys_state.battery_profile.cutoff_voltage_v;
+    sys_state.cutoff_voltage = sys_state.battery_profile.cutoff_voltage_v;
+    sys_state.inverter.battery_voltage_system =
+        (uint8_t)sys_state.battery_profile.nominal_voltage;
+    sys_state.battery_voltage_system =
+        (uint8_t)sys_state.battery_profile.nominal_voltage;
+
+    sync_battery_estimator_configuration();
+    sync_battery_protection_thresholds();
+    s_edit_runtime_snapshot_valid = false;
+}
+
 static void settings_snapshot_restore(
     const settings_value_snapshot_t *snapshot)
 {
@@ -1725,6 +1771,12 @@ static void settings_snapshot_restore(
     }
     sync_battery_voltage_state();
     sync_battery_protection_thresholds();
+
+    /* The NVS table contains the authoritative persisted representation;
+     * the runtime snapshot restores derived/non-table state that a failed
+     * edit may also have changed. */
+    settings_runtime_snapshot_restore();
+    sys_state.system_timeout = (uint64_t)sys_state.settings.system_timeout;
 }
 
 static uint32_t settings_fingerprint(void)
@@ -4695,6 +4747,7 @@ void enter_value_edit_mode(value_edit_context_t *value_type)
     sys_state.repeat_count = 0;
     settings_snapshot_capture(s_edit_snapshot);
     s_edit_snapshot_valid = true;
+    settings_runtime_snapshot_capture();
 
     // Backup current value
     float *current_value = get_current_value_pointer();
@@ -4778,6 +4831,7 @@ bool exit_value_edit_mode(bool save_changes)
     sys_state.hold_start_time = 0;
     sys_state.edit_backup_value = 0.0f;
     s_edit_snapshot_valid = false;
+    s_edit_runtime_snapshot_valid = false;
     return saved;
 }
 
@@ -5016,13 +5070,52 @@ void handle_value_confirmation(void)
     if (safety_check_passed)
     {
         ESP_LOGI("SETTINGS_APPLY", "Applying and persisting %s", ctx->label);
+
+        /* Capture exactly what the user confirmed so the post-save LCD shows
+         * the same value that was committed, rather than a stale editor value
+         * or a generic success message. */
+        char saved_value[LCD_LINE_SIZE];
+        memset(saved_value, ' ', sizeof(saved_value));
+        saved_value[sizeof(saved_value) - 1] = '\0';
+        switch (ctx->edit_type)
+        {
+        case VALUE_EDIT_NUMERIC:
+            snprintf(saved_value, sizeof(saved_value), "%.*f %s",
+                     ctx->decimal_places, ctx->current_value,
+                     ctx->unit ? ctx->unit : "");
+            break;
+        case VALUE_EDIT_BOOL:
+            snprintf(saved_value, sizeof(saved_value), "%s",
+                     ctx->current_value != 0.0f ? "ON" : "OFF");
+            break;
+        case VALUE_EDIT_SELECT:
+            snprintf(saved_value, sizeof(saved_value), "%s",
+                     (ctx->options && ctx->selection_index >= 0 &&
+                      ctx->selection_index < ctx->max_selection)
+                         ? ctx->options[ctx->selection_index]
+                         : "");
+            break;
+        case VALUE_EDIT_LIST:
+            snprintf(saved_value, sizeof(saved_value), "%s",
+                     (ctx->list && ctx->list_index >= 0 &&
+                      ctx->list_index < ctx->list_size)
+                         ? ctx->list[ctx->list_index]
+                         : "");
+            break;
+        default:
+            break;
+        }
+
         const bool saved = exit_value_edit_mode(true);
 
+        /* The menu is rebuilt from the canonical runtime state only after
+         * the transaction result is known. */
         show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
         if (saved)
         {
-            ESP_LOGI("SETTINGS_TRANSACTION", "SUCCESS label=%s", ctx->label);
-            lcd_flash_info_to(ctx->label, "Value Saved!    ", 1000, LCD_SCREEN_MENU);
+            ESP_LOGI("SETTINGS_TRANSACTION", "SUCCESS label=%s value=%s",
+                     ctx->label, saved_value);
+            lcd_flash_info_to(ctx->label, saved_value, 1200, LCD_SCREEN_MENU);
             printf("AUDIT: Parameter changed - %s\n", ctx->label);
         }
         else
@@ -6456,6 +6549,7 @@ static void begin_setting_edit(value_edit_param_t param, float current_value)
      * opens so a failed transaction can restore all settings consistently. */
     settings_snapshot_capture(s_edit_snapshot);
     s_edit_snapshot_valid = true;
+    settings_runtime_snapshot_capture();
 
     sys_state.value_edit_mode = true;
     lcd_show_value_edit_screen();
