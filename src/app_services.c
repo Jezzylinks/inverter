@@ -299,7 +299,9 @@ static void app_wifi_sync_menu_if_visible(void)
     bool visible;
 
     LCD_LOCK();
-    visible = sys_lcd.screen == LCD_SCREEN_MENU;
+    visible = (sys_lcd.screen == LCD_SCREEN_MENU) ||
+              (sys_lcd.screen == LCD_SCREEN_FLASH_MSG &&
+               lcd_flash_is_active());
     LCD_UNLOCK();
     if (!visible) {
         return;
