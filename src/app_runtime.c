@@ -1602,6 +1602,7 @@ typedef struct
     bool is_scaled_float;
     const char *label; /* friendly name for the View Settings screen */
     bool is_signed_8; /* true for signed int8_t storage such as UTC offset */
+    bool is_bool;     /* true for a C bool stored as NVS u8 */
 } nvs_setting_t;
 
 static nvs_setting_t g_settings[] = {
@@ -1635,9 +1636,43 @@ static nvs_setting_t g_settings[] = {
     {"frequency_range", &sys_state.settings.frequency_range, sizeof(int32_t), 50, false, "Freq Range"},
     {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300000, false, "Sys Timeout"},
     {"security_en", &sys_state.security.enabled, sizeof(uint8_t), 1, false, "Security Enable"},
+    {"bluetooth_en", &sys_state.bluetooth.enabled, sizeof(bool), 0, false, "Bluetooth", false, true},
 };
 
 #define NVS_SETTINGS_COUNT (sizeof(g_settings) / sizeof(g_settings[0]))
+/*
+ * Map the active value editor to exactly one canonical persistent setting.
+ * This is deliberately explicit: editor labels are presentation strings and
+ * must never be used as persistence keys.
+ *
+ * Wi-Fi is intentionally excluded. Its ON/OFF transition is asynchronous and
+ * app_services owns both the radio operation and APP_WIFI_ENABLED_KEY commit.
+ */
+static size_t settings_index_for_editor(const value_edit_context_t *ctx)
+{
+    if (ctx == &value_edit[VALUE_TYPE_VOLTAGE]) return 24U;              /* volt_threshold */
+    if (ctx == &value_edit[VALUE_TYPE_FREQUENCY]) return 23U;           /* frequency_range */
+    if (ctx == &value_edit[VALUE_TYPE_CURRENT]) return 25U;             /* current_limit */
+    if (ctx == &value_edit[VALUE_TYPE_TEMPERATURE]) return 26U;         /* temp_alarm */
+    if (ctx == &value_edit[VALUE_TYPE_BATTERY_VOLTAGE]) return 7U;      /* bat_cutoff_volt */
+    if (ctx == &value_edit[VALUE_TYPE_TIMEOUT]) return 28U;             /* system_timeout */
+    if (ctx == &value_edit[VALUE_TYPE_AUTO_SHUTDOWN]) return 11U;
+    if (ctx == &value_edit[VALUE_TYPE_SCROLL_ENABLE]) return 12U;
+    if (ctx == &value_edit[VALUE_TYPE_SCROLL_SPEED]) return 21U;
+    if (ctx == &value_edit[VALUE_TYPE_BATTERY_TYPE]) return 2U;
+    if (ctx == &value_edit[VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM]) return 0U;
+    if (ctx == &value_edit[VALUE_TYPE_SOUND_ENABLE]) return 13U;
+    if (ctx == &value_edit[VALUE_TYPE_QUIET_HOURS_ENABLE]) return 14U;
+    if (ctx == &value_edit[VALUE_TYPE_QUIET_HOURS_START]) return 15U;
+    if (ctx == &value_edit[VALUE_TYPE_QUIET_HOURS_END]) return 16U;
+    if (ctx == &value_edit[VALUE_TYPE_UTC_OFFSET]) return 17U;
+    if (ctx == &value_edit[VALUE_TYPE_SET_TIME_HOUR]) return 18U;
+    if (ctx == &value_edit[VALUE_TYPE_SET_TIME_MINUTE]) return 19U;
+    if (ctx == &value_edit[VALUE_TYPE_BLUETOOTH]) return 29U;
+    return (size_t)-1;
+}
+
+
 
 /* Store the canonical on-NVS representation so a failed transaction can
  * restore every setting, not only the field currently being edited. */
@@ -1648,6 +1683,8 @@ typedef struct
 
 static settings_value_snapshot_t s_edit_snapshot[NVS_SETTINGS_COUNT];
 static bool s_edit_snapshot_valid;
+/* Canonical NVS setting selected by the current foreground editor session. */
+static size_t s_edit_setting_index = (size_t)-1;
 
 /* Runtime state that is derived from persistent settings but is not itself
  * represented by the compact NVS settings table.  A failed transaction must
@@ -1672,6 +1709,10 @@ static bool settings_uses_i8_storage(const nvs_setting_t *setting)
 
 static int32_t settings_encoded_value(const nvs_setting_t *setting)
 {
+    if (setting->is_bool)
+    {
+        return *(const bool *)setting->field ? 1 : 0;
+    }
     if (setting->is_scaled_float)
     {
         /* Use roundf() rather than truncation.  A float that round-trips
@@ -1747,7 +1788,11 @@ static void settings_snapshot_restore(
     for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
     {
         const nvs_setting_t *setting = &g_settings[i];
-        if (setting->is_scaled_float)
+        if (setting->is_bool)
+        {
+            *(bool *)setting->field = snapshot[i].value != 0;
+        }
+        else if (setting->is_scaled_float)
         {
             *(float *)setting->field =
                 (float)snapshot[i].value / NVS_FLOAT_SCALE;
@@ -1803,7 +1848,11 @@ static void nvs_apply_defaults(void)
     for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
     {
         nvs_setting_t *setting = &g_settings[i];
-        if (setting->is_scaled_float)
+        if (setting->is_bool)
+        {
+            *(bool *)setting->field = setting->default_val != 0.0f;
+        }
+        else if (setting->is_scaled_float)
         {
             *(float *)setting->field = setting->default_val;
         }
@@ -1829,6 +1878,11 @@ static void nvs_apply_defaults(void)
 static esp_err_t nvs_write_setting(nvs_handle_t handle,
                                    const nvs_setting_t *setting)
 {
+    if (setting->is_bool)
+    {
+        return nvs_set_u8(handle, setting->key,
+                          *(const bool *)setting->field ? 1U : 0U);
+    }
     if (setting->is_scaled_float)
     {
         /* MUST use settings_encoded_value() here, not a bare (int32_t)(f*scale)
@@ -1865,6 +1919,13 @@ static esp_err_t nvs_read_setting(nvs_handle_t handle,
                                   const nvs_setting_t *setting,
                                   int32_t *out_value)
 {
+    if (setting->is_bool)
+    {
+        uint8_t value = 0U;
+        const esp_err_t err = nvs_get_u8(handle, setting->key, &value);
+        *out_value = value ? 1 : 0;
+        return err;
+    }
     if (setting->is_scaled_float)
     {
         return nvs_get_i32(handle, setting->key, out_value);
@@ -2035,7 +2096,18 @@ esp_err_t nvs_load_all(nvs_handle_t handle)
     {
         nvs_setting_t *s = &g_settings[i];
         esp_err_t err = ESP_OK;
-        if (s->is_scaled_float)
+        if (s->is_bool)
+        {
+            uint8_t val = setting->default_val != 0.0f ? 1U : 0U;
+            err = nvs_get_u8(handle, s->key, &val);
+            if (err != ESP_OK)
+            {
+                ESP_LOGW(NVS_LOAD_TAG, "Failed to load key '%s': %s (0x%x); using default %u",
+                         s->key, esp_err_to_name(err), err, val);
+            }
+            *(bool *)s->field = val != 0U;
+        }
+        else if (s->is_scaled_float)
         {
             /* Use roundf() for the default to match settings_encoded_value()
              * and nvs_write_setting().  A bare (int32_t)(default * scale)
@@ -2500,6 +2572,149 @@ bool save_settings()
     ESP_LOGI("NVS_SAVE", "Save lock released; result=%s", result ? "OK" : "FAIL");
     return result;
 }
+
+/*
+ * Foreground editor persistence:
+ * save exactly one canonical setting, commit it, then read that same key back.
+ * Full-table save_settings() remains available for boot/default/factory paths.
+ */
+static bool save_current_setting_locked(size_t setting_index)
+{
+    if (setting_index >= NVS_SETTINGS_COUNT)
+    {
+        ESP_LOGE("NVS_SAVE", "Invalid current setting index: %u",
+                 (unsigned)setting_index);
+        return false;
+    }
+
+    if (!storage_nvs_is_ready())
+    {
+        const esp_err_t init_err = storage_nvs_init();
+        if (init_err != ESP_OK)
+        {
+            ESP_LOGE("NVS_SAVE", "Current-setting NVS init failed: %s",
+                     esp_err_to_name(init_err));
+            return false;
+        }
+    }
+
+    nvs_handle_t nvs;
+    esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE("NVS_SAVE", "Failed to open NVS for current key '%s': %s",
+                 g_settings[setting_index].key, esp_err_to_name(err));
+        return false;
+    }
+
+    const nvs_setting_t *setting = &g_settings[setting_index];
+    const int32_t expected = settings_encoded_value(setting);
+
+    ESP_LOGI("NVS_SAVE", "SETTINGS_SAVE_CURRENT: key=%s value=%ld",
+             setting->key, (long)expected);
+
+    err = nvs_write_setting(nvs, setting);
+    if (err == ESP_ERR_NVS_TYPE_MISMATCH)
+    {
+        const esp_err_t erase_err = nvs_erase_key(nvs, setting->key);
+        if (erase_err == ESP_OK || erase_err == ESP_ERR_NVS_NOT_FOUND)
+            err = nvs_write_setting(nvs, setting);
+        else
+            err = erase_err;
+    }
+
+    if (err != ESP_OK)
+    {
+        ESP_LOGE("NVS_SAVE", "Current-setting write failed key='%s': %s",
+                 setting->key, esp_err_to_name(err));
+        storage_nvs_close(nvs);
+        return false;
+    }
+
+    uint32_t generation = 0U;
+    err = nvs_get_u32(nvs, NVS_SETTINGS_TXN_GEN_KEY, &generation);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
+    {
+        ESP_LOGE("NVS_SAVE", "Failed reading transaction generation: %s",
+                 esp_err_to_name(err));
+        storage_nvs_close(nvs);
+        return false;
+    }
+
+    err = nvs_set_u8(nvs, NVS_SETTINGS_TXN_VALID_KEY, 0U);
+    if (err == ESP_OK)
+        err = nvs_set_u32(nvs, NVS_SETTINGS_TXN_GEN_KEY, generation + 1U);
+    if (err == ESP_OK)
+        err = nvs_set_u32(nvs, NVS_SETTINGS_TXN_CRC_KEY, settings_fingerprint());
+    if (err == ESP_OK)
+        err = nvs_set_u8(nvs, NVS_SETTINGS_TXN_VALID_KEY,
+                         NVS_SETTINGS_TXN_VERSION);
+
+    if (err != ESP_OK)
+    {
+        ESP_LOGE("NVS_SAVE", "Current-setting transaction metadata failed: %s",
+                 esp_err_to_name(err));
+        storage_nvs_close(nvs);
+        return false;
+    }
+
+    err = nvs_commit(nvs);
+    storage_nvs_close(nvs);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE("NVS_SAVE", "Current-setting commit failed key='%s': %s",
+                 setting->key, esp_err_to_name(err));
+        return false;
+    }
+
+    nvs_handle_t verify;
+    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &verify);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE("NVS_SAVE", "Current-setting readback open failed key='%s': %s",
+                 setting->key, esp_err_to_name(err));
+        return false;
+    }
+
+    int32_t actual = 0;
+    err = nvs_read_setting(verify, setting, &actual);
+    storage_nvs_close(verify);
+
+    if (err != ESP_OK || actual != expected)
+    {
+        ESP_LOGE("NVS_SAVE",
+                 "Current-setting readback FAILED key='%s': expected=%ld actual=%ld err=%s",
+                 setting->key, (long)expected, (long)actual,
+                 esp_err_to_name(err));
+        return false;
+    }
+
+    ESP_LOGI("NVS_SAVE", "SETTINGS_SAVE_CURRENT: SUCCESS key=%s value=%ld",
+             setting->key, (long)actual);
+    return true;
+}
+
+static bool save_current_setting(size_t setting_index)
+{
+    if (!s_save_mutex)
+    {
+        ESP_LOGE("NVS_SAVE",
+                 "save_current_setting() called before init_menu_system(); aborting");
+        return false;
+    }
+
+    if (xSemaphoreTake(s_save_mutex, pdMS_TO_TICKS(4000)) != pdTRUE)
+    {
+        ESP_LOGE("NVS_SAVE",
+                 "Timed out waiting for current-setting save lock");
+        return false;
+    }
+
+    const bool result = save_current_setting_locked(setting_index);
+    xSemaphoreGive(s_save_mutex);
+    return result;
+}
+
 
 static bool save_settings_locked(void)
 {
@@ -4747,6 +4962,7 @@ void enter_value_edit_mode(value_edit_context_t *value_type)
     sys_state.repeat_count = 0;
     settings_snapshot_capture(s_edit_snapshot);
     s_edit_snapshot_valid = true;
+    s_edit_setting_index = settings_index_for_editor(value_type);
     settings_runtime_snapshot_capture();
 
     // Backup current value
@@ -4796,9 +5012,28 @@ bool exit_value_edit_mode(bool save_changes)
     if (save_changes && sys_state.value_changed)
     {
         apply_value_change();
-        /* Every accepted settings edit is durable immediately, including
-         * boolean, select, and list options. */
-        saved = save_settings();
+        /*
+         * Foreground ENTER saves only the canonical setting being edited.
+         * Wi-Fi is different: app_services owns its asynchronous radio
+         * transition and APP_WIFI_ENABLED_KEY persistence, so do not perform
+         * a second generic NVS transaction here.
+         */
+        const bool wifi_async_save = (ctx == &value_edit[VALUE_TYPE_WIFI]);
+        if (wifi_async_save)
+        {
+            saved = true;
+        }
+        else if (s_edit_setting_index != (size_t)-1)
+        {
+            saved = save_current_setting(s_edit_setting_index);
+        }
+        else
+        {
+            ESP_LOGE("VALUE_EDIT",
+                     "No canonical NVS setting mapped for '%s'", ctx->label);
+            saved = false;
+        }
+
         if (saved)
         {
             printf("Value saved successfully\n");
@@ -4832,6 +5067,7 @@ bool exit_value_edit_mode(bool save_changes)
     sys_state.edit_backup_value = 0.0f;
     s_edit_snapshot_valid = false;
     s_edit_runtime_snapshot_valid = false;
+    s_edit_setting_index = (size_t)-1;
     return saved;
 }
 
@@ -5106,11 +5342,21 @@ void handle_value_confirmation(void)
             break;
         }
 
+        const bool wifi_async_save = (ctx == &value_edit[VALUE_TYPE_WIFI]);
         const bool saved = exit_value_edit_mode(true);
 
         /* The menu is rebuilt from the canonical runtime state only after
          * the transaction result is known. */
         show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
+
+        /* Wi-Fi persistence is completed by app_services' worker. Its final
+         * ON/OFF result is the authoritative LCD feedback. */
+        if (wifi_async_save)
+        {
+            sys_state.pending_confirmation = false;
+            return;
+        }
+
         if (saved)
         {
             ESP_LOGI("SETTINGS_TRANSACTION", "SUCCESS label=%s value=%s",
