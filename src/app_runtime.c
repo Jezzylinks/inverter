@@ -1601,6 +1601,7 @@ typedef struct
     float default_val;
     bool is_scaled_float;
     const char *label; /* friendly name for the View Settings screen */
+    bool is_signed_8; /* true for signed int8_t storage such as UTC offset */
 } nvs_setting_t;
 
 static nvs_setting_t g_settings[] = {
@@ -1621,7 +1622,7 @@ static nvs_setting_t g_settings[] = {
     {"quiet_en", &sys_state.quiet_hours_enabled, sizeof(uint8_t), 0, false, "Quiet Hours"},
     {"quiet_start", &sys_state.quiet_hours_start, sizeof(uint8_t), 22, false, "Quiet Start"},
     {"quiet_end", &sys_state.quiet_hours_end, sizeof(uint8_t), 6, false, "Quiet End"},
-    {"utc_offset", &sys_state.utc_offset_hours, sizeof(uint8_t), 0, false, "UTC Offset"},
+    {"utc_offset", &sys_state.utc_offset_hours, sizeof(int8_t), 0, false, "UTC Offset", true},
     {"man_hour", &sys_state.manual_time_hour, sizeof(uint8_t), 0, false, "Set Hour"},
     {"man_min", &sys_state.manual_time_minute, sizeof(uint8_t), 0, false, "Set Minute"},
     {"time_set", &sys_state.time_manually_set, sizeof(uint8_t), 0, false, "Time Manually Set"},
@@ -1653,6 +1654,11 @@ static bool settings_uses_u16_storage(const nvs_setting_t *setting)
     return strcmp(setting->key, BATTERY_CAPACITY_KEY) == 0;
 }
 
+static bool settings_uses_i8_storage(const nvs_setting_t *setting)
+{
+    return setting->is_signed_8;
+}
+
 static int32_t settings_encoded_value(const nvs_setting_t *setting)
 {
     if (setting->is_scaled_float)
@@ -1665,6 +1671,10 @@ static int32_t settings_encoded_value(const nvs_setting_t *setting)
          * stable across the round-trip and prevents spurious CRC mismatches
          * in settings_fingerprint() on every boot. */
         return (int32_t)roundf(*(const float *)setting->field * NVS_FLOAT_SCALE);
+    }
+    if (settings_uses_i8_storage(setting))
+    {
+        return (int32_t)*(const int8_t *)setting->field;
     }
     if (setting->size == sizeof(uint8_t))
     {
@@ -1695,6 +1705,10 @@ static void settings_snapshot_restore(
         {
             *(float *)setting->field =
                 (float)snapshot[i].value / NVS_FLOAT_SCALE;
+        }
+        else if (settings_uses_i8_storage(setting))
+        {
+            *(int8_t *)setting->field = (int8_t)snapshot[i].value;
         }
         else if (setting->size == sizeof(uint8_t))
         {
@@ -1741,6 +1755,10 @@ static void nvs_apply_defaults(void)
         {
             *(float *)setting->field = setting->default_val;
         }
+        else if (settings_uses_i8_storage(setting))
+        {
+            *(int8_t *)setting->field = (int8_t)setting->default_val;
+        }
         else if (setting->size == sizeof(uint8_t))
         {
             *(uint8_t *)setting->field = (uint8_t)setting->default_val;
@@ -1772,6 +1790,11 @@ static esp_err_t nvs_write_setting(nvs_handle_t handle,
         const int32_t scaled = settings_encoded_value(setting);
         return nvs_set_i32(handle, setting->key, scaled);
     }
+    if (settings_uses_i8_storage(setting))
+    {
+        return nvs_set_i8(handle, setting->key,
+                          *(const int8_t *)setting->field);
+    }
     if (setting->size == sizeof(uint8_t))
     {
         return nvs_set_u8(handle, setting->key,
@@ -1793,6 +1816,13 @@ static esp_err_t nvs_read_setting(nvs_handle_t handle,
     if (setting->is_scaled_float)
     {
         return nvs_get_i32(handle, setting->key, out_value);
+    }
+    if (settings_uses_i8_storage(setting))
+    {
+        int8_t value = 0;
+        const esp_err_t err = nvs_get_i8(handle, setting->key, &value);
+        *out_value = (int32_t)value;
+        return err;
     }
     if (setting->size == sizeof(uint8_t))
     {
@@ -1841,6 +1871,57 @@ static esp_err_t nvs_verify_settings(nvs_handle_t handle,
 size_t app_settings_count(void)
 {
     return NVS_SETTINGS_COUNT;
+}
+
+static esp_err_t nvs_verify_changed_settings(
+    nvs_handle_t handle,
+    const settings_value_snapshot_t *expected,
+    const settings_value_snapshot_t *baseline)
+{
+    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
+    {
+        if (expected[i].value == baseline[i].value)
+            continue;
+        int32_t actual = 0;
+        const esp_err_t err = nvs_read_setting(handle, &g_settings[i], &actual);
+        if (err != ESP_OK)
+            return err;
+        if (actual != expected[i].value)
+        {
+            ESP_LOGE("NVS_SAVE", "Changed-key read-back mismatch key='%s': expected=%ld actual=%ld",
+                     g_settings[i].key, (long)expected[i].value, (long)actual);
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+    return ESP_OK;
+}
+
+static esp_err_t nvs_save_changed_settings(
+    nvs_handle_t handle,
+    const settings_value_snapshot_t *baseline,
+    const settings_value_snapshot_t *current)
+{
+    esp_err_t first_err = ESP_OK;
+    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
+    {
+        if (current[i].value == baseline[i].value)
+            continue;
+        nvs_setting_t *s = &g_settings[i];
+        ESP_LOGI("NVS_SAVE", "SETTINGS_SAVE_CHANGED: key=%s old=%ld new=%ld",
+                 s->key, (long)baseline[i].value, (long)current[i].value);
+        esp_err_t err = nvs_write_setting(handle, s);
+        if (err == ESP_ERR_NVS_TYPE_MISMATCH)
+        {
+            const esp_err_t erase_err = nvs_erase_key(handle, s->key);
+            if (erase_err == ESP_OK || erase_err == ESP_ERR_NVS_NOT_FOUND)
+                err = nvs_write_setting(handle, s);
+            else
+                err = erase_err;
+        }
+        if (err != ESP_OK && first_err == ESP_OK)
+            first_err = err;
+    }
+    return first_err;
 }
 
 esp_err_t nvs_save_all(nvs_handle_t handle)
@@ -1915,6 +1996,17 @@ esp_err_t nvs_load_all(nvs_handle_t handle)
                          s->key, esp_err_to_name(err), err, s->default_val);
             }
             *(float *)s->field = (float)scaled / NVS_FLOAT_SCALE;
+        }
+        else if (settings_uses_i8_storage(s))
+        {
+            int8_t val = (int8_t)s->default_val;
+            err = nvs_get_i8(handle, s->key, &val);
+            if (err != ESP_OK)
+            {
+                ESP_LOGW(NVS_LOAD_TAG, "Failed to load key '%s': %s (0x%x); using default %d",
+                         s->key, esp_err_to_name(err), err, (int)val);
+            }
+            *(int8_t *)s->field = val;
         }
         else if (s->size == sizeof(uint8_t))
         {
@@ -2383,12 +2475,15 @@ static bool save_settings_locked(void)
     }
 
     ESP_LOGI(NVS_SAVE_TAG, "Saving settings to NVS...");
-    /* g_settings is the single canonical settings table. Battery profile
-     * keys are already represented there, so write them through one path. */
-    err = nvs_save_all(nvs);
+    /* Foreground edits persist only changed canonical entries. Boot/default
+     * recovery has no edit snapshot and retains the full-table save path. */
+    if (s_edit_snapshot_valid)
+        err = nvs_save_changed_settings(nvs, s_edit_snapshot, expected);
+    else
+        err = nvs_save_all(nvs);
     if (err != ESP_OK)
     {
-        ESP_LOGE(NVS_SAVE_TAG, "One or more settings failed to save: %s", esp_err_to_name(err));
+        ESP_LOGE(NVS_SAVE_TAG, "Settings transaction write failed: %s", esp_err_to_name(err));
         storage_nvs_close(nvs);
         return false;
     }
@@ -2457,7 +2552,10 @@ static bool save_settings_locked(void)
                  esp_err_to_name(err), err);
         return false;
     }
-    err = nvs_verify_settings(verify_handle, expected);
+    if (s_edit_snapshot_valid)
+        err = nvs_verify_changed_settings(verify_handle, expected, s_edit_snapshot);
+    else
+        err = nvs_verify_settings(verify_handle, expected);
     storage_nvs_close(verify_handle);
     if (err != ESP_OK)
     {
@@ -2465,7 +2563,8 @@ static bool save_settings_locked(void)
                  esp_err_to_name(err), err);
         return false;
     }
-    ESP_LOGI(NVS_SAVE_TAG, "SETTINGS_TRANSACTION: SUCCESS");
+    ESP_LOGI(NVS_SAVE_TAG, "SETTINGS_TRANSACTION: SUCCESS (%s)",
+             s_edit_snapshot_valid ? "changed keys" : "all keys");
     return true;
 }
 
