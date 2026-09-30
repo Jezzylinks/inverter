@@ -343,6 +343,39 @@ void show_menu_screen(menu_state_t menu_st, int selection)
 {
     const uint8_t security_menu_count = 3;
 
+    /*
+     * Wi-Fi Mode edit screen (20x4 only).
+     *
+     * The edit state is already owned by app_services.c and the button
+     * handling in app_input.c. This renderer only makes the existing
+     * interaction visible to the user:
+     *   UP/DOWN  = change mode
+     *   ENTER    = save
+     *   BACK     = cancel
+     *
+     * Do not put Wi-Fi/NVS operations here.
+     */
+    if (menu_st == MENU_WIFI_SETTINGS &&
+        lcd_geometry_is_20x4() &&
+        app_services_wifi_mode_edit_active())
+    {
+        char rows[LCD_ROWS][LCD_LINE_SIZE];
+        const char *row_ptrs[LCD_ROWS] = {
+            rows[0], rows[1], rows[2], rows[3]
+        };
+
+        snprintf(rows[0], LCD_LINE_SIZE, "%-*s", LCD_COLS, "Wi-Fi Mode");
+        snprintf(rows[1], LCD_LINE_SIZE, "%-*s", LCD_COLS, "Mode: %s",
+                 app_services_wifi_mode_name());
+        snprintf(rows[2], LCD_LINE_SIZE, "%-*s", LCD_COLS,
+                 "UP/DOWN: CHANGE");
+        snprintf(rows[3], LCD_LINE_SIZE, "%-*s", LCD_COLS,
+                 "ENT=SAVE BACK=CANCEL");
+
+        lcd_show_menu_rows(row_ptrs, LCD_ROWS);
+        return;
+    }
+
     if (menu_st == MENU_SECURITY)
     {
         if (selection < 0)
