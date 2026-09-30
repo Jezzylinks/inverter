@@ -1606,36 +1606,36 @@ typedef struct
 } nvs_setting_t;
 
 static nvs_setting_t g_settings[] = {
-    {BATTERY_VOLTAGE_SYSTEM_KEY, &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 12, false, "Bat Volt System"},
-    {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false, "Inverter Active"},
-    {BATTERY_TYPE_KEY, &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false, "Battery Type"},
-    {BATTERY_CAPACITY_KEY, &sys_state.battery_profile.capacity_ah, sizeof(float), 0, false, "Battery Capacity"},
-    {"bat_charge_cur", &sys_state.battery_profile.max_charge_current_per_100ah, sizeof(int32_t), 0, true, "Max Charge Cur"},
-    {"bat_disc_cur", &sys_state.battery_profile.max_discharge_current_per_100ah, sizeof(int32_t), 0, true, "Max Discharge Cur"},
-    {"bat_full_volt", &sys_state.battery_profile.high_battery_voltage_v, sizeof(int32_t), 0, true, "Bat Full Volt"},
-    {"bat_cutoff_volt", &sys_state.battery_profile.cutoff_voltage_v, sizeof(int32_t), 10.5f, true, "Battery Cutoff"},
-    {"bat_rech_volt", &sys_state.battery_profile.recharge_voltage_v, sizeof(int32_t), 14.8f, true, "Recharge Volt"},
-    {"brightness", &sys_state.display.brightness, sizeof(int32_t), 100, false, "LCD Brightness"},
-    {"backlight_time", &sys_state.display.backlight_timeout, sizeof(int32_t), 30, false, "Backlight Time"},
-    {"auto_shutdown", &sys_state.display.auto_shutdown_enabled, sizeof(uint8_t), 0, false, "Auto Shutdown"},
-    {"scroll_en", &sys_state.display.scroll_enabled, sizeof(uint8_t), 0, false, "Scroll Enable"},
-    {"sound_en", &sys_state.sound_enabled, sizeof(uint8_t), 1, false, "Sound"},
-    {"quiet_en", &sys_state.quiet_hours_enabled, sizeof(uint8_t), 0, false, "Quiet Hours"},
-    {"quiet_start", &sys_state.quiet_hours_start, sizeof(uint8_t), 22, false, "Quiet Start"},
-    {"quiet_end", &sys_state.quiet_hours_end, sizeof(uint8_t), 6, false, "Quiet End"},
+    {BATTERY_VOLTAGE_SYSTEM_KEY, &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 12, false, "Bat Volt System", false},
+    {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false, "Inverter Active", false},
+    {BATTERY_TYPE_KEY, &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false, "Battery Type", false},
+    {BATTERY_CAPACITY_KEY, &sys_state.battery_profile.capacity_ah, sizeof(float), 0, false, "Battery Capacity", false},
+    {"bat_charge_cur", &sys_state.battery_profile.max_charge_current_per_100ah, sizeof(int32_t), 0, true, "Max Charge Cur", false},
+    {"bat_disc_cur", &sys_state.battery_profile.max_discharge_current_per_100ah, sizeof(int32_t), 0, true, "Max Discharge Cur", false},
+    {"bat_full_volt", &sys_state.battery_profile.high_battery_voltage_v, sizeof(int32_t), 0, true, "Bat Full Volt", false},
+    {"bat_cutoff_volt", &sys_state.battery_profile.cutoff_voltage_v, sizeof(int32_t), 10.5f, true, "Battery Cutoff", false},
+    {"bat_rech_volt", &sys_state.battery_profile.recharge_voltage_v, sizeof(int32_t), 14.8f, true, "Recharge Volt", false},
+    {"brightness", &sys_state.display.brightness, sizeof(int32_t), 100, false, "LCD Brightness", false},
+    {"backlight_time", &sys_state.display.backlight_timeout, sizeof(int32_t), 30, false, "Backlight Time", false},
+    {"auto_shutdown", &sys_state.display.auto_shutdown_enabled, sizeof(uint8_t), 0, false, "Auto Shutdown", false},
+    {"scroll_en", &sys_state.display.scroll_enabled, sizeof(uint8_t), 0, false, "Scroll Enable", false},
+    {"sound_en", &sys_state.sound_enabled, sizeof(uint8_t), 1, false, "Sound", false},
+    {"quiet_en", &sys_state.quiet_hours_enabled, sizeof(uint8_t), 0, false, "Quiet Hours", false},
+    {"quiet_start", &sys_state.quiet_hours_start, sizeof(uint8_t), 22, false, "Quiet Start", false},
+    {"quiet_end", &sys_state.quiet_hours_end, sizeof(uint8_t), 6, false, "Quiet End", false},
     {"utc_offset", &sys_state.utc_offset_hours, sizeof(int8_t), 0, false, "UTC Offset", true},
-    {"man_hour", &sys_state.manual_time_hour, sizeof(uint8_t), 0, false, "Set Hour"},
-    {"man_min", &sys_state.manual_time_minute, sizeof(uint8_t), 0, false, "Set Minute"},
-    {"time_set", &sys_state.time_manually_set, sizeof(uint8_t), 0, false, "Time Manually Set"},
-    {"scroll_spd", &sys_state.display.scroll_speed, sizeof(uint8_t), DEFAULT_SCROLL_SPEED, false, "Scroll Speed"},
-    {"out_volt", &sys_state.inverter.output_voltage, sizeof(int32_t), 220.0f, true, "Output Voltage"},
-    {"out_freq", &sys_state.inverter.output_frequency, sizeof(int32_t), 50.0f, true, "Output Freq"},
-    {"volt_threshold", &sys_state.settings.voltage_threshold, sizeof(int32_t), 220.0f, true, "Voltage Thresh"},
-    {"current_limit", &sys_state.settings.current_limit, sizeof(int32_t), 50.0f, true, "Current Limit"},
-    {"temp_alarm", &sys_state.settings.temperature_alarm, sizeof(int32_t), 70.0f, true, "Temp Alarm"},
-    {"frequency_range", &sys_state.settings.frequency_range, sizeof(int32_t), 50, false, "Freq Range"},
-    {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300000, false, "Sys Timeout"},
-    {"security_en", &sys_state.security.enabled, sizeof(uint8_t), 1, false, "Security Enable"},
+    {"man_hour", &sys_state.manual_time_hour, sizeof(uint8_t), 0, false, "Set Hour", false},
+    {"man_min", &sys_state.manual_time_minute, sizeof(uint8_t), 0, false, "Set Minute", false},
+    {"time_set", &sys_state.time_manually_set, sizeof(uint8_t), 0, false, "Time Manually Set", false},
+    {"scroll_spd", &sys_state.display.scroll_speed, sizeof(uint8_t), DEFAULT_SCROLL_SPEED, false, "Scroll Speed", false},
+    {"out_volt", &sys_state.inverter.output_voltage, sizeof(int32_t), 220.0f, true, "Output Voltage", false},
+    {"out_freq", &sys_state.inverter.output_frequency, sizeof(int32_t), 50.0f, true, "Output Freq", false},
+    {"volt_threshold", &sys_state.settings.voltage_threshold, sizeof(int32_t), 220.0f, true, "Voltage Thresh", false},
+    {"current_limit", &sys_state.settings.current_limit, sizeof(int32_t), 50.0f, true, "Current Limit", false},
+    {"temp_alarm", &sys_state.settings.temperature_alarm, sizeof(int32_t), 70.0f, true, "Temp Alarm", false},
+    {"frequency_range", &sys_state.settings.frequency_range, sizeof(int32_t), 50, false, "Freq Range", false},
+    {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300000, false, "Sys Timeout", false},
+    {"security_en", &sys_state.security.enabled, sizeof(uint8_t), 1, false, "Security Enable", false},
     {"bluetooth_en", &sys_state.bluetooth.enabled, sizeof(bool), 0, false, "Bluetooth", false, true},
 };
 
@@ -1648,30 +1648,62 @@ static nvs_setting_t g_settings[] = {
  * Wi-Fi is intentionally excluded. Its ON/OFF transition is asynchronous and
  * app_services owns both the radio operation and APP_WIFI_ENABLED_KEY commit.
  */
-static size_t settings_index_for_editor(const value_edit_context_t *ctx)
+static size_t settings_index_for_key(const char *key)
 {
-    if (ctx == &value_edit[VALUE_TYPE_VOLTAGE]) return 24U;              /* volt_threshold */
-    if (ctx == &value_edit[VALUE_TYPE_FREQUENCY]) return 27U;           /* frequency_range */
-    if (ctx == &value_edit[VALUE_TYPE_CURRENT]) return 25U;             /* current_limit */
-    if (ctx == &value_edit[VALUE_TYPE_TEMPERATURE]) return 26U;         /* temp_alarm */
-    if (ctx == &value_edit[VALUE_TYPE_BATTERY_VOLTAGE]) return 7U;      /* bat_cutoff_volt */
-    if (ctx == &value_edit[VALUE_TYPE_TIMEOUT]) return 28U;             /* system_timeout */
-    if (ctx == &value_edit[VALUE_TYPE_AUTO_SHUTDOWN]) return 11U;
-    if (ctx == &value_edit[VALUE_TYPE_SCROLL_ENABLE]) return 12U;
-    if (ctx == &value_edit[VALUE_TYPE_SCROLL_SPEED]) return 21U;
-    if (ctx == &value_edit[VALUE_TYPE_BATTERY_TYPE]) return 2U;
-    if (ctx == &value_edit[VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM]) return 0U;
-    if (ctx == &value_edit[VALUE_TYPE_SOUND_ENABLE]) return 13U;
-    if (ctx == &value_edit[VALUE_TYPE_QUIET_HOURS_ENABLE]) return 14U;
-    if (ctx == &value_edit[VALUE_TYPE_QUIET_HOURS_START]) return 15U;
-    if (ctx == &value_edit[VALUE_TYPE_QUIET_HOURS_END]) return 16U;
-    if (ctx == &value_edit[VALUE_TYPE_UTC_OFFSET]) return 17U;
-    if (ctx == &value_edit[VALUE_TYPE_SET_TIME_HOUR]) return 18U;
-    if (ctx == &value_edit[VALUE_TYPE_SET_TIME_MINUTE]) return 19U;
-    if (ctx == &value_edit[VALUE_TYPE_BLUETOOTH]) return 30U;
+    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
+    {
+        if (strcmp(g_settings[i].key, key) == 0)
+            return i;
+    }
     return (size_t)-1;
 }
 
+static size_t settings_index_for_editor(const value_edit_context_t *ctx)
+{
+    if (ctx == &value_edit[VALUE_TYPE_VOLTAGE])
+        return settings_index_for_key("volt_threshold");
+    if (ctx == &value_edit[VALUE_TYPE_FREQUENCY])
+        return settings_index_for_key("frequency_range");
+    if (ctx == &value_edit[VALUE_TYPE_CURRENT])
+        return settings_index_for_key("current_limit");
+    if (ctx == &value_edit[VALUE_TYPE_TEMPERATURE])
+        return settings_index_for_key("temp_alarm");
+    if (ctx == &value_edit[VALUE_TYPE_BATTERY_VOLTAGE])
+        return settings_index_for_key("bat_cutoff_volt");
+    if (ctx == &value_edit[VALUE_TYPE_TIMEOUT])
+        return settings_index_for_key("system_timeout");
+    if (ctx == &value_edit[VALUE_TYPE_AUTO_SHUTDOWN])
+        return settings_index_for_key("auto_shutdown");
+    if (ctx == &value_edit[VALUE_TYPE_SCROLL_ENABLE])
+        return settings_index_for_key("scroll_en");
+    if (ctx == &value_edit[VALUE_TYPE_SCROLL_SPEED])
+        return settings_index_for_key("scroll_spd");
+    if (ctx == &value_edit[VALUE_TYPE_BATTERY_TYPE])
+        return settings_index_for_key(BATTERY_TYPE_KEY);
+    if (ctx == &value_edit[VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM])
+        return settings_index_for_key(BATTERY_VOLTAGE_SYSTEM_KEY);
+    if (ctx == &value_edit[VALUE_TYPE_SOUND_ENABLE])
+        return settings_index_for_key("sound_en");
+    if (ctx == &value_edit[VALUE_TYPE_QUIET_HOURS_ENABLE])
+        return settings_index_for_key("quiet_en");
+    if (ctx == &value_edit[VALUE_TYPE_QUIET_HOURS_START])
+        return settings_index_for_key("quiet_start");
+    if (ctx == &value_edit[VALUE_TYPE_QUIET_HOURS_END])
+        return settings_index_for_key("quiet_end");
+    if (ctx == &value_edit[VALUE_TYPE_UTC_OFFSET])
+        return settings_index_for_key("utc_offset");
+    if (ctx == &value_edit[VALUE_TYPE_SET_TIME_HOUR])
+        return settings_index_for_key("man_hour");
+    if (ctx == &value_edit[VALUE_TYPE_SET_TIME_MINUTE])
+        return settings_index_for_key("man_min");
+    if (ctx == &value_edit[VALUE_TYPE_BLUETOOTH])
+        return settings_index_for_key("bluetooth_en");
+
+    /* Wi-Fi is intentionally excluded. Its ON/OFF transition is asynchronous
+     * and app_services owns the radio operation and APP_WIFI_ENABLED_KEY
+     * persistence. */
+    return (size_t)-1;
+}
 
 
 /* Store the canonical on-NVS representation so a failed transaction can
