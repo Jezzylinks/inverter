@@ -1782,44 +1782,30 @@ static void settings_runtime_snapshot_restore(void)
     s_edit_runtime_snapshot_valid = false;
 }
 
-static void settings_snapshot_restore(
-    const settings_value_snapshot_t *snapshot)
+static void settings_restore_current_snapshot(void)
 {
-    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
-    {
-        const nvs_setting_t *setting = &g_settings[i];
-        if (setting->is_bool)
-        {
-            *(bool *)setting->field = snapshot[i].value != 0;
-        }
-        else if (setting->is_scaled_float)
-        {
-            *(float *)setting->field =
-                (float)snapshot[i].value / NVS_FLOAT_SCALE;
-        }
-        else if (settings_uses_i8_storage(setting))
-        {
-            *(int8_t *)setting->field = (int8_t)snapshot[i].value;
-        }
-        else if (setting->size == sizeof(uint8_t))
-        {
-            *(uint8_t *)setting->field = (uint8_t)snapshot[i].value;
-        }
-        else if (settings_uses_u16_storage(setting))
-        {
-            *(float *)setting->field = (float)snapshot[i].value;
-        }
-        else
-        {
-            *(int32_t *)setting->field = snapshot[i].value;
-        }
-    }
+    if (!s_edit_snapshot_valid ||
+        s_edit_setting_index >= NVS_SETTINGS_COUNT)
+        return;
+
+    const nvs_setting_t *setting = &g_settings[s_edit_setting_index];
+    const int32_t value = s_edit_snapshot[s_edit_setting_index].value;
+
+    if (setting->is_bool)
+        *(bool *)setting->field = value != 0;
+    else if (setting->is_scaled_float)
+        *(float *)setting->field = (float)value / NVS_FLOAT_SCALE;
+    else if (settings_uses_i8_storage(setting))
+        *(int8_t *)setting->field = (int8_t)value;
+    else if (setting->size == sizeof(uint8_t))
+        *(uint8_t *)setting->field = (uint8_t)value;
+    else if (settings_uses_u16_storage(setting))
+        *(float *)setting->field = (float)value;
+    else
+        *(int32_t *)setting->field = value;
+
     sync_battery_voltage_state();
     sync_battery_protection_thresholds();
-
-    /* The NVS table contains the authoritative persisted representation;
-     * the runtime snapshot restores derived/non-table state that a failed
-     * edit may also have changed. */
     settings_runtime_snapshot_restore();
     sys_state.system_timeout = (uint64_t)sys_state.settings.system_timeout;
 }
@@ -2742,12 +2728,9 @@ static bool save_settings_locked(void)
     }
 
     ESP_LOGI(NVS_SAVE_TAG, "Saving settings to NVS...");
-    /* Foreground edits persist only changed canonical entries. Boot/default
-     * recovery has no edit snapshot and retains the full-table save path. */
-    if (s_edit_snapshot_valid)
-        err = nvs_save_changed_settings(nvs, s_edit_snapshot, expected);
-    else
-        err = nvs_save_all(nvs);
+    /* save_settings() is the explicit full-table persistence API. Foreground
+     * menu edits use save_current_setting() and never enter this path. */
+    err = nvs_save_all(nvs);
     if (err != ESP_OK)
     {
         ESP_LOGE(NVS_SAVE_TAG, "Settings transaction write failed: %s", esp_err_to_name(err));
@@ -2819,10 +2802,7 @@ static bool save_settings_locked(void)
                  esp_err_to_name(err), err);
         return false;
     }
-    if (s_edit_snapshot_valid)
-        err = nvs_verify_changed_settings(verify_handle, expected, s_edit_snapshot);
-    else
-        err = nvs_verify_settings(verify_handle, expected);
+    err = nvs_verify_settings(verify_handle, expected);
     storage_nvs_close(verify_handle);
     if (err != ESP_OK)
     {
@@ -2830,8 +2810,7 @@ static bool save_settings_locked(void)
                  esp_err_to_name(err), err);
         return false;
     }
-    ESP_LOGI(NVS_SAVE_TAG, "SETTINGS_TRANSACTION: SUCCESS (%s)",
-             s_edit_snapshot_valid ? "changed keys" : "all keys");
+    ESP_LOGI(NVS_SAVE_TAG, "SETTINGS_TRANSACTION: SUCCESS (all keys)");
     return true;
 }
 
@@ -4960,9 +4939,13 @@ void enter_value_edit_mode(value_edit_context_t *value_type)
     sys_state.value_changed = false;
     sys_state.pending_confirmation = false;
     sys_state.repeat_count = 0;
-    settings_snapshot_capture(s_edit_snapshot);
-    s_edit_snapshot_valid = true;
     s_edit_setting_index = settings_index_for_editor(value_type);
+    s_edit_snapshot_valid = (s_edit_setting_index < NVS_SETTINGS_COUNT);
+    if (s_edit_snapshot_valid)
+    {
+        s_edit_snapshot[s_edit_setting_index].value =
+            settings_encoded_value(&g_settings[s_edit_setting_index]);
+    }
     settings_runtime_snapshot_capture();
 
     // Backup current value
@@ -5042,7 +5025,7 @@ bool exit_value_edit_mode(bool save_changes)
         {
             if (s_edit_snapshot_valid)
             {
-                settings_snapshot_restore(s_edit_snapshot);
+                settings_restore_current_snapshot();
             }
             else
             {
@@ -6791,10 +6774,15 @@ static void begin_setting_edit(value_edit_param_t param, float current_value)
     sys_state.repeat_count = 0;
     sys_state.fast_increment_active = false;
 
-    /* Capture the complete canonical NVS representation when the editor
-     * opens so a failed transaction can restore all settings consistently. */
-    settings_snapshot_capture(s_edit_snapshot);
-    s_edit_snapshot_valid = true;
+    /* Capture only the canonical setting being edited. A failed edit must
+     * never roll back unrelated settings. */
+    s_edit_setting_index = settings_index_for_editor(ctx);
+    s_edit_snapshot_valid = (s_edit_setting_index < NVS_SETTINGS_COUNT);
+    if (s_edit_snapshot_valid)
+    {
+        s_edit_snapshot[s_edit_setting_index].value =
+            settings_encoded_value(&g_settings[s_edit_setting_index]);
+    }
     settings_runtime_snapshot_capture();
 
     sys_state.value_edit_mode = true;
