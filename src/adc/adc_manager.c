@@ -23,6 +23,7 @@
 #include "server/websocket/websocket_server.h"
 #include "system/inverter_errors.h"
 #include "system/task_watchdog.h"
+#include "system/core_affinity.h"
 #include "telemetry/telemetry_health.h"
 #include "wifi/wifi_monitor.h"
 
@@ -691,9 +692,9 @@ esp_err_t adc_manager_start(void)
     adc_manager_state = ADC_MANAGER_STATE_INITIALIZING;
     taskEXIT_CRITICAL(&adc_manager_state_lock);
 
-    const BaseType_t result = xTaskCreate(
+    const BaseType_t result = xTaskCreatePinnedToCore(
         adc_task, "adc_task", ADC_TASK_STACK_SIZE, NULL,
-        ADC_TASK_PRIORITY, NULL);
+        ADC_TASK_PRIORITY, NULL, APP_CORE_REALTIME);
     if (result != pdPASS)
     {
         adc_signal_failed("ADC task creation failed");
