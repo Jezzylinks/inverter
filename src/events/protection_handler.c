@@ -7,6 +7,7 @@
 #include "utility/led.h"
 #include "utility/buzzer.h"
 #include "lcd/lcd_writer.h"
+#include "system/inverter_error_codes.h"
 #include "esp_log.h"
 
 extern system_state_t sys_state;
@@ -29,6 +30,42 @@ static void flash_warning(const char *line1, const char *line2)
     lcd_flash_info(line1, line2, 1500);
 }
 
+static void show_protection_fault(const system_event_t *evt)
+{
+    const uint16_t code =
+        inverter_error_code_for_protection(evt->quantity,
+                                           PROT_ACTION_SHUTDOWN,
+                                           evt->value);
+
+    const char *reason = inverter_error_name(code);
+    char detail[LCD_LINE_SIZE];
+
+    switch (evt->quantity)
+    {
+    case PROT_QUANTITY_BATTERY_VOLTAGE:
+        snprintf(detail, sizeof(detail), "Battery: %.2fV", evt->value);
+        break;
+
+    case PROT_QUANTITY_OUTPUT_CURRENT:
+        snprintf(detail, sizeof(detail), "Current: %.2fA", evt->value);
+        break;
+
+    case PROT_QUANTITY_TEMPERATURE:
+        snprintf(detail, sizeof(detail), "Temp: %.1fC", evt->value);
+        break;
+
+    case PROT_QUANTITY_AC_VOLTAGE:
+        snprintf(detail, sizeof(detail), "AC: %.1fV", evt->value);
+        break;
+
+    default:
+        snprintf(detail, sizeof(detail), "Measured: %.2f", evt->value);
+        break;
+    }
+
+    lcd_show_inverter_fault(code, reason, evt->value, detail);
+}
+
 /* ---- one handler per quantity ---- */
 
 static void handle_battery_voltage(const system_event_t *evt)
@@ -44,11 +81,14 @@ static void handle_battery_voltage(const system_event_t *evt)
         break;
 
     case EVENT_ACTION_SHUTDOWN:
+        show_protection_fault(evt);
         inverter_emergency_disable("battery protection fault");
         break;
 
     case EVENT_ACTION_RECOVERED:
         inverter_set_current_limit(sys_state.current_limit);
+        if (sys_lcd.screen == LCD_SCREEN_FAULT)
+            lcd_clear_fault();
         break;
 
     default:
@@ -65,6 +105,7 @@ static void handle_temperature(const system_event_t *evt)
         break;
 
     case EVENT_ACTION_SHUTDOWN:
+        show_protection_fault(evt);
         inverter_emergency_disable("temperature protection fault");
         break;
 
@@ -81,6 +122,7 @@ static void handle_output_current(const system_event_t *evt)
 {
     if (evt->action == EVENT_ACTION_SHUTDOWN)
     {
+        show_protection_fault(evt);
         inverter_emergency_disable("output current protection fault");
     }
 }
@@ -89,6 +131,7 @@ static void handle_ac_voltage(const system_event_t *evt)
 {
     if (evt->action == EVENT_ACTION_SHUTDOWN)
     {
+        show_protection_fault(evt);
         inverter_emergency_disable("AC voltage protection fault");
     }
 }
