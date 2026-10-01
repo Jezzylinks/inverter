@@ -4,6 +4,7 @@
  */
 
 #include "wifi/wifi_monitor.h"
+#include "system/core_affinity.h"
 #include <string.h>
 #include <sys/socket.h>
 
@@ -268,13 +269,13 @@ esp_err_t wifi_monitor_start(void)
     s_running = true;
 
     BaseType_t ret =
-        xTaskCreate(
+        xTaskCreatePinnedToCore(
             wifi_monitor_task,
             "wifi_monitor",
             WIFI_MONITOR_TASK_STACK_SIZE,
             NULL,
             WIFI_MONITOR_TASK_PRIORITY,
-            &s_monitor_task);
+            &s_monitor_task, APP_CORE_SYSTEM);
 
     if (ret != pdPASS)
     {
