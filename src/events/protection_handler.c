@@ -112,6 +112,8 @@ static void handle_temperature(const system_event_t *evt)
 
     case EVENT_ACTION_RECOVERED:
         inverter_set_current_limit(sys_state.current_limit);
+        if (sys_lcd.screen == LCD_SCREEN_FAULT)
+            lcd_clear_fault();
         break;
 
     default:
