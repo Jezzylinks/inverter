@@ -1,4 +1,7 @@
 #include "system/inverter_error_codes.h"
+#include "system/system_state.h"
+
+extern system_state_t sys_state;
 
 uint16_t inverter_error_code_for_protection(protection_quantity_t quantity,
                                             protection_action_t action,
@@ -11,8 +14,9 @@ uint16_t inverter_error_code_for_protection(protection_quantity_t quantity,
     case PROT_QUANTITY_BATTERY_VOLTAGE:
         /* Preserve the established startup diagnostic codes so a battery
          * problem has one identity whether found before or during runtime. */
-        return (value < 0.0f) ? INVERTER_START_ERROR_BATTERY_UNDERVOLTAGE
-                              : 0U;
+        return (value < sys_state.battery_profile.cutoff_voltage_v)
+                   ? INVERTER_START_ERROR_BATTERY_UNDERVOLTAGE
+                   : INVERTER_START_ERROR_BATTERY_OVERVOLTAGE;
 
     case PROT_QUANTITY_AC_VOLTAGE:
         return INVERTER_RUNTIME_ERROR_AC_VOLTAGE;
