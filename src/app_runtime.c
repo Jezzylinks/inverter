@@ -18,6 +18,7 @@
 #include <esp_log.h>
 #include <math.h>
 #include "system/task_watchdog.h"
+#include "system/core_affinity.h"
 // System state
 #include "system/system_state.h"
 #include "telemetry/telemetry_health.h"
@@ -1573,8 +1574,8 @@ esp_err_t init_hardware(void)
     // Create Display Timeout Task
     // ==========================================================
     ESP_LOGI("STARTUP", "display timeout task creation");
-    if (xTaskCreate(display_timeout_task, "Display Timeout", 2048,
-                    NULL, 5, NULL) != pdPASS)
+    if (xTaskCreatePinnedToCore(display_timeout_task, "Display Timeout", 2048,
+                    NULL, 5, NULL, APP_CORE_SYSTEM) != pdPASS)
     {
         ESP_LOGE(APP_TAG, "Display timeout task creation failed");
         if (init_err == ESP_OK)
@@ -2440,12 +2441,12 @@ void app_runtime_start_deferred_settings_persistence(void)
         return;
     }
 
-    if (xTaskCreate(settings_persistence_task,
+    if (xTaskCreatePinnedToCore(settings_persistence_task,
                     "settings_save",
                     SETTINGS_PERSISTENCE_TASK_STACK_SIZE,
                     NULL,
                     SETTINGS_PERSISTENCE_TASK_PRIORITY,
-                    NULL) != pdPASS)
+                    NULL, APP_CORE_SYSTEM) != pdPASS)
     {
         atomic_store(&s_settings_persistence_active, false);
         ESP_LOGE("NVS_SAVE", "Could not create deferred settings persistence task");
