@@ -3,6 +3,7 @@
  * @brief Wi-Fi runtime state and ESP-IDF event integration.
  */
 #include "wifi/wifi_events.h"
+#include "system/core_affinity.h"
 
 #include <string.h>
 
@@ -163,10 +164,10 @@ static void wifi_schedule_reconnect(void)
                                  s_status.retry_count < s_retry_limit &&
                                  s_reconnect_task == NULL;
     if (should_schedule) {
-        const BaseType_t result = xTaskCreate(wifi_reconnect_task, "wifi_reconnect",
+        const BaseType_t result = xTaskCreatePinnedToCore(wifi_reconnect_task, "wifi_reconnect",
                                               WIFI_RECONNECT_TASK_STACK,
                                               (void *)(uintptr_t)s_reconnect_generation,
-                                              WIFI_RECONNECT_TASK_PRIORITY, &s_reconnect_task);
+                                              WIFI_RECONNECT_TASK_PRIORITY, &s_reconnect_task, APP_CORE_SYSTEM);
         if (result != pdPASS) {
             s_reconnect_task = NULL;
         }
