@@ -23,12 +23,14 @@
 #endif
 #define APP_MENU_INDENT ' '
 
-typedef struct {
+typedef struct
+{
     menu_state_t state;
     int selection;
 } app_menu_history_entry_t;
 
-typedef struct {
+typedef struct
+{
     app_menu_history_entry_t stack[APP_MENU_HISTORY_DEPTH];
     int depth;
 } app_menu_history_t;
@@ -169,19 +171,24 @@ static const char *wifi_menu_label(int index)
 {
     const wifi_mode_t mode = wifi_manager_get_mode();
     const app_wifi_menu_action_t action = app_menu_wifi_config_action_at(index);
-    if (action == APP_WIFI_MENU_TOGGLE) {
+    if (action == APP_WIFI_MENU_TOGGLE)
+    {
         return app_services_wifi_enabled() ? "Wi-Fi: ON" : "Wi-Fi: OFF";
     }
-    if (action == APP_WIFI_MENU_CONNECT) {
+    if (action == APP_WIFI_MENU_CONNECT)
+    {
         return app_services_wifi_connect_action_label();
     }
-    if (action == APP_WIFI_MENU_AP_CLIENTS) {
+    if (action == APP_WIFI_MENU_AP_CLIENTS)
+    {
         return "AP Clients";
     }
-    if (action == APP_WIFI_MENU_SETTINGS) {
+    if (action == APP_WIFI_MENU_SETTINGS)
+    {
         return "Settings";
     }
-    if (action == APP_WIFI_MENU_STATUS) {
+    if (action == APP_WIFI_MENU_STATUS)
+    {
         return "Status";
     }
     (void)mode;
@@ -193,22 +200,27 @@ static const char *ota_menu_label(int index)
     static char label[LCD_LINE_SIZE];
     app_ota_status_t status;
     app_services_get_ota_status(&status);
-    switch (index) {
+    switch (index)
+    {
     case 0:
         return status.state == APP_OTA_CHECKING ? "Checking..." : "Check for Update";
     case 1:
-        if (status.state == APP_OTA_ERROR) {
+        if (status.state == APP_OTA_ERROR)
+        {
             return "Retry";
         }
-        if (status.update_available && status.available_version[0] != '\0') {
+        if (status.update_available && status.available_version[0] != '\0')
+        {
             snprintf(label, sizeof(label), "Install %.8s", status.available_version);
             return label;
         }
         return "Install";
     case 2:
         return status.state == APP_OTA_PREPARING ||
-               status.state == APP_OTA_DOWNLOADING ||
-               status.state == APP_OTA_VERIFYING ? "Cancel Update" : "Back";
+                       status.state == APP_OTA_DOWNLOADING ||
+                       status.state == APP_OTA_VERIFYING
+                   ? "Cancel Update"
+                   : "Back";
     default:
         return ota_items[index].label;
     }
@@ -217,35 +229,49 @@ static const char *ota_menu_label(int index)
 static const char *wifi_settings_menu_label(int index)
 {
     const app_wifi_settings_action_t action = app_menu_wifi_settings_action_at(index);
-    if (action == APP_WIFI_SETTINGS_SAVED_NETWORK) {
+    if (action == APP_WIFI_SETTINGS_SAVED_NETWORK)
+    {
         return app_services_wifi_saved_network_label();
     }
-    if (action == APP_WIFI_SETTINGS_MODE) {
+    if (action == APP_WIFI_SETTINGS_MODE)
+    {
         static char mode[LCD_LINE_SIZE];
         snprintf(mode, sizeof(mode), "Mode: %s", app_services_wifi_mode_name());
         return mode;
     }
-    if (action == APP_WIFI_SETTINGS_DHCP) {
+    if (action == APP_WIFI_SETTINGS_DHCP)
+    {
         return app_services_wifi_dhcp_enabled() ? "DHCP: ON" : "DHCP: OFF";
     }
     return "AP Clients";
 }
 
-
 app_wifi_menu_action_t app_menu_wifi_config_action_at(int index)
 {
     const wifi_mode_t mode = wifi_manager_get_mode();
-    if (index == 0) return APP_WIFI_MENU_TOGGLE;
-    if (index == 1) return APP_WIFI_MENU_STATUS;
-    if (mode == WIFI_MODE_AP) {
-        if (index == 2) return APP_WIFI_MENU_AP_CLIENTS;
-        if (index == 3) return APP_WIFI_MENU_SETTINGS;
-    } else {
-        if (index == 2) return APP_WIFI_MENU_CONNECT;
-        if (index == 3) return APP_WIFI_MENU_SCAN;
-        if (index == 4 && mode == WIFI_MODE_STA) return APP_WIFI_MENU_SETTINGS;
-        if (index == 4 && mode == WIFI_MODE_APSTA) return APP_WIFI_MENU_AP_CLIENTS;
-        if (index == 5 && mode == WIFI_MODE_APSTA) return APP_WIFI_MENU_SETTINGS;
+    if (index == 0)
+        return APP_WIFI_MENU_TOGGLE;
+    if (index == 1)
+        return APP_WIFI_MENU_STATUS;
+    if (mode == WIFI_MODE_AP)
+    {
+        if (index == 2)
+            return APP_WIFI_MENU_AP_CLIENTS;
+        if (index == 3)
+            return APP_WIFI_MENU_SETTINGS;
+    }
+    else
+    {
+        if (index == 2)
+            return APP_WIFI_MENU_CONNECT;
+        if (index == 3)
+            return APP_WIFI_MENU_SCAN;
+        if (index == 4 && mode == WIFI_MODE_STA)
+            return APP_WIFI_MENU_SETTINGS;
+        if (index == 4 && mode == WIFI_MODE_APSTA)
+            return APP_WIFI_MENU_AP_CLIENTS;
+        if (index == 5 && mode == WIFI_MODE_APSTA)
+            return APP_WIFI_MENU_SETTINGS;
     }
     return APP_WIFI_MENU_STATUS;
 }
@@ -253,15 +279,25 @@ app_wifi_menu_action_t app_menu_wifi_config_action_at(int index)
 app_wifi_settings_action_t app_menu_wifi_settings_action_at(int index)
 {
     const wifi_mode_t mode = wifi_manager_get_mode();
-    if (mode == WIFI_MODE_AP) {
-        if (index == 0) return APP_WIFI_SETTINGS_MODE;
-        if (index == 1) return APP_WIFI_SETTINGS_DHCP;
-        if (index == 2) return APP_WIFI_SETTINGS_AP_CLIENTS;
-    } else {
-        if (index == 0) return APP_WIFI_SETTINGS_SAVED_NETWORK;
-        if (index == 1) return APP_WIFI_SETTINGS_MODE;
-        if (index == 2) return APP_WIFI_SETTINGS_DHCP;
-        if (index == 3 && mode == WIFI_MODE_APSTA) return APP_WIFI_SETTINGS_AP_CLIENTS;
+    if (mode == WIFI_MODE_AP)
+    {
+        if (index == 0)
+            return APP_WIFI_SETTINGS_MODE;
+        if (index == 1)
+            return APP_WIFI_SETTINGS_DHCP;
+        if (index == 2)
+            return APP_WIFI_SETTINGS_AP_CLIENTS;
+    }
+    else
+    {
+        if (index == 0)
+            return APP_WIFI_SETTINGS_SAVED_NETWORK;
+        if (index == 1)
+            return APP_WIFI_SETTINGS_MODE;
+        if (index == 2)
+            return APP_WIFI_SETTINGS_DHCP;
+        if (index == 3 && mode == WIFI_MODE_APSTA)
+            return APP_WIFI_SETTINGS_AP_CLIENTS;
     }
     return APP_WIFI_SETTINGS_MODE;
 }
@@ -296,11 +332,13 @@ const menu_item_t *get_menu_items(menu_state_t state, int *item_count)
     case MENU_WIFI_CONFIG:
     {
         const wifi_mode_t mode = wifi_manager_get_mode();
-        if (mode == WIFI_MODE_AP) {
+        if (mode == WIFI_MODE_AP)
+        {
             *item_count = sizeof(wifi_ap_items) / sizeof(wifi_ap_items[0]);
             return wifi_ap_items;
         }
-        if (mode == WIFI_MODE_APSTA) {
+        if (mode == WIFI_MODE_APSTA)
+        {
             *item_count = sizeof(wifi_apsta_items) / sizeof(wifi_apsta_items[0]);
             return wifi_apsta_items;
         }
@@ -311,11 +349,13 @@ const menu_item_t *get_menu_items(menu_state_t state, int *item_count)
     case MENU_WIFI_SETTINGS:
     {
         const wifi_mode_t mode = wifi_manager_get_mode();
-        if (mode == WIFI_MODE_AP) {
+        if (mode == WIFI_MODE_AP)
+        {
             *item_count = sizeof(wifi_settings_ap_items) / sizeof(wifi_settings_ap_items[0]);
             return wifi_settings_ap_items;
         }
-        if (mode == WIFI_MODE_APSTA) {
+        if (mode == WIFI_MODE_APSTA)
+        {
             *item_count = sizeof(wifi_settings_apsta_items) / sizeof(wifi_settings_apsta_items[0]);
             return wifi_settings_apsta_items;
         }
@@ -361,12 +401,16 @@ void show_menu_screen(menu_state_t menu_st, int selection)
     {
         char rows[LCD_ROWS][LCD_LINE_SIZE];
         const char *row_ptrs[LCD_ROWS] = {
-            rows[0], rows[1], rows[2], rows[3]
-        };
+            rows[0], rows[1], rows[2], rows[3]};
+
+        char mode_text[LCD_LINE_SIZE];
+
+        snprintf(mode_text, sizeof(mode_text), "Mode: %s",
+                 app_services_wifi_mode_name());
 
         snprintf(rows[0], LCD_LINE_SIZE, "%-*s", LCD_COLS, "Wi-Fi Mode");
-        snprintf(rows[1], LCD_LINE_SIZE, "%-*s", LCD_COLS, "Mode: %s",
-                 app_services_wifi_mode_name());
+        snprintf(rows[1], LCD_LINE_SIZE, "%-*s",
+                 LCD_COLS, mode_text);
         snprintf(rows[2], LCD_LINE_SIZE, "%-*s", LCD_COLS,
                  "UP/DOWN: CHANGE");
         snprintf(rows[3], LCD_LINE_SIZE, "%-*s", LCD_COLS,
@@ -410,105 +454,105 @@ void show_menu_screen(menu_state_t menu_st, int selection)
         selection = item_count - 1;
 
     uint8_t cols = lcd_geometry_cols();
-if (lcd_geometry_is_20x4())
-{
-    char rows[LCD_ROWS][LCD_LINE_SIZE];
-    const char *row_ptrs[LCD_ROWS];
-    const uint8_t visible_rows = lcd_geometry_rows();
-    int top = selection >= visible_rows ? selection - visible_rows + 1 : 0;
-    char indicator[APP_MENU_INDICATOR_MAX_LEN + 1];
-    int indicator_len = snprintf(indicator, sizeof(indicator), "%d/%d",
-                                 selection + 1, item_count);
-
-    for (uint8_t row = 0; row < visible_rows; ++row)
+    if (lcd_geometry_is_20x4())
     {
-        int item_index = top + row;
-        row_ptrs[row] = rows[row];
-        if (item_index >= item_count)
-        {
-            if (row == visible_rows - 1)
-                snprintf(rows[row], LCD_LINE_SIZE, "%*s%s",
-                         cols - indicator_len, "", indicator);
-            else
-                snprintf(rows[row], LCD_LINE_SIZE, "%*s", cols, "");
-            continue;
-        }
+        char rows[LCD_ROWS][LCD_LINE_SIZE];
+        const char *row_ptrs[LCD_ROWS];
+        const uint8_t visible_rows = lcd_geometry_rows();
+        int top = selection >= visible_rows ? selection - visible_rows + 1 : 0;
+        char indicator[APP_MENU_INDICATOR_MAX_LEN + 1];
+        int indicator_len = snprintf(indicator, sizeof(indicator), "%d/%d",
+                                     selection + 1, item_count);
 
-        char marker = item_index == selection ? APP_MENU_ARROW : APP_MENU_INDENT;
-        const char *label = menu_st == MENU_WIFI_CONFIG
-                                ? wifi_menu_label(item_index)
+        for (uint8_t row = 0; row < visible_rows; ++row)
+        {
+            int item_index = top + row;
+            row_ptrs[row] = rows[row];
+            if (item_index >= item_count)
+            {
+                if (row == visible_rows - 1)
+                    snprintf(rows[row], LCD_LINE_SIZE, "%*s%s",
+                             cols - indicator_len, "", indicator);
+                else
+                    snprintf(rows[row], LCD_LINE_SIZE, "%*s", cols, "");
+                continue;
+            }
+
+            char marker = item_index == selection ? APP_MENU_ARROW : APP_MENU_INDENT;
+            const char *label = menu_st == MENU_WIFI_CONFIG
+                                    ? wifi_menu_label(item_index)
                                 : menu_st == MENU_WIFI_SETTINGS
                                     ? wifi_settings_menu_label(item_index)
-                                    : menu_st == MENU_OTA
-                                        ? ota_menu_label(item_index)
-                                        : items[item_index].label;
-        int label_width = cols - 1;
-        if (row == visible_rows - 1)
-        {
-            label_width -= indicator_len + 1;
-            if (label_width < 1)
-                label_width = 1;
-            snprintf(rows[row], LCD_LINE_SIZE, "%c%-*.*s %s",
-                     marker, label_width, label_width,
-                     label, indicator);
+                                : menu_st == MENU_OTA
+                                    ? ota_menu_label(item_index)
+                                    : items[item_index].label;
+            int label_width = cols - 1;
+            if (row == visible_rows - 1)
+            {
+                label_width -= indicator_len + 1;
+                if (label_width < 1)
+                    label_width = 1;
+                snprintf(rows[row], LCD_LINE_SIZE, "%c%-*.*s %s",
+                         marker, label_width, label_width,
+                         label, indicator);
+            }
+            else
+            {
+                snprintf(rows[row], LCD_LINE_SIZE, "%c%-*.*s",
+                         marker, label_width, label_width, label);
+            }
         }
-        else
-        {
-            snprintf(rows[row], LCD_LINE_SIZE, "%c%-*.*s",
-                                          marker, label_width, label_width, label);
-        }
-    }
-    lcd_show_menu_rows(row_ptrs, visible_rows);
-}
-else
-{
-    char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
-
-    /* Preserve the established 16×2 menu behavior. */
-    const char *selected_label = menu_st == MENU_WIFI_CONFIG
-                                     ? wifi_menu_label(selection)
-                                     : menu_st == MENU_WIFI_SETTINGS
-                                         ? wifi_settings_menu_label(selection)
-                                         : menu_st == MENU_OTA
-                                             ? ota_menu_label(selection)
-                                             : items[selection].label;
-    snprintf(r0, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_ARROW,
-             cols - 1, cols - 1, selected_label);
-
-    int next = (selection + 1) % item_count;
-    if (item_count >= APP_MENU_INDICATOR_MIN_ITEMS)
-    {
-        char ind[APP_MENU_INDICATOR_MAX_LEN + 1];
-        int ind_len = snprintf(ind, sizeof(ind), "%d/%d",
-                               selection + 1, item_count);
-        int label_w = cols - 1 - ind_len;
-        if (label_w < 1)
-            label_w = 1;
-        const char *next_label = menu_st == MENU_WIFI_CONFIG
-                                     ? wifi_menu_label(next)
-                                     : menu_st == MENU_WIFI_SETTINGS
-                                         ? wifi_settings_menu_label(next)
-                                         : menu_st == MENU_OTA
-                                             ? ota_menu_label(next)
-                                             : items[next].label;
-        snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s%s",
-                 APP_MENU_INDENT, label_w, label_w,
-                 next_label, ind);
+        lcd_show_menu_rows(row_ptrs, visible_rows);
     }
     else
     {
-        const char *next_label = menu_st == MENU_WIFI_CONFIG
-                                     ? wifi_menu_label(next)
+        char r0[LCD_LINE_SIZE], r1[LCD_LINE_SIZE];
+
+        /* Preserve the established 16×2 menu behavior. */
+        const char *selected_label = menu_st == MENU_WIFI_CONFIG
+                                         ? wifi_menu_label(selection)
+                                     : menu_st == MENU_WIFI_SETTINGS
+                                         ? wifi_settings_menu_label(selection)
+                                     : menu_st == MENU_OTA
+                                         ? ota_menu_label(selection)
+                                         : items[selection].label;
+        snprintf(r0, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_ARROW,
+                 cols - 1, cols - 1, selected_label);
+
+        int next = (selection + 1) % item_count;
+        if (item_count >= APP_MENU_INDICATOR_MIN_ITEMS)
+        {
+            char ind[APP_MENU_INDICATOR_MAX_LEN + 1];
+            int ind_len = snprintf(ind, sizeof(ind), "%d/%d",
+                                   selection + 1, item_count);
+            int label_w = cols - 1 - ind_len;
+            if (label_w < 1)
+                label_w = 1;
+            const char *next_label = menu_st == MENU_WIFI_CONFIG
+                                         ? wifi_menu_label(next)
                                      : menu_st == MENU_WIFI_SETTINGS
                                          ? wifi_settings_menu_label(next)
-                                         : menu_st == MENU_OTA
-                                             ? ota_menu_label(next)
-                                             : items[next].label;
-        snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_INDENT,
-                 cols - 1, cols - 1, next_label);
+                                     : menu_st == MENU_OTA
+                                         ? ota_menu_label(next)
+                                         : items[next].label;
+            snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s%s",
+                     APP_MENU_INDENT, label_w, label_w,
+                     next_label, ind);
+        }
+        else
+        {
+            const char *next_label = menu_st == MENU_WIFI_CONFIG
+                                         ? wifi_menu_label(next)
+                                     : menu_st == MENU_WIFI_SETTINGS
+                                         ? wifi_settings_menu_label(next)
+                                     : menu_st == MENU_OTA
+                                         ? ota_menu_label(next)
+                                         : items[next].label;
+            snprintf(r1, LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_INDENT,
+                     cols - 1, cols - 1, next_label);
+        }
+        lcd_show_menu(r0, r1);
     }
-    lcd_show_menu(r0, r1);
-}
 }
 
 /*==============================================================================
@@ -554,4 +598,3 @@ void clear_menu_history(void)
     s_menu_history.depth = 0;
     ESP_LOGD(APP_MENU_TAG, "Menu history cleared");
 }
-
