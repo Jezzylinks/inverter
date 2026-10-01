@@ -128,6 +128,11 @@ static void handle_output_current(const system_event_t *evt)
         show_protection_fault(evt);
         inverter_emergency_disable("output current protection fault");
     }
+    else if (evt->action == EVENT_ACTION_RECOVERED &&
+             sys_lcd.screen == LCD_SCREEN_FAULT)
+    {
+        lcd_clear_fault();
+    }
 }
 
 static void handle_ac_voltage(const system_event_t *evt)
@@ -136,6 +141,11 @@ static void handle_ac_voltage(const system_event_t *evt)
     {
         show_protection_fault(evt);
         inverter_emergency_disable("AC voltage protection fault");
+    }
+    else if (evt->action == EVENT_ACTION_RECOVERED &&
+             sys_lcd.screen == LCD_SCREEN_FAULT)
+    {
+        lcd_clear_fault();
     }
 }
 
