@@ -1,4 +1,5 @@
 #include "server/network_services.h"
+#include "system/core_affinity.h"
 
 #include <string.h>
 
@@ -171,9 +172,9 @@ static void network_wifi_status_callback(const wifi_status_t *status)
         schedule = true;
     }
     services_unlock();
-    if (schedule && xTaskCreate(network_services_sync_task,
+    if (schedule && xTaskCreatePinnedToCore(network_services_sync_task,
                                 "net_services_sync", NETWORK_SYNC_TASK_STACK_SIZE, NULL, 4U,
-                                NULL) != pdPASS) {
+                                NULL, APP_CORE_SYSTEM) != pdPASS) {
         services_lock();
         s_sync_scheduled = false;
         services_unlock();
