@@ -1,4 +1,5 @@
 #include "system/task_watchdog.h"
+#include "system/core_affinity.h"
 
 #include <string.h>
 
@@ -396,12 +397,12 @@ bool task_watchdog_start_supervisor(void)
     if (s_supervisor_task) {
         return true;
     }
-    return xTaskCreate(task_watchdog_supervisor,
+    return xTaskCreatePinnedToCore(task_watchdog_supervisor,
                        "watchdog_supervisor",
                        TASK_WATCHDOG_SUPERVISOR_STACK,
                        NULL,
                        TASK_WATCHDOG_SUPERVISOR_PRIORITY,
-                       &s_supervisor_task) == pdPASS;
+                       &s_supervisor_task, APP_CORE_SYSTEM) == pdPASS;
 }
 
 size_t task_watchdog_get_snapshot(task_watchdog_snapshot_t *out,
