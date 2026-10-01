@@ -9,6 +9,7 @@
 #include "lcd/lcd_writer.h"
 #include "system/inverter_error_codes.h"
 #include "esp_log.h"
+#include <stdio.h>
 
 extern system_state_t sys_state;
 extern void shutdown_inverter(void);
