@@ -2,6 +2,7 @@
 #include "app/app_services.h"
 #include "app/app_menu.h"
 #include "system/task_watchdog.h"
+#include "system/core_affinity.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -1022,8 +1023,8 @@ esp_err_t app_services_init(void)
 
     if (!s_ota_check_task)
     {
-        if (xTaskCreate(ota_auto_check_task, "ota_check", APP_OTA_TASK_STACK_SIZE,
-                        NULL, APP_OTA_CHECK_TASK_PRIORITY, &s_ota_check_task) != pdPASS)
+        if (xTaskCreatePinnedToCore(ota_auto_check_task, "ota_check", APP_OTA_TASK_STACK_SIZE,
+                        NULL, APP_OTA_CHECK_TASK_PRIORITY, &s_ota_check_task, APP_CORE_SYSTEM) != pdPASS)
         {
             s_ota_check_task = NULL;
             ESP_LOGW(APP_SERVICES_TAG, "Could not create OTA availability task");
@@ -1044,12 +1045,12 @@ esp_err_t app_services_init(void)
     }
     if (!s_wifi_toggle_task)
     {
-        if (xTaskCreate(app_wifi_toggle_task,
+        if (xTaskCreatePinnedToCore(app_wifi_toggle_task,
                         "wifi_toggle",
                         APP_WIFI_TOGGLE_TASK_STACK_SIZE,
                         NULL,
                         APP_WIFI_TOGGLE_TASK_PRIORITY,
-                        &s_wifi_toggle_task) != pdPASS)
+                        &s_wifi_toggle_task, APP_CORE_SYSTEM) != pdPASS)
         {
             vQueueDelete(s_wifi_toggle_queue);
             s_wifi_toggle_queue = NULL;
@@ -1061,12 +1062,12 @@ esp_err_t app_services_init(void)
     }
     if (!s_wifi_operation_watch_task)
     {
-        if (xTaskCreate(app_wifi_operation_watch_task,
+        if (xTaskCreatePinnedToCore(app_wifi_operation_watch_task,
                         "wifi_op_watch",
                         APP_WIFI_OPERATION_WATCH_STACK_SIZE,
                         NULL,
                         APP_WIFI_OPERATION_WATCH_PRIORITY,
-                        &s_wifi_operation_watch_task) != pdPASS)
+                        &s_wifi_operation_watch_task, APP_CORE_SYSTEM) != pdPASS)
         {
             s_wifi_operation_watch_task = NULL;
             ESP_LOGW(APP_SERVICES_TAG, "Could not create Wi-Fi operation watcher");
@@ -1097,12 +1098,12 @@ esp_err_t app_services_wifi_toggle_init(void)
     }
 
     if (s_wifi_toggle_task == NULL) {
-        if (xTaskCreate(app_wifi_toggle_task,
+        if (xTaskCreatePinnedToCore(app_wifi_toggle_task,
                         "wifi_toggle",
                         APP_WIFI_TOGGLE_TASK_STACK_SIZE,
                         NULL,
                         APP_WIFI_TOGGLE_TASK_PRIORITY,
-                        &s_wifi_toggle_task) != pdPASS) {
+                        &s_wifi_toggle_task, APP_CORE_SYSTEM) != pdPASS) {
             vQueueDelete(s_wifi_toggle_queue);
             s_wifi_toggle_queue = NULL;
             s_wifi_toggle_task = NULL;
@@ -1148,12 +1149,12 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
     }
 
     if (s_wifi_toggle_task == NULL) {
-        if (xTaskCreate(app_wifi_toggle_task,
+        if (xTaskCreatePinnedToCore(app_wifi_toggle_task,
                         "wifi_toggle",
                         APP_WIFI_TOGGLE_TASK_STACK_SIZE,
                         NULL,
                         APP_WIFI_TOGGLE_TASK_PRIORITY,
-                        &s_wifi_toggle_task) != pdPASS) {
+                        &s_wifi_toggle_task, APP_CORE_SYSTEM) != pdPASS) {
             vQueueDelete(s_wifi_toggle_queue);
             s_wifi_toggle_queue = NULL;
             s_wifi_toggle_task = NULL;
@@ -1330,12 +1331,12 @@ esp_err_t app_services_wifi_mode_edit_confirm(void)
         }
     }
     if (s_wifi_toggle_task == NULL) {
-        if (xTaskCreate(app_wifi_toggle_task,
+        if (xTaskCreatePinnedToCore(app_wifi_toggle_task,
                         "wifi_toggle",
                         APP_WIFI_TOGGLE_TASK_STACK_SIZE,
                         NULL,
                         APP_WIFI_TOGGLE_TASK_PRIORITY,
-                        &s_wifi_toggle_task) != pdPASS) {
+                        &s_wifi_toggle_task, APP_CORE_SYSTEM) != pdPASS) {
             vQueueDelete(s_wifi_toggle_queue);
             s_wifi_toggle_queue = NULL;
             return ESP_ERR_NO_MEM;
@@ -1425,9 +1426,9 @@ esp_err_t app_services_wifi_scan(void)
     xSemaphoreGive(s_services_mutex);
 
     lcd_show_wifi_scan_start();
-    if (xTaskCreate(app_wifi_scan_task, "wifi_scan_ui",
+    if (xTaskCreatePinnedToCore(app_wifi_scan_task, "wifi_scan_ui",
                     APP_WIFI_SCAN_TASK_STACK_SIZE, NULL,
-                    APP_WIFI_SCAN_TASK_PRIORITY, &s_wifi_scan_task) != pdPASS) {
+                    APP_WIFI_SCAN_TASK_PRIORITY, &s_wifi_scan_task, APP_CORE_SYSTEM) != pdPASS) {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_wifi_scan_active = false;
         s_wifi_scan_cancel_requested = false;
@@ -2082,9 +2083,9 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     s_ota_manifest_check_active = true;
     xSemaphoreGive(s_services_mutex);
 
-    if (xTaskCreate(ota_manifest_check_task, "ota_manifest_check",
+    if (xTaskCreatePinnedToCore(ota_manifest_check_task, "ota_manifest_check",
                     APP_OTA_CHECK_TASK_STACK_SIZE, job,
-                    APP_OTA_CHECK_TASK_PRIORITY, &s_ota_manifest_check_task) != pdPASS) {
+                    APP_OTA_CHECK_TASK_PRIORITY, &s_ota_manifest_check_task, APP_CORE_SYSTEM) != pdPASS) {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_ota_manifest_check_task = NULL;
         s_ota_manifest_check_active = false;
