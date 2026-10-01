@@ -354,8 +354,10 @@ void lcd_show_inverter_start_error(inverter_start_error_code_t code,
     snprintf(code_line, sizeof(code_line), "CODE:E%03X",
              (unsigned)code & 0x0FFFU);
     if (lcd_geometry_is_20x4()) {
-        lcd_show_fault(reason != NULL ? reason : "Inverter start failed",
-                       code_line);
+        lcd_show_inverter_fault(code,
+                                reason != NULL ? reason : "Inverter start failed",
+                                NAN,
+                                NULL);
     } else {
         lcd_show_fault("SYSTEM ERROR", code_line);
     }
