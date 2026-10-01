@@ -11,6 +11,7 @@
 #include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 #include "esp_log.h"
 #include "system/system_state.h"
 #include "lcd/lcd_flash_queue.h"
