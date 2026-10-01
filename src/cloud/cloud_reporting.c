@@ -1,4 +1,5 @@
 #include "storage/nvs_manager.h"
+#include "system/core_affinity.h"
 #include "cloud/cloud_reporting.h"
 
 #include <stdio.h>
@@ -317,7 +318,7 @@ void cloud_reporting_publish(const system_state_t *state, float solar_power_kw, 
     s_status.publish_in_progress = true;
     s_next_publish_us = now + ((int64_t)s_config.period_sec * 1000000LL);
     xSemaphoreGive(s_mutex);
-    if (xTaskCreate(publish_task, "cloud_report", 6144, snapshot, 3, NULL) != pdPASS) {
+    if (xTaskCreatePinnedToCore(publish_task, "cloud_report", 6144, snapshot, 3, NULL, APP_CORE_SYSTEM) != pdPASS) {
         vPortFree(snapshot);
         if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(250)) == pdTRUE) {
             s_status.publish_in_progress = false;

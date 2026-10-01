@@ -1,4 +1,5 @@
 #include "ota/ota_service.h"
+#include "system/core_affinity.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -203,8 +204,8 @@ static esp_err_t queue_job(ota_job_t *job)
     }
     s_cancel_requested = false;
     s_in_progress = true;
-    const BaseType_t created = xTaskCreate(ota_task, "ota_task", OTA_TASK_STACK_SIZE,
-                                           job, OTA_TASK_PRIORITY, &s_ota_task);
+    const BaseType_t created = xTaskCreatePinnedToCore(ota_task, "ota_task", OTA_TASK_STACK_SIZE,
+                                           job, OTA_TASK_PRIORITY, &s_ota_task, APP_CORE_SYSTEM);
     if (created != pdPASS) {
         secure_zero(job, sizeof(*job));
         free(job);
