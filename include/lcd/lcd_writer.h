@@ -113,6 +113,8 @@ void lcd_show_shutdown_progress(uint8_t pct, bool load_warn, float load_a);
 
 /* ── Faults ──────────────────────────────────────────────────────────────── */
 void lcd_show_fault(const char *line0, const char *line1);
+void lcd_show_inverter_fault(uint16_t code, const char *reason,
+                             float measured, const char *limit_text);
 void lcd_show_inverter_start_error(inverter_start_error_code_t code,
                                    const char *reason);
 void lcd_show_system_error(uint16_t code);
