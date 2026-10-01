@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "security/protection.h"
+#include "system/inverter_errors.h"
 
 #ifdef __cplusplus
 extern "C" {
