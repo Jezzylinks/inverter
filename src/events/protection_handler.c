@@ -1,4 +1,5 @@
 #include "system/task_watchdog.h"
+#include "system/core_affinity.h"
 // events/protection_handler.c (or add to event_dispatcher.c)
 
 #include "events/event_dispatcher.h"
