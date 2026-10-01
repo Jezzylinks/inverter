@@ -294,7 +294,7 @@ void app_main(void)
     xTaskCreatePinnedToCore(led_event_task, "led_evt", 2048, NULL, 7, NULL, APP_CORE_SYSTEM);
     xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 4096, NULL, 5, NULL, APP_CORE_SYSTEM);
     xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, APP_CORE_SYSTEM);
-    xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 4096, NULL, 9, NULL, APP_CORE_REALTIME);
+    xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 4096, NULL, 9, NULL, APP_CORE_SYSTEM);
 
     /* Start all consumers before enabling physical inputs so no press can race
      * task creation. */
