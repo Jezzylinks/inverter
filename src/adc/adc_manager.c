@@ -439,10 +439,8 @@ static bool process_adc_reading(const adc_channel_config_t *config,
     return telemetry_valid;
 }
 
-static void update_snapshot_and_outputs(uint32_t sample_time_ms,
-                                        bool telemetry_ready,
-                                        uint8_t sample_count,
-                                        uint32_t *last_ws_publish_ms)
+static void update_snapshot_and_state(uint32_t sample_time_ms,
+                                       bool telemetry_ready)
 {
     sys_state.adc_data_valid = telemetry_ready;
     sys_state.inverter.adc_data_valid = telemetry_ready;
@@ -450,78 +448,114 @@ static void update_snapshot_and_outputs(uint32_t sample_time_ms,
 
     const float battery_soc = clamp_float(
         battery_estimator_get_soc(&bat_estimate), 0.0f, 100.0f);
-    const uint8_t battery_pct = (uint8_t)battery_soc;
     sys_state.inverter.battery.battery_soc = battery_soc;
-    lcd_update_main_data(
-        sys_state.inverter.battery.voltage,
-        sys_state.inverter.output_voltage,
-        sys_state.inverter.output_current,
-        sys_state.inverter.output_frequency,
-        sys_state.inverter.battery.battery_temperature,
-        sys_state.inverter.load_percentage,
-        battery_pct,
-        sys_state.inverter.inverter_active,
-        sys_state.inverter.connected,
-        sys_state.battery_charging);
+}
 
-    const float pv_kw = (sys_state.dc_input_voltage > 0.0f &&
-                         sys_state.dc_input_current > 0.0f)
-                            ? sys_state.dc_input_voltage * sys_state.dc_input_current / 1000.0f
-                            : 0.0f;
-    const float load_kw = (sys_state.inverter.output_voltage > 0.0f &&
-                           sys_state.inverter.output_current > 0.0f)
-                              ? sys_state.inverter.output_voltage *
-                                    sys_state.inverter.output_current / 1000.0f
-                              : 0.0f;
-    uint16_t remaining_minutes = 0U;
-    const float remaining_ah = battery_estimator_get_remaining_ah(&bat_estimate);
-    const float battery_voltage = sys_state.inverter.battery.voltage;
-    const float efficiency = (sys_state.efficiency > 0.50f &&
-                              sys_state.efficiency <= 1.0f)
-                                 ? sys_state.efficiency
-                                 : 0.90f;
-    if (remaining_ah > 0.05f && load_kw > 0.02f && battery_voltage > 5.0f)
+static void adc_presentation_task(void *arg)
+{
+    (void)arg;
+    if (!task_watchdog_register_health_only("adc_presentation_task"))
     {
-        const float battery_current_a =
-            (load_kw * 1000.0f) / (battery_voltage * efficiency);
-        if (battery_current_a > 0.05f)
+        vTaskDelete(NULL);
+        return;
+    }
+
+
+    while (true)
+    {
+        const uint32_t now_ms =
+            (uint32_t)(esp_timer_get_time() / 1000ULL);
+        const float battery_soc = clamp_float(
+            sys_state.inverter.battery.battery_soc, 0.0f, 100.0f);
+        const uint8_t battery_pct = (uint8_t)battery_soc;
+
+        /*
+         * All user-interface and network publication work deliberately runs
+         * on the system core. The ADC task on the realtime core only owns
+         * measurement, validation, state publication and protection.
+         */
+        lcd_update_main_data(
+            sys_state.inverter.battery.voltage,
+            sys_state.inverter.output_voltage,
+            sys_state.inverter.output_current,
+            sys_state.inverter.output_frequency,
+            sys_state.inverter.battery.battery_temperature,
+            sys_state.inverter.load_percentage,
+            battery_pct,
+            sys_state.inverter.inverter_active,
+            sys_state.inverter.connected,
+            sys_state.battery_charging);
+
+        const float pv_kw = (sys_state.dc_input_voltage > 0.0f &&
+                             sys_state.dc_input_current > 0.0f)
+                                ? sys_state.dc_input_voltage *
+                                      sys_state.dc_input_current / 1000.0f
+                                : 0.0f;
+        const float load_kw = (sys_state.inverter.output_voltage > 0.0f &&
+                               sys_state.inverter.output_current > 0.0f)
+                                  ? sys_state.inverter.output_voltage *
+                                        sys_state.inverter.output_current / 1000.0f
+                                  : 0.0f;
+
+        uint16_t remaining_minutes = 0U;
+        const float remaining_ah =
+            battery_estimator_get_remaining_ah(&bat_estimate);
+        const float battery_voltage = sys_state.inverter.battery.voltage;
+        const float efficiency = (sys_state.efficiency > 0.50f &&
+                                  sys_state.efficiency <= 1.0f)
+                                     ? sys_state.efficiency
+                                     : 0.90f;
+        if (remaining_ah > 0.05f && load_kw > 0.02f &&
+            battery_voltage > 5.0f)
         {
-            const float minutes = (remaining_ah / battery_current_a) * 60.0f;
-            remaining_minutes = (minutes >= 65535.0f) ? UINT16_MAX : (uint16_t)minutes;
+            const float battery_current_a =
+                (load_kw * 1000.0f) / (battery_voltage * efficiency);
+            if (battery_current_a > 0.05f)
+            {
+                const float minutes =
+                    (remaining_ah / battery_current_a) * 60.0f;
+                remaining_minutes =
+                    (minutes >= 65535.0f) ? UINT16_MAX : (uint16_t)minutes;
+            }
         }
-    }
 
-    lcd_update_main_power(pv_kw, 0.0f, load_kw,
-                          sys_state.inverter.output_voltage,
-                          remaining_minutes,
-                          (uint8_t)sys_state.battery_profile.nominal_voltage,
-                          sys_state.inverter.operating_mode);
+        lcd_update_main_power(
+            pv_kw, 0.0f, load_kw,
+            sys_state.inverter.output_voltage,
+            remaining_minutes,
+            (uint8_t)sys_state.battery_profile.nominal_voltage,
+            sys_state.inverter.operating_mode);
 
-    if ((uint32_t)(sample_time_ms - *last_ws_publish_ms) >= 1000U)
-    {
-        *last_ws_publish_ms = sample_time_ms;
-        websocket_broadcast_device_status();
-        cloud_reporting_publish(&sys_state, pv_kw, load_kw,
-                                wifi_monitor_get_rssi());
-    }
+        if ((uint32_t)(now_ms - last_ws_publish_ms) >= 1000U)
+        {
+            last_ws_publish_ms = now_ms;
+            websocket_broadcast_device_status();
+            cloud_reporting_publish(&sys_state, pv_kw, load_kw,
+                                    wifi_monitor_get_rssi());
+        }
 
-    if (sys_lcd.screen == LCD_SCREEN_STANDBY)
-    {
-        lcd_show_standby(sys_state.inverter.battery.voltage,
-                         battery_pct, sys_state.inverter.connected);
-    }
-    if (sys_state.error.error_flags && telemetry_ready &&
-        sample_count >= ADC_MULTISAMPLING_COUNT)
-    {
-        const char *err = get_error_string(sys_state.error.error_flags);
-        char l0[LCD_LINE_SIZE], l1[LCD_LINE_SIZE];
-        snprintf(l0, LCD_LINE_SIZE, "%-16.16s", err);
-        snprintf(l1, LCD_LINE_SIZE, "%-16s", "Check system    ");
-        lcd_show_fault(l0, l1);
-    }
-    else if (sys_lcd.screen == LCD_SCREEN_FAULT)
-    {
-        lcd_clear_fault();
+        if (sys_lcd.screen == LCD_SCREEN_STANDBY)
+        {
+            lcd_show_standby(sys_state.inverter.battery.voltage,
+                             battery_pct,
+                             sys_state.inverter.connected);
+        }
+
+        if (sys_state.error.error_flags && sys_state.adc_data_valid)
+        {
+            const char *err = get_error_string(sys_state.error.error_flags);
+            char l0[LCD_LINE_SIZE], l1[LCD_LINE_SIZE];
+            snprintf(l0, LCD_LINE_SIZE, "%-16.16s", err);
+            snprintf(l1, LCD_LINE_SIZE, "%-16s", "Check system    ");
+            lcd_show_fault(l0, l1);
+        }
+        else if (sys_lcd.screen == LCD_SCREEN_FAULT)
+        {
+            lcd_clear_fault();
+        }
+
+        task_watchdog_health_feed();
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
@@ -652,8 +686,7 @@ static void adc_task_body(void)
         {
             check_protections();
         }
-        update_snapshot_and_outputs(sample_time_ms, telemetry_ready,
-                                    sample_count, &last_ws_publish_ms);
+        update_snapshot_and_state(sample_time_ms, telemetry_ready);
 
         if (readiness_reported && sample_count >= ADC_MULTISAMPLING_COUNT &&
             !sys_state.inverter.adc_data_valid)
@@ -700,6 +733,16 @@ esp_err_t adc_manager_start(void)
         adc_signal_failed("ADC task creation failed");
         return ESP_ERR_NO_MEM;
     }
+
+    const BaseType_t presentation_result = xTaskCreatePinnedToCore(
+        adc_presentation_task, "adc_ui", 4096, NULL, 3, NULL,
+        APP_CORE_SYSTEM);
+    if (presentation_result != pdPASS)
+    {
+        ESP_LOGW(ADC_MANAGER_DRIVER_TAG,
+                 "ADC presentation task creation failed; telemetry remains available");
+    }
+
     return ESP_OK;
 }
 
