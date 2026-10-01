@@ -461,6 +461,7 @@ static void adc_presentation_task(void *arg)
     }
 
 
+    uint32_t last_ws_publish_ms = 0U;
     while (true)
     {
         const uint32_t now_ms =
@@ -601,7 +602,6 @@ static void adc_task_body(void)
 
     bool telemetry_shutdown_latched = false;
     uint8_t sample_count = 0U;
-    uint32_t last_ws_publish_ms = 0U;
     bool readiness_reported = false;
     bool startup_failure_reported = false;
     const uint32_t startup_started_ms =
