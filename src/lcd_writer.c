@@ -5,11 +5,13 @@
   then return immediately.  Zero hardware access here.
 ==============================================================================*/
 #include "lcd/lcd_writer.h"
+#include "system/inverter_error_codes.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 #include "esp_log.h"
 #include "system/system_state.h"
 #include "lcd/lcd_flash_queue.h"
@@ -283,9 +285,45 @@ void lcd_show_fault(const char *line0, const char *line1)
     sys_lcd.screen = LCD_SCREEN_FAULT;
     set_line(sys_lcd.fault.line0, line0);
     set_line(sys_lcd.fault.line1, line1);
+    set_line(sys_lcd.fault.line2, "");
+    set_line(sys_lcd.fault.line3, "");
     sys_lcd.fault.blink = true;
     sys_lcd.fault.system_error = false;
     LCD_UNLOCK();
+}
+
+void lcd_show_inverter_fault(uint16_t code,
+                             const char *reason,
+                             float measured,
+                             const char *limit_text)
+{
+    char line0[LCD_LINE_SIZE];
+    char line1[LCD_LINE_SIZE];
+    char line2[LCD_LINE_SIZE];
+    char line3[LCD_LINE_SIZE];
+
+    snprintf(line0, sizeof(line0), "FAULT E%03X", (unsigned)code & 0x0FFFU);
+    snprintf(line1, sizeof(line1), "%s", reason != NULL ? reason : inverter_error_name(code));
+
+    if (limit_text != NULL && limit_text[0] != '\0')
+        snprintf(line2, sizeof(line2), "%s", limit_text);
+    else if (isfinite(measured))
+        snprintf(line2, sizeof(line2), "Measured: %.2f", measured);
+    else
+        snprintf(line2, sizeof(line2), "%s", inverter_error_action(code));
+
+    snprintf(line3, sizeof(line3), "%s", inverter_error_clear_instruction(code));
+
+    LCD_LOCK();
+    sys_lcd.screen = LCD_SCREEN_FAULT;
+    set_line(sys_lcd.fault.line0, line0);
+    set_line(sys_lcd.fault.line1, line1);
+    set_line(sys_lcd.fault.line2, line2);
+    set_line(sys_lcd.fault.line3, line3);
+    sys_lcd.fault.blink = false;
+    sys_lcd.fault.system_error = false;
+    LCD_UNLOCK();
+    lcd_request_refresh();
 }
 
 void lcd_show_system_error(uint16_t code)
@@ -302,6 +340,8 @@ void lcd_show_system_error(uint16_t code)
     sys_lcd.screen = LCD_SCREEN_FAULT;
     set_line(sys_lcd.fault.line0, "SYSTEM ERROR");
     set_line(sys_lcd.fault.line1, code_line);
+    set_line(sys_lcd.fault.line2, "");
+    set_line(sys_lcd.fault.line3, "");
     sys_lcd.fault.blink = false;
     sys_lcd.fault.system_error = true;
     LCD_UNLOCK();
@@ -315,8 +355,10 @@ void lcd_show_inverter_start_error(inverter_start_error_code_t code,
     snprintf(code_line, sizeof(code_line), "CODE:E%03X",
              (unsigned)code & 0x0FFFU);
     if (lcd_geometry_is_20x4()) {
-        lcd_show_fault(reason != NULL ? reason : "Inverter start failed",
-                       code_line);
+        lcd_show_inverter_fault(code,
+                                reason != NULL ? reason : "Inverter start failed",
+                                NAN,
+                                NULL);
     } else {
         lcd_show_fault("SYSTEM ERROR", code_line);
     }

@@ -525,8 +525,7 @@ static void draw_fault(const lcd_fault_data_t *d)
             }
             else
             {
-                const char *rows[] = {"!!! SYSTEM FAULT !!!", d->line0,
-                                      d->line1, "OUTPUT DISABLED"};
+                const char *rows[] = {d->line0, d->line1, d->line2, d->line3};
                 draw_commit_rows(rows);
             }
         }

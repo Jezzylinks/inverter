@@ -218,6 +218,8 @@ extern "C"
     {
         char line0[LCD_LINE_SIZE];
         char line1[LCD_LINE_SIZE];
+        char line2[LCD_LINE_SIZE];
+        char line3[LCD_LINE_SIZE];
         bool blink;
         bool system_error;
     } lcd_fault_data_t;
