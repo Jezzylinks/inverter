@@ -655,11 +655,13 @@ void handle_power_button_event(button_event_info_t *event_info,
             }
             else
             {
+                sys_state.inverter.inverter_state = INVERTER_FAULT;
+                sys_state.inverter.inverter_active = false;
+                sys_state.output_enabled = false;
+                led_set_inverter_active(false);
                 inverter_show_last_start_error();
                 post_buzzer_event(false);
-
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                go_to_main_screen();
+                return;
             }
             break;
         default:
