@@ -91,6 +91,7 @@ extern "C"
         bool battery_low;
         bool battery_critical;
         bool wifi_connected;
+        bool wifi_enabled;
         int8_t wifi_rssi;
         float pv_power_kw;
         float grid_power_kw;

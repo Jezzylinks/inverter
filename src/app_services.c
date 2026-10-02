@@ -361,6 +361,7 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
          * this user setting. */
         sys_state.wifi.enabled = enabled;
         sys_state.inverter.wifi_enabled = enabled;
+        lcd_update_wifi_enabled(enabled);
         ESP_LOGI(APP_SERVICES_TAG, "Committing Wi-Fi runtime state: %s",
                  enabled ? "ON" : "OFF");
         nvs_err = persist_u8(APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
@@ -385,6 +386,7 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
     } else {
         sys_state.wifi.enabled = previous_enabled;
         sys_state.inverter.wifi_enabled = previous_enabled;
+        lcd_update_wifi_enabled(previous_enabled);
         ESP_LOGE(APP_SERVICES_TAG, "Wi-Fi %s failed: %s",
                  enabled ? "ON" : "OFF", esp_err_to_name(controller_err));
         app_wifi_end_operation();
@@ -734,6 +736,7 @@ static void load_persisted_config(void)
 
     sys_state.wifi.enabled = wifi_enabled != 0U;
     sys_state.inverter.wifi_enabled = sys_state.wifi.enabled;
+    lcd_update_wifi_enabled(sys_state.wifi.enabled);
     s_ota_status.auto_check_enabled = auto_check != 0U;
 }
 

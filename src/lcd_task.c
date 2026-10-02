@@ -266,7 +266,7 @@ static void format_battery_time(char *out, size_t out_len,
 static void draw_main(lcd_main_data_t *m)
 {
     char wifi[8];
-    format_home_wifi(wifi, sizeof(wifi), m->wifi_connected, m->wifi_rssi);
+    format_home_wifi(wifi, sizeof(wifi), m->wifi_enabled, m->wifi_rssi);
 
     if (lcd_geometry_is_20x4())
     {
@@ -315,7 +315,7 @@ static void draw_main(lcd_main_data_t *m)
             snprintf(rows[2], LCD_LINE_SIZE, "AC %3uV %2.0fHz %-3.3s",
                      ac_voltage, m->output_frequency, state);
             snprintf(rows[3], LCD_LINE_SIZE, "WIFI %-4.4s %4ddBm",
-                     m->wifi_connected ? "ON" : "OFF", (int)m->wifi_rssi);
+                     m->wifi_enabled ? "ON" : "OFF", (int)m->wifi_rssi);
         }
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
         draw_commit_rows(row_ptrs);
@@ -354,9 +354,9 @@ static void draw_main(lcd_main_data_t *m)
             break;
         case MAIN_SUB_NETWORK:
             snprintf(r0, LCD_LINE_SIZE, "WIFI %-6.6s %-.4s",
-                     m->wifi_connected ? "ONLINE" : "OFF",
+                     m->wifi_enabled ? "ON" : "OFF",
                      m->wifi_connected ? wifi + 1 : "-");
-            if (m->wifi_connected && m->wifi_rssi > -127)
+            if (m->wifi_enabled && m->wifi_connected && m->wifi_rssi > -127)
             {
                 snprintf(r1, LCD_LINE_SIZE, "RSSI %4ddBm", (int)m->wifi_rssi);
             }
