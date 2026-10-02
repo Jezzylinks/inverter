@@ -727,7 +727,7 @@ esp_err_t adc_manager_start(void)
 
     const BaseType_t result = xTaskCreatePinnedToCore(
         adc_task, "adc_task", ADC_TASK_STACK_SIZE, NULL,
-        ADC_TASK_PRIORITY, NULL, APP_CORE_REALTIME);
+        ADC_TASK_PRIORITY, NULL, APP_CORE_SYSTEM);
     if (result != pdPASS)
     {
         adc_signal_failed("ADC task creation failed");
