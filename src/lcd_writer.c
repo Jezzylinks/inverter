@@ -157,6 +157,18 @@ void lcd_update_wifi_status(bool connected, int8_t rssi)
     LCD_UNLOCK();
 }
 
+void lcd_update_wifi_enabled(bool enabled)
+{
+    LCD_LOCK();
+    sys_lcd.main.wifi_enabled = enabled;
+    if (!enabled) {
+        sys_lcd.main.wifi_connected = false;
+        sys_lcd.main.wifi_rssi = -127;
+    }
+    LCD_UNLOCK();
+    lcd_request_refresh();
+}
+
 void lcd_update_main_power(float pv_kw, float grid_kw, float load_kw,
                            float ac_voltage, uint16_t battery_remaining_minutes,
                            uint8_t voltage_system, uint8_t operating_mode)
