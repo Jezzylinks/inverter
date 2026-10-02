@@ -95,11 +95,11 @@ static void show_wifi_client_delete_confirmation(void)
     if (lcd_geometry_is_20x4()) {
         snprintf(rows[0], LCD_LINE_SIZE, "%-*s", LCD_COLS, "Delete AP Client?");
         snprintf(rows[1], LCD_LINE_SIZE, "%-*s", LCD_COLS, mac);
-        snprintf(rows[2], LCD_LINE_SIZE, "%c%-*s", selected == 0U ? APP_MENU_ARROW : ' ', LCD_COLS - 1, "Delete");
-        snprintf(rows[3], LCD_LINE_SIZE, "%c%-*s", selected == 1U ? APP_MENU_ARROW : ' ', LCD_COLS - 1, "Exit");
+        snprintf(rows[2], LCD_LINE_SIZE, "%c%-*s", selected == 0U ? '>' : ' ', LCD_COLS - 1, "Delete");
+        snprintf(rows[3], LCD_LINE_SIZE, "%c%-*s", selected == 1U ? '>' : ' ', LCD_COLS - 1, "Exit");
         lcd_show_menu_rows(row_ptrs, LCD_ROWS);
     } else {
-        snprintf(rows[0], LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_ARROW, LCD_COLS - 1, LCD_COLS - 1, "Delete AP client");
+        snprintf(rows[0], LCD_LINE_SIZE, "%c%-*.*s", '>', LCD_COLS - 1, LCD_COLS - 1, "Delete AP client");
         snprintf(rows[1], LCD_LINE_SIZE, "%c%s", selected == 0U ? '>' : ' ', selected == 0U ? "Delete" : "Exit");
         lcd_show_menu_rows(row_ptrs, 2U);
     }
@@ -116,7 +116,6 @@ static void begin_wifi_client_delete_confirmation(void)
     LCD_UNLOCK();
     s_wifi_client_delete_choice = 0U;
     s_wifi_client_delete_confirmation = true;
-    lcd_show_confirm("Delete AP Client?", "ENTER=Delete BACK=Exit");
     show_wifi_client_delete_confirmation();
 }
 
@@ -124,14 +123,13 @@ static void cancel_wifi_client_delete_confirmation(void)
 {
     s_wifi_client_delete_confirmation = false;
     s_wifi_client_delete_choice = 0U;
-    show_wifi_client_delete_confirmation();
 }
 
 static void handle_wifi_client_delete_confirmation_enter(void)
 {
     if (s_wifi_client_delete_choice == 1U) {
         s_wifi_client_delete_confirmation = false;
-        show_wifi_client_delete_confirmation();
+        app_services_show_ap_clients();
         return;
     }
 
