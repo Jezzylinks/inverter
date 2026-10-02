@@ -69,6 +69,82 @@ extern change_pin_ctx_t change_pin_ctx;
 static uint8_t s_ota_auth_selection = 1U;
 static bool s_ota_feedback_active = false;
 static bool s_wifi_settings_child_active = false;
+static bool s_wifi_client_delete_confirmation = false;
+static uint8_t s_wifi_client_delete_choice = 0U; /* 0=Delete, 1=Exit */
+static uint8_t s_wifi_client_delete_index = 0U;
+
+static void show_wifi_client_delete_confirmation(void)
+{
+    char rows[LCD_ROWS][LCD_LINE_SIZE];
+    const char *row_ptrs[LCD_ROWS];
+    uint8_t selected = s_wifi_client_delete_choice;
+    uint8_t client_index = s_wifi_client_delete_index;
+    char mac[18] = {0};
+
+    LCD_LOCK();
+    if (client_index < sys_lcd.wifi_clients.count) {
+        snprintf(mac, sizeof(mac), "%s", sys_lcd.wifi_clients.mac[client_index]);
+    }
+    LCD_UNLOCK();
+
+    for (uint8_t i = 0U; i < LCD_ROWS; ++i) {
+        row_ptrs[i] = rows[i];
+        snprintf(rows[i], LCD_LINE_SIZE, "%-*s", LCD_COLS, "");
+    }
+
+    if (lcd_geometry_is_20x4()) {
+        snprintf(rows[0], LCD_LINE_SIZE, "%-*s", LCD_COLS, "Delete AP Client?");
+        snprintf(rows[1], LCD_LINE_SIZE, "%-*s", LCD_COLS, mac);
+        snprintf(rows[2], LCD_LINE_SIZE, "%c%-*s", selected == 0U ? APP_MENU_ARROW : ' ', LCD_COLS - 1, "Delete");
+        snprintf(rows[3], LCD_LINE_SIZE, "%c%-*s", selected == 1U ? APP_MENU_ARROW : ' ', LCD_COLS - 1, "Exit");
+        lcd_show_menu_rows(row_ptrs, LCD_ROWS);
+    } else {
+        snprintf(rows[0], LCD_LINE_SIZE, "%c%-*.*s", APP_MENU_ARROW, LCD_COLS - 1, LCD_COLS - 1, "Delete AP client");
+        snprintf(rows[1], LCD_LINE_SIZE, "%c%s", selected == 0U ? '>' : ' ', selected == 0U ? "Delete" : "Exit");
+        lcd_show_menu_rows(row_ptrs, 2U);
+    }
+}
+
+static void begin_wifi_client_delete_confirmation(void)
+{
+    LCD_LOCK();
+    if (sys_lcd.wifi_clients.count == 0U) {
+        LCD_UNLOCK();
+        return;
+    }
+    s_wifi_client_delete_index = sys_lcd.wifi_clients.selected;
+    LCD_UNLOCK();
+    s_wifi_client_delete_choice = 0U;
+    s_wifi_client_delete_confirmation = true;
+    lcd_show_confirm("Delete AP Client?", "ENTER=Delete BACK=Exit");
+    show_wifi_client_delete_confirmation();
+}
+
+static void cancel_wifi_client_delete_confirmation(void)
+{
+    s_wifi_client_delete_confirmation = false;
+    s_wifi_client_delete_choice = 0U;
+    show_wifi_client_delete_confirmation();
+}
+
+static void handle_wifi_client_delete_confirmation_enter(void)
+{
+    if (s_wifi_client_delete_choice == 1U) {
+        s_wifi_client_delete_confirmation = false;
+        show_wifi_client_delete_confirmation();
+        return;
+    }
+
+    const esp_err_t err = app_services_disconnect_ap_client_at(s_wifi_client_delete_index);
+    s_wifi_client_delete_confirmation = false;
+    if (err == ESP_OK) {
+        app_services_show_ap_clients();
+    } else {
+        lcd_flash_message("Remove Failed", "Try again", 1200U);
+        app_services_show_ap_clients();
+    }
+}
+
 
 static void return_factory_reset_to_menu(void)
 {
@@ -896,10 +972,20 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         return;
     }
 
+    if (s_wifi_client_delete_confirmation) {
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            handle_wifi_client_delete_confirmation_enter();
+        }
+        return;
+    }
+
     if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
         if (event_info->event == BUTTON_EVENT_CLICK) {
-            handle_wifi_client_delete();
+            begin_wifi_client_delete_confirmation();
         }
+        return;
+    }
+        handle_wifi_client_delete_confirmation_enter();
         return;
     }
 
@@ -1509,6 +1595,14 @@ void handle_up_button_event(button_event_info_t *event_info,
         return;
     }
 
+    if (s_wifi_client_delete_confirmation) {
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            s_wifi_client_delete_choice = s_wifi_client_delete_choice == 0U ? 1U : 0U;
+            show_wifi_client_delete_confirmation();
+        }
+        return;
+    }
+
     if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
         if (event_info->event == BUTTON_EVENT_CLICK) {
             handle_wifi_clients_move(true);
@@ -1772,6 +1866,14 @@ void handle_down_button_event(button_event_info_t *event_info,
     if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN) {
         if (event_info->event == BUTTON_EVENT_CLICK) {
             handle_wifi_scan_move(false);
+        }
+        return;
+    }
+
+    if (s_wifi_client_delete_confirmation) {
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            s_wifi_client_delete_choice = s_wifi_client_delete_choice == 0U ? 1U : 0U;
+            show_wifi_client_delete_confirmation();
         }
         return;
     }
@@ -2083,6 +2185,19 @@ void handle_back_button_event(button_event_info_t *event_info,
          sys_lcd.screen == LCD_SCREEN_OTA)) {
         s_ota_feedback_active = false;
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
+        return;
+    }
+
+    if (event_info->event == BUTTON_EVENT_CLICK && s_wifi_client_delete_confirmation) {
+        cancel_wifi_client_delete_confirmation();
+        app_services_show_ap_clients();
+        return;
+    }
+
+    if (event_info->event == BUTTON_EVENT_CLICK && sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
+        s_wifi_settings_child_active = false;
+        s_wifi_client_delete_confirmation = false;
+        show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
         return;
     }
 
