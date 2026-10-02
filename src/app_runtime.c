@@ -3786,10 +3786,16 @@ void inverter_power_on(void)
     set_last_start_error(INVERTER_START_ERROR_NONE, "No start error");
     if (!check_safety_conditions())
     {
+        sys_state.inverter.inverter_state = INVERTER_FAULT;
+        sys_state.inverter.inverter_active = false;
+        sys_state.output_enabled = false;
+        led_set_inverter_active(false);
         inverter_show_last_start_error();
+        post_buzzer_event(false);
         post_inverter_fault_event();
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        go_to_main_screen();
+        ESP_LOGW(INV_TAG, "Inverter start blocked: E%03X - %s",
+                 (unsigned)inverter_get_last_start_error_code() & 0x0FFFU,
+                 inverter_get_last_start_error_reason());
         return;
     }
 
@@ -3822,9 +3828,8 @@ void inverter_power_on(void)
         set_last_start_error(INVERTER_START_ERROR_RELAY,
                              "Power relay control failed");
         inverter_show_last_start_error();
+        post_buzzer_event(false);
         post_inverter_fault_event();
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        go_to_main_screen();
         return;
     }
 
