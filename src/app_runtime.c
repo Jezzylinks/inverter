@@ -2607,6 +2607,8 @@ bool save_settings()
  * the other authoritative settings-save paths.  Keep this wrapper so the
  * editor has one clearly named persistence entry point.
  */
+static bool save_settings_locked(void);
+
 static bool save_current_setting(size_t setting_index)
 {
     (void)setting_index;
