@@ -2102,6 +2102,7 @@ void lcd_task(void *arg)
     lcd_watchdog_init(xTaskGetCurrentTaskHandle());
     lcd_render_state_t snap;
     static lcd_screen_id_t last_screen = LCD_SCREEN_COUNT;
+    static uint32_t standby_page_last_change_ms = 0U;
     bool need_clear = true;
 
     sys_lcd.main.sub_page = MAIN_SUB_OUTPUT;
@@ -2176,6 +2177,11 @@ void lcd_task(void *arg)
                 lcd_main_next_page();
             }
         }
+        if (snap.screen != LCD_SCREEN_STANDBY)
+        {
+            standby_page_last_change_ms = 0U;
+        }
+
         /* ====== STEP 6: SCREEN CHANGE DETECTION ====== */
         if (snap.screen != last_screen)
         {
@@ -2314,7 +2320,6 @@ void lcd_task(void *arg)
 
         case LCD_SCREEN_STANDBY:
         {
-            static uint32_t standby_page_last_change_ms = 0U;
             const uint32_t now = _lcd_get_time_ms();
             draw_standby(&snap.standby);
 
