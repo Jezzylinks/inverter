@@ -158,11 +158,9 @@
 #define FAULT_REVERSE_POLARITY (1 << 7)
 #define FAULT_WATCHDOG (1 << 8)
 #define SYS_STATE_MUTEX_TIMEOUT_MS 100
-#define DISPLAY_TIMEOUT 300
 #define SLEEP_TIMEOUT 1800
 #define UI_MENU_TIMEOUT_MS 10000U
 #define UI_STANDBY_TIMEOUT_MS (10U * 60U * 1000U)
-#define START_ERROR_DISPLAY_DURATION_MS 5000U
 #define LCD_PWM_FREQ 5000
 #define LCD_PWM_RES LEDC_TIMER_8_BIT
 #define LCD_BACKLIGHT_LEDC_TIMER LEDC_TIMER_1
@@ -1121,7 +1119,6 @@ void check_protections();
 void update_led_status();
 void perform_factory_reset();
 void show_system_info();
-bool system_is_inactive();
 void update_activity();
 void display_timeout_task(void *arg);
 esp_err_t lcd_power_init();
@@ -6224,13 +6221,6 @@ void adjust_calibration_setting(button_event_info_t btn)
         show_menu_screen(MAIN_MENU, 0);
         break;
     }
-}
-
-bool system_is_inactive()
-{
-    const TickType_t now = xTaskGetTickCount();
-    return (now - sys_state.flags.last_user_activity) >=
-           pdMS_TO_TICKS(UI_STANDBY_TIMEOUT_MS);
 }
 
 // ================== UPDATED INPUT HANDLER ==================
