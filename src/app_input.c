@@ -863,6 +863,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         return;
     }
 
+    sys_state.last_activity_time = event_info->timestamp_us / 1000;
+    sys_state.flags.last_user_activity = xTaskGetTickCount();
+
     if (event_info->event == BUTTON_EVENT_CLICK && ota_confirmation_is_pending()) {
         (void)app_services_confirm_update();
         return;
