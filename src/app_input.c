@@ -1025,9 +1025,6 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         }
         return;
     }
-        handle_wifi_client_delete_confirmation_enter();
-        return;
-    }
 
     if (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS) {
         if (event_info->event == BUTTON_EVENT_CLICK) {
