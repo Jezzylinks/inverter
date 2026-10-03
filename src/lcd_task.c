@@ -2235,6 +2235,17 @@ void lcd_task(void *arg)
 
         case LCD_SCREEN_FAULT:
             draw_fault(&snap.fault);
+            if (snap.fault.transient &&
+                _lcd_get_time_ms() - snap.fault.entered_ms >= 5000U)
+            {
+                xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+                if (sys_lcd.screen == LCD_SCREEN_FAULT && sys_lcd.fault.transient)
+                {
+                    sys_lcd.fault.transient = false;
+                    sys_lcd.screen = LCD_SCREEN_MAIN;
+                }
+                xSemaphoreGive(sys_state_mutex);
+            }
             break;
 
         case LCD_SCREEN_SYSTEM_EVENT:
@@ -2302,8 +2313,24 @@ void lcd_task(void *arg)
             break;
 
         case LCD_SCREEN_STANDBY:
+        {
+            static uint32_t standby_page_last_change_ms = 0U;
+            const uint32_t now = _lcd_get_time_ms();
             draw_standby(&snap.standby);
+
+            /* Keep the saver informative without requiring a button: rotate
+             * between the existing status and battery pages every 5 seconds. */
+            if (standby_page_last_change_ms == 0U)
+            {
+                standby_page_last_change_ms = now;
+            }
+            else if (now - standby_page_last_change_ms >= 5000U)
+            {
+                lcd_standby_next_page();
+                standby_page_last_change_ms = now;
+            }
             break;
+        }
 
         case LCD_SCREEN_FLASH_MSG:
         {
