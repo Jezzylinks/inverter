@@ -270,6 +270,29 @@ static bool ota_confirmation_is_pending(void)
     return status.confirmation_pending;
 }
 
+/* Consume the first button event when waking from a display-only state. */
+static bool consume_display_wakeup_event(const button_event_info_t *event_info)
+{
+    if (event_info == NULL) {
+        return false;
+    }
+
+    bool wake = false;
+    LCD_LOCK();
+    wake = (sys_lcd.screen == LCD_SCREEN_STANDBY) ||
+           (sys_lcd.screen == LCD_SCREEN_FAULT && sys_lcd.fault.transient);
+    LCD_UNLOCK();
+
+    if (!wake) {
+        return false;
+    }
+
+    sys_state.last_activity_time = event_info->timestamp_us / 1000;
+    sys_state.flags.last_user_activity = xTaskGetTickCount();
+    go_to_main_screen();
+    return true;
+}
+
 static void handle_wifi_scan_move(bool up)
 {
     uint8_t count = 0U;
@@ -487,6 +510,11 @@ void handle_power_button_event(button_event_info_t *event_info,
 {
     log_button_callback("Power", event_info, sys_state.system_ready);
 
+    if (consume_display_wakeup_event(event_info))
+    {
+        return;
+    }
+
     if (event_info->event == BUTTON_EVENT_PRESS)
     {
         post_button_click_event();
@@ -504,6 +532,11 @@ void handle_power_button_event(button_event_info_t *event_info,
      * display/navigation side effects are deferred until startup releases the
      * LCD. */
     if (lcd_is_startup_active())
+    {
+        return;
+    }
+
+    if (consume_display_wakeup_event(event_info))
     {
         return;
     }
@@ -1529,6 +1562,11 @@ void handle_up_button_event(button_event_info_t *event_info,
         return;
     }
 
+    if (consume_display_wakeup_event(event_info))
+    {
+        return;
+    }
+
     if (event_info->event == BUTTON_EVENT_PRESS)
     {
         post_button_click_event();
@@ -1801,6 +1839,11 @@ void handle_down_button_event(button_event_info_t *event_info,
 {
     log_button_callback("Down", event_info, sys_state.system_ready);
     if (lcd_is_startup_active())
+    {
+        return;
+    }
+
+    if (consume_display_wakeup_event(event_info))
     {
         return;
     }
@@ -2096,6 +2139,11 @@ void handle_back_button_event(button_event_info_t *event_info,
 {
     log_button_callback("Back", event_info, sys_state.system_ready);
     if (lcd_is_startup_active())
+    {
+        return;
+    }
+
+    if (consume_display_wakeup_event(event_info))
     {
         return;
     }
