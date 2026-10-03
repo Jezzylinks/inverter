@@ -381,6 +381,10 @@ void lcd_show_inverter_start_error(inverter_start_error_code_t code,
         LCD_UNLOCK();
     } else {
         lcd_show_fault("SYSTEM ERROR", code_line);
+        LCD_LOCK();
+        sys_lcd.fault.transient = true;
+        sys_lcd.fault.entered_ms = _lcd_get_time_ms();
+        LCD_UNLOCK();
     }
 }
 
