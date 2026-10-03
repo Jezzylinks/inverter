@@ -2594,128 +2594,23 @@ bool save_settings()
 }
 
 /*
- * Foreground editor persistence:
- * save exactly one canonical setting, commit it, then read that same key back.
- * Full-table save_settings() remains available for boot/default/factory paths.
+ * Foreground editor persistence
+ *
+ * A menu edit can change more than one runtime/canonical field (for example,
+ * voltage threshold also updates output-voltage state, and battery selection
+ * regenerates a complete battery profile).  The settings transaction CRC is
+ * calculated from the complete settings table, so saving only one key can
+ * create a CRC mismatch on the next boot and make a valid edit appear to
+ * have been reverted.
+ *
+ * Therefore foreground ENTER uses the same atomic, full-table transaction as
+ * the other authoritative settings-save paths.  Keep this wrapper so the
+ * editor has one clearly named persistence entry point.
  */
-static bool save_current_setting_locked(size_t setting_index)
-{
-    if (setting_index >= NVS_SETTINGS_COUNT)
-    {
-        ESP_LOGE("NVS_SAVE", "Invalid current setting index: %u",
-                 (unsigned)setting_index);
-        return false;
-    }
-
-    if (!storage_nvs_is_ready())
-    {
-        const esp_err_t init_err = storage_nvs_init();
-        if (init_err != ESP_OK)
-        {
-            ESP_LOGE("NVS_SAVE", "Current-setting NVS init failed: %s",
-                     esp_err_to_name(init_err));
-            return false;
-        }
-    }
-
-    nvs_handle_t nvs;
-    esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE("NVS_SAVE", "Failed to open NVS for current key '%s': %s",
-                 g_settings[setting_index].key, esp_err_to_name(err));
-        return false;
-    }
-
-    const nvs_setting_t *setting = &g_settings[setting_index];
-    const int32_t expected = settings_encoded_value(setting);
-
-    ESP_LOGI("NVS_SAVE", "SETTINGS_SAVE_CURRENT: key=%s value=%ld",
-             setting->key, (long)expected);
-
-    err = nvs_write_setting(nvs, setting);
-    if (err == ESP_ERR_NVS_TYPE_MISMATCH)
-    {
-        const esp_err_t erase_err = nvs_erase_key(nvs, setting->key);
-        if (erase_err == ESP_OK || erase_err == ESP_ERR_NVS_NOT_FOUND)
-            err = nvs_write_setting(nvs, setting);
-        else
-            err = erase_err;
-    }
-
-    if (err != ESP_OK)
-    {
-        ESP_LOGE("NVS_SAVE", "Current-setting write failed key='%s': %s",
-                 setting->key, esp_err_to_name(err));
-        storage_nvs_close(nvs);
-        return false;
-    }
-
-    uint32_t generation = 0U;
-    err = nvs_get_u32(nvs, NVS_SETTINGS_TXN_GEN_KEY, &generation);
-    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
-    {
-        ESP_LOGE("NVS_SAVE", "Failed reading transaction generation: %s",
-                 esp_err_to_name(err));
-        storage_nvs_close(nvs);
-        return false;
-    }
-
-    err = nvs_set_u8(nvs, NVS_SETTINGS_TXN_VALID_KEY, 0U);
-    if (err == ESP_OK)
-        err = nvs_set_u32(nvs, NVS_SETTINGS_TXN_GEN_KEY, generation + 1U);
-    if (err == ESP_OK)
-        err = nvs_set_u32(nvs, NVS_SETTINGS_TXN_CRC_KEY, settings_fingerprint());
-    if (err == ESP_OK)
-        err = nvs_set_u8(nvs, NVS_SETTINGS_TXN_VALID_KEY,
-                         NVS_SETTINGS_TXN_VERSION);
-
-    if (err != ESP_OK)
-    {
-        ESP_LOGE("NVS_SAVE", "Current-setting transaction metadata failed: %s",
-                 esp_err_to_name(err));
-        storage_nvs_close(nvs);
-        return false;
-    }
-
-    err = nvs_commit(nvs);
-    storage_nvs_close(nvs);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE("NVS_SAVE", "Current-setting commit failed key='%s': %s",
-                 setting->key, esp_err_to_name(err));
-        return false;
-    }
-
-    nvs_handle_t verify;
-    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &verify);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE("NVS_SAVE", "Current-setting readback open failed key='%s': %s",
-                 setting->key, esp_err_to_name(err));
-        return false;
-    }
-
-    int32_t actual = 0;
-    err = nvs_read_setting(verify, setting, &actual);
-    storage_nvs_close(verify);
-
-    if (err != ESP_OK || actual != expected)
-    {
-        ESP_LOGE("NVS_SAVE",
-                 "Current-setting readback FAILED key='%s': expected=%ld actual=%ld err=%s",
-                 setting->key, (long)expected, (long)actual,
-                 esp_err_to_name(err));
-        return false;
-    }
-
-    ESP_LOGI("NVS_SAVE", "SETTINGS_SAVE_CURRENT: SUCCESS key=%s value=%ld",
-             setting->key, (long)actual);
-    return true;
-}
-
 static bool save_current_setting(size_t setting_index)
 {
+    (void)setting_index;
+
     if (!s_save_mutex)
     {
         ESP_LOGE("NVS_SAVE",
@@ -2726,15 +2621,18 @@ static bool save_current_setting(size_t setting_index)
     if (xSemaphoreTake(s_save_mutex, pdMS_TO_TICKS(4000)) != pdTRUE)
     {
         ESP_LOGE("NVS_SAVE",
-                 "Timed out waiting for current-setting save lock");
+                 "Timed out waiting for settings save serialisation lock");
         return false;
     }
 
-    const bool result = save_current_setting_locked(setting_index);
+    const bool result = save_settings_locked();
     xSemaphoreGive(s_save_mutex);
+
+    ESP_LOGI("NVS_SAVE",
+             "Foreground settings transaction %s",
+             result ? "COMMITTED" : "FAILED");
     return result;
 }
-
 
 static bool save_settings_locked(void)
 {
