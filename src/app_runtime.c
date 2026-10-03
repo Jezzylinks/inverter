@@ -1843,13 +1843,16 @@ static void settings_restore_current_snapshot(void)
     sys_state.system_timeout = (uint64_t)sys_state.settings.system_timeout;
 }
 
-static uint32_t settings_fingerprint(void)
+/* The transaction CRC is always computed from a captured snapshot, never from
+ * live memory, so the CRC is guaranteed to describe exactly the values that
+ * were written to flash even if another task changes a runtime field while
+ * the (slow) NVS write is in progress. */
+static uint32_t settings_fingerprint_from_snapshot(const settings_value_snapshot_t *snapshot)
 {
     uint32_t hash = 2166136261UL;
     for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
     {
-        const nvs_setting_t *setting = &g_settings[i];
-        const int32_t encoded = settings_encoded_value(setting);
+        const int32_t encoded = snapshot[i].value;
         const uint8_t *bytes = (const uint8_t *)&encoded;
         for (size_t j = 0U; j < sizeof(encoded); ++j)
         {
@@ -1860,6 +1863,15 @@ static uint32_t settings_fingerprint(void)
         hash *= 16777619UL;
     }
     return hash ^ NVS_SETTINGS_TXN_VERSION;
+}
+
+/* Fingerprint of the current live settings (used when validating what was
+ * just loaded from flash). */
+static uint32_t settings_fingerprint(void)
+{
+    settings_value_snapshot_t snapshot[NVS_SETTINGS_COUNT];
+    settings_snapshot_capture(snapshot);
+    return settings_fingerprint_from_snapshot(snapshot);
 }
 
 static void nvs_apply_defaults(void)
@@ -1894,44 +1906,39 @@ static void nvs_apply_defaults(void)
     }
 }
 
-static esp_err_t nvs_write_setting(nvs_handle_t handle,
-                                   const nvs_setting_t *setting)
+/* Write one setting from its canonical encoded value (as produced by
+ * settings_encoded_value()).  Using the captured value instead of re-reading
+ * the live field keeps the stored data, the CRC and the read-back check all
+ * describing the same snapshot.
+ *
+ * settings_encoded_value() uses roundf() for scaled floats; a bare C cast
+ * would truncate (16.8 * 100 = 1679.9999 in float32) and make the read-back
+ * verification report a mismatch ("Save Failed"). */
+static esp_err_t nvs_write_encoded(nvs_handle_t handle,
+                                   const nvs_setting_t *setting,
+                                   int32_t encoded)
 {
     if (setting->is_bool)
     {
-        return nvs_set_u8(handle, setting->key,
-                          *(const bool *)setting->field ? 1U : 0U);
+        return nvs_set_u8(handle, setting->key, encoded ? 1U : 0U);
     }
     if (setting->is_scaled_float)
     {
-        /* MUST use settings_encoded_value() here, not a bare (int32_t)(f*scale)
-         * cast.  settings_encoded_value uses roundf(); a raw C cast truncates
-         * toward zero.  For float32 values whose product with NVS_FLOAT_SCALE
-         * is not exactly representable (e.g. 16.8 × 100 = 1679.9999... in
-         * float32), truncation writes 1679 while settings_encoded_value returns
-         * 1680.  nvs_verify_settings then compares the read-back (1679) against
-         * the pre-write snapshot (1680) and reports a mismatch, causing
-         * save_settings() to return false and the UI to show "Save Failed". */
-        const int32_t scaled = settings_encoded_value(setting);
-        return nvs_set_i32(handle, setting->key, scaled);
+        return nvs_set_i32(handle, setting->key, encoded);
     }
     if (settings_uses_i8_storage(setting))
     {
-        return nvs_set_i8(handle, setting->key,
-                          *(const int8_t *)setting->field);
+        return nvs_set_i8(handle, setting->key, (int8_t)encoded);
     }
     if (setting->size == sizeof(uint8_t))
     {
-        return nvs_set_u8(handle, setting->key,
-                          *(const uint8_t *)setting->field);
+        return nvs_set_u8(handle, setting->key, (uint8_t)encoded);
     }
     if (settings_uses_u16_storage(setting))
     {
-        return nvs_set_u16(handle, setting->key,
-                           (uint16_t)*(const float *)setting->field);
+        return nvs_set_u16(handle, setting->key, (uint16_t)encoded);
     }
-    return nvs_set_i32(handle, setting->key,
-                       *(const int32_t *)setting->field);
+    return nvs_set_i32(handle, setting->key, encoded);
 }
 
 static esp_err_t nvs_read_setting(nvs_handle_t handle,
@@ -2005,58 +2012,9 @@ size_t app_settings_count(void)
     return NVS_SETTINGS_COUNT;
 }
 
-static esp_err_t nvs_verify_changed_settings(
-    nvs_handle_t handle,
-    const settings_value_snapshot_t *expected,
-    const settings_value_snapshot_t *baseline)
-{
-    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
-    {
-        if (expected[i].value == baseline[i].value)
-            continue;
-        int32_t actual = 0;
-        const esp_err_t err = nvs_read_setting(handle, &g_settings[i], &actual);
-        if (err != ESP_OK)
-            return err;
-        if (actual != expected[i].value)
-        {
-            ESP_LOGE("NVS_SAVE", "Changed-key read-back mismatch key='%s': expected=%ld actual=%ld",
-                     g_settings[i].key, (long)expected[i].value, (long)actual);
-            return ESP_ERR_INVALID_STATE;
-        }
-    }
-    return ESP_OK;
-}
-
-static esp_err_t nvs_save_changed_settings(
-    nvs_handle_t handle,
-    const settings_value_snapshot_t *baseline,
-    const settings_value_snapshot_t *current)
-{
-    esp_err_t first_err = ESP_OK;
-    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
-    {
-        if (current[i].value == baseline[i].value)
-            continue;
-        nvs_setting_t *s = &g_settings[i];
-        ESP_LOGI("NVS_SAVE", "SETTINGS_SAVE_CHANGED: key=%s old=%ld new=%ld",
-                 s->key, (long)baseline[i].value, (long)current[i].value);
-        esp_err_t err = nvs_write_setting(handle, s);
-        if (err == ESP_ERR_NVS_TYPE_MISMATCH)
-        {
-            const esp_err_t erase_err = nvs_erase_key(handle, s->key);
-            if (erase_err == ESP_OK || erase_err == ESP_ERR_NVS_NOT_FOUND)
-                err = nvs_write_setting(handle, s);
-            else
-                err = erase_err;
-        }
-        if (err != ESP_OK && first_err == ESP_OK)
-            first_err = err;
-    }
-    return first_err;
-}
-
-esp_err_t nvs_save_all(nvs_handle_t handle)
+/* Write every setting from an already captured snapshot. */
+static esp_err_t nvs_save_snapshot(nvs_handle_t handle,
+                                   const settings_value_snapshot_t *snapshot)
 {
     esp_err_t err = ESP_OK;
     esp_err_t first_err = ESP_OK;
@@ -2064,14 +2022,9 @@ esp_err_t nvs_save_all(nvs_handle_t handle)
 
     for (size_t i = 0; i < NVS_SETTINGS_COUNT; i++)
     {
-        nvs_setting_t *s = &g_settings[i];
+        const nvs_setting_t *s = &g_settings[i];
 
-        ESP_LOGI(NVS_SAVING_TAG, "SETTINGS_SAVE: key=%s", s->key);
-        err = nvs_write_setting(handle, s);
-        if (err == ESP_OK)
-        {
-            ESP_LOGI(NVS_SAVING_TAG, "SETTINGS_SAVE: key=%s nvs_set OK", s->key);
-        }
+        err = nvs_write_encoded(handle, s, snapshot[i].value);
         if (err == ESP_ERR_NVS_TYPE_MISMATCH)
         {
             /* NVS fixes a key's type when it is first created. Older
@@ -2083,7 +2036,7 @@ esp_err_t nvs_save_all(nvs_handle_t handle)
             const esp_err_t erase_err = nvs_erase_key(handle, s->key);
             if (erase_err == ESP_OK || erase_err == ESP_ERR_NVS_NOT_FOUND)
             {
-                err = nvs_write_setting(handle, s);
+                err = nvs_write_encoded(handle, s, snapshot[i].value);
             }
             else
             {
@@ -2094,9 +2047,8 @@ esp_err_t nvs_save_all(nvs_handle_t handle)
         if (err != ESP_OK)
         {
             ESP_LOGE(NVS_SAVING_TAG,
-                     "Failed to save namespace='%s' key='%s' type=%s: %s (0x%x)",
-                     NVS_NS_SYSTEM, s->key,
-                     s->is_scaled_float ? "i32_scaled" : (s->size == sizeof(uint8_t) ? "u8" : "i32"),
+                     "Failed to save namespace='%s' key='%s' value=%ld: %s (0x%x)",
+                     NVS_NS_SYSTEM, s->key, (long)snapshot[i].value,
                      esp_err_to_name(err), err);
             if (first_err == ESP_OK)
             {
@@ -2106,6 +2058,13 @@ esp_err_t nvs_save_all(nvs_handle_t handle)
     }
 
     return first_err;
+}
+
+esp_err_t nvs_save_all(nvs_handle_t handle)
+{
+    settings_value_snapshot_t snapshot[NVS_SETTINGS_COUNT];
+    settings_snapshot_capture(snapshot);
+    return nvs_save_snapshot(handle, snapshot);
 }
 
 esp_err_t nvs_load_all(nvs_handle_t handle)
@@ -2130,7 +2089,7 @@ esp_err_t nvs_load_all(nvs_handle_t handle)
         else if (s->is_scaled_float)
         {
             /* Use roundf() for the default to match settings_encoded_value()
-             * and nvs_write_setting().  A bare (int32_t)(default * scale)
+             * and nvs_write_encoded().  A bare (int32_t)(default * scale)
              * truncates toward zero; roundf() is stable across round-trips. */
             int32_t scaled = (int32_t)roundf(s->default_val * NVS_FLOAT_SCALE);
             err = nvs_get_i32(handle, s->key, &scaled);
@@ -2475,10 +2434,6 @@ bool load_settings()
         load_error = true;
     }
 
-    /* Keep timeout fields synchronized. */
-    sys_state.system_timeout =
-        sys_state.settings.system_timeout;
-
     /* Validate settings transaction while handle is still open. */
     uint8_t txn_marker = 0U;
     uint32_t stored_crc = 0U;
@@ -2492,6 +2447,11 @@ bool load_settings()
         nvs_get_u32(nvs,
                     NVS_SETTINGS_TXN_CRC_KEY,
                     &stored_crc) == ESP_OK;
+
+    /* True only when flash holds a complete, current-version transaction whose
+     * CRC matches the values just decoded.  Only then are the decoded values
+     * known to be ones the user actually saved. */
+    bool txn_trusted = false;
 
     if (txn_present && txn_marker != NVS_SETTINGS_TXN_VERSION)
     {
@@ -2512,6 +2472,30 @@ bool load_settings()
         nvs_apply_defaults();
         load_error = true;
     }
+    else if (txn_present)
+    {
+        txn_trusted = true;
+    }
+
+    /* Keep timeout fields synchronized (after any default restore above). */
+    sys_state.system_timeout =
+        sys_state.settings.system_timeout;
+
+    if (txn_trusted)
+    {
+        /* current_limit / temperature_limit are persisted through
+         * sys_state.settings.*, but the protection code reads the runtime
+         * copies.  Restore them from the saved values; otherwise a saved edit
+         * is shown in the menu but the runtime keeps its boot default (and
+         * validate_and_clamp_settings() checks the wrong copy). */
+        sys_state.current_limit = sys_state.settings.current_limit;
+        sys_state.temperature_limit = sys_state.settings.temperature_alarm;
+    }
+
+    /* The user-editable battery cutoff lives inside the generated profile.
+     * battery_load_profile() regenerates the whole profile from
+     * type/voltage/capacity, which would silently discard an edited cutoff. */
+    const float saved_cutoff_v = sys_state.battery_profile.cutoff_voltage_v;
 
     /*
      * IMPORTANT:
@@ -2527,6 +2511,23 @@ bool load_settings()
         ESP_LOGW("BAT_PROFILE",
                  "Failed to load battery profile, using defaults");
         load_error = true;
+    }
+    else if (txn_trusted)
+    {
+        battery_profile_t *bp = &sys_state.battery_profile;
+        const float margin_v = 0.3f; /* same margin as validate_and_clamp_settings() */
+        if (saved_cutoff_v >= bp->cutoff_voltage_min_v &&
+            saved_cutoff_v <= bp->high_battery_voltage_v &&
+            saved_cutoff_v < bp->recharge_voltage_v - margin_v)
+        {
+            if (saved_cutoff_v != bp->cutoff_voltage_v)
+            {
+                ESP_LOGI(NVS_LOADING_TAG,
+                         "Restoring saved battery cutoff %.2fV (profile default %.2fV)",
+                         saved_cutoff_v, bp->cutoff_voltage_v);
+            }
+            bp->cutoff_voltage_v = saved_cutoff_v;
+        }
     }
 
     sync_battery_voltage_state();
@@ -2651,7 +2652,6 @@ static bool save_settings_locked(void)
     }
     nvs_handle_t nvs;
     settings_value_snapshot_t expected[NVS_SETTINGS_COUNT];
-    settings_snapshot_capture(expected);
     const char *NVS_SAVE_TAG = "NVS_SAVE";
 
     err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs);
@@ -2661,10 +2661,19 @@ static bool save_settings_locked(void)
         return false;
     }
 
-    ESP_LOGI(NVS_SAVE_TAG, "Saving settings to NVS...");
-    /* save_settings() is the explicit full-table persistence API. Foreground
-     * menu edits use save_current_setting() and never enter this path. */
-    err = nvs_save_all(nvs);
+    /* The caller holds s_save_mutex, and the NVS lock is now held by this
+     * handle.  Capture the authoritative settings exactly once, here: the
+     * stored values, the transaction CRC and the read-back verification are
+     * all derived from this one snapshot.  Previously each of them re-read
+     * live memory at a different time, so a runtime change in between (for
+     * example inverter_active) produced a CRC that did not match the stored
+     * values (next boot: "checksum invalid; restoring validated defaults")
+     * or a false read-back mismatch ("Save Failed"). */
+    settings_snapshot_capture(expected);
+
+    ESP_LOGI(NVS_SAVE_TAG, "SETTINGS_TRANSACTION: writing %u keys",
+             (unsigned)NVS_SETTINGS_COUNT);
+    err = nvs_save_snapshot(nvs, expected);
     if (err != ESP_OK)
     {
         ESP_LOGE(NVS_SAVE_TAG, "Settings transaction write failed: %s", esp_err_to_name(err));
@@ -2692,7 +2701,7 @@ static bool save_settings_locked(void)
     if (err == ESP_OK)
     {
         err = nvs_set_u32(nvs, NVS_SETTINGS_TXN_CRC_KEY,
-                          settings_fingerprint());
+                          settings_fingerprint_from_snapshot(expected));
     }
     if (err == ESP_OK)
     {
@@ -2744,7 +2753,8 @@ static bool save_settings_locked(void)
                  esp_err_to_name(err), err);
         return false;
     }
-    ESP_LOGI(NVS_SAVE_TAG, "SETTINGS_TRANSACTION: SUCCESS (all keys)");
+    ESP_LOGI(NVS_SAVE_TAG, "SETTINGS_TRANSACTION: SUCCESS (all keys, gen=%lu)",
+             (unsigned long)(generation + 1U));
     return true;
 }
 
@@ -4952,9 +4962,22 @@ bool exit_value_edit_mode(bool save_changes)
 
     if (save_changes && sys_state.value_changed)
     {
+        const int32_t edit_old_value =
+            (s_edit_snapshot_valid && s_edit_setting_index < NVS_SETTINGS_COUNT)
+                ? s_edit_snapshot[s_edit_setting_index].value
+                : 0;
         apply_value_change();
+        if (s_edit_setting_index < NVS_SETTINGS_COUNT)
+        {
+            ESP_LOGI("SETTINGS_EDIT", "idx=%u key=%s old=%ld new=%ld",
+                     (unsigned)s_edit_setting_index,
+                     g_settings[s_edit_setting_index].key,
+                     (long)edit_old_value,
+                     (long)settings_encoded_value(&g_settings[s_edit_setting_index]));
+        }
         /*
-         * Foreground ENTER saves only the canonical setting being edited.
+         * Foreground ENTER commits the complete settings table as one
+         * transaction (see save_current_setting()).
          * Wi-Fi is different: app_services owns its asynchronous radio
          * transition and APP_WIFI_ENABLED_KEY persistence, so do not perform
          * a second generic NVS transaction here.
@@ -4977,6 +5000,7 @@ bool exit_value_edit_mode(bool save_changes)
 
         if (saved)
         {
+            ESP_LOGI("SETTINGS_APPLY", "committed %s", ctx->label);
             printf("Value saved successfully\n");
         }
         else
