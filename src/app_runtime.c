@@ -4704,6 +4704,13 @@ void handle_menu_timeout(void)
         return;
     }
 
+    /* Never interrupt a factory-reset erase/format operation merely because
+     * the user cannot press a key while the operation is running. */
+    if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_PROGRESS)
+    {
+        return;
+    }
+
     /* An inactivity exit is a full UI reset.  Discard any pending edit,
      * confirmation, detail view, Wi-Fi child screen, or factory-reset PIN
      * session before returning to the home UI. */
