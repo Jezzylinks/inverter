@@ -539,14 +539,6 @@ void handle_power_button_event(button_event_info_t *event_info,
         return;
     }
 
-    if (consume_display_wakeup_event(event_info))
-    {
-        return;
-    }
-
-    sys_state.last_activity_time = event_info->timestamp_us / 1000;
-    sys_state.flags.last_user_activity = xTaskGetTickCount();
-
     if (event_info->event == BUTTON_EVENT_CLICK && ota_confirmation_is_pending()) {
         (void)app_services_cancel_update();
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
@@ -865,6 +857,11 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
     /* Keep button delivery intact, but do not let normal navigation take
      * ownership of the LCD before app_main performs STARTUP -> NORMAL. */
     if (lcd_is_startup_active())
+    {
+        return;
+    }
+
+    if (consume_display_wakeup_event(event_info))
     {
         return;
     }
