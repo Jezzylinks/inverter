@@ -25,6 +25,7 @@
 #include "security/security.h"
 #include "system/system_state.h"
 #include "utility/buzzer.h"
+#include "utility/led.h"
 
 #define APP_INPUT_TAG "APP_INPUT"
 #define APP_SEQUENCE_TIMEOUT_MS 3000U
