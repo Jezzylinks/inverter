@@ -334,6 +334,8 @@ void lcd_show_inverter_fault(uint16_t code,
     set_line(sys_lcd.fault.line3, line3);
     sys_lcd.fault.blink = false;
     sys_lcd.fault.system_error = false;
+    sys_lcd.fault.transient = false;
+    sys_lcd.fault.entered_ms = _lcd_get_time_ms();
     LCD_UNLOCK();
     lcd_request_refresh();
 }
@@ -356,6 +358,8 @@ void lcd_show_system_error(uint16_t code)
     set_line(sys_lcd.fault.line3, "");
     sys_lcd.fault.blink = false;
     sys_lcd.fault.system_error = true;
+    sys_lcd.fault.transient = false;
+    sys_lcd.fault.entered_ms = _lcd_get_time_ms();
     LCD_UNLOCK();
     lcd_request_refresh();
 }
@@ -371,8 +375,16 @@ void lcd_show_inverter_start_error(inverter_start_error_code_t code,
                                 reason != NULL ? reason : "Inverter start failed",
                                 NAN,
                                 NULL);
+        LCD_LOCK();
+        sys_lcd.fault.transient = true;
+        sys_lcd.fault.entered_ms = _lcd_get_time_ms();
+        LCD_UNLOCK();
     } else {
         lcd_show_fault("SYSTEM ERROR", code_line);
+        LCD_LOCK();
+        sys_lcd.fault.transient = true;
+        sys_lcd.fault.entered_ms = _lcd_get_time_ms();
+        LCD_UNLOCK();
     }
 }
 

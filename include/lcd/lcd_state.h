@@ -223,6 +223,8 @@ extern "C"
         char line3[LCD_LINE_SIZE];
         bool blink;
         bool system_error;
+        bool transient;
+        uint32_t entered_ms;
     } lcd_fault_data_t;
 
     typedef enum

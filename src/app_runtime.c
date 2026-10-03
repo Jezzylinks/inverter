@@ -158,8 +158,9 @@
 #define FAULT_REVERSE_POLARITY (1 << 7)
 #define FAULT_WATCHDOG (1 << 8)
 #define SYS_STATE_MUTEX_TIMEOUT_MS 100
-#define DISPLAY_TIMEOUT 300
 #define SLEEP_TIMEOUT 1800
+#define UI_MENU_TIMEOUT_MS 10000U
+#define UI_STANDBY_TIMEOUT_MS (10U * 60U * 1000U)
 #define LCD_PWM_FREQ 5000
 #define LCD_PWM_RES LEDC_TIMER_8_BIT
 #define LCD_BACKLIGHT_LEDC_TIMER LEDC_TIMER_1
@@ -229,7 +230,7 @@
 #define LONG_PRESS_THRESHOLD_MS 2000
 #define VERY_LONG_PRESS_THRESHOLD_MS 5000
 #define SEQUENCE_TIMEOUT_MS 3000
-#define MENU_TIMEOUT_MS 300000 // 5 minutes -- return to main screen if no button press while a menu is open
+#define MENU_TIMEOUT_MS UI_MENU_TIMEOUT_MS // 10 seconds -- return to home after inactivity outside the home UI
 #define FACTORY_RESET_HOLD_MS 10000
 #define FAST_INCREMENT_THRESHOLD_MS 500
 #define REPEAT_ACCELERATION_MS 100
@@ -1118,7 +1119,6 @@ void check_protections();
 void update_led_status();
 void perform_factory_reset();
 void show_system_info();
-bool system_is_inactive();
 void update_activity();
 void display_timeout_task(void *arg);
 esp_err_t lcd_power_init();
@@ -4694,22 +4694,41 @@ bool check_safety_conditions(void)
 /* ── handle_menu_timeout() ──────────────────────────────────────────────── */
 void handle_menu_timeout(void)
 {
-    int64_t now = esp_timer_get_time() / 1000;
-    if (sys_state.menu_state != MENU_NONE &&
-        now - sys_state.last_activity_time > MENU_TIMEOUT_MS)
+    const int64_t now = esp_timer_get_time() / 1000;
+    if (sys_state.menu_state == MENU_NONE ||
+        now - sys_state.last_activity_time <= MENU_TIMEOUT_MS)
     {
-        if (sys_state.menu_state == MENU_FACTORY_RESET)
-        {
-            /* An inactivity exit must discard the pending PIN/action so a
-             * later factory-reset entry always starts from a clean state. */
-            factory_reset_cancel(&sys_lcd.factory_reset);
-        }
-
-        sys_state.menu_state = MENU_NONE;
-        sys_state.menu_selection = 0;
-        clear_menu_history();
-        go_to_main_screen();
+        return;
     }
+
+    /* Never interrupt a factory-reset erase/format operation merely because
+     * the user cannot press a key while the operation is running. */
+    if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_PROGRESS)
+    {
+        return;
+    }
+
+    /* An inactivity exit is a full UI reset.  Discard any pending edit,
+     * confirmation, detail view, Wi-Fi child screen, or factory-reset PIN
+     * session before returning to the home UI. */
+    if (sys_state.value_edit_mode)
+    {
+        (void)exit_value_edit_mode(false);
+    }
+    sys_state.in_confirmation_screen = false;
+    sys_state.in_info_screen = false;
+    sys_state.in_detail_view = false;
+
+    if (sys_state.menu_state == MENU_FACTORY_RESET)
+    {
+        factory_reset_cancel(&sys_lcd.factory_reset);
+    }
+
+    sys_state.menu_state = MENU_NONE;
+    sys_state.menu_selection = 0;
+    clear_menu_history();
+    sys_state.last_activity_time = now;
+    go_to_main_screen();
 }
 
 /*------------------------------------------------------------------------------
@@ -6204,68 +6223,82 @@ void adjust_calibration_setting(button_event_info_t btn)
     }
 }
 
-bool system_is_inactive()
-{
-    // 1. check for recent user input
-    if (xTaskGetTickCount() - sys_state.flags.last_user_activity < pdMS_TO_TICKS(DISPLAY_TIMEOUT * 1000))
-    {
-        return false;
-    }
-    // 2. Check for power events
-    if (xTaskGetTickCount() - sys_state.flags.last_power_event < pdMS_TO_TICKS(DISPLAY_TIMEOUT * 1000))
-    {
-        return false;
-    }
-    // 3. Check if system is in active mode
-    if (sys_state.inverter.inverter_active || sys_state.inverter.connected)
-    {
-        return false;
-    }
-    // 4. If we get here, system is inactive
-    return true;
-}
-
 // ================== UPDATED INPUT HANDLER ==================
 void update_activity()
 {
-    // Update last user activity timestamp
-    if (system_is_inactive())
-    {
-        // If system is inactive, do not update last activity
-        return;
-    }
-    sys_state.flags.last_user_activity = xTaskGetTickCount();
-    // Turn display on if it was off
+    const TickType_t now = xTaskGetTickCount();
+    sys_state.flags.last_user_activity = now;
+    sys_state.flags.last_power_event = now;
+    sys_state.last_activity_time = esp_timer_get_time() / 1000;
+
+    /* Any user activity wakes the physical display if it was previously
+     * blanked by an older display-power path. */
     if (!sys_state.display.display_on)
     {
         sys_state.display.display_on = true;
         LCD_power(true);
-        update_led(LED_STATUS, 100); // Full brightness
+        update_led(LED_STATUS, 100);
     }
 }
 
-// ================== DISPLAY TIMEOUT TASK ==================
+static bool ui_standby_allowed(void)
+{
+    if (sys_state.menu_state != MENU_NONE ||
+        sys_state.value_edit_mode ||
+        sys_state.in_confirmation_screen ||
+        sys_state.in_info_screen ||
+        sys_state.in_detail_view)
+    {
+        return false;
+    }
+
+    if (sys_lcd.screen != LCD_SCREEN_MAIN ||
+        lcd_is_startup_active())
+    {
+        return false;
+    }
+
+    /* Never replace an active startup transition with the idle saver. */
+    if (sys_state.inverter.inverter_state == INVERTER_STARTING)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+// ================== UI TIMEOUT / STANDBY TASK ==================
 void display_timeout_task(void *arg)
 {
     if (!task_watchdog_register("display_timeout_task"))
     {
-        /* A TWDT task must not continue unprotected. */
         vTaskDelete(NULL);
         return;
     }
+
     while (1)
     {
         task_watchdog_feed();
-        // Turn off display after timeout
 
-        if (sys_state.display.display_on &&
-            xTaskGetTickCount() - sys_state.flags.last_user_activity > pdMS_TO_TICKS(DISPLAY_TIMEOUT * 1000))
+        /* Menus, editors, detail pages and other non-home UI have a strict
+         * 10-second inactivity timeout. */
+        handle_menu_timeout();
+
+        /* After 10 minutes with no user action on the home UI, enter the
+         * display-only standby saver.  This deliberately does NOT change the
+         * inverter's electrical operating state. */
+        const int64_t now_ms = esp_timer_get_time() / 1000;
+        if (ui_standby_allowed() &&
+            now_ms - sys_state.last_activity_time >= UI_STANDBY_TIMEOUT_MS)
         {
-            sys_state.display.display_on = false;
-            LCD_power(false);
-            update_led(LED_STATUS, 0); // Turn off LED
+            const uint8_t soc = (uint8_t)fmaxf(0.0f,
+                fminf(100.0f, battery_estimator_get_soc(&bat_estimate)));
+            const bool ac_connected = sys_state.inverter.connected;
+            lcd_show_standby(sys_state.inverter.battery.voltage,
+                             soc, ac_connected);
         }
-        vTaskDelay(pdMS_TO_TICKS(1000)); // Check every second
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -6442,7 +6475,7 @@ esp_err_t init_system_state()
     sys_state.error_count = 0;
 
     /* Timing */
-    sys_state.last_activity_time = esp_timer_get_time();
+    sys_state.last_activity_time = esp_timer_get_time() / 1000;
     sys_state.flags.last_user_activity = xTaskGetTickCount();
     sys_state.flags.last_power_event = xTaskGetTickCount();
 
