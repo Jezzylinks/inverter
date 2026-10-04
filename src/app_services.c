@@ -62,6 +62,9 @@
 #define APP_WIFI_TOGGLE_QUEUE_LENGTH 1U
 #define APP_WIFI_TOGGLE_WATCHDOG_POLL_MS 500U
 #define APP_WIFI_OPERATION_TIMEOUT_MS 30000U
+#define APP_WIFI_PREREQUISITE_POLL_MS 500U
+#define APP_WIFI_PREREQUISITE_STACK_SIZE 4096U
+#define APP_WIFI_PREREQUISITE_PRIORITY 5U
 #define APP_WIFI_SCAN_DURATION_MS 40000U
 #define APP_WIFI_SCAN_POLL_MS 250U
 #define APP_WIFI_SCAN_INTERVAL_MS 2500U
@@ -76,6 +79,7 @@ static TaskHandle_t s_ota_check_task;
 static TaskHandle_t s_ota_manifest_check_task;
 static bool s_ota_manifest_check_active;
 static TaskHandle_t s_wifi_operation_watch_task;
+static TaskHandle_t s_wifi_prerequisite_task;
 static TaskHandle_t s_wifi_toggle_task;
 static QueueHandle_t s_wifi_toggle_queue;
 /* Set to 1 while app_wifi_toggle_task is inside execute_wifi_toggle().
@@ -126,7 +130,19 @@ static wifi_mode_t s_wifi_mode_edit_value = WIFI_COMPILED_OPERATION_MODE;
 
 static esp_err_t persist_u8(const char *key, uint8_t value);
 static void app_wifi_toggle_task(void *parameter);
+static void app_wifi_prerequisite_task(void *parameter);
 static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode);
+
+typedef enum {
+    APP_WIFI_PREREQUISITE_NONE = 0,
+    APP_WIFI_PREREQUISITE_OTA_CHECK,
+    APP_WIFI_PREREQUISITE_OTA_INSTALL
+} app_wifi_prerequisite_operation_t;
+
+static app_wifi_prerequisite_operation_t s_wifi_prerequisite_operation;
+static bool s_wifi_prerequisite_pending;
+static bool s_wifi_prerequisite_waiting;
+static bool s_wifi_prerequisite_ready;
 
 static bool app_manifest_url_is_valid(const char *url)
 {
@@ -214,6 +230,72 @@ static void app_wifi_scan_task(void *parameter)
     s_wifi_scan_task = NULL;
     xSemaphoreGive(s_services_mutex);
     vTaskDelete(NULL);
+}
+
+static void app_wifi_prerequisite_task(void *parameter)
+{
+    (void)parameter;
+
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(APP_WIFI_PREREQUISITE_POLL_MS));
+
+        app_wifi_prerequisite_operation_t operation = APP_WIFI_PREREQUISITE_NONE;
+        bool waiting = false;
+
+        if (s_services_mutex != NULL) {
+            xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+            operation = s_wifi_prerequisite_operation;
+            waiting = s_wifi_prerequisite_waiting;
+            xSemaphoreGive(s_services_mutex);
+        }
+
+        if (!waiting || operation == APP_WIFI_PREREQUISITE_NONE) {
+            continue;
+        }
+
+        if (!wifi_controller_is_connected() || !wifi_monitor_is_online()) {
+            continue;
+        }
+
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        if (s_wifi_prerequisite_operation == operation &&
+            s_wifi_prerequisite_waiting) {
+            s_wifi_prerequisite_waiting = false;
+            s_wifi_prerequisite_ready = true;
+        } else {
+            operation = APP_WIFI_PREREQUISITE_NONE;
+        }
+        xSemaphoreGive(s_services_mutex);
+
+        if (operation == APP_WIFI_PREREQUISITE_NONE) {
+            continue;
+        }
+
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "Wi-Fi prerequisite ready for operation=%d", (int)operation);
+
+        if (operation == APP_WIFI_PREREQUISITE_OTA_CHECK) {
+            xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+            s_wifi_prerequisite_ready = false;
+            s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_NONE;
+            xSemaphoreGive(s_services_mutex);
+
+            (void)app_services_check_for_update(true);
+        } else {
+            /*
+             * Keep the existing OTA authentication boundary in app_input.c.
+             * Return to the OTA menu with Install selected; ENTER resumes the
+             * normal PIN/confirmation path now that networking is ready.
+             */
+            xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+            s_wifi_prerequisite_ready = true;
+            s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_NONE;
+            xSemaphoreGive(s_services_mutex);
+
+            lcd_flash_message("Wi-Fi Ready", "Press ENTER", 1200U);
+            show_menu_screen(MENU_OTA, 1);
+        }
+    }
 }
 
 static void app_wifi_operation_watch_task(void *parameter)
@@ -935,6 +1017,10 @@ esp_err_t app_services_init(void)
     s_wifi_scan_task = NULL;
     s_wifi_forget_pending = false;
     s_wifi_disconnect_pending = false;
+    s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_NONE;
+    s_wifi_prerequisite_pending = false;
+    s_wifi_prerequisite_waiting = false;
+    s_wifi_prerequisite_ready = false;
     xSemaphoreGive(s_services_mutex);
 
     load_persisted_config();
@@ -1078,6 +1164,23 @@ esp_err_t app_services_init(void)
         else
         {
             task_watchdog_register_health_only("wifi_op_watch");
+        }
+    }
+    if (!s_wifi_prerequisite_task)
+    {
+        if (xTaskCreatePinnedToCore(app_wifi_prerequisite_task,
+                        "wifi_prereq",
+                        APP_WIFI_PREREQUISITE_STACK_SIZE,
+                        NULL,
+                        APP_WIFI_PREREQUISITE_PRIORITY,
+                        &s_wifi_prerequisite_task, APP_CORE_SYSTEM) != pdPASS)
+        {
+            s_wifi_prerequisite_task = NULL;
+            ESP_LOGW(APP_SERVICES_TAG, "Could not create Wi-Fi prerequisite task");
+        }
+        else
+        {
+            task_watchdog_register_health_only("wifi_prereq");
         }
     }
     return err == ESP_OK ? ota_err : err;
@@ -2036,10 +2139,20 @@ esp_err_t app_services_check_for_update(bool user_initiated)
         return ESP_ERR_INVALID_STATE;
     }
     if (!wifi_controller_is_connected()) {
+        if (user_initiated && !app_services_wifi_enabled()) {
+            xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+            s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_OTA_CHECK;
+            s_wifi_prerequisite_pending = true;
+            s_wifi_prerequisite_waiting = false;
+            s_wifi_prerequisite_ready = false;
+            xSemaphoreGive(s_services_mutex);
+            lcd_show_confirm("Wi-Fi is OFF", "ENTER=Yes BACK=No");
+            ESP_LOGI(APP_SERVICES_TAG,
+                     "OTA check paused: Wi-Fi is OFF; prerequisite prompt shown");
+            return ESP_ERR_INVALID_STATE;
+        }
         if (user_initiated) {
-            const bool enabled = app_services_wifi_enabled();
-            lcd_flash_warning_to(enabled ? "Wi-Fi ON" : "Wi-Fi OFF",
-                                 enabled ? "Connect first" : "Turn Wi-Fi ON",
+            lcd_flash_warning_to("Wi-Fi ON", "Connect first",
                                  1800U, LCD_SCREEN_MENU);
         }
         ESP_LOGW(APP_SERVICES_TAG, "Update check skipped: station is not connected");
@@ -2108,6 +2221,77 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     return ESP_OK;
 }
 
+bool app_services_wifi_prerequisite_pending(void)
+{
+    if (s_services_mutex == NULL) {
+        return false;
+    }
+
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    const bool pending = s_wifi_prerequisite_pending;
+    xSemaphoreGive(s_services_mutex);
+    return pending;
+}
+
+esp_err_t app_services_confirm_wifi_prerequisite(void)
+{
+    if (s_services_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    app_wifi_prerequisite_operation_t operation;
+    bool pending;
+
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    operation = s_wifi_prerequisite_operation;
+    pending = s_wifi_prerequisite_pending;
+    if (pending) {
+        s_wifi_prerequisite_pending = false;
+        s_wifi_prerequisite_waiting = true;
+        s_wifi_prerequisite_ready = false;
+    }
+    xSemaphoreGive(s_services_mutex);
+
+    if (!pending || operation == APP_WIFI_PREREQUISITE_NONE) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const esp_err_t err = app_services_set_wifi_enabled(true);
+    if (err != ESP_OK) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_NONE;
+        s_wifi_prerequisite_pending = false;
+        s_wifi_prerequisite_waiting = false;
+        s_wifi_prerequisite_ready = false;
+        xSemaphoreGive(s_services_mutex);
+
+        lcd_flash_message("Wi-Fi Start Failed", "Try again", 1500U);
+        return err;
+    }
+
+    lcd_flash_message("Wi-Fi STARTING", "Please wait", 1200U);
+    ESP_LOGI(APP_SERVICES_TAG,
+             "Wi-Fi prerequisite accepted for operation=%d; waiting for readiness",
+             (int)operation);
+    return ESP_OK;
+}
+
+void app_services_cancel_wifi_prerequisite(void)
+{
+    if (s_services_mutex == NULL) {
+        return;
+    }
+
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_NONE;
+    s_wifi_prerequisite_pending = false;
+    s_wifi_prerequisite_waiting = false;
+    s_wifi_prerequisite_ready = false;
+    xSemaphoreGive(s_services_mutex);
+
+    lcd_flash_message("Operation Cancelled", "Wi-Fi unchanged", 1200U);
+}
+
 esp_err_t app_services_request_update_confirmation(void)
 {
     if (s_services_mutex == NULL) {
@@ -2115,6 +2299,19 @@ esp_err_t app_services_request_update_confirmation(void)
                  "Update confirmation requested before app services initialization");
         return ESP_ERR_INVALID_STATE;
     }
+    if (!wifi_controller_is_connected() && !app_services_wifi_enabled()) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_OTA_INSTALL;
+        s_wifi_prerequisite_pending = true;
+        s_wifi_prerequisite_waiting = false;
+        s_wifi_prerequisite_ready = false;
+        xSemaphoreGive(s_services_mutex);
+        lcd_show_confirm("Wi-Fi is OFF", "ENTER=Yes BACK=No");
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "OTA install paused: Wi-Fi is OFF; prerequisite prompt shown");
+        return ESP_ERR_INVALID_STATE;
+    }
+
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool available = s_ota_status.update_available;
     const bool busy = s_ota_status.state == APP_OTA_PREPARING ||
