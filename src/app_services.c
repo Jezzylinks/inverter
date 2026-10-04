@@ -143,6 +143,7 @@ static app_wifi_prerequisite_operation_t s_wifi_prerequisite_operation;
 static bool s_wifi_prerequisite_pending;
 static bool s_wifi_prerequisite_waiting;
 static bool s_wifi_prerequisite_ready;
+static TickType_t s_wifi_prerequisite_started_tick;
 
 static bool app_manifest_url_is_valid(const char *url)
 {
@@ -248,8 +249,27 @@ static void app_wifi_prerequisite_task(void *parameter)
             waiting = s_wifi_prerequisite_waiting;
             xSemaphoreGive(s_services_mutex);
         }
+        (void)task_watchdog_health_feed();
+        }
 
         if (!waiting || operation == APP_WIFI_PREREQUISITE_NONE) {
+            continue;
+        }
+
+        if ((xTaskGetTickCount() - s_wifi_prerequisite_started_tick) >=
+            pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
+            xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+            s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_NONE;
+            s_wifi_prerequisite_pending = false;
+            s_wifi_prerequisite_waiting = false;
+            s_wifi_prerequisite_ready = false;
+            xSemaphoreGive(s_services_mutex);
+
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Wi-Fi prerequisite timed out after %ums",
+                     (unsigned)APP_WIFI_OPERATION_TIMEOUT_MS);
+            lcd_flash_message("Wi-Fi Unavailable", "Try again", 1500U);
+            show_menu_screen(MENU_OTA, operation == APP_WIFI_PREREQUISITE_OTA_INSTALL ? 1 : 0);
             continue;
         }
 
@@ -1021,6 +1041,7 @@ esp_err_t app_services_init(void)
     s_wifi_prerequisite_pending = false;
     s_wifi_prerequisite_waiting = false;
     s_wifi_prerequisite_ready = false;
+    s_wifi_prerequisite_started_tick = 0;
     xSemaphoreGive(s_services_mutex);
 
     load_persisted_config();
@@ -2249,6 +2270,7 @@ esp_err_t app_services_confirm_wifi_prerequisite(void)
         s_wifi_prerequisite_pending = false;
         s_wifi_prerequisite_waiting = true;
         s_wifi_prerequisite_ready = false;
+        s_wifi_prerequisite_started_tick = xTaskGetTickCount();
     }
     xSemaphoreGive(s_services_mutex);
 
