@@ -1964,7 +1964,7 @@ bool app_services_wifi_dhcp_enabled(void)
 
 esp_err_t app_services_wifi_toggle_dhcp(void)
 {
-    wifi_network_config_t config = {0};
+    wifi_manager_config_t config = {0};
     esp_err_t err = wifi_manager_get_config(&config);
     if (err != ESP_OK) {
         return err;
