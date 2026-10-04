@@ -489,6 +489,20 @@ static void handle_ota_menu_action(uint8_t selection)
             (void)app_services_check_for_update(true);
             break;
         }
+
+        /*
+         * Run the Wi-Fi prerequisite before entering the OTA PIN flow.  If
+         * Wi-Fi is OFF, app_services_request_update_confirmation() creates
+         * only the Wi-Fi prerequisite prompt and returns; it does not bypass
+         * the existing authentication path.
+         */
+        if (ota_status.update_available &&
+            !wifi_controller_is_connected() &&
+            !app_services_wifi_enabled()) {
+            (void)app_services_request_update_confirmation();
+            break;
+        }
+
         if (sys_state.security.enabled) {
             begin_ota_auth(selection);
         } else {
