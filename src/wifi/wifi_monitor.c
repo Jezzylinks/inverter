@@ -7,6 +7,11 @@
 #include "system/core_affinity.h"
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/select.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include "esp_log.h"
 #include "wifi/wifi_events.h"
@@ -54,7 +59,9 @@ static wifi_monitor_callback_t
  *
  *---------------------------------------------------------*/
 
-static bool wifi_monitor_ping_test(void);
+#define WIFI_MONITOR_CONNECT_TIMEOUT_MS 1500U
+
+static bool wifi_monitor_tcp_connect_test(const char *address, uint16_t port);
 
 static void wifi_monitor_notify(void)
 {
@@ -79,82 +86,117 @@ static void wifi_monitor_notify(void)
 }
 
 /*----------------------------------------------------------
- * Check internet availability
+ * Internet reachability
  *
- * Simple gateway check.
- * More advanced versions can use DNS/ping.
+ * Use outbound TCP/443 rather than ICMP. Some networks and ISPs block
+ * ICMP while normal HTTPS traffic remains available.
  *---------------------------------------------------------*/
 
-static wifi_internet_status_t wifi_monitor_check_internet(void)
+static bool wifi_monitor_tcp_connect_test(const char *address, uint16_t port)
 {
-    /* The ping is performed in a bounded worker path. Avoid getaddrinfo()
-     * here: lwIP DNS resolution can block for an uncontrolled interval. */
-    return wifi_monitor_ping_test()
-               ? WIFI_INTERNET_AVAILABLE
-               : WIFI_INTERNET_UNAVAILABLE;
-}
+    struct sockaddr_in server = {0};
+    server.sin_family = AF_INET;
+    server.sin_port = htons(port);
 
-static bool wifi_monitor_ping_test(void)
-{
-    esp_ping_config_t config =
-        ESP_PING_DEFAULT_CONFIG();
-
-    ip_addr_t target_addr;
-
-    inet_pton(
-        AF_INET,
-        "8.8.8.8",
-        &target_addr);
-
-    config.target_addr =
-        target_addr;
-    config.count = 3;         /* Send 3 pings */
-    config.interval_ms = 500; /* 500ms between pings */
-    config.timeout_ms = 1000; /* 1s timeout per ping */
-
-    esp_ping_callbacks_t cbs = {0};
-    uint32_t received = 0;
-    cbs.on_ping_success = NULL;
-    cbs.on_ping_timeout = NULL;
-    cbs.on_ping_end = NULL;
-
-    esp_ping_handle_t ping;
-
-    esp_err_t err =
-        esp_ping_new_session(
-            &config,
-            &cbs,
-            &ping);
-
-    if (err != ESP_OK)
-    {
+    if (inet_pton(AF_INET, address, &server.sin_addr) != 1) {
         return false;
     }
 
-    esp_ping_start(ping);
-
-    /* Wait in short slices. A stop notification interrupts the probe
-     * immediately, so Wi-Fi off/disconnect cannot wait behind a long
-     * network operation. */
-    uint32_t waited_ms = 0U;
-    while (waited_ms < 3500U && s_running) {
-        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100U)) > 0U) {
-            break;
-        }
-        waited_ms += 100U;
+    const int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+    if (sock < 0) {
+        return false;
     }
-    /* Get statistics */
-    uint32_t transmitted = 0;
-    esp_ping_get_profile(ping, ESP_PING_PROF_REQUEST, &transmitted, sizeof(transmitted));
-    esp_ping_get_profile(ping, ESP_PING_PROF_REPLY, &received, sizeof(received));
 
-    esp_ping_stop(ping);
+    const int flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0 || fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+        close(sock);
+        return false;
+    }
 
-    esp_ping_delete_session(ping);
+    const int result = connect(
+        sock,
+        (struct sockaddr *)&server,
+        sizeof(server));
 
-    ESP_LOGI(TAG, "Ping: %lu/%lu received", received, transmitted);
+    if (result == 0) {
+        close(sock);
+        return true;
+    }
 
-    return (received > 0);
+    if (errno != EINPROGRESS) {
+        close(sock);
+        return false;
+    }
+
+    fd_set write_set;
+    FD_ZERO(&write_set);
+    FD_SET(sock, &write_set);
+
+    struct timeval timeout = {
+        .tv_sec = WIFI_MONITOR_CONNECT_TIMEOUT_MS / 1000U,
+        .tv_usec = (WIFI_MONITOR_CONNECT_TIMEOUT_MS % 1000U) * 1000U
+    };
+
+    const int selected = select(
+        sock + 1,
+        NULL,
+        &write_set,
+        NULL,
+        &timeout);
+
+    if (selected <= 0 || !FD_ISSET(sock, &write_set)) {
+        close(sock);
+        return false;
+    }
+
+    int socket_error = 0;
+    socklen_t socket_error_len = sizeof(socket_error);
+
+    if (getsockopt(
+            sock,
+            SOL_SOCKET,
+            SO_ERROR,
+            &socket_error,
+            &socket_error_len) < 0) {
+        close(sock);
+        return false;
+    }
+
+    close(sock);
+    return socket_error == 0;
+}
+
+/*
+ * Two independent public HTTPS endpoints are tested. A temporary failure
+ * at one endpoint therefore does not make the whole Internet appear down.
+ */
+static bool wifi_monitor_internet_test(void)
+{
+    static const char *const targets[] = {
+        "1.1.1.1",
+        "8.8.8.8"
+    };
+
+    for (size_t i = 0; i < sizeof(targets) / sizeof(targets[0]); ++i) {
+        if (!s_running) {
+            return false;
+        }
+
+        if (wifi_monitor_tcp_connect_test(targets[i], 443U)) {
+            ESP_LOGI(TAG, "Internet TCP test: %s:443 reachable", targets[i]);
+            return true;
+        }
+    }
+
+    ESP_LOGW(TAG, "Internet TCP test: no public HTTPS endpoint reachable");
+    return false;
+}
+
+static wifi_internet_status_t wifi_monitor_check_internet(void)
+{
+    return wifi_monitor_internet_test()
+               ? WIFI_INTERNET_AVAILABLE
+               : WIFI_INTERNET_UNAVAILABLE;
 }
 
 /*----------------------------------------------------------
