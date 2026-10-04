@@ -23,7 +23,6 @@ extern "C"
 
 #include "esp_err.h"
 #include "esp_netif.h"
-#include "esp_ping.h"
 
     /*==========================================================
      *
