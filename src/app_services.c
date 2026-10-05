@@ -250,7 +250,6 @@ static void app_wifi_prerequisite_task(void *parameter)
             xSemaphoreGive(s_services_mutex);
         }
         (void)task_watchdog_health_feed();
-        }
 
         if (!waiting || operation == APP_WIFI_PREREQUISITE_NONE) {
             continue;
