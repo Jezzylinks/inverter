@@ -1590,9 +1590,18 @@ esp_err_t init_hardware(void)
 
 #define NVS_FLOAT_SCALE 100.0f
 #define NVS_SETTINGS_TXN_VERSION 2U
-#define NVS_SETTINGS_TXN_VALID_KEY "settings_txn_ok"
-#define NVS_SETTINGS_TXN_GEN_KEY "settings_txn_gen"
-#define NVS_SETTINGS_TXN_CRC_KEY "settings_txn_crc"
+#define NVS_SETTINGS_TXN_VALID_KEY "set_txn_ok"
+#define NVS_SETTINGS_TXN_GEN_KEY "set_txn_gen"
+#define NVS_SETTINGS_TXN_CRC_KEY "set_txn_crc"
+
+/* ESP-IDF NVS keys are limited to 15 characters (excluding NUL). Keep
+ * transaction metadata names short enough for every nvs_get/set_* call. */
+_Static_assert(sizeof(NVS_SETTINGS_TXN_VALID_KEY) <= 16U,
+               "NVS transaction valid key exceeds the NVS key limit");
+_Static_assert(sizeof(NVS_SETTINGS_TXN_GEN_KEY) <= 16U,
+               "NVS transaction generation key exceeds the NVS key limit");
+_Static_assert(sizeof(NVS_SETTINGS_TXN_CRC_KEY) <= 16U,
+               "NVS transaction CRC key exceeds the NVS key limit");
 
 typedef struct
 {
