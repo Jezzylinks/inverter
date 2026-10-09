@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_wifi.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -116,6 +117,7 @@ static char s_wifi_operation_ssid[WIFI_MAX_SSID_LEN + 1U];
 static uint32_t s_wifi_operation_generation;
 static TickType_t s_wifi_operation_started_tick;
 static int8_t s_wifi_operation_rssi = -127;
+static bool s_wifi_connection_uses_auth = false;
 
 typedef struct {
     bool enabled;
@@ -687,6 +689,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     app_wifi_operation_t operation;
     char ssid[sizeof(s_wifi_operation_ssid)] = {0};
     int8_t operation_rssi = -127;
+    bool connection_uses_auth = false;
     bool terminal = false;
     bool connected = false;
     bool failed = false;
@@ -696,6 +699,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     operation = s_wifi_operation;
     strncpy(ssid, s_wifi_operation_ssid, sizeof(ssid) - 1U);
     operation_rssi = s_wifi_operation_rssi;
+    connection_uses_auth = s_wifi_connection_uses_auth;
     xSemaphoreGive(s_services_mutex);
 
     if (operation == APP_WIFI_OPERATION_NONE) {
@@ -716,7 +720,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         } else if (status->state == WIFI_STATE_FAILED) {
             terminal = true;
             failed = true;
-            message = "Connect failed";
+            message = connection_uses_auth ? "Auth failed" : "Network unavailable";
         }
         break;
     case APP_WIFI_OPERATION_DISABLE:
@@ -1602,6 +1606,19 @@ bool app_services_wifi_scan_is_active(void)
     return active;
 }
 
+bool app_services_wifi_operation_in_progress(void)
+{
+    bool operation_pending = false;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        operation_pending = (s_wifi_operation != APP_WIFI_OPERATION_NONE) ||
+                            s_wifi_scan_active;
+        xSemaphoreGive(s_services_mutex);
+    }
+    /* Toggle admission remains set until radio transition and NVS commit end. */
+    return operation_pending || s_wifi_toggle_admitted != 0U;
+}
+
 void app_services_show_wifi_network_details(uint8_t selected_index)
 {
     char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
@@ -1641,6 +1658,17 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
         return ESP_ERR_NOT_SUPPORTED;
     }
 
+    /* Avoid a needless reconnect when the selected SSID is already active. */
+    if (wifi_controller_is_connected()) {
+        wifi_ap_record_t current_ap = {0};
+        if (esp_wifi_sta_get_ap_info(&current_ap) == ESP_OK &&
+            strncmp((const char *)current_ap.ssid, ssid,
+                    sizeof(current_ap.ssid)) == 0) {
+            lcd_flash_message("Already Connected", "Returning to list", 1200U);
+            return ESP_OK;
+        }
+    }
+
     wifi_manager_config_t config = {0};
     esp_err_t err = wifi_manager_get_config(&config);
     if (err != ESP_OK) {
@@ -1660,6 +1688,11 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
     strncpy(credentials.password, password, sizeof(credentials.password) - 1U);
     (void)wifi_storage_save_credentials(&credentials);
 
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_wifi_connection_uses_auth = password[0] != '\0';
+        xSemaphoreGive(s_services_mutex);
+    }
     app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, ssid, rssi);
     lcd_show_wifi_connecting(ssid, rssi);
     err = wifi_controller_reconnect();
@@ -1773,14 +1806,26 @@ esp_err_t app_services_wifi_reconnect(void)
 
 esp_err_t app_services_wifi_disconnect(void)
 {
+    /* A disconnect request is idempotent when STA is already disconnected. */
+    if (!wifi_controller_is_connected()) {
+        app_wifi_end_operation();
+        lcd_flash_message("Disconnected", "Wi-Fi is idle", 1000U);
+        return ESP_OK;
+    }
+
     app_wifi_begin_operation(APP_WIFI_OPERATION_DISCONNECT, NULL, -127);
     const esp_err_t err = wifi_controller_disconnect();
+    if (err == ESP_ERR_WIFI_NOT_CONNECT || err == ESP_ERR_WIFI_NOT_STARTED) {
+        app_wifi_end_operation();
+        lcd_flash_message("Disconnected", "Wi-Fi is idle", 1000U);
+        return ESP_OK;
+    }
     if (err != ESP_OK) {
         app_wifi_end_operation();
         lcd_show_wifi_result(false, true, false, "", -127, "Disconnect failed");
     } else if (!wifi_controller_is_connected() && app_wifi_operation_pending()) {
         app_wifi_end_operation();
-        lcd_show_wifi_result(false, false, false, "", -127, "Disconnected");
+        lcd_flash_message("Disconnected", "Wi-Fi is idle", 1000U);
     }
     return err;
 }
@@ -2039,12 +2084,22 @@ void app_services_show_ap_clients(void)
         lcd_flash_message("AP Clients", "AP mode required", 1400U);
         return;
     }
+    if (!sys_state.wifi.enabled) {
+        /* AP mode can be selected while the radio is OFF: this is not a
+         * system fault and must not eject the user from the Wi-Fi menu. */
+        lcd_flash_message("Wi-Fi is OFF", "Turn Wi-Fi ON", 1400U);
+        return;
+    }
     wifi_ap_client_info_t clients[WIFI_AP_MAX_CLIENTS] = {0};
     char macs[WIFI_AP_MAX_CLIENTS][18] = {{0}};
     size_t count = 0U;
     const esp_err_t err = app_services_get_ap_clients(clients, WIFI_AP_MAX_CLIENTS, &count);
     if (err != ESP_OK && err != ESP_ERR_INVALID_SIZE) {
-        lcd_show_system_error(SYSTEM_ERROR_WIFI_AP_CLIENT_LIMIT);
+        /* Radio startup/offline errors are recoverable UI conditions, not a
+         * global system fault. Keep the user in the Wi-Fi menu. */
+        ESP_LOGW(APP_SERVICES_TAG, "Could not read AP clients: %s",
+                 esp_err_to_name(err));
+        lcd_flash_message("AP Clients Unavailable", "Check Wi-Fi state", 1400U);
         return;
     }
     for (size_t i = 0U; i < count; ++i) {

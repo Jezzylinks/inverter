@@ -61,6 +61,8 @@ bool app_services_wifi_enabled(void);
 esp_err_t app_services_wifi_scan(void);
 esp_err_t app_services_wifi_scan_cancel(void);
 bool app_services_wifi_scan_is_active(void);
+/** True while a Wi-Fi toggle, scan, or connection/disconnection operation is active. */
+bool app_services_wifi_operation_in_progress(void);
 void app_services_show_wifi_network_details(uint8_t selected_index);
 esp_err_t app_services_wifi_connect_selected(uint8_t selected_index);
 esp_err_t app_services_wifi_submit_password(void);
