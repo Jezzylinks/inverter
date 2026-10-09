@@ -159,7 +159,7 @@
 #define FAULT_WATCHDOG (1 << 8)
 #define SYS_STATE_MUTEX_TIMEOUT_MS 100
 #define SLEEP_TIMEOUT 1800
-#define UI_MENU_TIMEOUT_MS 10000U
+#define UI_MENU_TIMEOUT_MS (5U * 60U * 1000U)
 #define UI_STANDBY_TIMEOUT_MS (10U * 60U * 1000U)
 #define LCD_PWM_FREQ 5000
 #define LCD_PWM_RES LEDC_TIMER_8_BIT
@@ -4611,6 +4611,16 @@ void handle_menu_timeout(void)
         return;
     }
 
+    /* Do not eject the user while Wi-Fi is scanning, associating, toggling,
+     * disconnecting, or committing its persistent state. */
+    if (app_services_wifi_operation_in_progress() ||
+        sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING ||
+        (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN &&
+         app_services_wifi_scan_is_active())) {
+        sys_state.last_activity_time = now;
+        return;
+    }
+
     /* Never interrupt a factory-reset erase/format operation merely because
      * the user cannot press a key while the operation is running. */
     if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_PROGRESS)
@@ -6204,8 +6214,8 @@ void display_timeout_task(void *arg)
     {
         task_watchdog_feed();
 
-        /* Menus, editors, detail pages and other non-home UI have a strict
-         * 10-second inactivity timeout. */
+        /* Menus, editors, detail pages and other non-home UI return home
+         * after five minutes, except while a service operation is active. */
         handle_menu_timeout();
 
         /* After 10 minutes with no user action on the home UI, enter the
