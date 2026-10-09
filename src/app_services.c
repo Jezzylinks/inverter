@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_wifi.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -716,7 +717,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         } else if (status->state == WIFI_STATE_FAILED) {
             terminal = true;
             failed = true;
-            message = "Connect failed";
+            message = "Check password/signal";
         }
         break;
     case APP_WIFI_OPERATION_DISABLE:
@@ -1602,6 +1603,19 @@ bool app_services_wifi_scan_is_active(void)
     return active;
 }
 
+bool app_services_wifi_operation_in_progress(void)
+{
+    bool operation_pending = false;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        operation_pending = (s_wifi_operation != APP_WIFI_OPERATION_NONE) ||
+                            s_wifi_scan_active;
+        xSemaphoreGive(s_services_mutex);
+    }
+    /* Toggle admission remains set until radio transition and NVS commit end. */
+    return operation_pending || s_wifi_toggle_admitted != 0U;
+}
+
 void app_services_show_wifi_network_details(uint8_t selected_index)
 {
     char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
@@ -1639,6 +1653,17 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
     if (wifi_manager_get_mode() == WIFI_MODE_AP) {
         lcd_flash_message("AP Mode", "No STA Connect", 1400U);
         return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    /* Avoid a needless reconnect when the selected SSID is already active. */
+    if (wifi_controller_is_connected()) {
+        wifi_ap_record_t current_ap = {0};
+        if (esp_wifi_sta_get_ap_info(&current_ap) == ESP_OK &&
+            strncmp((const char *)current_ap.ssid, ssid,
+                    sizeof(current_ap.ssid)) == 0) {
+            lcd_flash_message("Already Connected", "Returning to list", 1200U);
+            return ESP_OK;
+        }
     }
 
     wifi_manager_config_t config = {0};
@@ -1773,14 +1798,26 @@ esp_err_t app_services_wifi_reconnect(void)
 
 esp_err_t app_services_wifi_disconnect(void)
 {
+    /* A disconnect request is idempotent when STA is already disconnected. */
+    if (!wifi_controller_is_connected()) {
+        app_wifi_end_operation();
+        lcd_flash_message("Disconnected", "Wi-Fi is idle", 1000U);
+        return ESP_OK;
+    }
+
     app_wifi_begin_operation(APP_WIFI_OPERATION_DISCONNECT, NULL, -127);
     const esp_err_t err = wifi_controller_disconnect();
+    if (err == ESP_ERR_WIFI_NOT_CONNECT || err == ESP_ERR_WIFI_NOT_STARTED) {
+        app_wifi_end_operation();
+        lcd_flash_message("Disconnected", "Wi-Fi is idle", 1000U);
+        return ESP_OK;
+    }
     if (err != ESP_OK) {
         app_wifi_end_operation();
         lcd_show_wifi_result(false, true, false, "", -127, "Disconnect failed");
     } else if (!wifi_controller_is_connected() && app_wifi_operation_pending()) {
         app_wifi_end_operation();
-        lcd_show_wifi_result(false, false, false, "", -127, "Disconnected");
+        lcd_flash_message("Disconnected", "Wi-Fi is idle", 1000U);
     }
     return err;
 }
@@ -2039,12 +2076,22 @@ void app_services_show_ap_clients(void)
         lcd_flash_message("AP Clients", "AP mode required", 1400U);
         return;
     }
+    if (!sys_state.wifi.enabled) {
+        /* AP mode can be selected while the radio is OFF: this is not a
+         * system fault and must not eject the user from the Wi-Fi menu. */
+        lcd_flash_message("Wi-Fi is OFF", "Turn Wi-Fi ON", 1400U);
+        return;
+    }
     wifi_ap_client_info_t clients[WIFI_AP_MAX_CLIENTS] = {0};
     char macs[WIFI_AP_MAX_CLIENTS][18] = {{0}};
     size_t count = 0U;
     const esp_err_t err = app_services_get_ap_clients(clients, WIFI_AP_MAX_CLIENTS, &count);
     if (err != ESP_OK && err != ESP_ERR_INVALID_SIZE) {
-        lcd_show_system_error(SYSTEM_ERROR_WIFI_AP_CLIENT_LIMIT);
+        /* Radio startup/offline errors are recoverable UI conditions, not a
+         * global system fault. Keep the user in the Wi-Fi menu. */
+        ESP_LOGW(APP_SERVICES_TAG, "Could not read AP clients: %s",
+                 esp_err_to_name(err));
+        lcd_flash_message("AP Clients Unavailable", "Check Wi-Fi state", 1400U);
         return;
     }
     for (size_t i = 0U; i < count; ++i) {
