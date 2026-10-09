@@ -159,7 +159,7 @@
 #define FAULT_WATCHDOG (1 << 8)
 #define SYS_STATE_MUTEX_TIMEOUT_MS 100
 #define SLEEP_TIMEOUT 1800
-#define UI_MENU_TIMEOUT_MS 10000U
+#define UI_MENU_TIMEOUT_MS (5U * 60U * 1000U)
 #define UI_STANDBY_TIMEOUT_MS (10U * 60U * 1000U)
 #define LCD_PWM_FREQ 5000
 #define LCD_PWM_RES LEDC_TIMER_8_BIT
@@ -1608,7 +1608,7 @@ typedef struct
 
 static nvs_setting_t g_settings[] = {
     {BATTERY_VOLTAGE_SYSTEM_KEY, &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 12, false, "Bat Volt System", false, false},
-    {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false, "Inverter Active", false, false},
+    {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false, "Inverter Active", false, true},
     {BATTERY_TYPE_KEY, &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false, "Battery Type", false, false},
     {BATTERY_CAPACITY_KEY, &sys_state.battery_profile.capacity_ah, sizeof(float), 0, false, "Battery Capacity", false, false},
     {"bat_charge_cur", &sys_state.battery_profile.max_charge_current_per_100ah, sizeof(int32_t), 0, true, "Max Charge Cur", false, false},
@@ -1618,16 +1618,16 @@ static nvs_setting_t g_settings[] = {
     {"bat_rech_volt", &sys_state.battery_profile.recharge_voltage_v, sizeof(int32_t), 14.8f, true, "Recharge Volt", false, false},
     {"brightness", &sys_state.display.brightness, sizeof(int32_t), 100, false, "LCD Brightness", false, false},
     {"backlight_time", &sys_state.display.backlight_timeout, sizeof(int32_t), 30, false, "Backlight Time", false, false},
-    {"auto_shutdown", &sys_state.display.auto_shutdown_enabled, sizeof(uint8_t), 0, false, "Auto Shutdown", false, false},
-    {"scroll_en", &sys_state.display.scroll_enabled, sizeof(uint8_t), 0, false, "Scroll Enable", false, false},
-    {"sound_en", &sys_state.sound_enabled, sizeof(uint8_t), 1, false, "Sound", false, false},
-    {"quiet_en", &sys_state.quiet_hours_enabled, sizeof(uint8_t), 0, false, "Quiet Hours", false, false},
+    {"auto_shutdown", &sys_state.display.auto_shutdown_enabled, sizeof(uint8_t), 0, false, "Auto Shutdown", false, true},
+    {"scroll_en", &sys_state.display.scroll_enabled, sizeof(uint8_t), 0, false, "Scroll Enable", false, true},
+    {"sound_en", &sys_state.sound_enabled, sizeof(uint8_t), 1, false, "Sound", false, true},
+    {"quiet_en", &sys_state.quiet_hours_enabled, sizeof(uint8_t), 0, false, "Quiet Hours", false, true},
     {"quiet_start", &sys_state.quiet_hours_start, sizeof(uint8_t), 22, false, "Quiet Start", false, false},
     {"quiet_end", &sys_state.quiet_hours_end, sizeof(uint8_t), 6, false, "Quiet End", false, false},
     {"utc_offset", &sys_state.utc_offset_hours, sizeof(int8_t), 0, false, "UTC Offset", true, false},
     {"man_hour", &sys_state.manual_time_hour, sizeof(uint8_t), 0, false, "Set Hour", false, false},
     {"man_min", &sys_state.manual_time_minute, sizeof(uint8_t), 0, false, "Set Minute", false, false},
-    {"time_set", &sys_state.time_manually_set, sizeof(uint8_t), 0, false, "Time Manually Set", false, false},
+    {"time_set", &sys_state.time_manually_set, sizeof(uint8_t), 0, false, "Time Manually Set", false, true},
     {"scroll_spd", &sys_state.display.scroll_speed, sizeof(uint8_t), DEFAULT_SCROLL_SPEED, false, "Scroll Speed", false, false},
     {"out_volt", &sys_state.inverter.output_voltage, sizeof(int32_t), 220.0f, true, "Output Voltage", false, false},
     {"out_freq", &sys_state.inverter.output_frequency, sizeof(int32_t), 50.0f, true, "Output Freq", false, false},
@@ -1636,7 +1636,7 @@ static nvs_setting_t g_settings[] = {
     {"temp_alarm", &sys_state.settings.temperature_alarm, sizeof(int32_t), 70.0f, true, "Temp Alarm", false, false},
     {"frequency_range", &sys_state.settings.frequency_range, sizeof(int32_t), 50, false, "Freq Range", false, false},
     {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300000, false, "Sys Timeout", false, false},
-    {"security_en", &sys_state.security.enabled, sizeof(uint8_t), 1, false, "Security Enable", false, false},
+    {"security_en", &sys_state.security.enabled, sizeof(uint8_t), 1, false, "Security Enable", false, true},
     {"bluetooth_en", &sys_state.bluetooth.enabled, sizeof(bool), 0, false, "Bluetooth", false, true},
 };
 
@@ -4611,6 +4611,16 @@ void handle_menu_timeout(void)
         return;
     }
 
+    /* Do not eject the user while Wi-Fi is scanning, associating, toggling,
+     * disconnecting, or committing its persistent state. */
+    if (app_services_wifi_operation_in_progress() ||
+        sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING ||
+        (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN &&
+         app_services_wifi_scan_is_active())) {
+        sys_state.last_activity_time = now;
+        return;
+    }
+
     /* Never interrupt a factory-reset erase/format operation merely because
      * the user cannot press a key while the operation is running. */
     if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_PROGRESS)
@@ -6204,8 +6214,8 @@ void display_timeout_task(void *arg)
     {
         task_watchdog_feed();
 
-        /* Menus, editors, detail pages and other non-home UI have a strict
-         * 10-second inactivity timeout. */
+        /* Menus, editors, detail pages and other non-home UI return home
+         * after five minutes, except while a service operation is active. */
         handle_menu_timeout();
 
         /* After 10 minutes with no user action on the home UI, enter the
