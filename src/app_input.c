@@ -1004,11 +1004,10 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             LCD_LOCK();
             page = sys_lcd.wifi_network_detail.page;
             LCD_UNLOCK();
-            if (lcd_geometry_is_20x4() || page >= 2U) {
-                (void)app_services_wifi_connect_selected(0U);
-            } else {
-                lcd_update_wifi_network_detail_page((uint8_t)(page + 1U));
-            }
+            /* The first ENTER on a selected network must start the action:
+             * open networks connect; secured networks open password entry. */
+            (void)page;
+            (void)app_services_wifi_connect_selected(0U);
         }
         return;
     }
@@ -1030,9 +1029,8 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             } else if (stage == LCD_WIFI_SCAN_FAILED || count == 0U) {
                 (void)app_services_wifi_scan();
             } else {
-                /* Selecting a found network starts the existing credential /
-                 * connection flow. The connection screen owns the RSSI,
-                 * animation, timeout, and terminal result. */
+                /* One selection is enough: open networks connect directly,
+                 * secured networks move directly to password entry. */
                 (void)app_services_wifi_connect_selected(selected);
             }
         }
@@ -2285,6 +2283,19 @@ void handle_back_button_event(button_event_info_t *event_info,
     if (event_info->event == BUTTON_EVENT_CLICK && sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
         s_wifi_settings_child_active = false;
         s_wifi_client_delete_confirmation = false;
+        show_menu_screen(sys_state.menu_state == MENU_WIFI_SETTINGS
+                             ? MENU_WIFI_SETTINGS : MENU_WIFI_CONFIG,
+                         sys_state.menu_selection);
+        return;
+    }
+
+    /* AP-client informational messages are child-screen results. Back should
+     * restore the Wi-Fi menu that opened them, never fall through to home. */
+    if (event_info->event == BUTTON_EVENT_CLICK &&
+        s_wifi_settings_child_active &&
+        sys_state.menu_state == MENU_WIFI_CONFIG &&
+        sys_lcd.screen == LCD_SCREEN_FLASH_MSG) {
+        s_wifi_settings_child_active = false;
         show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
         return;
     }
