@@ -117,6 +117,7 @@ static char s_wifi_operation_ssid[WIFI_MAX_SSID_LEN + 1U];
 static uint32_t s_wifi_operation_generation;
 static TickType_t s_wifi_operation_started_tick;
 static int8_t s_wifi_operation_rssi = -127;
+static bool s_wifi_connection_uses_auth = false;
 
 typedef struct {
     bool enabled;
@@ -688,6 +689,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     app_wifi_operation_t operation;
     char ssid[sizeof(s_wifi_operation_ssid)] = {0};
     int8_t operation_rssi = -127;
+    bool connection_uses_auth = false;
     bool terminal = false;
     bool connected = false;
     bool failed = false;
@@ -697,6 +699,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     operation = s_wifi_operation;
     strncpy(ssid, s_wifi_operation_ssid, sizeof(ssid) - 1U);
     operation_rssi = s_wifi_operation_rssi;
+    connection_uses_auth = s_wifi_connection_uses_auth;
     xSemaphoreGive(s_services_mutex);
 
     if (operation == APP_WIFI_OPERATION_NONE) {
@@ -717,7 +720,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         } else if (status->state == WIFI_STATE_FAILED) {
             terminal = true;
             failed = true;
-            message = "Check password/signal";
+            message = connection_uses_auth ? "Auth failed" : "Network unavailable";
         }
         break;
     case APP_WIFI_OPERATION_DISABLE:
@@ -1685,6 +1688,11 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
     strncpy(credentials.password, password, sizeof(credentials.password) - 1U);
     (void)wifi_storage_save_credentials(&credentials);
 
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_wifi_connection_uses_auth = password[0] != '\0';
+        xSemaphoreGive(s_services_mutex);
+    }
     app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, ssid, rssi);
     lcd_show_wifi_connecting(ssid, rssi);
     err = wifi_controller_reconnect();
