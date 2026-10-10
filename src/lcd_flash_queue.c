@@ -210,28 +210,34 @@ static uint8_t find_insert_pos(flash_priority_t priority)
 /* Special sentinel meaning "auto-capture whatever screen is live right now" */
 #define LCD_FLASH_RETURN_AUTO ((lcd_screen_id_t) - 1)
 
-void lcd_flash_enqueue_to(const char *line0,
-                          const char *line1,
-                          uint32_t duration_ms,
-                          flash_priority_t priority,
-                          lcd_screen_id_t return_to_override)
+void lcd_flash_enqueue_rows_to(const char *const rows[],
+                               uint8_t row_count,
+                               uint32_t duration_ms,
+                               flash_priority_t priority,
+                               lcd_screen_id_t return_to_override)
 {
     if (!s_flash_mutex)
         return;
+
+    if (row_count < 2U)
+        row_count = 2U;
+    if (row_count > 4U)
+        row_count = 4U;
 
     flash_entry_t entry = {
         .valid = true,
         .priority = priority,
         .duration_ms = duration_ms,
-        .return_to = LCD_SCREEN_MAIN /* placeholder, corrected below */
+        .return_to = LCD_SCREEN_MAIN,
+        .row_count = row_count
     };
 
-    /* Format to the selected physical LCD width. LCD_LINE_SIZE includes
-     * the terminating NUL for both 16×2 and 20×4 builds. */
-    snprintf(entry.line0, sizeof(entry.line0), "%-*.*s",
-             LCD_COLS, LCD_COLS, line0 ? line0 : "");
-    snprintf(entry.line1, sizeof(entry.line1), "%-*.*s",
-             LCD_COLS, LCD_COLS, line1 ? line1 : "");
+    char *dst_rows[4] = {entry.line0, entry.line1, entry.line2, entry.line3};
+    for (uint8_t i = 0U; i < 4U; ++i) {
+        const char *src = (rows != NULL && i < row_count) ? rows[i] : "";
+        snprintf(dst_rows[i], LCD_LINE_SIZE, "%-*.*s",
+                 LCD_COLS, LCD_COLS, src != NULL ? src : "");
+    }
 
     xSemaphoreTake(s_flash_mutex, portMAX_DELAY);
     bool flash_active = s_active_flash.active;
@@ -244,40 +250,30 @@ void lcd_flash_enqueue_to(const char *line0,
         lcd_screen_id_t current_screen = sys_lcd.screen;
         lcd_screen_id_t resolved_return;
 
-        if (return_to_override != LCD_FLASH_RETURN_AUTO)
-        {
-            /* Caller explicitly forced a screen — honor it as-is. */
+        if (return_to_override != LCD_FLASH_RETURN_AUTO) {
             resolved_return = return_to_override;
-        }
-        else if (current_screen == LCD_SCREEN_VALUE_EDIT)
-        {
-            /* Special case: leaving value-edit via a flash always
-             * lands on the main screen, not back into value-edit. */
+        } else if (current_screen == LCD_SCREEN_VALUE_EDIT) {
             resolved_return = LCD_SCREEN_MAIN;
-        }
-        else
-        {
-            /* Normal case: auto-capture whatever was showing. */
+        } else {
             resolved_return = current_screen;
         }
 
-        strcpy(s_active_flash.line0, entry.line0);
-        strcpy(s_active_flash.line1, entry.line1);
+        memcpy(s_active_flash.line0, entry.line0, sizeof(entry.line0));
+        memcpy(s_active_flash.line1, entry.line1, sizeof(entry.line1));
+        memcpy(s_active_flash.line2, entry.line2, sizeof(entry.line2));
+        memcpy(s_active_flash.line3, entry.line3, sizeof(entry.line3));
+        s_active_flash.row_count = entry.row_count;
         s_active_flash.priority = priority;
         s_active_flash.expire_ms = _lcd_get_time_ms() + duration_ms;
         s_active_flash.return_to = resolved_return;
         s_active_flash.active = true;
 
         sys_lcd.screen = LCD_SCREEN_FLASH_MSG;
-
         xSemaphoreGive(s_flash_mutex);
     }
     else
     {
         xSemaphoreTake(s_flash_mutex, portMAX_DELAY);
-
-        /* Queued entries still inherit the currently-active flash's
-         * return_to UNLESS this specific enqueue explicitly overrides it. */
         entry.return_to = (return_to_override == LCD_FLASH_RETURN_AUTO)
                               ? s_active_flash.return_to
                               : return_to_override;
@@ -286,32 +282,39 @@ void lcd_flash_enqueue_to(const char *line0,
         {
             uint8_t pos = find_insert_pos(priority);
             insert_at(pos, &entry);
-
-            ESP_LOGI(TAG, "📋 FLASH_QUEUED: '%s' (pos=%d, queue_size=%d, pri=%d, return_to=%d)",
-                     entry.line0, pos, s_queue_count, priority, entry.return_to);
+            ESP_LOGI(TAG, "FLASH_QUEUED: '%s' (pos=%u, queue_size=%u, pri=%d, return_to=%d)",
+                     entry.line0, (unsigned)pos, (unsigned)s_queue_count,
+                     (int)priority, (int)entry.return_to);
         }
         else
         {
-            flash_priority_t tail_pri = s_queue[s_queue_count - 1].priority;
+            flash_priority_t tail_pri = s_queue[s_queue_count - 1U].priority;
             if (priority > tail_pri)
             {
-                ESP_LOGW(TAG, "⚠️ Queue full, dropping lower priority");
                 s_queue_count--;
-
                 uint8_t pos = find_insert_pos(priority);
                 insert_at(pos, &entry);
-
-                ESP_LOGD(TAG, "📋 FLASH_QUEUED (replaced): '%s' (queue_size=%d)",
-                         entry.line0, s_queue_count);
+                ESP_LOGW(TAG, "FLASH_QUEUED_REPLACED: '%s' (queue_size=%u)",
+                         entry.line0, (unsigned)s_queue_count);
             }
             else
             {
-                ESP_LOGW(TAG, "⚠️ Queue full, rejecting lower priority flash");
+                ESP_LOGW(TAG, "FLASH_QUEUED_REJECTED: '%s'", entry.line0);
             }
         }
-
         xSemaphoreGive(s_flash_mutex);
     }
+}
+
+void lcd_flash_enqueue_to(const char *line0,
+                          const char *line1,
+                          uint32_t duration_ms,
+                          flash_priority_t priority,
+                          lcd_screen_id_t return_to_override)
+{
+    const char *rows[2] = {line0, line1};
+    lcd_flash_enqueue_rows_to(rows, 2U, duration_ms, priority,
+                              return_to_override);
 }
 
 /**
