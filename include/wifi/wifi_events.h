@@ -74,6 +74,15 @@ extern "C"
     bool wifi_events_is_connected(void);
     bool wifi_events_has_ip(void);
 
+    /**
+     * @brief Publish the independently measured upstream internet state.
+     *
+     * A station association or DHCP lease does not prove internet access.
+     * The Wi-Fi monitor calls this after its reachability probe. The value is
+     * forced false unless the station is connected and has an IP address.
+     */
+    esp_err_t wifi_events_set_internet_available(bool available);
+
     /** Configure non-blocking station retry behaviour. */
     void wifi_events_set_retry_policy(bool enabled, uint8_t retry_limit);
 
