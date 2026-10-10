@@ -42,7 +42,7 @@ extern "C"
         LCD_SCREEN_WIFI_CONNECTING,
         LCD_SCREEN_WIFI_CLIENTS,
         LCD_SCREEN_CONFIRMATION,
-        LCD_SCREEN_FLASH_MSG, /* timed 2-line message then returns */
+        LCD_SCREEN_FLASH_MSG, /* timed message (2 or 4 rows) then returns */
         LCD_SCREEN_STANDBY,
         LCD_SHOW_TEMP,
         LCD_SHOW_SETTINGS,
