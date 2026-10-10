@@ -477,17 +477,11 @@ esp_err_t network_services_start(void)
     }
 
     /* Local services are architecture-neutral: they can run on STA, AP, or
-     * APSTA once a usable local interface exists. Station/internet services
-     * are started separately only after STA has a valid IP. */
+     * APSTA once a usable local interface exists. The sync worker manages
+     * NTP/MQTT separately after the monitor confirms upstream connectivity. */
     services_lock();
     s_running = true;
-    const bool station_ready = s_station_ready;
-    const bool internet_ready = s_internet_ready;
     services_unlock();
-
-    if (station_ready && internet_ready) {
-        (void)network_services_start_station_services();
-    }
 
     ESP_LOGI(NETWORK_SERVICES_TAG, "Local network services started for %s mode",
              wifi_manager_get_mode() == WIFI_MODE_STA ? "STA" :
