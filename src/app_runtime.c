@@ -6,6 +6,7 @@
 #include <freertos/task.h>
 #include <freertos/queue.h>
 #include <esp_system.h>
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include <nvs_flash.h>
 #include <nvs.h>
@@ -178,6 +179,8 @@
 #define BATTERY_MENU_COUNT 3
 #define BATTERY_PROFILE_VERSION 1
 #define BATTERY_TYPE_KEY "battery_type"
+_Static_assert(sizeof(BATTERY_TYPE_KEY) <= 16U,
+               "Battery type NVS key exceeds ESP-IDF's 15-character limit");
 #define BATTERY_CAPACITY_KEY "bat_capacity"
 #define NVS_VOLTAGE_KEY_PREFIX "voltage_"
 #define BATTERY_VOLTAGE_SYSTEM_KEY "inv_bat_volt"
@@ -675,52 +678,111 @@ bool battery_save_configuration(battery_type_t battery_type,
  */
 bool battery_load_profile(battery_profile_t *profile_out)
 {
+    if (profile_out == NULL)
+    {
+        return false;
+    }
+
     nvs_handle_t nvs_handle;
     esp_err_t err;
-    uint8_t battery_type;
-    uint8_t voltage_system;
-    uint16_t capacity_ah;
+    uint8_t battery_type =
+        profile_out->profile_id < BATTERY_TYPE_COUNT
+            ? (uint8_t)profile_out->profile_id : (uint8_t)BATTERY_AGM;
+    uint8_t voltage_system =
+        (profile_out->nominal_voltage == VOLTAGE_SYSTEM_12V ||
+         profile_out->nominal_voltage == VOLTAGE_SYSTEM_24V ||
+         profile_out->nominal_voltage == VOLTAGE_SYSTEM_48V)
+            ? (uint8_t)profile_out->nominal_voltage : (uint8_t)VOLTAGE_SYSTEM_12V;
+    uint16_t capacity_ah =
+        profile_out->capacity_ah >= 1.0f && profile_out->capacity_ah <= 65535.0f
+            ? (uint16_t)lroundf(profile_out->capacity_ah) : 200U;
 
-    // Open NVS
     err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK)
     {
-        printf("ERROR: Failed to open NVS!\n");
+        ESP_LOGE("BAT_PROFILE", "Unable to open NVS for profile restore: %s",
+                 esp_err_to_name(err));
         return false;
     }
 
-    // Read battery configuration from NVS
+    /* Missing legacy keys should not discard a valid saved battery type.
+     * Keep the validated profile defaults for only the missing field, while
+     * treating real NVS errors as a failed restore. */
     err = nvs_get_u8(nvs_handle, BATTERY_TYPE_KEY, &battery_type);
-    if (err != ESP_OK)
+    if (err == ESP_ERR_NVS_NOT_FOUND)
     {
-        printf("ERROR: Failed to read battery type from NVS!\n");
-        storage_nvs_close(nvs_handle);
-        return false;
+        ESP_LOGW("BAT_PROFILE", "NVS key '%s' missing; retaining profile type=%u",
+                 BATTERY_TYPE_KEY, (unsigned)battery_type);
+        err = ESP_OK;
     }
-
-    err = nvs_get_u8(nvs_handle, BATTERY_VOLTAGE_SYSTEM_KEY, &voltage_system);
-    if (err != ESP_OK)
+    if (err == ESP_OK)
     {
-        printf("ERROR: Failed to read voltage system from NVS!\n");
-        storage_nvs_close(nvs_handle);
-        return false;
+        esp_err_t field_err = nvs_get_u8(nvs_handle, BATTERY_VOLTAGE_SYSTEM_KEY,
+                                         &voltage_system);
+        if (field_err == ESP_ERR_NVS_NOT_FOUND)
+        {
+            ESP_LOGW("BAT_PROFILE", "NVS key '%s' missing; retaining voltage=%uV",
+                     BATTERY_VOLTAGE_SYSTEM_KEY, (unsigned)voltage_system);
+        }
+        else if (field_err != ESP_OK)
+        {
+            err = field_err;
+        }
     }
-
-    err = nvs_get_u16(nvs_handle, BATTERY_CAPACITY_KEY, &capacity_ah);
-    if (err != ESP_OK)
+    if (err == ESP_OK)
     {
-        printf("ERROR: Failed to read capacity from NVS!\n");
-        storage_nvs_close(nvs_handle);
-        return false;
+        esp_err_t field_err = nvs_get_u16(nvs_handle, BATTERY_CAPACITY_KEY,
+                                          &capacity_ah);
+        if (field_err == ESP_ERR_NVS_NOT_FOUND)
+        {
+            ESP_LOGW("BAT_PROFILE", "NVS key '%s' missing; retaining capacity=%uAh",
+                     BATTERY_CAPACITY_KEY, (unsigned)capacity_ah);
+        }
+        else if (field_err != ESP_OK)
+        {
+            err = field_err;
+        }
     }
-
     storage_nvs_close(nvs_handle);
 
-    // Generate profile based on NVS settings
-    return battery_generate_profile((battery_type_t)battery_type,
-                                    (voltage_system_t)voltage_system,
-                                    capacity_ah,
-                                    profile_out);
+    if (err != ESP_OK)
+    {
+        ESP_LOGE("BAT_PROFILE", "Battery profile NVS read failed: %s (0x%x)",
+                 esp_err_to_name(err), err);
+        return false;
+    }
+    if (battery_type >= BATTERY_TYPE_COUNT)
+    {
+        ESP_LOGE("BAT_PROFILE", "Invalid battery type %u in NVS key '%s'",
+                 (unsigned)battery_type, BATTERY_TYPE_KEY);
+        return false;
+    }
+    if (voltage_system != VOLTAGE_SYSTEM_12V &&
+        voltage_system != VOLTAGE_SYSTEM_24V &&
+        voltage_system != VOLTAGE_SYSTEM_48V)
+    {
+        ESP_LOGE("BAT_PROFILE", "Invalid battery voltage system %u in NVS",
+                 (unsigned)voltage_system);
+        return false;
+    }
+    if (capacity_ah == 0U)
+    {
+        ESP_LOGW("BAT_PROFILE", "Invalid zero battery capacity; using 200Ah");
+        capacity_ah = 200U;
+    }
+
+    const bool loaded = battery_generate_profile((battery_type_t)battery_type,
+                                                 (voltage_system_t)voltage_system,
+                                                 capacity_ah, profile_out);
+    if (loaded)
+    {
+        ESP_LOGI("BAT_PROFILE",
+                 "Restored battery profile: key=%s key_len=%u type=%u voltage=%uV capacity=%uAh",
+                 BATTERY_TYPE_KEY, (unsigned)(sizeof(BATTERY_TYPE_KEY) - 1U),
+                 (unsigned)battery_type, (unsigned)voltage_system,
+                 (unsigned)capacity_ah);
+    }
+    return loaded;
 }
 
 void battery_system_init(battery_profile_t *profile)
@@ -3278,7 +3340,12 @@ void diagnostic_update_task(void *pv)
         diag_data.uptime_seconds++;
         diag_data.cpu_load = esp_cpu_get_usage_percent(); // If you have CPU metrics
         diag_data.temperature = sys_state.inverter.temperature;
-        diag_data.ram_usage = esp_get_free_heap_size() / 1024.0;
+        const size_t heap_total = heap_caps_get_total_size(MALLOC_CAP_8BIT);
+        const size_t heap_free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+        diag_data.ram_usage = heap_total > 0U
+                                  ? ((double)(heap_total - (heap_free > heap_total ? heap_total : heap_free)) *
+                                     100.0 / (double)heap_total)
+                                  : 0.0;
         diag_data.system_ok = (diag_data.temperature < 75.0);
 
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -4228,7 +4295,7 @@ void lcd_draw_settings_view_screen(uint8_t index)
     {
         uint8_t val = *(uint8_t *)s->field;
 
-        if (strcmp(s->key, "bat_type") == 0 && val < BATTERY_TYPE_COUNT)
+        if (strcmp(s->key, BATTERY_TYPE_KEY) == 0 && val < BATTERY_TYPE_COUNT)
         {
             snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, battery_type_names[val]);
         }
@@ -5355,6 +5422,7 @@ void handle_value_confirmation(void)
         }
 
         const bool wifi_async_save = (ctx == &value_edit[VALUE_TYPE_WIFI]);
+        const size_t saved_setting_index = settings_index_for_editor(ctx);
         const bool saved = exit_value_edit_mode(true);
 
         /* The menu is rebuilt from the canonical runtime state only after
@@ -5373,7 +5441,28 @@ void handle_value_confirmation(void)
         {
             ESP_LOGI("SETTINGS_TRANSACTION", "SUCCESS label=%s value=%s",
                      ctx->label, saved_value);
-            lcd_flash_info_to("Setting Saved!", saved_value, 1400, LCD_SCREEN_MENU);
+            if (lcd_geometry_is_20x4())
+            {
+                char rows[4][LCD_LINE_SIZE];
+                snprintf(rows[0], LCD_LINE_SIZE, "Setting ID: %02u",
+                         (unsigned)(saved_setting_index < NVS_SETTINGS_COUNT
+                                        ? saved_setting_index + 1U : 0U));
+                snprintf(rows[1], LCD_LINE_SIZE, "%-*.*s",
+                         LCD_COLS, LCD_COLS, "New Value Saved");
+                snprintf(rows[2], LCD_LINE_SIZE, "%-*.*s",
+                         LCD_COLS, LCD_COLS, ctx->label ? ctx->label : "Setting");
+                snprintf(rows[3], LCD_LINE_SIZE, "%-*.*s",
+                         LCD_COLS, LCD_COLS, saved_value);
+                const char *row_ptrs[4] = {rows[0], rows[1], rows[2], rows[3]};
+                lcd_flash_enqueue_rows_to(row_ptrs, 4U, 1400U,
+                                          FLASH_PRI_INFO, LCD_SCREEN_MENU);
+            }
+            else
+            {
+                const char *rows[2] = {"New Value Saved", saved_value};
+                lcd_flash_enqueue_rows_to(rows, 2U, 1400U,
+                                          FLASH_PRI_INFO, LCD_SCREEN_MENU);
+            }
             printf("AUDIT: Parameter changed - %s\n", ctx->label);
         }
         else
