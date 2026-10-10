@@ -675,9 +675,12 @@ static void app_wifi_lcd_status_callback(const wifi_monitor_status_t *status)
     if (status == NULL) {
         return;
     }
-    const bool online = status->connected && status->got_ip &&
-                        status->internet == WIFI_INTERNET_AVAILABLE;
-    lcd_update_wifi_status(online, online ? status->rssi : 0);
+
+    /* This indicator represents station connectivity, not internet access.
+     * Internet availability is a separate status shown on the Wi-Fi details
+     * screen and used to gate remote services such as OTA. */
+    const bool connected = status->connected && status->got_ip;
+    lcd_update_wifi_status(connected, connected ? status->rssi : 0);
 }
 
 static void app_wifi_status_callback(const wifi_status_t *status)
