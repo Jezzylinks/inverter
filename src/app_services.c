@@ -1649,6 +1649,13 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
         strlen(ssid) > WIFI_MAX_SSID_LEN || strlen(password) > 63U) {
         return ESP_ERR_INVALID_ARG;
     }
+    /* wifi_manager_config_valid() rejects non-empty station passwords under
+     * WPA's 8-character minimum. Report that exact problem instead of the
+     * misleading generic "Network Invalid" message. */
+    if (password[0] != '\0' && strlen(password) < 8U) {
+        lcd_flash_message("Password Too Short", "Use 8+ characters", 1400U);
+        return ESP_ERR_INVALID_ARG;
+    }
     if (!sys_state.wifi.enabled) {
         lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
         return ESP_ERR_INVALID_STATE;
@@ -1679,7 +1686,10 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
     config.authmode = authmode;
     err = wifi_manager_set_config(&config);
     if (err != ESP_OK) {
-        lcd_flash_message("Network Invalid", "Try again", 1400U);
+        ESP_LOGE(APP_SERVICES_TAG,
+                 "Rejected scanned-network configuration for SSID='%s': %s (0x%x)",
+                 ssid, esp_err_to_name(err), err);
+        lcd_flash_message("Wi-Fi Config Error", "Check credentials", 1400U);
         return err;
     }
 
