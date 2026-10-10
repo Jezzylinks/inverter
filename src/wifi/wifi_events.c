@@ -409,6 +409,40 @@ bool wifi_events_has_ip(void)
     return wifi_events_get_status_copy(&status) == ESP_OK && status.got_ip;
 }
 
+esp_err_t wifi_events_set_internet_available(bool available)
+{
+    if (!s_initialized || s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    wifi_status_t status_copy = {0};
+    wifi_status_callback_t callbacks[WIFI_MAX_CALLBACKS] = {0};
+    bool changed = false;
+
+    events_lock();
+    /* Never report internet access unless the station link and IP lease are
+     * both valid. This state is measured separately by wifi_monitor. */
+    const bool effective = available && s_status.connected && s_status.got_ip;
+    changed = s_status.internet_available != effective;
+    if (changed) {
+        s_status.internet_available = effective;
+        status_copy = s_status;
+        memcpy(callbacks, s_status_callbacks, sizeof(callbacks));
+    }
+    events_unlock();
+
+    if (changed) {
+        for (size_t i = 0U; i < WIFI_MAX_CALLBACKS; ++i) {
+            if (callbacks[i] != NULL) {
+                callbacks[i](&status_copy);
+            }
+        }
+        ESP_LOGI(WIFI_EVENTS_TAG, "Internet availability: %s",
+                 status_copy.internet_available ? "available" : "unavailable");
+    }
+    return ESP_OK;
+}
+
 static esp_err_t wifi_callbacks_register(void **callbacks, void *callback)
 {
     if (callback == NULL || !s_initialized) {
