@@ -40,6 +40,7 @@ static bool s_ntp_running;
 static bool s_websocket_running;
 static bool s_dashboard_running;
 static bool s_station_ready;
+static bool s_internet_ready;
 static bool s_station_services_running;
 static bool s_sync_scheduled;
 /* Set atomically by network_services_begin_teardown() before any Wi-Fi
@@ -94,6 +95,7 @@ static void network_services_sync_task(void *arg)
 
     services_lock();
     const bool station_ready = s_station_ready;
+    const bool internet_ready = s_internet_ready;
     const bool local_running = s_running;
     const bool station_services_running = s_station_services_running;
     services_unlock();
@@ -132,9 +134,14 @@ static void network_services_sync_task(void *arg)
         ESP_LOGI(NETWORK_SERVICES_TAG, "Captive portal DNS stopped");
     }
 
-    if (station_capable && station_ready && !station_services_running) {
+    /* NTP/MQTT are upstream services, not merely station-IP services.
+     * Keep them stopped until the monitor confirms outbound connectivity;
+     * losing internet must not stop the local AP/web control path above. */
+    if (station_capable && station_ready && internet_ready &&
+        !station_services_running) {
         (void)network_services_start_station_services();
-    } else if ((!station_capable || !station_ready) && station_services_running) {
+    } else if ((!station_capable || !station_ready || !internet_ready) &&
+               station_services_running) {
         (void)network_services_stop_station_services();
     }
 
@@ -167,6 +174,8 @@ static void network_wifi_status_callback(const wifi_status_t *status)
     bool schedule = false;
     services_lock();
     s_station_ready = !provisioning && station_ready;
+    s_internet_ready = !provisioning && station_ready &&
+                       status->internet_available;
     if (!s_sync_scheduled) {
         s_sync_scheduled = true;
         schedule = true;
@@ -242,6 +251,12 @@ static esp_err_t network_services_start_station_services(void)
     }
 
     services_lock();
+    if (!s_internet_ready) {
+        services_unlock();
+        ESP_LOGI(NETWORK_SERVICES_TAG,
+                 "Station services deferred: internet is not available");
+        return ESP_ERR_INVALID_STATE;
+    }
     if (s_station_services_running) {
         services_unlock();
         return ESP_OK;
@@ -325,6 +340,7 @@ esp_err_t network_services_init(void)
     s_websocket_running = false;
     s_dashboard_running = false;
     s_station_ready = false;
+    s_internet_ready = false;
     s_station_services_running = false;
     s_sync_scheduled = false;
     s_teardown_pending = false;
@@ -439,9 +455,10 @@ esp_err_t network_services_start(void)
     services_lock();
     s_running = true;
     const bool station_ready = s_station_ready;
+    const bool internet_ready = s_internet_ready;
     services_unlock();
 
-    if (station_ready) {
+    if (station_ready && internet_ready) {
         (void)network_services_start_station_services();
     }
 
