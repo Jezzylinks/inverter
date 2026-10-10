@@ -37,7 +37,8 @@ static void log_button_callback(const char *name,
                                 bool system_ready)
 {
 #if defined(CONFIG_INVERTER_BUTTON_DIAGNOSTICS) && CONFIG_INVERTER_BUTTON_DIAGNOSTICS
-    if (event_info != NULL) {
+    if (event_info != NULL)
+    {
         ESP_LOGI(APP_INPUT_TAG, "CALLBACK %s event=%s ready=%d",
                  name, button_event_to_string(event_info->event),
                  system_ready);
@@ -51,7 +52,8 @@ static void log_button_callback(const char *name,
 
 static bool require_system_ready_for_inverter_action(const char *action)
 {
-    if (sys_state.system_ready) {
+    if (sys_state.system_ready)
+    {
         return true;
     }
 
@@ -83,23 +85,28 @@ static void show_wifi_client_delete_confirmation(void)
     char mac[18] = {0};
 
     LCD_LOCK();
-    if (client_index < sys_lcd.wifi_clients.count) {
+    if (client_index < sys_lcd.wifi_clients.count)
+    {
         snprintf(mac, sizeof(mac), "%s", sys_lcd.wifi_clients.mac[client_index]);
     }
     LCD_UNLOCK();
 
-    for (uint8_t i = 0U; i < LCD_ROWS; ++i) {
+    for (uint8_t i = 0U; i < LCD_ROWS; ++i)
+    {
         row_ptrs[i] = rows[i];
         snprintf(rows[i], LCD_LINE_SIZE, "%-*s", LCD_COLS, "");
     }
 
-    if (lcd_geometry_is_20x4()) {
+    if (lcd_geometry_is_20x4())
+    {
         snprintf(rows[0], LCD_LINE_SIZE, "%-*s", LCD_COLS, "Delete AP Client?");
         snprintf(rows[1], LCD_LINE_SIZE, "%-*s", LCD_COLS, mac);
         snprintf(rows[2], LCD_LINE_SIZE, "%c%-*s", selected == 0U ? '>' : ' ', LCD_COLS - 1, "Delete");
         snprintf(rows[3], LCD_LINE_SIZE, "%c%-*s", selected == 1U ? '>' : ' ', LCD_COLS - 1, "Exit");
         lcd_show_menu_rows(row_ptrs, LCD_ROWS);
-    } else {
+    }
+    else
+    {
         snprintf(rows[0], LCD_LINE_SIZE, "%c%-*.*s", '>', LCD_COLS - 1, LCD_COLS - 1, "Delete AP client");
         snprintf(rows[1], LCD_LINE_SIZE, "%c%s", selected == 0U ? '>' : ' ', selected == 0U ? "Delete" : "Exit");
         lcd_show_menu_rows(row_ptrs, 2U);
@@ -109,7 +116,8 @@ static void show_wifi_client_delete_confirmation(void)
 static void begin_wifi_client_delete_confirmation(void)
 {
     LCD_LOCK();
-    if (sys_lcd.wifi_clients.count == 0U) {
+    if (sys_lcd.wifi_clients.count == 0U)
+    {
         LCD_UNLOCK();
         return;
     }
@@ -128,7 +136,8 @@ static void cancel_wifi_client_delete_confirmation(void)
 
 static void handle_wifi_client_delete_confirmation_enter(void)
 {
-    if (s_wifi_client_delete_choice == 1U) {
+    if (s_wifi_client_delete_choice == 1U)
+    {
         s_wifi_client_delete_confirmation = false;
         app_services_show_ap_clients();
         return;
@@ -136,14 +145,16 @@ static void handle_wifi_client_delete_confirmation_enter(void)
 
     const esp_err_t err = app_services_disconnect_ap_client_at(s_wifi_client_delete_index);
     s_wifi_client_delete_confirmation = false;
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         app_services_show_ap_clients();
-    } else {
+    }
+    else
+    {
         lcd_flash_message("Remove Failed", "Try again", 1200U);
         app_services_show_ap_clients();
     }
 }
-
 
 static void return_factory_reset_to_menu(void)
 {
@@ -172,16 +183,22 @@ static void exit_factory_reset_to_previous_menu(void)
 
     menu_state_t previous_menu;
     int previous_selection;
-    if (pop_menu_history(&previous_menu, &previous_selection)) {
+    if (pop_menu_history(&previous_menu, &previous_selection))
+    {
         sys_state.menu_state = previous_menu;
         sys_state.menu_selection = previous_selection;
         sys_state.last_activity_time = esp_timer_get_time() / 1000;
-        if (previous_menu == MENU_NONE) {
+        if (previous_menu == MENU_NONE)
+        {
             go_to_main_screen();
-        } else {
+        }
+        else
+        {
             show_menu_screen(previous_menu, previous_selection);
         }
-    } else {
+    }
+    else
+    {
         exit_factory_reset_to_home();
     }
 }
@@ -207,11 +224,15 @@ static void return_from_ota_auth(bool authenticated)
     sys_state.menu_state = MENU_OTA;
     sys_state.menu_selection = s_ota_auth_selection;
 
-    if (authenticated) {
-        if (app_services_request_update_confirmation() != ESP_OK) {
+    if (authenticated)
+    {
+        if (app_services_request_update_confirmation() != ESP_OK)
+        {
             show_menu_screen(MENU_OTA, sys_state.menu_selection);
         }
-    } else {
+    }
+    else
+    {
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
     }
 }
@@ -274,7 +295,8 @@ static bool ota_confirmation_is_pending(void)
 /* Consume the first button event when waking from a display-only state. */
 static bool consume_display_wakeup_event(const button_event_info_t *event_info)
 {
-    if (event_info == NULL) {
+    if (event_info == NULL)
+    {
         return false;
     }
 
@@ -284,7 +306,8 @@ static bool consume_display_wakeup_event(const button_event_info_t *event_info)
            (sys_lcd.screen == LCD_SCREEN_FAULT && sys_lcd.fault.transient);
     LCD_UNLOCK();
 
-    if (!wake) {
+    if (!wake)
+    {
         return false;
     }
 
@@ -300,7 +323,8 @@ static void handle_wifi_scan_move(bool up)
     uint8_t selected = 0U;
     uint8_t top = 0U;
     LCD_LOCK();
-    if (sys_lcd.screen != LCD_SCREEN_WIFI_SCAN) {
+    if (sys_lcd.screen != LCD_SCREEN_WIFI_SCAN)
+    {
         LCD_UNLOCK();
         return;
     }
@@ -308,17 +332,21 @@ static void handle_wifi_scan_move(bool up)
     selected = sys_lcd.wifi_scan.selected_index;
     top = sys_lcd.wifi_scan.top_index;
     LCD_UNLOCK();
-    if (count == 0U) {
+    if (count == 0U)
+    {
         return;
     }
 
     selected = up
-        ? (selected == 0U ? count - 1U : selected - 1U)
-        : (selected + 1U) % count;
+                   ? (selected == 0U ? count - 1U : selected - 1U)
+                   : (selected + 1U) % count;
     const uint8_t visible = lcd_geometry_is_20x4() ? 3U : 2U;
-    if (selected < top) {
+    if (selected < top)
+    {
         top = selected;
-    } else if (selected >= top + visible) {
+    }
+    else if (selected >= top + visible)
+    {
         top = selected - visible + 1U;
     }
     lcd_update_wifi_selection(selected, top);
@@ -332,10 +360,11 @@ static void handle_wifi_clients_move(bool up)
     count = sys_lcd.wifi_clients.count;
     selected = sys_lcd.wifi_clients.selected;
     LCD_UNLOCK();
-    if (count == 0U) return;
+    if (count == 0U)
+        return;
     selected = up
-        ? (selected == 0U ? count - 1U : selected - 1U)
-        : (selected + 1U) % count;
+                   ? (selected == 0U ? count - 1U : selected - 1U)
+                   : (selected + 1U) % count;
     lcd_update_wifi_client_selection(selected);
 }
 
@@ -367,7 +396,8 @@ static void handle_wifi_password_append(void)
     length = sys_lcd.wifi_password.length;
     strncpy(password, sys_lcd.wifi_password.password, sizeof(password) - 1U);
     LCD_UNLOCK();
-    if (length >= LCD_WIFI_PASSWORD_MAX_LEN) {
+    if (length >= LCD_WIFI_PASSWORD_MAX_LEN)
+    {
         lcd_flash_message("Password full", "Double=connect", 900U);
         return;
     }
@@ -379,28 +409,16 @@ static void handle_wifi_password_append(void)
 static void handle_wifi_password_submit(void)
 {
     const esp_err_t err = app_services_wifi_submit_password();
-    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN && err != ESP_ERR_INVALID_STATE) {
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN && err != ESP_ERR_INVALID_STATE)
+    {
         lcd_flash_message("Connect failed", "Try again", 1200U);
-    }
-}
-
-static void handle_wifi_client_delete(void)
-{
-    uint8_t selected = 0U;
-    LCD_LOCK();
-    selected = sys_lcd.wifi_clients.selected;
-    LCD_UNLOCK();
-    const esp_err_t err = app_services_disconnect_ap_client_at(selected);
-    if (err == ESP_OK) {
-        app_services_show_ap_clients();
-    } else {
-        lcd_flash_message("Remove Failed", "Try again", 1200U);
     }
 }
 
 static void handle_wifi_menu_action(uint8_t selection)
 {
-    switch (app_menu_wifi_config_action_at(selection)) {
+    switch (app_menu_wifi_config_action_at(selection))
+    {
     case APP_WIFI_MENU_TOGGLE:
         show_menu_screen(MENU_WIFI_CONFIG, selection);
         (void)app_services_set_wifi_enabled(!app_services_wifi_enabled());
@@ -409,9 +427,12 @@ static void handle_wifi_menu_action(uint8_t selection)
         app_services_show_wifi_status();
         break;
     case APP_WIFI_MENU_CONNECT:
-        if (wifi_controller_is_connected()) {
+        if (wifi_controller_is_connected())
+        {
             (void)app_services_wifi_request_disconnect();
-        } else {
+        }
+        else
+        {
             (void)app_services_wifi_reconnect();
         }
         break;
@@ -436,25 +457,33 @@ static void handle_wifi_menu_action(uint8_t selection)
 
 static void handle_wifi_settings_action(uint8_t selection)
 {
-    switch (app_menu_wifi_settings_action_at(selection)) {
+    switch (app_menu_wifi_settings_action_at(selection))
+    {
     case APP_WIFI_SETTINGS_SAVED_NETWORK:
         s_wifi_settings_child_active = false;
         (void)app_services_wifi_request_forget_saved();
         break;
     case APP_WIFI_SETTINGS_MODE:
-        if (!app_services_wifi_mode_edit_active()) {
+        if (!app_services_wifi_mode_edit_active())
+        {
             const esp_err_t err = app_services_wifi_mode_edit_begin();
-            if (err != ESP_OK) {
+            if (err != ESP_OK)
+            {
                 lcd_flash_message("Mode Unavailable", "Try again", 1200U);
                 break;
             }
             s_wifi_settings_child_active = true;
             show_menu_screen(MENU_WIFI_SETTINGS, selection);
-        } else {
+        }
+        else
+        {
             const esp_err_t err = app_services_wifi_mode_edit_confirm();
-            if (err != ESP_OK) {
+            if (err != ESP_OK)
+            {
                 lcd_flash_message("Mode Not Saved", "Try again", 1200U);
-            } else {
+            }
+            else
+            {
                 s_wifi_settings_child_active = false;
             }
         }
@@ -475,7 +504,8 @@ static void handle_wifi_settings_action(uint8_t selection)
 
 static void handle_ota_menu_action(uint8_t selection)
 {
-    switch (selection) {
+    switch (selection)
+    {
     case 0:
         s_ota_feedback_active = true;
         (void)app_services_check_for_update(true);
@@ -485,7 +515,8 @@ static void handle_ota_menu_action(uint8_t selection)
         s_ota_feedback_active = true;
         app_ota_status_t ota_status;
         app_services_get_ota_status(&ota_status);
-        if (ota_status.state == APP_OTA_ERROR) {
+        if (ota_status.state == APP_OTA_ERROR)
+        {
             (void)app_services_check_for_update(true);
             break;
         }
@@ -498,14 +529,18 @@ static void handle_ota_menu_action(uint8_t selection)
          */
         if (ota_status.update_available &&
             !wifi_controller_is_connected() &&
-            !app_services_wifi_enabled()) {
+            !app_services_wifi_enabled())
+        {
             (void)app_services_request_update_confirmation();
             break;
         }
 
-        if (sys_state.security.enabled) {
+        if (sys_state.security.enabled)
+        {
             begin_ota_auth(selection);
-        } else {
+        }
+        else
+        {
             (void)app_services_request_update_confirmation();
         }
         break;
@@ -555,13 +590,15 @@ void handle_power_button_event(button_event_info_t *event_info,
     }
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
-        app_services_wifi_prerequisite_pending()) {
+        app_services_wifi_prerequisite_pending())
+    {
         app_services_cancel_wifi_prerequisite();
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
         return;
     }
 
-    if (event_info->event == BUTTON_EVENT_CLICK && ota_confirmation_is_pending()) {
+    if (event_info->event == BUTTON_EVENT_CLICK && ota_confirmation_is_pending())
+    {
         (void)app_services_cancel_update();
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
         return;
@@ -570,7 +607,8 @@ void handle_power_button_event(button_event_info_t *event_info,
     if (sys_state.menu_state == MENU_FACTORY_RESET &&
         atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
     {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             exit_factory_reset_to_home();
         }
         return;
@@ -581,7 +619,8 @@ void handle_power_button_event(button_event_info_t *event_info,
 
     case BUTTON_EVENT_CLICK:
     {
-        if (app_services_wifi_scan_is_active()) {
+        if (app_services_wifi_scan_is_active())
+        {
             (void)app_services_wifi_scan_cancel();
         }
         /* Cancel the active edit, then continue through the normal power
@@ -682,7 +721,8 @@ void handle_power_button_event(button_event_info_t *event_info,
         {
         case INVERTER_OFF:
         case INVERTER_STANDBY:
-            if (require_system_ready_for_inverter_action("inverter enable")) {
+            if (require_system_ready_for_inverter_action("inverter enable"))
+            {
                 inverter_power_on();
             }
             break;
@@ -693,7 +733,8 @@ void handle_power_button_event(button_event_info_t *event_info,
             shutdown_inverter();
             break;
         case INVERTER_FAULT:
-            if (!require_system_ready_for_inverter_action("fault recovery enable")) {
+            if (!require_system_ready_for_inverter_action("fault recovery enable"))
+            {
                 break;
             }
             lcd_show_fault("Clearing fault  ", "Please wait...  ");
@@ -892,28 +933,33 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
     sys_state.flags.last_user_activity = xTaskGetTickCount();
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
-        app_services_wifi_prerequisite_pending()) {
+        app_services_wifi_prerequisite_pending())
+    {
         (void)app_services_confirm_wifi_prerequisite();
         return;
     }
 
-    if (event_info->event == BUTTON_EVENT_CLICK && ota_confirmation_is_pending()) {
+    if (event_info->event == BUTTON_EVENT_CLICK && ota_confirmation_is_pending())
+    {
         (void)app_services_confirm_update();
         return;
     }
     if (event_info->event == BUTTON_EVENT_CLICK &&
-        app_services_ota_cancel_confirmation_pending()) {
+        app_services_ota_cancel_confirmation_pending())
+    {
         (void)app_services_confirm_cancel_update();
         return;
     }
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
-        app_services_wifi_forget_confirmation_pending()) {
+        app_services_wifi_forget_confirmation_pending())
+    {
         (void)app_services_wifi_confirm_forget_saved();
         return;
     }
     if (event_info->event == BUTTON_EVENT_CLICK &&
-        app_services_wifi_disconnect_confirmation_pending()) {
+        app_services_wifi_disconnect_confirmation_pending())
+    {
         (void)app_services_wifi_confirm_disconnect();
         return;
     }
@@ -970,9 +1016,12 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 const bool ota_authenticated =
                     security_action == SECURITY_ACTION_OTA_AUTH &&
                     change_pin_ctx.phase == CHANGE_PIN_SUCCESS;
-                if (security_action == SECURITY_ACTION_OTA_AUTH) {
+                if (security_action == SECURITY_ACTION_OTA_AUTH)
+                {
                     return_from_ota_auth(ota_authenticated);
-                } else {
+                }
+                else
+                {
                     atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
                     atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
                     sys_lcd.screen = LCD_SCREEN_SECURITY;
@@ -982,24 +1031,31 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         }
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING)
+    {
         /* The connection screen is intentionally non-interactive while the
          * controller is connecting or showing its terminal result. Enter
          * must not fall through to the parent Wi-Fi menu; Back owns exit. */
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             handle_wifi_password_append();
-        } else if (event_info->event == BUTTON_EVENT_LONG_PRESS) {
+        }
+        else if (event_info->event == BUTTON_EVENT_LONG_PRESS)
+        {
             handle_wifi_password_submit();
         }
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             uint8_t page = 0U;
             LCD_LOCK();
             page = sys_lcd.wifi_network_detail.page;
@@ -1012,8 +1068,10 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             lcd_wifi_scan_stage_t stage;
             uint8_t selected;
             uint8_t count;
@@ -1022,13 +1080,18 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             selected = sys_lcd.wifi_scan.selected_index;
             count = sys_lcd.wifi_scan.count;
             LCD_UNLOCK();
-            if (stage == LCD_WIFI_SCAN_SCANNING) {
+            if (stage == LCD_WIFI_SCAN_SCANNING)
+            {
                 /* ENTER stops the worker/lower-level scan. The worker then
                  * publishes the latest valid results and resets selection to 0. */
                 (void)app_services_wifi_scan_cancel();
-            } else if (stage == LCD_WIFI_SCAN_FAILED || count == 0U) {
+            }
+            else if (stage == LCD_WIFI_SCAN_FAILED || count == 0U)
+            {
                 (void)app_services_wifi_scan();
-            } else {
+            }
+            else
+            {
                 /* One selection is enough: open networks connect directly,
                  * secured networks move directly to password entry. */
                 (void)app_services_wifi_connect_selected(selected);
@@ -1037,22 +1100,28 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         return;
     }
 
-    if (s_wifi_client_delete_confirmation) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (s_wifi_client_delete_confirmation)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             handle_wifi_client_delete_confirmation_enter();
         }
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             begin_wifi_client_delete_confirmation();
         }
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             uint8_t page;
             LCD_LOCK();
             page = sys_lcd.wifi_status.page;
@@ -1062,24 +1131,34 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_OTA) {
-        if (event_info->event != BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_OTA)
+    {
+        if (event_info->event != BUTTON_EVENT_CLICK)
+        {
             return;
         }
         lcd_ota_view_state_t ota_view;
         LCD_LOCK();
         ota_view = sys_lcd.ota.state;
         LCD_UNLOCK();
-        if (ota_view == LCD_OTA_VIEW_AVAILABLE) {
-            if (sys_state.security.enabled) {
+        if (ota_view == LCD_OTA_VIEW_AVAILABLE)
+        {
+            if (sys_state.security.enabled)
+            {
                 begin_ota_auth(1U);
-            } else {
+            }
+            else
+            {
                 (void)app_services_request_update_confirmation();
             }
-        } else if (ota_view == LCD_OTA_VIEW_ERROR) {
+        }
+        else if (ota_view == LCD_OTA_VIEW_ERROR)
+        {
             (void)app_services_check_for_update(true);
-        } else if (ota_view == LCD_OTA_VIEW_CURRENT ||
-                   ota_view == LCD_OTA_VIEW_CANCELLED) {
+        }
+        else if (ota_view == LCD_OTA_VIEW_CURRENT ||
+                 ota_view == LCD_OTA_VIEW_CANCELLED)
+        {
             s_ota_feedback_active = false;
             show_menu_screen(MENU_OTA, sys_state.menu_selection);
         }
@@ -1640,15 +1719,19 @@ void handle_up_button_event(button_event_info_t *event_info,
         return; // Up just adjusts the current PIN digit -- never finishes the flow
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             handle_wifi_password_char(true);
         }
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             uint8_t page = 0U;
             LCD_LOCK();
             page = sys_lcd.wifi_network_detail.page;
@@ -1658,30 +1741,38 @@ void handle_up_button_event(button_event_info_t *event_info,
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             handle_wifi_scan_move(true);
         }
         return;
     }
 
-    if (s_wifi_client_delete_confirmation) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (s_wifi_client_delete_confirmation)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             s_wifi_client_delete_choice = s_wifi_client_delete_choice == 0U ? 1U : 0U;
             show_wifi_client_delete_confirmation();
         }
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             handle_wifi_clients_move(true);
         }
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             uint8_t page;
             LCD_LOCK();
             page = sys_lcd.wifi_status.page;
@@ -1923,15 +2014,19 @@ void handle_down_button_event(button_event_info_t *event_info,
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             handle_wifi_password_char(false);
         }
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             uint8_t page = 0U;
             LCD_LOCK();
             page = sys_lcd.wifi_network_detail.page;
@@ -1941,30 +2036,38 @@ void handle_down_button_event(button_event_info_t *event_info,
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             handle_wifi_scan_move(false);
         }
         return;
     }
 
-    if (s_wifi_client_delete_confirmation) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (s_wifi_client_delete_confirmation)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             s_wifi_client_delete_choice = s_wifi_client_delete_choice == 0U ? 1U : 0U;
             show_wifi_client_delete_confirmation();
         }
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             handle_wifi_clients_move(false);
         }
         return;
     }
 
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS) {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             uint8_t page;
             LCD_LOCK();
             page = sys_lcd.wifi_status.page;
@@ -2201,13 +2304,15 @@ void handle_back_button_event(button_event_info_t *event_info,
         return;
     }
 
-    if (event_info->event == BUTTON_EVENT_CLICK && ota_confirmation_is_pending()) {
+    if (event_info->event == BUTTON_EVENT_CLICK && ota_confirmation_is_pending())
+    {
         (void)app_services_cancel_update();
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
         return;
     }
     if (event_info->event == BUTTON_EVENT_CLICK &&
-        app_services_ota_cancel_confirmation_pending()) {
+        app_services_ota_cancel_confirmation_pending())
+    {
         app_services_cancel_cancel_update();
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
         return;
@@ -2218,7 +2323,8 @@ void handle_back_button_event(button_event_info_t *event_info,
     if (sys_state.menu_state == MENU_FACTORY_RESET &&
         atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_RESET_PIN_ENTRY)
     {
-        if (event_info->event == BUTTON_EVENT_CLICK) {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
             return_factory_reset_to_menu();
         }
         return;
@@ -2244,9 +2350,12 @@ void handle_back_button_event(button_event_info_t *event_info,
             if (flow_done)
             {
                 ESP_LOGI("DISPLAY MODE", "DISPLAYING MODE");
-                if (security_action == SECURITY_ACTION_OTA_AUTH) {
+                if (security_action == SECURITY_ACTION_OTA_AUTH)
+                {
                     return_from_ota_auth(false);
-                } else {
+                }
+                else
+                {
                     atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
                     atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
                     sys_lcd.screen = LCD_SCREEN_SECURITY;
@@ -2268,23 +2377,27 @@ void handle_back_button_event(button_event_info_t *event_info,
         sys_state.menu_state == MENU_OTA &&
         s_ota_feedback_active &&
         (sys_lcd.screen == LCD_SCREEN_FLASH_MSG ||
-         sys_lcd.screen == LCD_SCREEN_OTA)) {
+         sys_lcd.screen == LCD_SCREEN_OTA))
+    {
         s_ota_feedback_active = false;
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
         return;
     }
 
-    if (event_info->event == BUTTON_EVENT_CLICK && s_wifi_client_delete_confirmation) {
+    if (event_info->event == BUTTON_EVENT_CLICK && s_wifi_client_delete_confirmation)
+    {
         cancel_wifi_client_delete_confirmation();
         app_services_show_ap_clients();
         return;
     }
 
-    if (event_info->event == BUTTON_EVENT_CLICK && sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS) {
+    if (event_info->event == BUTTON_EVENT_CLICK && sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS)
+    {
         s_wifi_settings_child_active = false;
         s_wifi_client_delete_confirmation = false;
         show_menu_screen(sys_state.menu_state == MENU_WIFI_SETTINGS
-                             ? MENU_WIFI_SETTINGS : MENU_WIFI_CONFIG,
+                             ? MENU_WIFI_SETTINGS
+                             : MENU_WIFI_CONFIG,
                          sys_state.menu_selection);
         return;
     }
@@ -2294,7 +2407,8 @@ void handle_back_button_event(button_event_info_t *event_info,
     if (event_info->event == BUTTON_EVENT_CLICK &&
         s_wifi_settings_child_active &&
         sys_state.menu_state == MENU_WIFI_CONFIG &&
-        sys_lcd.screen == LCD_SCREEN_FLASH_MSG) {
+        sys_lcd.screen == LCD_SCREEN_FLASH_MSG)
+    {
         s_wifi_settings_child_active = false;
         show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
         return;
@@ -2304,7 +2418,8 @@ void handle_back_button_event(button_event_info_t *event_info,
         sys_state.menu_state == MENU_WIFI_SETTINGS &&
         s_wifi_settings_child_active &&
         (sys_lcd.screen == LCD_SCREEN_FLASH_MSG ||
-         sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS)) {
+         sys_lcd.screen == LCD_SCREEN_WIFI_CLIENTS))
+    {
         s_wifi_settings_child_active = false;
         show_menu_screen(MENU_WIFI_SETTINGS, sys_state.menu_selection);
         return;
@@ -2312,7 +2427,8 @@ void handle_back_button_event(button_event_info_t *event_info,
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
         (app_services_wifi_forget_confirmation_pending() ||
-         app_services_wifi_disconnect_confirmation_pending())) {
+         app_services_wifi_disconnect_confirmation_pending()))
+    {
         app_services_wifi_cancel_forget_saved();
         app_services_wifi_cancel_disconnect();
         show_menu_screen(MENU_WIFI_SETTINGS, sys_state.menu_selection);
@@ -2321,7 +2437,8 @@ void handle_back_button_event(button_event_info_t *event_info,
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
         (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD ||
-         sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS)) {
+         sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS))
+    {
         LCD_LOCK();
         sys_lcd.screen = LCD_SCREEN_WIFI_SCAN;
         LCD_UNLOCK();
@@ -2329,8 +2446,10 @@ void handle_back_button_event(button_event_info_t *event_info,
     }
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
-        sys_lcd.screen == LCD_SCREEN_WIFI_SCAN) {
-        if (app_services_wifi_scan_is_active()) {
+        sys_lcd.screen == LCD_SCREEN_WIFI_SCAN)
+    {
+        if (app_services_wifi_scan_is_active())
+        {
             (void)app_services_wifi_scan_cancel();
         }
         show_menu_screen(MENU_WIFI_CONFIG, 1U);
@@ -2339,7 +2458,8 @@ void handle_back_button_event(button_event_info_t *event_info,
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
         (sys_lcd.screen == LCD_SCREEN_WIFI_STATUS ||
-         sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING)) {
+         sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING))
+    {
         show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
         return;
     }
