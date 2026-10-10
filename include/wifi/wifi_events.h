@@ -73,6 +73,8 @@ extern "C"
     wifi_connection_state_t wifi_events_get_state(void);
     bool wifi_events_is_connected(void);
     bool wifi_events_has_ip(void);
+    /** True while the AP interface is active, including APSTA when STA state changes. */
+    bool wifi_events_is_ap_active(void);
 
     /**
      * @brief Publish the independently measured upstream internet state.
