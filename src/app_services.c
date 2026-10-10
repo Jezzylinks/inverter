@@ -1096,11 +1096,10 @@ esp_err_t app_services_init(void)
          * context, which is safe for lcd_update_wifi_status() — that function
          * only takes the LCD mutex for a short memcpy, never for network I/O.
          *
-         * Critically, the lcd_task itself must NOT call wifi_monitor_is_online()
-         * or wifi_monitor_get_rssi() directly: those functions take
-         * s_mutex with portMAX_DELAY, and wifi_monitor_task can hold s_mutex
-         * for up to 3500 ms during a ping probe.  Blocking the lcd_task on a
-         * foreign mutex past its watchdog feed point causes a TASK_WDT reset. */
+         * The lcd_task itself should not poll wifi_monitor_is_online() or
+         * wifi_monitor_get_rssi() while rendering. The callback supplies a
+         * snapshot asynchronously and keeps LCD rendering independent of
+         * network-probe timing and monitor mutex contention. */
         (void)wifi_monitor_register_callback(app_wifi_lcd_status_callback);
         const esp_err_t network_err = network_services_init();
         if (network_err != ESP_OK) {
