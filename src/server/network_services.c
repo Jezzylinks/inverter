@@ -43,6 +43,8 @@ static bool s_station_ready;
 static bool s_internet_ready;
 static bool s_station_services_running;
 static bool s_sync_scheduled;
+/* Detect status updates that arrive while the sync worker is already running. */
+static uint32_t s_status_generation;
 /* Set atomically by network_services_begin_teardown() before any Wi-Fi
  * disable sequence.  Prevents network_services_sync_task from calling
  * network_services_start() after teardown has been initiated, which would
@@ -94,6 +96,7 @@ static void network_services_sync_task(void *arg)
     }
 
     services_lock();
+    const uint32_t status_generation = s_status_generation;
     const bool station_ready = s_station_ready;
     const bool internet_ready = s_internet_ready;
     const bool local_running = s_running;
@@ -103,7 +106,7 @@ static void network_services_sync_task(void *arg)
     const wifi_mode_t mode = wifi_manager_get_mode();
     const bool station_capable = mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA;
     const bool ap_capable = mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA;
-    const bool ap_ready = ap_capable && wifi_events_get_state() == WIFI_STATE_AP_ACTIVE;
+    const bool ap_ready = ap_capable && wifi_events_is_ap_active();
     const bool local_ready = station_ready || ap_ready;
 
     if (local_ready && !local_running) {
@@ -145,9 +148,27 @@ static void network_services_sync_task(void *arg)
         (void)network_services_stop_station_services();
     }
 
+    bool rerun = false;
     services_lock();
-    s_sync_scheduled = false;
+    if (s_status_generation != status_generation && !s_teardown_pending) {
+        /* A Wi-Fi/internet event arrived during this pass. Keep the admission
+         * flag set and run another pass so that the newest state is applied. */
+        rerun = true;
+    } else {
+        s_sync_scheduled = false;
+    }
     services_unlock();
+
+    if (rerun && xTaskCreatePinnedToCore(network_services_sync_task,
+                                         "net_services_sync",
+                                         NETWORK_SYNC_TASK_STACK_SIZE,
+                                         NULL, 4U, NULL, APP_CORE_SYSTEM) != pdPASS) {
+        services_lock();
+        s_sync_scheduled = false;
+        services_unlock();
+        ESP_LOGW(NETWORK_SERVICES_TAG,
+                 "Unable to schedule follow-up network-service sync");
+    }
     vTaskDelete(NULL);
 }
 
@@ -157,11 +178,14 @@ static void network_wifi_status_callback(const wifi_status_t *status)
         return;
     }
     const wifi_mode_t mode = wifi_manager_get_mode();
-    const bool station_ready = status->state == WIFI_STATE_CONNECTED && status->got_ip;
+    /* In APSTA, the public state enum can represent AP_ACTIVE while the STA
+     * is connected (or CONNECTED while the AP is also active). Use the
+     * independent interface flags rather than treating the enum as exclusive. */
+    const bool station_ready = status->connected && status->got_ip;
     const bool provisioning = wifi_controller_get_state() == WIFI_CONTROLLER_PROVISIONING;
     const bool ap_ready = !provisioning &&
                           (mode == WIFI_MODE_AP || mode == WIFI_MODE_APSTA) &&
-                          status->state == WIFI_STATE_AP_ACTIVE;
+                          wifi_events_is_ap_active();
     const bool local_ready = !provisioning && (station_ready || ap_ready);
     bool mdns_running = false;
     services_lock();
@@ -176,6 +200,7 @@ static void network_wifi_status_callback(const wifi_status_t *status)
     s_station_ready = !provisioning && station_ready;
     s_internet_ready = !provisioning && station_ready &&
                        status->internet_available;
+    ++s_status_generation;
     if (!s_sync_scheduled) {
         s_sync_scheduled = true;
         schedule = true;
@@ -343,6 +368,7 @@ esp_err_t network_services_init(void)
     s_internet_ready = false;
     s_station_services_running = false;
     s_sync_scheduled = false;
+    s_status_generation = 0U;
     s_teardown_pending = false;
     const esp_err_t dns_init_err = wifi_dns_server_init();
     if (dns_init_err != ESP_OK) {
