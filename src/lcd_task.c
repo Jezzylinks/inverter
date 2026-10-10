@@ -49,6 +49,7 @@ extern change_pin_ctx_t change_pin_ctx; /* no static -- external linkage */
 extern SemaphoreHandle_t change_pin_mutex;
 extern system_state_t sys_state;
 extern led_pattern_t pattern;
+extern void lcd_draw_diagnostics_screen(uint8_t index);
 
 /* lcd.h hardware config */
 /* Pass zero so lcd_init() scans the PCF8574T address range (0x20-0x27). */
@@ -2103,6 +2104,7 @@ void lcd_task(void *arg)
     lcd_render_state_t snap;
     static lcd_screen_id_t last_screen = LCD_SCREEN_COUNT;
     static uint32_t standby_page_last_change_ms = 0U;
+    static uint32_t last_diagnostic_refresh_ms = 0U;
     bool need_clear = true;
 
     sys_lcd.main.sub_page = MAIN_SUB_OUTPUT;
@@ -2133,10 +2135,31 @@ void lcd_task(void *arg)
         lcd_watchdog_feed();
 
         /* ====== STEP 2: SNAPSHOT STATE ====== */
+        menu_state_t menu_state_snapshot;
+        uint8_t menu_selection_snapshot;
         xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
         memcpy(&snap, &sys_lcd, sizeof(snap));
         diag_data.uptime_seconds = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+        menu_state_snapshot = sys_state.menu_state;
+        menu_selection_snapshot = sys_state.menu_selection;
         xSemaphoreGive(sys_state_mutex);
+
+        /* Uptime and memory diagnostics are live views, not one-time snapshots.
+         * Refresh only while those diagnostic items are on screen. */
+        const uint32_t diagnostic_now_ms = _lcd_get_time_ms();
+        if (snap.screen == LCD_SCREEN_DIAGNOSTIC &&
+            menu_state_snapshot == MENU_DIAGNOSTIC &&
+            (menu_selection_snapshot == 4U || menu_selection_snapshot == 5U) &&
+            (last_diagnostic_refresh_ms == 0U ||
+             diagnostic_now_ms - last_diagnostic_refresh_ms >= 1000U))
+        {
+            lcd_draw_diagnostics_screen(menu_selection_snapshot);
+            last_diagnostic_refresh_ms = diagnostic_now_ms;
+        }
+        else if (snap.screen != LCD_SCREEN_DIAGNOSTIC)
+        {
+            last_diagnostic_refresh_ms = 0U;
+        }
 
         /* ====== STEP 4: FLASH EXPIRY ====== */
         if (lcd_flash_is_expired())
