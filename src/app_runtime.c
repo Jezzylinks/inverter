@@ -5446,7 +5446,7 @@ void handle_value_confirmation(void)
                 char rows[4][LCD_LINE_SIZE];
                 snprintf(rows[0], LCD_LINE_SIZE, "Setting ID: %02u",
                          (unsigned)(saved_setting_index < NVS_SETTINGS_COUNT
-                                        ? saved_setting_index + 1U : 0U));
+                                        ? saved_setting_index : 0U));
                 snprintf(rows[1], LCD_LINE_SIZE, "%-*.*s",
                          LCD_COLS, LCD_COLS, "New Value Saved");
                 snprintf(rows[2], LCD_LINE_SIZE, "%-*.*s",
