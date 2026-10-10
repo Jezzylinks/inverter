@@ -1621,24 +1621,10 @@ bool app_services_wifi_operation_in_progress(void)
 
 void app_services_show_wifi_network_details(uint8_t selected_index)
 {
-    char ssid[LCD_WIFI_SSID_MAX_LEN + 1U] = {0};
-    int8_t rssi = 0;
-    uint8_t channel = 0U;
-    uint8_t authmode = 0U;
-
-    LCD_LOCK();
-    if (sys_lcd.screen != LCD_SCREEN_WIFI_SCAN ||
-        sys_lcd.wifi_scan.stage != LCD_WIFI_SCAN_COMPLETE ||
-        selected_index >= sys_lcd.wifi_scan.count) {
-        LCD_UNLOCK();
-        return;
-    }
-    strncpy(ssid, sys_lcd.wifi_scan.ssid[selected_index], sizeof(ssid) - 1U);
-    rssi = sys_lcd.wifi_scan.rssi[selected_index];
-    channel = sys_lcd.wifi_scan.channel[selected_index];
-    authmode = sys_lcd.wifi_scan.authmode[selected_index];
-    LCD_UNLOCK();
-    lcd_show_wifi_network_details(ssid, rssi, channel, authmode);
+    /* A network selection is an action, not a separate details page:
+     * open networks connect immediately and secured networks go straight to
+     * password entry. This avoids making the user select the same SSID twice. */
+    (void)app_services_wifi_connect_selected(selected_index);
 }
 
 static esp_err_t app_services_wifi_connect_network_with_authmode(
