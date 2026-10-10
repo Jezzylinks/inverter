@@ -403,6 +403,17 @@ bool wifi_events_is_connected(void)
     return wifi_events_get_status_copy(&status) == ESP_OK && status.connected;
 }
 
+bool wifi_events_is_ap_active(void)
+{
+    if (!s_initialized || s_mutex == NULL) {
+        return false;
+    }
+    events_lock();
+    const bool active = s_ap_active;
+    events_unlock();
+    return active;
+}
+
 bool wifi_events_has_ip(void)
 {
     wifi_status_t status;
