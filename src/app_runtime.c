@@ -684,8 +684,8 @@ bool battery_load_profile(battery_profile_t *profile_out)
     }
 
     nvs_handle_t nvs_handle;
-    esp_err_t err;
     uint8_t battery_type =
+        profile_out->profile_id >= BATTERY_LEAD_ACID &&
         profile_out->profile_id < BATTERY_TYPE_COUNT
             ? (uint8_t)profile_out->profile_id : (uint8_t)BATTERY_AGM;
     uint8_t voltage_system =
@@ -697,7 +697,7 @@ bool battery_load_profile(battery_profile_t *profile_out)
         profile_out->capacity_ah >= 1.0f && profile_out->capacity_ah <= 65535.0f
             ? (uint16_t)lroundf(profile_out->capacity_ah) : 200U;
 
-    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs_handle);
+    esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK)
     {
         ESP_LOGE("BAT_PROFILE", "Unable to open NVS for profile restore: %s",
@@ -705,52 +705,101 @@ bool battery_load_profile(battery_profile_t *profile_out)
         return false;
     }
 
-    /* Missing legacy keys should not discard a valid saved battery type.
-     * Keep the validated profile defaults for only the missing field, while
-     * treating real NVS errors as a failed restore. */
-    err = nvs_get_u8(nvs_handle, BATTERY_TYPE_KEY, &battery_type);
-    if (err == ESP_ERR_NVS_NOT_FOUND)
+    /*
+     * These profile fields are also part of the canonical settings table.
+     * Older firmware revisions stored some numeric values with different NVS
+     * types. Try the legacy i32 representation when a u8/u16 read reports a
+     * type mismatch, and keep the already-loaded runtime value if a legacy
+     * field is missing or unreadable. A bad capacity key must not discard a
+     * valid battery type and silently replace the whole profile at boot.
+     */
+    esp_err_t field_err = nvs_get_u8(nvs_handle, BATTERY_TYPE_KEY, &battery_type);
+    if (field_err == ESP_ERR_NVS_TYPE_MISMATCH)
     {
-        ESP_LOGW("BAT_PROFILE", "NVS key '%s' missing; retaining profile type=%u",
+        int32_t legacy_type = -1;
+        const esp_err_t legacy_err = nvs_get_i32(nvs_handle, BATTERY_TYPE_KEY,
+                                                  &legacy_type);
+        if (legacy_err == ESP_OK && legacy_type >= BATTERY_LEAD_ACID &&
+            legacy_type < BATTERY_TYPE_COUNT)
+        {
+            battery_type = (uint8_t)legacy_type;
+            ESP_LOGW("BAT_PROFILE", "Recovered legacy i32 battery type from NVS");
+        }
+        else
+        {
+            ESP_LOGW("BAT_PROFILE", "Could not recover legacy battery type: %s",
+                     esp_err_to_name(legacy_err));
+        }
+    }
+    else if (field_err != ESP_OK && field_err != ESP_ERR_NVS_NOT_FOUND)
+    {
+        ESP_LOGW("BAT_PROFILE", "Reading '%s' failed: %s; retaining loaded type=%u",
+                 BATTERY_TYPE_KEY, esp_err_to_name(field_err),
+                 (unsigned)battery_type);
+    }
+    else if (field_err == ESP_ERR_NVS_NOT_FOUND)
+    {
+        ESP_LOGW("BAT_PROFILE", "NVS key '%s' missing; retaining loaded type=%u",
                  BATTERY_TYPE_KEY, (unsigned)battery_type);
-        err = ESP_OK;
     }
-    if (err == ESP_OK)
+
+    field_err = nvs_get_u8(nvs_handle, BATTERY_VOLTAGE_SYSTEM_KEY,
+                           &voltage_system);
+    if (field_err == ESP_ERR_NVS_TYPE_MISMATCH)
     {
-        esp_err_t field_err = nvs_get_u8(nvs_handle, BATTERY_VOLTAGE_SYSTEM_KEY,
-                                         &voltage_system);
-        if (field_err == ESP_ERR_NVS_NOT_FOUND)
+        int32_t legacy_voltage = 0;
+        const esp_err_t legacy_err = nvs_get_i32(nvs_handle,
+                                                  BATTERY_VOLTAGE_SYSTEM_KEY,
+                                                  &legacy_voltage);
+        if (legacy_err == ESP_OK &&
+            (legacy_voltage == VOLTAGE_SYSTEM_12V ||
+             legacy_voltage == VOLTAGE_SYSTEM_24V ||
+             legacy_voltage == VOLTAGE_SYSTEM_48V))
         {
-            ESP_LOGW("BAT_PROFILE", "NVS key '%s' missing; retaining voltage=%uV",
-                     BATTERY_VOLTAGE_SYSTEM_KEY, (unsigned)voltage_system);
+            voltage_system = (uint8_t)legacy_voltage;
+            ESP_LOGW("BAT_PROFILE", "Recovered legacy i32 battery voltage system");
         }
-        else if (field_err != ESP_OK)
+        else
         {
-            err = field_err;
+            ESP_LOGW("BAT_PROFILE", "Could not recover legacy voltage system: %s",
+                     esp_err_to_name(legacy_err));
         }
     }
-    if (err == ESP_OK)
+    else if (field_err != ESP_OK && field_err != ESP_ERR_NVS_NOT_FOUND)
     {
-        esp_err_t field_err = nvs_get_u16(nvs_handle, BATTERY_CAPACITY_KEY,
-                                          &capacity_ah);
-        if (field_err == ESP_ERR_NVS_NOT_FOUND)
+        ESP_LOGW("BAT_PROFILE", "Reading '%s' failed: %s; retaining voltage=%uV",
+                 BATTERY_VOLTAGE_SYSTEM_KEY, esp_err_to_name(field_err),
+                 (unsigned)voltage_system);
+    }
+
+    field_err = nvs_get_u16(nvs_handle, BATTERY_CAPACITY_KEY, &capacity_ah);
+    if (field_err == ESP_ERR_NVS_TYPE_MISMATCH)
+    {
+        int32_t legacy_capacity = 0;
+        const esp_err_t legacy_err = nvs_get_i32(nvs_handle,
+                                                  BATTERY_CAPACITY_KEY,
+                                                  &legacy_capacity);
+        if (legacy_err == ESP_OK && legacy_capacity > 0 &&
+            legacy_capacity <= UINT16_MAX)
         {
-            ESP_LOGW("BAT_PROFILE", "NVS key '%s' missing; retaining capacity=%uAh",
-                     BATTERY_CAPACITY_KEY, (unsigned)capacity_ah);
+            capacity_ah = (uint16_t)legacy_capacity;
+            ESP_LOGW("BAT_PROFILE", "Recovered legacy i32 battery capacity");
         }
-        else if (field_err != ESP_OK)
+        else
         {
-            err = field_err;
+            ESP_LOGW("BAT_PROFILE", "Could not recover legacy capacity: %s",
+                     esp_err_to_name(legacy_err));
         }
     }
+    else if (field_err != ESP_OK && field_err != ESP_ERR_NVS_NOT_FOUND)
+    {
+        ESP_LOGW("BAT_PROFILE", "Reading '%s' failed: %s; retaining capacity=%uAh",
+                 BATTERY_CAPACITY_KEY, esp_err_to_name(field_err),
+                 (unsigned)capacity_ah);
+    }
+
     storage_nvs_close(nvs_handle);
 
-    if (err != ESP_OK)
-    {
-        ESP_LOGE("BAT_PROFILE", "Battery profile NVS read failed: %s (0x%x)",
-                 esp_err_to_name(err), err);
-        return false;
-    }
     if (battery_type >= BATTERY_TYPE_COUNT)
     {
         ESP_LOGE("BAT_PROFILE", "Invalid battery type %u in NVS key '%s'",
