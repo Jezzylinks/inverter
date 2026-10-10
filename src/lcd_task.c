@@ -2146,10 +2146,14 @@ void lcd_task(void *arg)
             if (lcd_flash_queue_has_pending())
             {
                 flash_entry_t next;
-                if (lcd_flash_dequeue(&next))
-                    lcd_flash_enqueue_to(next.line0, next.line1,
-                                         next.duration_ms, next.priority,
-                                         next.return_to);
+                if (lcd_flash_dequeue(&next)) {
+                    const char *rows[4] = {
+                        next.line0, next.line1, next.line2, next.line3
+                    };
+                    lcd_flash_enqueue_rows_to(rows, next.row_count,
+                                              next.duration_ms, next.priority,
+                                              next.return_to);
+                }
             }
             else
             {
@@ -2339,37 +2343,38 @@ void lcd_task(void *arg)
 
         case LCD_SCREEN_FLASH_MSG:
         {
-            static char prev_flash_line0[LCD_LINE_SIZE] = {0};
-            static char prev_flash_line1[LCD_LINE_SIZE] = {0};
+            static active_flash_t previous_flash = {0};
             active_flash_t flash;
             if (lcd_flash_get(&flash))
             {
-                bool changed = (strcmp(prev_flash_line0, flash.line0) != 0) ||
-                               (strcmp(prev_flash_line1, flash.line1) != 0);
+                const bool changed =
+                    memcmp(&previous_flash, &flash, sizeof(flash)) != 0;
                 if (changed)
                 {
-                    strncpy(prev_flash_line0, flash.line0,
-                            sizeof(prev_flash_line0) - 1);
-                    prev_flash_line0[sizeof(prev_flash_line0) - 1] = '\0';
-                    strncpy(prev_flash_line1, flash.line1,
-                            sizeof(prev_flash_line1) - 1);
-                    prev_flash_line1[sizeof(prev_flash_line1) - 1] = '\0';
+                    previous_flash = flash;
                     ESP_LOGI(TAG, "Flash updated: '%s' / '%s'",
                              flash.line0, flash.line1);
                 }
+
                 if (flash.priority == FLASH_PRI_WARNING)
                 {
                     if (lcd_geometry_is_20x4())
                     {
-                        draw_commit_rows((const char *[]){"SYSTEM WARNING",
-                                                          flash.line0,
-                                                          flash.line1,
-                                                          "CHECK SYSTEM"});
+                        draw_commit_rows((const char *[]){
+                            "SYSTEM WARNING", flash.line0, flash.line1,
+                            "CHECK SYSTEM"
+                        });
                     }
                     else
                     {
                         draw_commit("SYSTEM WARNING", flash.line1);
                     }
+                }
+                else if (lcd_geometry_is_20x4() && flash.row_count >= 4U)
+                {
+                    draw_commit_rows((const char *[]){
+                        flash.line0, flash.line1, flash.line2, flash.line3
+                    });
                 }
                 else
                 {
