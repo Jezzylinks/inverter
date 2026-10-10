@@ -2,6 +2,7 @@
 #include "system/core_affinity.h"
 
 #include <string.h>
+#include <stdint.h>
 
 #include "esp_http_server.h"
 #include "esp_log.h"
