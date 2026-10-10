@@ -2457,6 +2457,18 @@ bool load_settings()
                     NVS_SETTINGS_TXN_CRC_KEY,
                     &stored_crc) == ESP_OK;
 
+    /* Compute this before battery_load_profile() regenerates the profile.
+     * It lets startup logs distinguish a flash/load mismatch from a later
+     * runtime overwrite of the selected battery type. */
+    const uint32_t loaded_fingerprint = settings_fingerprint();
+    ESP_LOGI(NVS_LOADING_TAG,
+             "Loaded settings transaction: marker_present=%d marker=%u crc_present=%d stored_crc=0x%08lx loaded_crc=0x%08lx battery_type=%u",
+             txn_present ? 1 : 0, (unsigned)txn_marker,
+             crc_present ? 1 : 0,
+             (unsigned long)stored_crc,
+             (unsigned long)loaded_fingerprint,
+             (unsigned)sys_state.battery_profile.profile_id);
+
     /* True only when flash holds a complete, current-version transaction whose
      * CRC matches the values just decoded.  Only then are the decoded values
      * known to be ones the user actually saved. */
@@ -2473,7 +2485,7 @@ bool load_settings()
         load_error = true;
     }
     else if (txn_present &&
-             (!crc_present || stored_crc != settings_fingerprint()))
+             (!crc_present || stored_crc != loaded_fingerprint))
     {
         ESP_LOGE(NVS_LOADING_TAG,
                  "Settings transaction checksum invalid; restoring validated defaults");
@@ -2521,7 +2533,16 @@ bool load_settings()
                  "Failed to load battery profile, using defaults");
         load_error = true;
     }
-    else if (txn_trusted)
+    else
+    {
+        ESP_LOGI(NVS_LOADING_TAG,
+                 "Battery profile restored from NVS: type=%u voltage_system=%u capacity_ah=%.1f",
+                 (unsigned)sys_state.battery_profile.profile_id,
+                 (unsigned)sys_state.battery_profile.nominal_voltage,
+                 (double)sys_state.battery_profile.capacity_ah);
+    }
+
+    if (txn_trusted && sys_state.battery_profile.profile_id < BATTERY_TYPE_COUNT)
     {
         battery_profile_t *bp = &sys_state.battery_profile;
         const float margin_v = 0.3f; /* same margin as validate_and_clamp_settings() */
@@ -2553,6 +2574,13 @@ bool load_settings()
 
     sync_battery_voltage_state();
     sync_battery_protection_thresholds();
+
+    ESP_LOGI(NVS_LOADING_TAG,
+             "Final settings after validation: battery_type=%u voltage_system=%u capacity_ah=%.1f transaction_trusted=%d load_error=%d",
+             (unsigned)sys_state.battery_profile.profile_id,
+             (unsigned)sys_state.battery_profile.nominal_voltage,
+             (double)sys_state.battery_profile.capacity_ah,
+             txn_trusted ? 1 : 0, load_error ? 1 : 0);
 
     if (load_error)
     {
@@ -5345,7 +5373,7 @@ void handle_value_confirmation(void)
         {
             ESP_LOGI("SETTINGS_TRANSACTION", "SUCCESS label=%s value=%s",
                      ctx->label, saved_value);
-            lcd_flash_info_to(ctx->label, saved_value, 1200, LCD_SCREEN_MENU);
+            lcd_flash_info_to("Setting Saved!", saved_value, 1400, LCD_SCREEN_MENU);
             printf("AUDIT: Parameter changed - %s\n", ctx->label);
         }
         else
