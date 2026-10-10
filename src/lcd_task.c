@@ -2371,7 +2371,12 @@ void lcd_task(void *arg)
             if (lcd_flash_get(&flash))
             {
                 const bool changed =
-                    memcmp(&previous_flash, &flash, sizeof(flash)) != 0;
+                    previous_flash.row_count != flash.row_count ||
+                    previous_flash.priority != flash.priority ||
+                    strcmp(previous_flash.line0, flash.line0) != 0 ||
+                    strcmp(previous_flash.line1, flash.line1) != 0 ||
+                    strcmp(previous_flash.line2, flash.line2) != 0 ||
+                    strcmp(previous_flash.line3, flash.line3) != 0;
                 if (changed)
                 {
                     previous_flash = flash;
