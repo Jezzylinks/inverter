@@ -40,6 +40,9 @@ typedef struct
   bool active;
   char line0[LCD_LINE_SIZE];
   char line1[LCD_LINE_SIZE];
+  char line2[LCD_LINE_SIZE];
+  char line3[LCD_LINE_SIZE];
+  uint8_t row_count;
   uint32_t expire_ms;
   flash_priority_t priority;
   lcd_screen_id_t return_to;
@@ -50,6 +53,9 @@ typedef struct
 {
   char line0[LCD_LINE_SIZE];
   char line1[LCD_LINE_SIZE];
+  char line2[LCD_LINE_SIZE];
+  char line3[LCD_LINE_SIZE];
+  uint8_t row_count;
   uint32_t duration_ms;
   flash_priority_t priority;
   lcd_screen_id_t return_to; /* screen to restore when timer expires   */
@@ -66,6 +72,9 @@ void lcd_flash_enqueue_to(const char *line0,
                           uint32_t duration_ms,
                           flash_priority_t priority,
                           lcd_screen_id_t return_to_override);
+void lcd_flash_enqueue_rows_to(const char *const rows[], uint8_t row_count,
+                               uint32_t duration_ms, flash_priority_t priority,
+                               lcd_screen_id_t return_to_override);
 
 /*
  * Convenience wrappers — use these instead of calling lcd_flash_enqueue
