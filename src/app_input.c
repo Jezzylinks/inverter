@@ -560,6 +560,12 @@ void handle_power_button_event(button_event_info_t *event_info,
 {
     log_button_callback("Power", event_info, sys_state.system_ready);
 
+    /* Startup owns the panel until the final boot screen is released. */
+    if (lcd_is_startup_active())
+    {
+        return;
+    }
+
     if (consume_display_wakeup_event(event_info))
     {
         return;
@@ -577,14 +583,6 @@ void handle_power_button_event(button_event_info_t *event_info,
     /* Never let the power button interrupt an in-progress factory reset.
      * The erase/format sequence must run to completion undisturbed. */
     if (atomic_load(&sys_lcd.factory_reset.phase) == FACTORY_PHASE_PROGRESS)
-    {
-        return;
-    }
-
-    /* Power actions still emit their normal safety event above, but their
-     * display/navigation side effects are deferred until startup releases the
-     * LCD. */
-    if (lcd_is_startup_active())
     {
         return;
     }
@@ -898,10 +896,6 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
 {
     log_button_callback("Enter/Menu", event_info, sys_state.system_ready);
 
-    if (event_info->event == BUTTON_EVENT_PRESS)
-    {
-        post_button_click_event();
-    }
     if (event_info->event == BUTTON_EVENT_CLICK)
     {
         const uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000LL);
@@ -917,11 +911,15 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         return;
     }
 
-    /* Keep button delivery intact, but do not let normal navigation take
-     * ownership of the LCD before app_main performs STARTUP -> NORMAL. */
+    /* Do not emit click events or allow navigation while startup owns the LCD. */
     if (lcd_is_startup_active())
     {
         return;
+    }
+
+    if (event_info->event == BUTTON_EVENT_PRESS)
+    {
+        post_button_click_event();
     }
 
     if (consume_display_wakeup_event(event_info))
