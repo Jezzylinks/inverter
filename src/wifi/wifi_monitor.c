@@ -168,8 +168,9 @@ static bool wifi_monitor_tcp_connect_test(const char *address, uint16_t port)
 }
 
 /*
- * Two independent public HTTPS endpoints are tested. A temporary failure
- * at one endpoint therefore does not make the whole Internet appear down.
+ * Two independent public IP endpoints are tested for TCP/443 reachability.
+ * A temporary failure at one endpoint therefore does not make the whole
+ * upstream connection appear down.
  */
 static bool wifi_monitor_internet_test(void)
 {
