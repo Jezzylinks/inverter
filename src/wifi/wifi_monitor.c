@@ -22,7 +22,6 @@
 #include "freertos/semphr.h"
 
 #include "lwip/sockets.h"
-#include "ping/ping_sock.h"
 
 #define WIFI_MONITOR_MAX_CALLBACKS 8
 #define WIFI_MONITOR_STOP_TIMEOUT_MS 5000
@@ -88,8 +87,10 @@ static void wifi_monitor_notify(void)
 /*----------------------------------------------------------
  * Internet reachability
  *
- * Use outbound TCP/443 rather than ICMP. Some networks and ISPs block
- * ICMP while normal HTTPS traffic remains available.
+ * Probe outbound TCP connections to port 443 on two public IP addresses.
+ * This is a lightweight reachability heuristic, not a full TLS/HTTPS or DNS
+ * validation. Actual OTA and MQTT connections still validate their own
+ * destination and must handle DNS, TLS, authentication, and server failures.
  *---------------------------------------------------------*/
 
 static bool wifi_monitor_tcp_connect_test(const char *address, uint16_t port)
