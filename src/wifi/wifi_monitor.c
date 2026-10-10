@@ -219,6 +219,12 @@ static void wifi_monitor_task(void *arg)
         const wifi_internet_status_t internet = got_ip
             ? wifi_monitor_check_internet()
             : WIFI_INTERNET_UNAVAILABLE;
+
+        /* Keep the shared Wi-Fi event snapshot in sync with the independent
+         * internet probe. A DHCP lease alone must not imply internet access. */
+        (void)wifi_events_set_internet_available(
+            got_ip && internet == WIFI_INTERNET_AVAILABLE);
+
         bool internet_changed = false;
         wifi_internet_callback_t internet_callback = NULL;
 
