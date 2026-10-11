@@ -48,6 +48,16 @@ static void display_event_notice(const system_event_t *event)
         return;
     }
 
+    /* Wi-Fi lifecycle success events include AP_ACTIVE, which means the
+     * local access point started—not that a user connection completed. The
+     * generic "WiFi / Success" flash is misleading during a radio toggle;
+     * real connect/disconnect results are already shown by app_services. Keep
+     * error events visible and leave logging/LED/buzzer subscribers intact. */
+    if (event->category == EVENT_CATEGORY_WIFI &&
+        event->action == EVENT_ACTION_SUCCESS) {
+        return;
+    }
+
     /* Startup notices are intentionally quiet. Events remain available to
      * the protection/logger/relay consumers; only their LCD flash is
      * suppressed. AC and battery voltage notices are excluded for the whole
