@@ -991,6 +991,7 @@ typedef enum
     VALUE_TYPE_SCROLL_ENABLE,
     VALUE_TYPE_SCROLL_SPEED,
     VALUE_TYPE_BATTERY_TYPE,
+    VALUE_TYPE_BATTERY_CAPACITY,
     VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM,
     VALUE_TYPE_SOUND_ENABLE,
     VALUE_TYPE_QUIET_HOURS_ENABLE,
@@ -1158,6 +1159,7 @@ static void apply_scroll_enable(float v);
 static void apply_scroll_speed(float v);
 static void apply_system_timeout(float v);
 static void apply_battery_type(float v);
+static void apply_battery_capacity(float v);
 static void apply_battery_voltage_system(float v);
 static void apply_sound_enable(float v);
 static void apply_quiet_hours_enable(float v);
@@ -1445,6 +1447,23 @@ static value_edit_context_t value_edit[] = {
         .apply = apply_battery_type,
     },
 
+    [VALUE_TYPE_BATTERY_CAPACITY] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 1.0f,
+        .max_value = 5000.0f,
+        .increment_small = 1.0f,
+        .increment_large = 10.0f,
+        .increment_precision = 1.0f,
+        .decimal_places = 0,
+        .unit = "Ah",
+        .label = "Battery Capacity",
+        .is_critical = true,
+        .live_update = false,
+        .step_size = 1.0f,
+        .current_value = 200.0f,
+        .apply = apply_battery_capacity,
+    },
+
     [VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM] = {
         .edit_type = VALUE_EDIT_SELECT,
         .selection_index = 0,
@@ -1730,8 +1749,8 @@ typedef struct
 static nvs_setting_t g_settings[] = {
     {BATTERY_VOLTAGE_SYSTEM_KEY, &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 12, false, "Bat Volt System", false, false},
     {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false, "Inverter Active", false, true},
-    {BATTERY_TYPE_KEY, &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false, "Battery Type", false, false},
-    {BATTERY_CAPACITY_KEY, &sys_state.battery_profile.capacity_ah, sizeof(float), 0, false, "Battery Capacity", false, false},
+    {BATTERY_TYPE_KEY, &sys_state.battery_profile.profile_id, sizeof(uint8_t), DEFAULT_BATTERY_PROFILE, false, "Battery Type", false, false},
+    {BATTERY_CAPACITY_KEY, &sys_state.battery_profile.capacity_ah, sizeof(float), 200, false, "Battery Capacity", false, false},
     {"bat_charge_cur", &sys_state.battery_profile.max_charge_current_per_100ah, sizeof(int32_t), 0, true, "Max Charge Cur", false, false},
     {"bat_disc_cur", &sys_state.battery_profile.max_discharge_current_per_100ah, sizeof(int32_t), 0, true, "Max Discharge Cur", false, false},
     {"bat_full_volt", &sys_state.battery_profile.high_battery_voltage_v, sizeof(int32_t), 0, true, "Bat Full Volt", false, false},
@@ -1802,6 +1821,8 @@ static size_t settings_index_for_editor(const value_edit_context_t *ctx)
         return settings_index_for_key("scroll_spd");
     if (ctx == &value_edit[VALUE_TYPE_BATTERY_TYPE])
         return settings_index_for_key(BATTERY_TYPE_KEY);
+    if (ctx == &value_edit[VALUE_TYPE_BATTERY_CAPACITY])
+        return settings_index_for_key(BATTERY_CAPACITY_KEY);
     if (ctx == &value_edit[VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM])
         return settings_index_for_key(BATTERY_VOLTAGE_SYSTEM_KEY);
     if (ctx == &value_edit[VALUE_TYPE_SOUND_ENABLE])
@@ -4089,21 +4110,51 @@ static void sync_battery_protection_thresholds(void)
 
 static void apply_battery_type(float v)
 {
-    battery_type_t new_type = (battery_type_t)v;
+    if (v < 0.0f || v >= (float)BATTERY_TYPE_COUNT) {
+        ESP_LOGW("BAT_PROFILE", "Rejected battery type value %.2f", (double)v);
+        return;
+    }
+    const battery_type_t new_type = (battery_type_t)lroundf(v);
     battery_profile_t regenerated;
     if (battery_generate_profile(new_type,
                                  (voltage_system_t)sys_state.battery_profile.nominal_voltage,
                                  sys_state.battery_profile.capacity_ah,
                                  &regenerated))
     {
+        regenerated.profile_id = new_type;
         sys_state.battery_profile = regenerated;
-        sys_state.battery_profile.profile_id = new_type;
         sys_state.inverter.battery_voltage_system =
             (uint8_t)sys_state.battery_profile.nominal_voltage;
         sys_state.battery_voltage_system =
             (uint8_t)sys_state.battery_profile.nominal_voltage;
         sync_battery_estimator_configuration();
         sync_battery_protection_thresholds();
+        ESP_LOGI("BAT_PROFILE", "Applied battery type=%u capacity_ah=%.0f voltage=%uV",
+                 (unsigned)new_type, (double)sys_state.battery_profile.capacity_ah,
+                 (unsigned)sys_state.battery_profile.nominal_voltage);
+    }
+}
+
+static void apply_battery_capacity(float v)
+{
+    if (!isfinite(v) || v < 1.0f || v > 5000.0f) {
+        ESP_LOGW("BAT_PROFILE", "Rejected battery capacity %.2fAh", (double)v);
+        return;
+    }
+
+    const uint16_t capacity_ah = (uint16_t)lroundf(v);
+    battery_profile_t regenerated;
+    if (battery_generate_profile((battery_type_t)sys_state.battery_profile.profile_id,
+                                 (voltage_system_t)sys_state.battery_profile.nominal_voltage,
+                                 capacity_ah, &regenerated)) {
+        regenerated.profile_id = sys_state.battery_profile.profile_id;
+        regenerated.cutoff_voltage_v = sys_state.battery_profile.cutoff_voltage_v;
+        sys_state.battery_profile = regenerated;
+        sync_battery_estimator_configuration();
+        sync_battery_protection_thresholds();
+        ESP_LOGI("BAT_PROFILE", "Applied battery capacity=%uAh type=%u",
+                 (unsigned)capacity_ah,
+                 (unsigned)sys_state.battery_profile.profile_id);
     }
 }
 
@@ -7108,6 +7159,13 @@ void edit_battery_type(void)
     ctx->selection_index = sys_state.battery_profile.profile_id;
     sys_state.edit_backup_value = (float)ctx->selection_index;
     lcd_show_value_edit_screen();
+}
+
+void edit_battery_capacity(void)
+{
+    begin_setting_edit(VALUE_TYPE_BATTERY_CAPACITY,
+                       sys_state.battery_profile.capacity_ah > 0.0f
+                           ? sys_state.battery_profile.capacity_ah : 200.0f);
 }
 
 /* edit_battery_cutoff_voltage() — system- and chemistry-aware cutoff editor.
