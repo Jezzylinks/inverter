@@ -816,6 +816,20 @@ static esp_err_t persist_manifest_url(const char *url)
     else
     {
         err = nvs_set_str(handle, APP_OTA_MANIFEST_KEY, url);
+        if (err == ESP_ERR_NVS_TYPE_MISMATCH)
+        {
+            /* Older firmware may have used this key with a different NVS
+             * type. Migrate this key only; never erase the whole namespace. */
+            const esp_err_t erase_err = nvs_erase_key(handle, APP_OTA_MANIFEST_KEY);
+            if (erase_err == ESP_OK || erase_err == ESP_ERR_NVS_NOT_FOUND)
+            {
+                err = nvs_set_str(handle, APP_OTA_MANIFEST_KEY, url);
+            }
+            else
+            {
+                err = erase_err;
+            }
+        }
     }
     if (err == ESP_OK)
     {
@@ -848,7 +862,7 @@ static void load_persisted_config(void)
         s_manifest_url[0] = '\0';
     }
     if (s_manifest_url[0] != '\0' && !app_manifest_url_is_valid(s_manifest_url)) {
-        ESP_LOGW(APP_SERVICES_TAG, "Persisted OTA manifest URL rejected");
+        ESP_LOGW(APP_SERVICES_TAG, "Persisted OTA manifest URL rejected; using configured default");
         s_manifest_url[0] = '\0';
     }
 
@@ -2270,14 +2284,19 @@ esp_err_t app_services_check_for_update(bool user_initiated)
         ESP_LOGW(APP_SERVICES_TAG,
                  "Internet probe is not yet positive; attempting HTTPS manifest check");
     }
-    if (app_services_get_ota_manifest_url(manifest_url, sizeof(manifest_url)) != ESP_OK ||
-        strncmp(manifest_url, "https://", 8U) != 0 ||
-        strlen(manifest_url) >= sizeof(manifest_url)) {
+    const esp_err_t url_err =
+        app_services_get_ota_manifest_url(manifest_url, sizeof(manifest_url));
+    if (url_err != ESP_OK || !ota_manifest_is_https_url(manifest_url)) {
+        ESP_LOGE(APP_SERVICES_TAG,
+                 "OTA manifest URL unavailable or invalid (get=%s, https_valid=%d)",
+                 esp_err_to_name(url_err),
+                 ota_manifest_is_https_url(manifest_url) ? 1 : 0);
         if (user_initiated) {
-            lcd_flash_warning_to("OTA URL Invalid", "HTTPS required",
+            lcd_flash_warning_to("OTA URL Invalid",
+                                 url_err == ESP_OK ? "HTTPS required" : "Set manifest URL",
                                  1500U, LCD_SCREEN_MENU);
         }
-        return ESP_ERR_INVALID_ARG;
+        return url_err == ESP_OK ? ESP_ERR_INVALID_ARG : url_err;
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
