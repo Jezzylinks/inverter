@@ -440,7 +440,25 @@ static void app_wifi_menu_refresh_task(void *parameter)
 {
     const uint32_t delay_ms = (uint32_t)(uintptr_t)parameter;
     vTaskDelay(pdMS_TO_TICKS(delay_ms));
-    app_wifi_sync_menu_if_visible();
+
+    /* A queued LCD flash can last slightly longer than its nominal duration.
+     * Never redraw the menu over an active flash/result screen. */
+    for (unsigned attempt = 0U; attempt < 12U; ++attempt) {
+        lcd_screen_id_t screen;
+        LCD_LOCK();
+        screen = sys_lcd.screen;
+        LCD_UNLOCK();
+
+        if (screen == LCD_SCREEN_MENU) {
+            app_wifi_sync_menu_if_visible();
+            break;
+        }
+        if (screen != LCD_SCREEN_FLASH_MSG &&
+            screen != LCD_SCREEN_WIFI_CONNECTING) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(250U));
+    }
     vTaskDelete(NULL);
 }
 
