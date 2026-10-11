@@ -730,12 +730,19 @@ static void app_wifi_status_callback(const wifi_status_t *status)
          * informational and must not race the runtime/NVS commit. */
         break;
     case APP_WIFI_OPERATION_CONNECT_SAVED:
-        /* Do not require WIFI_STATE_CONNECTED: in APSTA mode AP_START can
-         * publish AP_ACTIVE while the station still has a valid DHCP lease. */
-        if (status->connected && status->got_ip) {
-            terminal = true;
-            connected = true;
-            message = ssid[0] != '\0' ? ssid : "Connected";
+        /* A DHCP lease on the previously connected AP is not proof that the
+         * requested connection succeeded. Confirm the actual associated SSID
+         * before completing the pending operation (important for same-SSID
+         * password changes and delayed monitor callbacks). */
+        if (status->connected && status->got_ip && ssid[0] != '\0') {
+            wifi_ap_record_t active_ap = {0};
+            if (esp_wifi_sta_get_ap_info(&active_ap) == ESP_OK &&
+                strncmp((const char *)active_ap.ssid, ssid,
+                        sizeof(active_ap.ssid)) == 0) {
+                terminal = true;
+                connected = true;
+                message = ssid;
+            }
         } else if (status->state == WIFI_STATE_FAILED) {
             terminal = true;
             failed = true;
