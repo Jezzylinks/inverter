@@ -9,6 +9,8 @@
 #include "app/app_services.h"
 #include "battery/battery_estimator.h"
 #include "events/system_events.h"
+#include "events/fault_log.h"
+#include "system/system_error_codes.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -31,6 +33,23 @@
 #define APP_SEQUENCE_TIMEOUT_MS 3000U
 
 extern system_state_t sys_state;
+
+/* A PIN flow must not consume navigation keys while its reminder/feedback
+ * flash is visible. The flash queue owns the display until its expiry. */
+static bool security_flash_message_blocks_input(void)
+{
+    if (sys_state.menu_state != MENU_SECURITY ||
+        atomic_load(&sys_lcd.security.phase) != SECURITY_PHASE_PIN_FLOW)
+    {
+        return false;
+    }
+
+    bool flash_screen;
+    LCD_LOCK();
+    flash_screen = (sys_lcd.screen == LCD_SCREEN_FLASH_MSG);
+    LCD_UNLOCK();
+    return flash_screen && lcd_flash_is_active();
+}
 
 static void log_button_callback(const char *name,
                                 const button_event_info_t *event_info,
@@ -566,6 +585,11 @@ void handle_power_button_event(button_event_info_t *event_info,
         return;
     }
 
+    if (security_flash_message_blocks_input())
+    {
+        return;
+    }
+
     if (consume_display_wakeup_event(event_info))
     {
         return;
@@ -722,6 +746,17 @@ void handle_power_button_event(button_event_info_t *event_info,
             if (require_system_ready_for_inverter_action("inverter enable"))
             {
                 inverter_power_on();
+                if (sys_state.inverter.inverter_state != INVERTER_ON &&
+                    sys_state.inverter.inverter_state != INVERTER_STARTING)
+                {
+                    const uint32_t fault_flags = (uint32_t)sys_state.error.error_flags;
+                    fault_log_add(FAULT_SEV_FAULT, FAULT_SRC_OTHER,
+                                  (float)fault_flags,
+                                  fault_flags != 0U
+                                      ? get_error_string(sys_state.error.error_flags)
+                                      : "Inverter failed to start");
+                    inverter_show_last_start_error();
+                }
             }
             break;
         case INVERTER_ON:
@@ -1195,7 +1230,14 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             }
             else
             {
-                exit_value_edit_mode(true);
+                const menu_state_t parent_menu = sys_state.menu_state;
+                const int parent_selection = sys_state.menu_selection;
+                if (exit_value_edit_mode(true))
+                {
+                    show_menu_screen(parent_menu, parent_selection);
+                    lcd_flash_info_to("Setting Saved", "Changes stored",
+                                      900U, LCD_SCREEN_MENU);
+                }
             }
             break;
         }
@@ -1668,6 +1710,11 @@ void handle_up_button_event(button_event_info_t *event_info,
         return;
     }
 
+    if (security_flash_message_blocks_input())
+    {
+        return;
+    }
+
     if (consume_display_wakeup_event(event_info))
     {
         return;
@@ -1960,6 +2007,11 @@ void handle_down_button_event(button_event_info_t *event_info,
 {
     log_button_callback("Down", event_info, sys_state.system_ready);
     if (lcd_is_startup_active())
+    {
+        return;
+    }
+
+    if (security_flash_message_blocks_input())
     {
         return;
     }
@@ -2275,6 +2327,11 @@ void handle_back_button_event(button_event_info_t *event_info,
 {
     log_button_callback("Back", event_info, sys_state.system_ready);
     if (lcd_is_startup_active())
+    {
+        return;
+    }
+
+    if (security_flash_message_blocks_input())
     {
         return;
     }
