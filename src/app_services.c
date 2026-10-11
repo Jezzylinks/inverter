@@ -1707,8 +1707,19 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
         return ESP_ERR_NOT_SUPPORTED;
     }
 
-    /* Avoid a needless reconnect when the selected SSID is already active. */
-    if (wifi_controller_is_connected()) {
+    wifi_manager_config_t config = {0};
+    esp_err_t err = wifi_manager_get_config(&config);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    /* Skip reconnect only when the active SSID and the stored credentials
+     * both match the requested network. A changed password for the same SSID
+     * must replace the old configuration and start a fresh connection. */
+    if (wifi_controller_is_connected() &&
+        strcmp(config.ssid, ssid) == 0 &&
+        strcmp(config.password, password) == 0 &&
+        config.authmode == authmode) {
         wifi_ap_record_t current_ap = {0};
         if (esp_wifi_sta_get_ap_info(&current_ap) == ESP_OK &&
             strncmp((const char *)current_ap.ssid, ssid,
@@ -1716,12 +1727,6 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
             lcd_flash_message("Already Connected", "Returning to list", 1200U);
             return ESP_OK;
         }
-    }
-
-    wifi_manager_config_t config = {0};
-    esp_err_t err = wifi_manager_get_config(&config);
-    if (err != ESP_OK) {
-        return err;
     }
     strncpy(config.ssid, ssid, sizeof(config.ssid) - 1U);
     strncpy(config.password, password, sizeof(config.password) - 1U);
