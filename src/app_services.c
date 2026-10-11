@@ -770,7 +770,6 @@ static void app_wifi_status_callback(const wifi_status_t *status)
             message = "Setup AP Active";
         } else if (status->state == WIFI_STATE_FAILED) {
             terminal = true;
-            failed = true;
             message = "Setup AP failed";
         }
         break;
