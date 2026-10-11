@@ -4244,9 +4244,30 @@ void lcd_draw_diagnostics_screen(uint8_t index)
         break;
     }
 
-    case 5: /* RAM usage */
-        snprintf(row1, LCD_LINE_SIZE, "RAM:%6.1f%%     ", diag_data.ram_usage);
+    case 5: /* Live RAM usage */
+    {
+        const size_t heap_total = heap_caps_get_total_size(MALLOC_CAP_8BIT);
+        const size_t heap_free_raw = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+        const size_t heap_free = heap_free_raw > heap_total ? heap_total : heap_free_raw;
+        const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        const unsigned used_percent = heap_total > 0U
+                                          ? (unsigned)(((heap_total - heap_free) * 100U) /
+                                                       heap_total)
+                                          : 0U;
+
+        if (lcd_geometry_is_20x4())
+        {
+            snprintf(row1, LCD_LINE_SIZE, "Free:%uK Max:%uK",
+                     (unsigned)(heap_free / 1024U),
+                     (unsigned)(largest / 1024U));
+        }
+        else
+        {
+            snprintf(row1, LCD_LINE_SIZE, "F:%uK U:%u%%",
+                     (unsigned)(heap_free / 1024U), used_percent);
+        }
         break;
+    }
 
     default:
         snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, "Unknown item");
