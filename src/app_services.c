@@ -2241,13 +2241,12 @@ esp_err_t app_services_check_for_update(bool user_initiated)
         ESP_LOGW(APP_SERVICES_TAG, "Update check skipped: station is not connected");
         return ESP_ERR_INVALID_STATE;
     }
+    /* The monitor's TCP reachability result can lag a newly acquired DHCP
+     * lease. Let the actual HTTPS manifest request validate DNS/TLS/endpoint
+     * reachability instead of rejecting a user check on a stale probe. */
     if (!wifi_monitor_is_online()) {
-        if (user_initiated) {
-            lcd_flash_warning_to("Wi-Fi Connected", "Internet OFF",
-                                 1800U, LCD_SCREEN_MENU);
-        }
-        ESP_LOGW(APP_SERVICES_TAG, "Internet Not Available; OTA check skipped");
-        return ESP_ERR_INVALID_STATE;
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Internet probe is not yet positive; attempting HTTPS manifest check");
     }
     if (app_services_get_ota_manifest_url(manifest_url, sizeof(manifest_url)) != ESP_OK ||
         strncmp(manifest_url, "https://", 8U) != 0 ||
