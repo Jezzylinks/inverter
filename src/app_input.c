@@ -2022,7 +2022,6 @@ void handle_up_button_event(button_event_info_t *event_info,
          * continuously scrolling the menu. */
         if (sys_state.value_edit_mode &&
             sys_state.current_value_type != NULL &&
-            sys_state.current_value_type->active &&
             sys_state.current_value_type->edit_type == VALUE_EDIT_NUMERIC)
         {
             if (sys_state.hold_start_time == 0)
@@ -2357,7 +2356,6 @@ void handle_down_button_event(button_event_info_t *event_info,
          * continuously scrolling the menu. */
         if (sys_state.value_edit_mode &&
             sys_state.current_value_type != NULL &&
-            sys_state.current_value_type->active &&
             sys_state.current_value_type->edit_type == VALUE_EDIT_NUMERIC)
         {
             if (sys_state.hold_start_time == 0)
