@@ -395,6 +395,27 @@ static void app_wifi_end_operation(void)
     xSemaphoreGive(s_services_mutex);
 }
 
+/* End a monitor-reported operation only if it is still the operation whose
+ * status snapshot was evaluated. This prevents a delayed callback from
+ * clearing a newer user request. */
+static bool app_wifi_end_operation_if_generation(uint32_t generation)
+{
+    if (s_services_mutex == NULL) {
+        return false;
+    }
+
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    const bool matches = (s_wifi_operation != APP_WIFI_OPERATION_NONE) &&
+                         (s_wifi_operation_generation == generation);
+    if (matches) {
+        s_wifi_operation = APP_WIFI_OPERATION_NONE;
+        s_wifi_operation_ssid[0] = '\0';
+        s_wifi_operation_rssi = -127;
+    }
+    xSemaphoreGive(s_services_mutex);
+    return matches;
+}
+
 static bool app_wifi_operation_pending(void)
 {
     if (s_services_mutex == NULL) {
@@ -757,6 +778,8 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     bool connection_uses_auth = false;
     bool terminal = false;
     bool connected = false;
+    bool failed = false;
+    int8_t operation_rssi = -127;
     const char *message = NULL;
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
@@ -764,6 +787,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     operation_generation = s_wifi_operation_generation;
     strncpy(ssid, s_wifi_operation_ssid, sizeof(ssid) - 1U);
     connection_uses_auth = s_wifi_connection_uses_auth;
+    operation_rssi = s_wifi_operation_rssi;
     xSemaphoreGive(s_services_mutex);
 
     if (operation == APP_WIFI_OPERATION_NONE) {
@@ -797,6 +821,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
              * serving clients. Exhausted STA retries are still a terminal
              * failure for this requested connection. */
             terminal = true;
+            failed = true;
             message = connection_uses_auth ? "Auth failed" : "Network unavailable";
         }
         break;
@@ -819,6 +844,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
             message = "Setup AP Active";
         } else if (status->state == WIFI_STATE_FAILED) {
             terminal = true;
+            failed = true;
             message = "Setup AP failed";
         }
         break;
@@ -831,7 +857,10 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         return;
     }
 
-    app_wifi_end_operation();
+    if (!app_wifi_end_operation_if_generation(operation_generation)) {
+        /* The request changed while this monitor snapshot was being handled. */
+        return;
+    }
     if (operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
         /* Mark the connecting screen as terminal. Otherwise its stale
          * connected=false snapshot reappears after a flash overlay closes. */

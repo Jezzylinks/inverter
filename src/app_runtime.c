@@ -787,7 +787,6 @@ bool battery_load_profile(battery_profile_t *profile_out)
             }
         }
         if (legacy_key_err == ESP_OK &&
-            legacy_key_type >= BATTERY_LEAD_ACID &&
             legacy_key_type < BATTERY_TYPE_COUNT)
         {
             battery_type = legacy_key_type;
@@ -1062,7 +1061,6 @@ typedef enum
     VALUE_TYPE_UTC_OFFSET,
     VALUE_TYPE_SET_TIME_HOUR,
     VALUE_TYPE_SET_TIME_MINUTE,
-    VALUE_TYPE_BATTERY_CAPACITY,
     VALUE_TYPE_COUNT
 } value_edit_param_t;
 
@@ -4199,30 +4197,7 @@ static void apply_battery_type(float v)
     }
 }
 
-static void apply_battery_capacity(float v)
-{
-    if (!isfinite(v) || v < 1.0f || v > 5000.0f)
-    {
-        ESP_LOGW("BAT_PROFILE", "Rejected battery capacity %.2fAh", (double)v);
-        return;
-    }
 
-    const uint16_t capacity_ah = (uint16_t)lroundf(v);
-    battery_profile_t regenerated;
-    if (battery_generate_profile((battery_type_t)sys_state.battery_profile.profile_id,
-                                 (voltage_system_t)sys_state.battery_profile.nominal_voltage,
-                                 capacity_ah, &regenerated))
-    {
-        regenerated.profile_id = sys_state.battery_profile.profile_id;
-        regenerated.cutoff_voltage_v = sys_state.battery_profile.cutoff_voltage_v;
-        sys_state.battery_profile = regenerated;
-        sync_battery_estimator_configuration();
-        sync_battery_protection_thresholds();
-        ESP_LOGI("BAT_PROFILE", "Applied battery capacity=%uAh type=%u",
-                 (unsigned)capacity_ah,
-                 (unsigned)sys_state.battery_profile.profile_id);
-    }
-}
 
 /* Voltage system change regenerates the active profile at the currently
  * configured battery type/capacity, scaled to the new nominal voltage.
