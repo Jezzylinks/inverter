@@ -4273,9 +4273,17 @@ void lcd_draw_diagnostics_screen(uint8_t index)
 
         if (lcd_geometry_is_20x4())
         {
-            snprintf(row1, LCD_LINE_SIZE, "Free:%uK Max:%uK",
-                     (unsigned)(heap_free / 1024U),
-                     (unsigned)(largest / 1024U));
+            /* Keep both values bounded to four digits so the output is
+             * guaranteed to fit the 20-character LCD row. */
+            const size_t free_kb_raw = heap_free / 1024U;
+            const size_t largest_kb_raw = largest / 1024U;
+            const unsigned free_kb = free_kb_raw > 9999U
+                                         ? 9999U : (unsigned)free_kb_raw;
+            const unsigned largest_kb = largest_kb_raw > 9999U
+                                            ? 9999U : (unsigned)largest_kb_raw;
+
+            snprintf(row1, LCD_LINE_SIZE, "F:%uK M:%uK",
+                     free_kb, largest_kb);
         }
         else
         {
