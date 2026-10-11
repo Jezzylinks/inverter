@@ -160,7 +160,9 @@ void factory_reset_cancel(factory_reset_ctx_t *ctx)
 
     pin_entry_reset(&ctx->pin_ctx);
     memset(ctx->pin_line, 0, sizeof(ctx->pin_line));
-    security_reset_scope_attempts(SECURITY_LOCKOUT_FACTORY_RESET);
+    /* Keep the factory-reset lockout budget across cancellation and across
+     * Reset All Data / Clear Settings / Erase Logs. Only a successful PIN
+     * verification or normal lockout expiry may clear the shared budget. */
     atomic_store(&ctx->action, FACTORY_ACTION_NONE);
     atomic_store(&ctx->phase, FACTORY_PHASE_IDLE);
     atomic_store(&ctx->progress_pct, 0U);
