@@ -438,7 +438,10 @@ bool battery_generate_profile(battery_type_t battery_type,
     // Copy basic info
     profile_out->chemistry = base->chemistry;
     profile_out->nominal_voltage = voltage_system;
-    profile_out->profile_id = base->profile_id;
+    /* The static chemistry templates do not carry runtime selection IDs.
+     * Persist/restore the requested profile ID from the function argument;
+     * copying base->profile_id silently reset every restored chemistry to 0. */
+    profile_out->profile_id = battery_type;
 
     // Capacity
     profile_out->capacity_ah = capacity_ah;
