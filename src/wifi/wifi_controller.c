@@ -23,6 +23,9 @@ static const char *TAG = "WIFI_CONTROLLER";
 static wifi_controller_state_t s_state = WIFI_CONTROLLER_IDLE;
 static bool s_initialized = false;
 static SemaphoreHandle_t s_mutex = NULL;
+/* A user-requested station disconnect suppresses automatic reconnect until
+ * the user explicitly connects again. Radio OFF/ON must not override it. */
+static bool s_manual_disconnect = false;
 
 static void wifi_controller_lock(void)
 {
@@ -221,7 +224,10 @@ esp_err_t wifi_controller_start(void)
      * Keep STARTING visible until saved-station handling has been decided so
      * an explicit disconnect can cancel the pending automatic association. */
     wifi_controller_lock();
-    wifi_manager_enable_auto_reconnect(false);
+
+    /* Restore saved station connectivity when Wi-Fi is enabled, while
+     * preserving an explicit user disconnect for the lifetime of this boot. */
+    wifi_manager_enable_auto_reconnect(!s_manual_disconnect);
     s_state = WIFI_CONTROLLER_STARTING;
 
     const esp_err_t err = wifi_manager_start();
@@ -233,10 +239,16 @@ esp_err_t wifi_controller_start(void)
         return err;
     }
 
+    s_state = WIFI_CONTROLLER_IDLE;
     const wifi_mode_t mode = wifi_manager_get_mode();
-    if (mode == WIFI_MODE_AP) {
-        s_state = WIFI_CONTROLLER_IDLE;
-    }
+    wifi_manager_config_t config = {0};
+    const bool have_saved_station =
+        mode != WIFI_MODE_AP &&
+        wifi_manager_get_config(&config) == ESP_OK &&
+        config.ssid[0] != '\0';
+    const bool should_auto_connect = have_saved_station &&
+                                     !s_manual_disconnect &&
+                                     !wifi_manager_is_connected();
     wifi_controller_unlock();
 
     if (mode != WIFI_MODE_AP) {
@@ -296,7 +308,15 @@ esp_err_t wifi_controller_start(void)
             ESP_LOGI(TAG, "No saved station SSID; automatic connection skipped");
         }
     }
-
+    if (should_auto_connect) {
+        const esp_err_t connect_err = wifi_manager_connect();
+        if (connect_err != ESP_OK && connect_err != ESP_ERR_WIFI_CONN) {
+            ESP_LOGW(TAG, "Saved station auto-connect could not start: %s",
+                     esp_err_to_name(connect_err));
+        } else {
+            ESP_LOGI(TAG, "Saved station auto-connect requested");
+        }
+    }
     ESP_LOGI(TAG, "WiFi architecture started in %s mode",
              mode == WIFI_MODE_STA ? "STA" :
              mode == WIFI_MODE_AP ? "AP" :
@@ -369,6 +389,7 @@ esp_err_t wifi_controller_reconnect(void)
 
     /* See wifi_controller_start(). */
     wifi_controller_lock();
+    s_manual_disconnect = false;
     wifi_manager_enable_auto_reconnect(true);
     esp_err_t err = wifi_manager_reconnect();
     if (err == ESP_OK)
@@ -393,6 +414,7 @@ esp_err_t wifi_controller_disconnect(void)
      * provisioning flag -- it is the most likely source of an overlapping
      * start/stop from an HTTP worker task racing the menu-driven toggle. */
     wifi_controller_lock();
+    s_manual_disconnect = true;
     wifi_manager_enable_auto_reconnect(false);
     const esp_err_t err = wifi_manager_disconnect();
     if (err == ESP_OK || err == ESP_ERR_WIFI_NOT_CONNECT) {

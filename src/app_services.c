@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "esp_log.h"
 #include "esp_wifi.h"
@@ -36,8 +37,9 @@
 #ifdef CONFIG_INVERTER_OTA_MANIFEST_URL
 #define APP_OTA_DEFAULT_MANIFEST_URL CONFIG_INVERTER_OTA_MANIFEST_URL
 #else
-#define APP_OTA_DEFAULT_MANIFEST_URL \
-    "https://github.com/Jezzylinks/inverter/releases/latest/download/inverter.csv"
+/* Do not assume a production release asset exists. Configure a real HTTPS
+ * CSV manifest in menuconfig for deployments that enable OTA. */
+#define APP_OTA_DEFAULT_MANIFEST_URL ""
 #endif
 #define APP_SERVICES_NVS_NAMESPACE NVS_NS_SYSTEM
 #define APP_WIFI_ENABLED_KEY "wifi_enabled"
@@ -149,6 +151,8 @@ static TickType_t s_wifi_prerequisite_started_tick;
 
 static bool app_manifest_url_is_valid(const char *url)
 {
+    /* URI schemes are case-insensitive (RFC 3986). Keep this policy in
+     * step with ota_manifest_is_https_url(), which already accepts HTTPS://. */
     return url != NULL && url[0] != '\0' &&
            ota_manifest_is_https_url(url) &&
            strlen(url) < APP_OTA_MANIFEST_URL_MAX;
@@ -336,14 +340,12 @@ static void app_wifi_operation_watch_task(void *parameter)
 
         bool timed_out = false;
         char timed_out_ssid[sizeof(s_wifi_operation_ssid)] = {0};
-        int8_t timed_out_rssi = -127;
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         if (s_wifi_operation != APP_WIFI_OPERATION_NONE &&
             (uint32_t)(xTaskGetTickCount() - s_wifi_operation_started_tick) >=
                 pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
             strncpy(timed_out_ssid, s_wifi_operation_ssid,
                     sizeof(timed_out_ssid) - 1U);
-            timed_out_rssi = s_wifi_operation_rssi;
             s_wifi_operation = APP_WIFI_OPERATION_NONE;
             s_wifi_operation_ssid[0] = '\0';
             s_wifi_operation_rssi = -127;
@@ -750,18 +752,17 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     }
 
     app_wifi_operation_t operation;
+    uint32_t operation_generation;
     char ssid[sizeof(s_wifi_operation_ssid)] = {0};
-    int8_t operation_rssi = -127;
     bool connection_uses_auth = false;
     bool terminal = false;
     bool connected = false;
-    bool failed = false;
     const char *message = NULL;
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     operation = s_wifi_operation;
+    operation_generation = s_wifi_operation_generation;
     strncpy(ssid, s_wifi_operation_ssid, sizeof(ssid) - 1U);
-    operation_rssi = s_wifi_operation_rssi;
     connection_uses_auth = s_wifi_connection_uses_auth;
     xSemaphoreGive(s_services_mutex);
 
@@ -776,15 +777,26 @@ static void app_wifi_status_callback(const wifi_status_t *status)
          * informational and must not race the runtime/NVS commit. */
         break;
     case APP_WIFI_OPERATION_CONNECT_SAVED:
-        /* Do not require WIFI_STATE_CONNECTED: in APSTA mode AP_START can
-         * publish AP_ACTIVE while the station still has a valid DHCP lease. */
-        if (status->connected && status->got_ip) {
+        /* A DHCP lease on the previously connected AP is not proof that the
+         * requested connection succeeded. Confirm the actual associated SSID
+         * before completing the pending operation (important for same-SSID
+         * password changes and delayed monitor callbacks). */
+        if (status->connected && status->got_ip && ssid[0] != '\0') {
+            wifi_ap_record_t active_ap = {0};
+            if (esp_wifi_sta_get_ap_info(&active_ap) == ESP_OK &&
+                strncmp((const char *)active_ap.ssid, ssid,
+                        sizeof(active_ap.ssid)) == 0) {
+                terminal = true;
+                connected = true;
+                message = ssid;
+            }
+        } else if (status->state == WIFI_STATE_FAILED ||
+                   (!status->connected &&
+                    status->retry_count >= wifi_manager_get_retry_limit())) {
+            /* APSTA intentionally keeps publishing AP_ACTIVE while the AP is
+             * serving clients. Exhausted STA retries are still a terminal
+             * failure for this requested connection. */
             terminal = true;
-            connected = true;
-            message = ssid[0] != '\0' ? ssid : "Connected";
-        } else if (status->state == WIFI_STATE_FAILED) {
-            terminal = true;
-            failed = true;
             message = connection_uses_auth ? "Auth failed" : "Network unavailable";
         }
         break;
@@ -792,10 +804,11 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         /* The controller return value, not WIFI_STATE_IDLE, proves STOP. */
         break;
     case APP_WIFI_OPERATION_DISCONNECT:
-        if (!status->connected &&
+        if (!status->connected && !status->got_ip &&
             (status->state == WIFI_STATE_IDLE ||
              status->state == WIFI_STATE_DISCONNECTED ||
-             status->state == WIFI_STATE_FAILED)) {
+             status->state == WIFI_STATE_FAILED ||
+             status->state == WIFI_STATE_AP_ACTIVE)) {
             terminal = true;
             message = "Disconnected";
         }
@@ -806,7 +819,6 @@ static void app_wifi_status_callback(const wifi_status_t *status)
             message = "Setup AP Active";
         } else if (status->state == WIFI_STATE_FAILED) {
             terminal = true;
-            failed = true;
             message = "Setup AP failed";
         }
         break;
@@ -1138,20 +1150,20 @@ esp_err_t app_services_init(void)
 
     load_persisted_config();
 
-    if (s_manifest_url[0] == '\0')
+    if (s_manifest_url[0] == '\0' &&
+        APP_OTA_DEFAULT_MANIFEST_URL[0] != '\0')
     {
-        const char *bootstrap_manifest_url = APP_OTA_DEFAULT_MANIFEST_URL;
         const esp_err_t manifest_err =
-            app_services_set_ota_manifest_url(bootstrap_manifest_url);
+            app_services_set_ota_manifest_url(APP_OTA_DEFAULT_MANIFEST_URL);
         if (manifest_err != ESP_OK)
         {
             ESP_LOGW(APP_SERVICES_TAG,
-                     "Could not provision OTA manifest URL: %s",
+                     "Could not provision configured OTA manifest URL: %s",
                      esp_err_to_name(manifest_err));
         }
         else
         {
-            ESP_LOGI(APP_SERVICES_TAG, "OTA manifest URL provisioned");
+            ESP_LOGI(APP_SERVICES_TAG, "Configured OTA manifest URL provisioned");
         }
     }
 

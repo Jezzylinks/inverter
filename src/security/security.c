@@ -162,11 +162,19 @@ esp_err_t security_init(void)
     nvs_handle_t handle;
     esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
     if (err != ESP_OK) {
+        /* Only a genuinely missing namespace is a fresh install. A timeout,
+         * initialization error, or other storage failure must never trigger
+         * replacement of a previously configured PIN. */
+        if (err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGE(TAG, "Cannot read PIN storage: %s", esp_err_to_name(err));
+            security_cleanup_failed_init();
+            return err;
+        }
         const uint8_t default_pin[SECURITY_PIN_LEN] = SECURITY_DEFAULT_PIN;
         const esp_err_t provision_err = persist_pin(default_pin, true);
         if (provision_err != ESP_OK) {
             security_cleanup_failed_init();
-            return err;
+            return provision_err;
         }
         s_sec.force_change = true;
         memset(s_sec.attempts, 0, sizeof(s_sec.attempts));
@@ -181,15 +189,9 @@ esp_err_t security_init(void)
     size_t hash_len = sizeof(stored_hash);
     size_t salt_len = sizeof(stored_salt);
     err = nvs_get_blob(handle, NVS_KEY_HASH, stored_hash, &hash_len);
-    if (err == ESP_ERR_NVS_NOT_FOUND || err == ESP_ERR_NVS_TYPE_MISMATCH) {
-        /* Key missing or stored as wrong type (e.g. leftover from older
-         * firmware).  Erase and provision the default PIN. */
-        if (err == ESP_ERR_NVS_TYPE_MISMATCH) {
-            nvs_erase_key(handle, NVS_KEY_HASH);
-            nvs_erase_key(handle, NVS_KEY_SALT);
-            nvs_commit(handle);
-            ESP_LOGW(TAG, "PIN key type mismatch erased; reprovisioning default PIN");
-        }
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        /* A missing hash is a fresh-install case; malformed existing material
+         * must fail closed rather than replacing a user's configured PIN. */
         storage_nvs_close(handle);
         const uint8_t default_pin[SECURITY_PIN_LEN] = SECURITY_DEFAULT_PIN;
         err = persist_pin(default_pin, true);
@@ -217,23 +219,11 @@ esp_err_t security_init(void)
     storage_nvs_close(handle);
 
     if (err != ESP_OK || hash_len != HASH_LEN || salt_len != SALT_LEN) {
-        ESP_LOGW(TAG, "missing or invalid persisted PIN material; provisioning default 0000");
+        ESP_LOGE(TAG, "Persisted PIN material is unreadable or malformed; refusing replacement");
         secure_zero(stored_hash, sizeof(stored_hash));
         secure_zero(stored_salt, sizeof(stored_salt));
-
-        const uint8_t default_pin[SECURITY_PIN_LEN] = SECURITY_DEFAULT_PIN;
-        const esp_err_t provision_err = persist_pin(default_pin, true);
-        if (provision_err != ESP_OK) {
-            security_cleanup_failed_init();
-            return provision_err;
-        }
-
-        s_sec.force_change = true;
-        memset(s_sec.attempts, 0, sizeof(s_sec.attempts));
-        memset(s_sec.lockout_until_ms, 0, sizeof(s_sec.lockout_until_ms));
-        s_sec.initialized = true;
-        ESP_LOGW(TAG, "default PIN 0000 provisioned; change it before remote access");
-        return ESP_OK;
+        security_cleanup_failed_init();
+        return err != ESP_OK ? err : ESP_ERR_INVALID_STATE;
     }
 
     secure_zero(stored_hash, sizeof(stored_hash));

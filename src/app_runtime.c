@@ -183,6 +183,9 @@
 _Static_assert(sizeof(BATTERY_TYPE_KEY) <= 16U,
                "Battery type NVS key exceeds ESP-IDF's 15-character limit");
 #define BATTERY_CAPACITY_KEY "bat_capacity"
+#define BATTERY_CAPACITY_DEFAULT_AH 200U
+#define BATTERY_CAPACITY_MIN_AH 1U
+#define BATTERY_CAPACITY_MAX_AH 10000U
 #define NVS_VOLTAGE_KEY_PREFIX "voltage_"
 #define BATTERY_VOLTAGE_SYSTEM_KEY "inv_bat_volt"
 #define BATTERY_CAPACITY_AH "bat_capacity_ah"
@@ -418,6 +421,8 @@ bool battery_generate_profile(battery_type_t battery_type,
                               battery_profile_t *profile_out)
 {
     if (battery_type >= BATTERY_TYPE_COUNT || profile_out == NULL ||
+        capacity_ah < BATTERY_CAPACITY_MIN_AH ||
+        capacity_ah > BATTERY_CAPACITY_MAX_AH ||
         (voltage_system != VOLTAGE_SYSTEM_12V &&
          voltage_system != VOLTAGE_SYSTEM_24V &&
          voltage_system != VOLTAGE_SYSTEM_48V))
@@ -438,7 +443,10 @@ bool battery_generate_profile(battery_type_t battery_type,
     // Copy basic info
     profile_out->chemistry = base->chemistry;
     profile_out->nominal_voltage = voltage_system;
-    profile_out->profile_id = base->profile_id;
+    /* The static chemistry templates do not carry runtime selection IDs.
+     * Persist/restore the requested profile ID from the function argument;
+     * copying base->profile_id silently reset every restored chemistry to 0. */
+    profile_out->profile_id = battery_type;
 
     // Capacity
     profile_out->capacity_ah = capacity_ah;
@@ -621,6 +629,17 @@ bool battery_save_configuration(battery_type_t battery_type,
     esp_err_t err;
 
     // Open NVS in read-write mode
+    if (battery_type >= BATTERY_TYPE_COUNT ||
+        (voltage_system != VOLTAGE_SYSTEM_12V &&
+         voltage_system != VOLTAGE_SYSTEM_24V &&
+         voltage_system != VOLTAGE_SYSTEM_48V) ||
+        capacity_ah < BATTERY_CAPACITY_MIN_AH ||
+        capacity_ah > BATTERY_CAPACITY_MAX_AH)
+    {
+        ESP_LOGW("BAT_PROFILE", "Refusing invalid battery configuration");
+        return false;
+    }
+
     err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &nvs_handle);
     if (err != ESP_OK)
     {
@@ -695,8 +714,10 @@ bool battery_load_profile(battery_profile_t *profile_out)
          profile_out->nominal_voltage == VOLTAGE_SYSTEM_48V)
             ? (uint8_t)profile_out->nominal_voltage : (uint8_t)VOLTAGE_SYSTEM_12V;
     uint16_t capacity_ah =
-        profile_out->capacity_ah >= 1.0f && profile_out->capacity_ah <= 65535.0f
-            ? (uint16_t)lroundf(profile_out->capacity_ah) : 200U;
+        profile_out->capacity_ah >= (float)BATTERY_CAPACITY_MIN_AH &&
+        profile_out->capacity_ah <= (float)BATTERY_CAPACITY_MAX_AH
+            ? (uint16_t)lroundf(profile_out->capacity_ah)
+            : (uint16_t)BATTERY_CAPACITY_DEFAULT_AH;
 
     esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK)
@@ -844,10 +865,13 @@ bool battery_load_profile(battery_profile_t *profile_out)
                  (unsigned)voltage_system);
         return false;
     }
-    if (capacity_ah == 0U)
+    if (capacity_ah < BATTERY_CAPACITY_MIN_AH ||
+        capacity_ah > BATTERY_CAPACITY_MAX_AH)
     {
-        ESP_LOGW("BAT_PROFILE", "Invalid zero battery capacity; using 200Ah");
-        capacity_ah = 200U;
+        ESP_LOGW("BAT_PROFILE",
+                 "Invalid battery capacity %uAh; using default %uAh",
+                 (unsigned)capacity_ah, (unsigned)BATTERY_CAPACITY_DEFAULT_AH);
+        capacity_ah = (uint16_t)BATTERY_CAPACITY_DEFAULT_AH;
     }
 
     const bool loaded = battery_generate_profile((battery_type_t)battery_type,
@@ -1029,6 +1053,7 @@ typedef enum
     VALUE_TYPE_UTC_OFFSET,
     VALUE_TYPE_SET_TIME_HOUR,
     VALUE_TYPE_SET_TIME_MINUTE,
+    VALUE_TYPE_BATTERY_CAPACITY,
     VALUE_TYPE_COUNT
 } value_edit_param_t;
 
@@ -1190,6 +1215,7 @@ static void apply_system_timeout(float v);
 static void apply_battery_type(float v);
 static void apply_battery_capacity(float v);
 static void apply_battery_voltage_system(float v);
+static void apply_battery_capacity(float v);
 static void apply_sound_enable(float v);
 static void apply_quiet_hours_enable(float v);
 static void apply_quiet_hours_start(float v);
@@ -1478,18 +1504,18 @@ static value_edit_context_t value_edit[] = {
 
     [VALUE_TYPE_BATTERY_CAPACITY] = {
         .edit_type = VALUE_EDIT_NUMERIC,
-        .min_value = 1.0f,
-        .max_value = 5000.0f,
-        .increment_small = 1.0f,
-        .increment_large = 10.0f,
+        .min_value = (float)BATTERY_CAPACITY_MIN_AH,
+        .max_value = (float)BATTERY_CAPACITY_MAX_AH,
+        .increment_small = 10.0f,
+        .increment_large = 100.0f,
         .increment_precision = 1.0f,
+        .step_size = 10.0f,
         .decimal_places = 0,
         .unit = "Ah",
         .label = "Battery Capacity",
         .is_critical = true,
         .live_update = false,
-        .step_size = 1.0f,
-        .current_value = 200.0f,
+        .current_value = (float)BATTERY_CAPACITY_DEFAULT_AH,
         .apply = apply_battery_capacity,
     },
 
@@ -1778,8 +1804,8 @@ typedef struct
 static nvs_setting_t g_settings[] = {
     {BATTERY_VOLTAGE_SYSTEM_KEY, &sys_state.inverter.battery_voltage_system, sizeof(uint8_t), 12, false, "Bat Volt System", false, false},
     {"inverter_active", &sys_state.inverter.inverter_active, sizeof(uint8_t), 0, false, "Inverter Active", false, true},
-    {BATTERY_TYPE_KEY, &sys_state.battery_profile.profile_id, sizeof(uint8_t), DEFAULT_BATTERY_PROFILE, false, "Battery Type", false, false},
-    {BATTERY_CAPACITY_KEY, &sys_state.battery_profile.capacity_ah, sizeof(float), 200, false, "Battery Capacity", false, false},
+    {BATTERY_TYPE_KEY, &sys_state.battery_profile.profile_id, sizeof(uint8_t), BATTERY_AGM, false, "Battery Type", false, false},
+    {BATTERY_CAPACITY_KEY, &sys_state.battery_profile.capacity_ah, sizeof(float), (float)BATTERY_CAPACITY_DEFAULT_AH, false, "Battery Capacity", false, false},
     {"bat_charge_cur", &sys_state.battery_profile.max_charge_current_per_100ah, sizeof(int32_t), 0, true, "Max Charge Cur", false, false},
     {"bat_disc_cur", &sys_state.battery_profile.max_discharge_current_per_100ah, sizeof(int32_t), 0, true, "Max Discharge Cur", false, false},
     {"bat_full_volt", &sys_state.battery_profile.high_battery_voltage_v, sizeof(int32_t), 0, true, "Bat Full Volt", false, false},
@@ -4200,6 +4226,47 @@ static void sync_battery_estimator_configuration(void)
                                   p->capacity_ah);
 }
 
+static void apply_battery_capacity(float v)
+{
+    if (!isfinite(v) ||
+        v < (float)BATTERY_CAPACITY_MIN_AH ||
+        v > (float)BATTERY_CAPACITY_MAX_AH)
+    {
+        ESP_LOGW("BAT_PROFILE", "Rejected invalid capacity edit: %.2fAh", (double)v);
+        return;
+    }
+
+    const battery_type_t type = (battery_type_t)sys_state.battery_profile.profile_id;
+    const voltage_system_t voltage =
+        (voltage_system_t)sys_state.battery_profile.nominal_voltage;
+    const float previous_cutoff = sys_state.battery_profile.cutoff_voltage_v;
+    const uint16_t capacity = (uint16_t)lroundf(v);
+    battery_profile_t regenerated;
+
+    if (!battery_generate_profile(type, voltage, capacity, &regenerated))
+    {
+        ESP_LOGE("BAT_PROFILE", "Could not regenerate profile for capacity=%uAh",
+                 (unsigned)capacity);
+        return;
+    }
+
+    /* Preserve the user's cutoff only if it remains safe for this profile. */
+    const float cutoff_max = regenerated.recharge_voltage_v - 0.3f;
+    if (previous_cutoff >= regenerated.cutoff_voltage_min_v &&
+        previous_cutoff <= cutoff_max &&
+        previous_cutoff <= regenerated.high_battery_voltage_v)
+    {
+        regenerated.cutoff_voltage_v = previous_cutoff;
+    }
+
+    sys_state.battery_profile = regenerated;
+    sync_battery_voltage_state();
+    sync_battery_estimator_configuration();
+    sync_battery_protection_thresholds();
+    ESP_LOGI("BAT_PROFILE", "Battery capacity applied: %uAh",
+             (unsigned)capacity);
+}
+
 static void apply_battery_voltage_system(float v)
 {
     int index = (int)v;
@@ -6006,11 +6073,19 @@ static bool validate_and_clamp_settings(void)
         battery_type_t type = sys_state.battery_profile.profile_id < BATTERY_TYPE_COUNT
                                   ? (battery_type_t)sys_state.battery_profile.profile_id
                                   : BATTERY_AGM;
-        uint16_t capacity = sys_state.battery_profile.capacity_ah > 0.0f
-                                ? (uint16_t)sys_state.battery_profile.capacity_ah
-                                : 100U;
-        battery_generate_profile(type, VOLTAGE_SYSTEM_12V, capacity, &regenerated);
-        sys_state.battery_profile = regenerated;
+        const float configured_capacity = sys_state.battery_profile.capacity_ah;
+        const uint16_t capacity =
+            isfinite(configured_capacity) &&
+            configured_capacity >= (float)BATTERY_CAPACITY_MIN_AH &&
+            configured_capacity <= (float)BATTERY_CAPACITY_MAX_AH
+                ? (uint16_t)lroundf(configured_capacity)
+                : (uint16_t)BATTERY_CAPACITY_DEFAULT_AH;
+        if (battery_generate_profile(type, VOLTAGE_SYSTEM_12V, capacity,
+                                     &regenerated))
+        {
+            sys_state.battery_profile = regenerated;
+            sync_battery_estimator_configuration();
+        }
         corrected = true;
     }
 
@@ -6019,10 +6094,43 @@ static bool validate_and_clamp_settings(void)
         ESP_LOGE(TAG_SYS, "Invalid battery type %d loaded — resetting to AGM",
                  sys_state.battery_profile.profile_id);
         battery_profile_t regenerated;
-        battery_generate_profile(BATTERY_AGM, VOLTAGE_SYSTEM_12V, 100, &regenerated);
+        battery_generate_profile(BATTERY_AGM, VOLTAGE_SYSTEM_12V,
+                                 (uint16_t)BATTERY_CAPACITY_DEFAULT_AH,
+                                 &regenerated);
         sys_state.battery_profile = regenerated;
         sys_state.battery_profile.profile_id = BATTERY_AGM;
         corrected = true;
+    }
+
+    /* ---- Battery capacity ---- */
+    if (!isfinite(sys_state.battery_profile.capacity_ah) ||
+        sys_state.battery_profile.capacity_ah < (float)BATTERY_CAPACITY_MIN_AH ||
+        sys_state.battery_profile.capacity_ah > (float)BATTERY_CAPACITY_MAX_AH)
+    {
+        ESP_LOGW(TAG_SYS,
+                 "Battery capacity %.2fAh outside %u..%uAh; restoring %uAh",
+                 (double)sys_state.battery_profile.capacity_ah,
+                 (unsigned)BATTERY_CAPACITY_MIN_AH,
+                 (unsigned)BATTERY_CAPACITY_MAX_AH,
+                 (unsigned)BATTERY_CAPACITY_DEFAULT_AH);
+        const battery_type_t type =
+            sys_state.battery_profile.profile_id < BATTERY_TYPE_COUNT
+                ? (battery_type_t)sys_state.battery_profile.profile_id : BATTERY_AGM;
+        const voltage_system_t voltage =
+            (sys_state.battery_profile.nominal_voltage == VOLTAGE_SYSTEM_12V ||
+             sys_state.battery_profile.nominal_voltage == VOLTAGE_SYSTEM_24V ||
+             sys_state.battery_profile.nominal_voltage == VOLTAGE_SYSTEM_48V)
+                ? (voltage_system_t)sys_state.battery_profile.nominal_voltage
+                : VOLTAGE_SYSTEM_12V;
+        battery_profile_t regenerated;
+        if (battery_generate_profile(type, voltage,
+                                     (uint16_t)BATTERY_CAPACITY_DEFAULT_AH,
+                                     &regenerated))
+        {
+            sys_state.battery_profile = regenerated;
+            sync_battery_estimator_configuration();
+            corrected = true;
+        }
     }
 
     /* ---- Battery cutoff voltage ---- */
@@ -7192,9 +7300,13 @@ void edit_battery_type(void)
 
 void edit_battery_capacity(void)
 {
-    begin_setting_edit(VALUE_TYPE_BATTERY_CAPACITY,
-                       sys_state.battery_profile.capacity_ah > 0.0f
-                           ? sys_state.battery_profile.capacity_ah : 200.0f);
+    const float capacity =
+        sys_state.battery_profile.capacity_ah >= (float)BATTERY_CAPACITY_MIN_AH &&
+        sys_state.battery_profile.capacity_ah <= (float)BATTERY_CAPACITY_MAX_AH
+            ? sys_state.battery_profile.capacity_ah
+            : (float)BATTERY_CAPACITY_DEFAULT_AH;
+    begin_setting_edit(VALUE_TYPE_BATTERY_CAPACITY, capacity);
+    lcd_show_value_edit_screen();
 }
 
 /* edit_battery_cutoff_voltage() — system- and chemistry-aware cutoff editor.

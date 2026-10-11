@@ -298,6 +298,7 @@ extern void edit_scroll_speed(void);
 extern void edit_battery_type(void);
 extern void edit_battery_capacity(void);
 extern void edit_battery_cutoff_voltage(void);
+extern void edit_battery_capacity(void);
 extern void edit_battery_voltage_system(void);
 extern void edit_sound_enable(void);
 extern void edit_quiet_hours_enable(void);

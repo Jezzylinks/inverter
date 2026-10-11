@@ -51,8 +51,8 @@ choice INVERTER_WIFI_OPERATION_MODE
     help
         Select the complete runtime architecture. STA connects to the
         configured home network only. AP exposes the inverter network only.
-        APSTA exposes the inverter network and may connect to the home network
-        when the user explicitly requests it.
+        APSTA exposes the inverter network and auto-connects a valid saved
+        station network when Wi-Fi is enabled, unless the user disconnected it.
 
 config INVERTER_WIFI_MODE_STA
     bool "Station only"
@@ -138,10 +138,12 @@ config INVERTER_WIFI_RUNTIME_PROVISIONING
 
 config INVERTER_OTA_MANIFEST_URL
     string "Default OTA manifest URL"
-    default "https://github.com/Jezzylinks/inverter/releases/latest/download/inverter.csv"
+    default ""
     help
         HTTPS CSV manifest URL used when no runtime OTA URL has been stored.
-        Keep this endpoint under trusted release control. Runtime storage still
-        validates the URL before every check and install.
+        Set this to a real CSV manifest hosted under your trusted release
+        process. Leave it empty when no production manifest endpoint exists;
+        OTA checks will report that the URL is not configured. The firmware
+        rejects non-HTTPS URLs and retains HTTPS certificate verification.
 
 endmenu
