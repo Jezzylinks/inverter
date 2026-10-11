@@ -150,7 +150,7 @@ static TickType_t s_wifi_prerequisite_started_tick;
 static bool app_manifest_url_is_valid(const char *url)
 {
     return url != NULL && url[0] != '\0' &&
-           strncmp(url, "https://", 8U) == 0 &&
+           ota_manifest_is_https_url(url) &&
            strlen(url) < APP_OTA_MANIFEST_URL_MAX;
 }
 
@@ -434,6 +434,45 @@ static void app_wifi_sync_menu_if_visible(void)
     }
 }
 
+/* Connection result messages use a timed LCD overlay. Refresh after that
+ * overlay has expired so the underlying Connect/Disconnect label is current. */
+static void app_wifi_menu_refresh_task(void *parameter)
+{
+    const uint32_t delay_ms = (uint32_t)(uintptr_t)parameter;
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+
+    /* A queued LCD flash can last slightly longer than its nominal duration.
+     * Never redraw the menu over an active flash/result screen. */
+    for (unsigned attempt = 0U; attempt < 12U; ++attempt) {
+        lcd_screen_id_t screen;
+        LCD_LOCK();
+        screen = sys_lcd.screen;
+        LCD_UNLOCK();
+
+        if (screen == LCD_SCREEN_MENU) {
+            app_wifi_sync_menu_if_visible();
+            break;
+        }
+        if (screen != LCD_SCREEN_FLASH_MSG &&
+            screen != LCD_SCREEN_WIFI_CONNECTING) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(250U));
+    }
+    vTaskDelete(NULL);
+}
+
+static void app_wifi_schedule_menu_refresh(uint32_t delay_ms)
+{
+    TaskHandle_t task = NULL;
+    if (xTaskCreatePinnedToCore(app_wifi_menu_refresh_task, "wifi_menu_refresh",
+                                2048U, (void *)(uintptr_t)delay_ms,
+                                APP_WIFI_OPERATION_WATCH_PRIORITY,
+                                &task, APP_CORE_SYSTEM) != pdPASS) {
+        ESP_LOGW(APP_SERVICES_TAG, "Could not schedule Wi-Fi menu refresh");
+    }
+}
+
 static esp_err_t app_services_execute_wifi_toggle(bool enabled,
                                                     bool previous_enabled)
 {
@@ -489,10 +528,12 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
     if (controller_err == ESP_OK) {
         app_wifi_end_operation();
         app_wifi_sync_menu_if_visible();
-        if (nvs_err == ESP_OK) {
-            lcd_flash_message(enabled ? "Wi-Fi ON" : "Wi-Fi OFF", "Ready", 900U);
-        } else {
-            lcd_flash_message(enabled ? "Wi-Fi ON" : "Wi-Fi OFF", "Save failed", 1500U);
+        /* Successful ON/OFF transitions are reflected by the live menu and
+         * home-screen status; do not replace them with a redundant success
+         * flash. Persistence failures remain visible to the user. */
+        if (nvs_err != ESP_OK) {
+            lcd_flash_warning_to(enabled ? "Wi-Fi ON" : "Wi-Fi OFF",
+                                 "Save failed", 1500U, LCD_SCREEN_MENU);
         }
     } else {
         sys_state.wifi.enabled = previous_enabled;
@@ -689,6 +730,17 @@ static void app_wifi_lcd_status_callback(const wifi_monitor_status_t *status)
      * screen and used to gate remote services such as OTA. */
     const bool connected = status->connected && status->got_ip;
     lcd_update_wifi_status(connected, connected ? status->rssi : 0);
+
+    /* The callback is invoked only when the monitor snapshot changes. If the
+     * Wi-Fi menu is currently visible, redraw it immediately; never redraw
+     * over a connecting/result overlay. */
+    bool menu_visible = false;
+    LCD_LOCK();
+    menu_visible = sys_lcd.screen == LCD_SCREEN_MENU;
+    LCD_UNLOCK();
+    if (menu_visible) {
+        app_wifi_sync_menu_if_visible();
+    }
 }
 
 static void app_wifi_status_callback(const wifi_status_t *status)
@@ -768,15 +820,25 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     }
 
     app_wifi_end_operation();
-    if (operation == APP_WIFI_OPERATION_DISABLE ||
-        operation == APP_WIFI_OPERATION_DISCONNECT) {
+    if (operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
+        /* Mark the connecting screen as terminal. Otherwise its stale
+         * connected=false snapshot reappears after a flash overlay closes. */
+        lcd_show_wifi_result(connected, failed, false, ssid, operation_rssi,
+                             connected ? "LINK ESTABLISHED" :
+                             (message != NULL ? message : "Connect failed"));
+        app_wifi_schedule_menu_refresh(5200U);
+    } else if (operation == APP_WIFI_OPERATION_DISABLE ||
+               operation == APP_WIFI_OPERATION_DISCONNECT) {
         lcd_flash_info_to(message, "Wi-Fi updated", 1200U, LCD_SCREEN_MENU);
-    } else if (connected) {
-        lcd_flash_info_to("Connected", ssid[0] != '\0' ? ssid : "Wi-Fi ready",
-                          1500U, LCD_SCREEN_MENU);
-    } else {
-        lcd_flash_warning_to(message != NULL ? message : "Connect failed",
+        app_wifi_schedule_menu_refresh(1800U);
+    } else if (failed) {
+        lcd_flash_warning_to(message != NULL ? message : "Operation failed",
                              "Try again", 1500U, LCD_SCREEN_MENU);
+        app_wifi_schedule_menu_refresh(1800U);
+    } else {
+        lcd_flash_info_to(message != NULL ? message : "Wi-Fi ready",
+                          "Wi-Fi updated", 1200U, LCD_SCREEN_MENU);
+        app_wifi_schedule_menu_refresh(1500U);
     }
 }
 
@@ -816,6 +878,20 @@ static esp_err_t persist_manifest_url(const char *url)
     else
     {
         err = nvs_set_str(handle, APP_OTA_MANIFEST_KEY, url);
+        if (err == ESP_ERR_NVS_TYPE_MISMATCH)
+        {
+            /* Older firmware may have used this key with a different NVS
+             * type. Migrate this key only; never erase the whole namespace. */
+            const esp_err_t erase_err = nvs_erase_key(handle, APP_OTA_MANIFEST_KEY);
+            if (erase_err == ESP_OK || erase_err == ESP_ERR_NVS_NOT_FOUND)
+            {
+                err = nvs_set_str(handle, APP_OTA_MANIFEST_KEY, url);
+            }
+            else
+            {
+                err = erase_err;
+            }
+        }
     }
     if (err == ESP_OK)
     {
@@ -848,7 +924,7 @@ static void load_persisted_config(void)
         s_manifest_url[0] = '\0';
     }
     if (s_manifest_url[0] != '\0' && !app_manifest_url_is_valid(s_manifest_url)) {
-        ESP_LOGW(APP_SERVICES_TAG, "Persisted OTA manifest URL rejected");
+        ESP_LOGW(APP_SERVICES_TAG, "Persisted OTA manifest URL rejected; using configured default");
         s_manifest_url[0] = '\0';
     }
 
@@ -1525,7 +1601,23 @@ const char *app_services_wifi_connect_action_label(void)
     if (mode == WIFI_MODE_AP) {
         return "AP Clients";
     }
-    return wifi_controller_is_connected() ? "Disconnect" : "Connect";
+
+    wifi_status_t status = {0};
+    const bool have_status = wifi_events_get_status_copy(&status) == ESP_OK;
+    const wifi_controller_state_t controller_state = wifi_controller_get_state();
+
+    /* A valid station IP is the completed state and takes precedence over
+     * stale controller bookkeeping left at CONNECTING. */
+    if (have_status && status.connected && status.got_ip) {
+        return "Disconnect";
+    }
+    if (controller_state == WIFI_CONTROLLER_CONNECTING ||
+        controller_state == WIFI_CONTROLLER_STARTING ||
+        (have_status && (status.state == WIFI_STATE_CONNECTING ||
+                         status.state == WIFI_STATE_RECONNECTING))) {
+        return "Connecting...";
+    }
+    return "Connect";
 }
 
 const char *app_services_wifi_secondary_action_label(void)
@@ -1663,8 +1755,31 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
         return ESP_ERR_NOT_SUPPORTED;
     }
 
-    /* Avoid a needless reconnect when the selected SSID is already active. */
-    if (wifi_controller_is_connected()) {
+    /* Compare the active station's full credential pair, not just SSID.
+     * The manager config is loaded from saved credentials during init and is
+     * updated whenever a new credential pair is accepted. */
+    wifi_manager_config_t config = {0};
+    esp_err_t err = wifi_manager_get_config(&config);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    const bool same_active_config =
+        strcmp(config.ssid, ssid) == 0 &&
+        strcmp(config.password, password) == 0;
+
+    if (same_active_config &&
+        wifi_controller_get_state() == WIFI_CONTROLLER_CONNECTING) {
+        /* An identical connection request is already in flight. */
+        return ESP_OK;
+    }
+
+    wifi_status_t live_status = {0};
+    const bool station_ready =
+        wifi_events_get_status_copy(&live_status) == ESP_OK &&
+        live_status.connected && live_status.got_ip;
+    if (same_active_config && station_ready &&
+        wifi_controller_is_connected()) {
         wifi_ap_record_t current_ap = {0};
         if (esp_wifi_sta_get_ap_info(&current_ap) == ESP_OK &&
             strncmp((const char *)current_ap.ssid, ssid,
@@ -1673,9 +1788,6 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
             return ESP_OK;
         }
     }
-
-    wifi_manager_config_t config = {0};
-    esp_err_t err = wifi_manager_get_config(&config);
     if (err != ESP_OK) {
         return err;
     }
@@ -2248,14 +2360,19 @@ esp_err_t app_services_check_for_update(bool user_initiated)
         ESP_LOGW(APP_SERVICES_TAG,
                  "Internet probe is not yet positive; attempting HTTPS manifest check");
     }
-    if (app_services_get_ota_manifest_url(manifest_url, sizeof(manifest_url)) != ESP_OK ||
-        strncmp(manifest_url, "https://", 8U) != 0 ||
-        strlen(manifest_url) >= sizeof(manifest_url)) {
+    const esp_err_t url_err =
+        app_services_get_ota_manifest_url(manifest_url, sizeof(manifest_url));
+    if (url_err != ESP_OK || !ota_manifest_is_https_url(manifest_url)) {
+        ESP_LOGE(APP_SERVICES_TAG,
+                 "OTA manifest URL unavailable or invalid (get=%s, https_valid=%d)",
+                 esp_err_to_name(url_err),
+                 ota_manifest_is_https_url(manifest_url) ? 1 : 0);
         if (user_initiated) {
-            lcd_flash_warning_to("OTA URL Invalid", "HTTPS required",
+            lcd_flash_warning_to("OTA URL Invalid",
+                                 url_err == ESP_OK ? "HTTPS required" : "Set manifest URL",
                                  1500U, LCD_SCREEN_MENU);
         }
-        return ESP_ERR_INVALID_ARG;
+        return url_err == ESP_OK ? ESP_ERR_INVALID_ARG : url_err;
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);

@@ -71,7 +71,8 @@ static const menu_item_t settings_items[] = {
     {"UTC Offset", MENU_SETTINGS},
     {"Set Hour", MENU_SETTINGS},
     {"Set Minute", MENU_SETTINGS},
-    {"Battery Cutoff", MENU_SETTINGS}};
+    {"Battery Cutoff", MENU_SETTINGS},
+    {"Battery Capacity", MENU_SETTINGS}};
 #else
 /* Preserve the established 16×2 menu labels exactly. */
 static const menu_item_t settings_items[] = {
@@ -92,7 +93,8 @@ static const menu_item_t settings_items[] = {
     {"UTC Offset", MENU_SETTINGS},
     {"Set Hour", MENU_SETTINGS},
     {"Set Minute", MENU_SETTINGS},
-    {"Bat Cutoff", MENU_SETTINGS}};
+    {"Bat Cutoff", MENU_SETTINGS},
+    {"Bat Capacity", MENU_SETTINGS}};
 #endif
 
 // MONITORING MENU (8 items)
@@ -399,8 +401,8 @@ void show_menu_screen(menu_state_t menu_st, int selection)
         lcd_geometry_is_20x4() &&
         app_services_wifi_mode_edit_active())
     {
-        char rows[LCD_ROWS][LCD_LINE_SIZE];
-        const char *row_ptrs[LCD_ROWS] = {
+        char rows[4][LCD_LINE_SIZE];
+        const char *row_ptrs[4] = {
             rows[0], rows[1], rows[2], rows[3]};
 
         char mode_text[LCD_LINE_SIZE];
@@ -416,7 +418,7 @@ void show_menu_screen(menu_state_t menu_st, int selection)
         snprintf(rows[3], LCD_LINE_SIZE, "%-*s", LCD_COLS,
                  "ENT=SAVE BACK=CANCEL");
 
-        lcd_show_menu_rows(row_ptrs, LCD_ROWS);
+        lcd_show_menu_rows(row_ptrs, 4U);
         return;
     }
 

@@ -296,6 +296,7 @@ extern void edit_auto_shutdown(void);
 extern void edit_scroll_enable(void);
 extern void edit_scroll_speed(void);
 extern void edit_battery_type(void);
+extern void edit_battery_capacity(void);
 extern void edit_battery_cutoff_voltage(void);
 extern void edit_battery_voltage_system(void);
 extern void edit_sound_enable(void);
@@ -448,15 +449,19 @@ static void handle_wifi_menu_action(uint8_t selection)
         app_services_show_wifi_status();
         break;
     case APP_WIFI_MENU_CONNECT:
-        if (wifi_controller_is_connected())
+    {
+        const char *action_label = app_services_wifi_connect_action_label();
+        if (strcmp(action_label, "Disconnect") == 0)
         {
             (void)app_services_wifi_request_disconnect();
         }
-        else
+        else if (strcmp(action_label, "Connecting...") != 0)
         {
             (void)app_services_wifi_reconnect();
         }
+        /* A second ENTER while connecting is deliberately idempotent. */
         break;
+    }
     case APP_WIFI_MENU_SCAN:
         (void)app_services_wifi_scan();
         break;
@@ -1410,6 +1415,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             case 17:
                 edit_battery_cutoff_voltage();
                 break;
+            case 18:
+                edit_battery_capacity();
+                break;
             }
             break;
 
@@ -1986,13 +1994,18 @@ void handle_up_button_event(button_event_info_t *event_info,
         break;
 
     case BUTTON_EVENT_LONG_PRESS:
-        if (sys_state.value_edit_mode)
+        if (sys_state.value_edit_mode && config != NULL &&
+            config->edit_type == VALUE_EDIT_NUMERIC)
         {
             sys_state.hold_start_time = current_time;
             sys_state.repeat_count = 0;
             sys_state.fast_increment_active = false;
             increase_value(false, false);
             lcd_show_value_edit_screen();
+        }
+        else if (sys_state.value_edit_mode)
+        {
+            /* Hold adjustment is disabled for selection/boolean editors. */
         }
         else if (sys_state.in_detail_view &&
                  sys_state.menu_state == MENU_DIAGNOSTIC)
@@ -2005,18 +2018,13 @@ void handle_up_button_event(button_event_info_t *event_info,
         {
             exit_detail_view();
         }
-        else if (sys_state.menu_state != MENU_NONE)
-        {
-            sys_state.menu_selection = 0;
-            show_menu_screen(sys_state.menu_state, 0);
-        }
+        /* Holding UP outside a numerical editor is intentionally inert. */
         break;
 
     case BUTTON_EVENT_REPEAT:
-        /* Hold-repeat is reserved for accelerated value editing. A menu move
-         * requires a discrete click, preventing a retained press from
-         * continuously scrolling the menu. */
-        if (sys_state.value_edit_mode)
+        /* Hold-repeat is reserved for numerical value editing only. */
+        if (sys_state.value_edit_mode && config != NULL &&
+            config->edit_type == VALUE_EDIT_NUMERIC)
         {
             if (sys_state.hold_start_time == 0)
                 sys_state.hold_start_time = current_time;
@@ -2308,13 +2316,18 @@ void handle_down_button_event(button_event_info_t *event_info,
         break;
 
     case BUTTON_EVENT_LONG_PRESS:
-        if (sys_state.value_edit_mode)
+        if (sys_state.value_edit_mode && config != NULL &&
+            config->edit_type == VALUE_EDIT_NUMERIC)
         {
             sys_state.hold_start_time = current_time;
             sys_state.repeat_count = 0;
             sys_state.fast_increment_active = false;
             decrease_value(false, false);
             lcd_show_value_edit_screen();
+        }
+        else if (sys_state.value_edit_mode)
+        {
+            /* Hold adjustment is disabled for selection/boolean editors. */
         }
         else if (sys_state.in_detail_view &&
                  sys_state.menu_state == MENU_DIAGNOSTIC)
@@ -2332,23 +2345,13 @@ void handle_down_button_event(button_event_info_t *event_info,
         {
             exit_detail_view();
         }
-        else if (sys_state.menu_state != MENU_NONE)
-        {
-            int n = 0;
-            const menu_item_t *items = get_menu_items(sys_state.menu_state, &n);
-            if (items && n > 0)
-            {
-                sys_state.menu_selection = n - 1;
-                show_menu_screen(sys_state.menu_state, n - 1);
-            }
-        }
+        /* Holding DOWN outside a numerical editor is intentionally inert. */
         break;
 
     case BUTTON_EVENT_REPEAT:
-        /* Hold-repeat is reserved for accelerated value editing. A menu move
-         * requires a discrete click, preventing a retained press from
-         * continuously scrolling the menu. */
-        if (sys_state.value_edit_mode)
+        /* Hold-repeat is reserved for numerical value editing only. */
+        if (sys_state.value_edit_mode && config != NULL &&
+            config->edit_type == VALUE_EDIT_NUMERIC)
         {
             if (sys_state.hold_start_time == 0)
                 sys_state.hold_start_time = current_time;

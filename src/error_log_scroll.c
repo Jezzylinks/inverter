@@ -106,8 +106,9 @@ void error_log_scroll_update_display(void)
         int label_width = LCD_COLS - indicator_len;
         if (label_width < 0)
             label_width = 0;
-        snprintf(row0, sizeof(row0), "%-*.*s%s",
-                 label_width, label_width, "Error Log", indicator);
+        snprintf(row0, sizeof(row0), "%-*.*s",
+                 label_width, label_width, "Error Log");
+        strncat(row0, indicator, sizeof(row0) - strlen(row0) - 1U);
 
         const uint32_t uptime_seconds = entry->timestamp_ms / 1000U;
         char time_text[8];
