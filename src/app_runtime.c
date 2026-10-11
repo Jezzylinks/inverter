@@ -3451,6 +3451,11 @@ void error_log_record(uint8_t code, const char *description)
     strncpy(sys_state.error.last_error_msg, slot->description,
             sizeof(sys_state.error.last_error_msg) - 1);
     sys_state.error.last_error_msg[sizeof(sys_state.error.last_error_msg) - 1] = '\0';
+
+    /* Keep the legacy error_record() call sites connected to the same
+     * persistent history consumed by the diagnostic LCD. */
+    fault_log_add(FAULT_SEV_FAULT, FAULT_SRC_OTHER, (float)code,
+                  description ? description : "Unspecified error");
 }
 
 /**
@@ -3476,6 +3481,7 @@ void error_log_clear(void)
     memset(sys_state.error.last_error_msg, 0, sizeof(sys_state.error.last_error_msg));
     strncpy(sys_state.error.last_error_msg, "No logs",
             sizeof(sys_state.error.last_error_msg) - 1);
+    (void)fault_log_clear();
 }
 
 /* ── calibration_reset() ────────────────────────────────────────────────── */
