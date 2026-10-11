@@ -2016,7 +2016,10 @@ void handle_up_button_event(button_event_info_t *event_info,
         /* Hold-repeat is reserved for accelerated value editing. A menu move
          * requires a discrete click, preventing a retained press from
          * continuously scrolling the menu. */
-        if (sys_state.value_edit_mode)
+        if (sys_state.value_edit_mode &&
+            sys_state.current_value_type != NULL &&
+            sys_state.current_value_type->active &&
+            sys_state.current_value_type->edit_type == VALUE_EDIT_NUMERIC)
         {
             if (sys_state.hold_start_time == 0)
                 sys_state.hold_start_time = current_time;
@@ -2348,7 +2351,10 @@ void handle_down_button_event(button_event_info_t *event_info,
         /* Hold-repeat is reserved for accelerated value editing. A menu move
          * requires a discrete click, preventing a retained press from
          * continuously scrolling the menu. */
-        if (sys_state.value_edit_mode)
+        if (sys_state.value_edit_mode &&
+            sys_state.current_value_type != NULL &&
+            sys_state.current_value_type->active &&
+            sys_state.current_value_type->edit_type == VALUE_EDIT_NUMERIC)
         {
             if (sys_state.hold_start_time == 0)
                 sys_state.hold_start_time = current_time;
