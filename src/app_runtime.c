@@ -6031,6 +6031,37 @@ static bool validate_and_clamp_settings(void)
         corrected = true;
     }
 
+    /* ---- Battery capacity ---- */
+    if (!isfinite(sys_state.battery_profile.capacity_ah) ||
+        sys_state.battery_profile.capacity_ah < (float)BATTERY_CAPACITY_MIN_AH ||
+        sys_state.battery_profile.capacity_ah > (float)BATTERY_CAPACITY_MAX_AH)
+    {
+        ESP_LOGW(TAG_SYS,
+                 "Battery capacity %.2fAh outside %u..%uAh; restoring %uAh",
+                 (double)sys_state.battery_profile.capacity_ah,
+                 (unsigned)BATTERY_CAPACITY_MIN_AH,
+                 (unsigned)BATTERY_CAPACITY_MAX_AH,
+                 (unsigned)BATTERY_CAPACITY_DEFAULT_AH);
+        const battery_type_t type =
+            sys_state.battery_profile.profile_id < BATTERY_TYPE_COUNT
+                ? (battery_type_t)sys_state.battery_profile.profile_id : BATTERY_AGM;
+        const voltage_system_t voltage =
+            (sys_state.battery_profile.nominal_voltage == VOLTAGE_SYSTEM_12V ||
+             sys_state.battery_profile.nominal_voltage == VOLTAGE_SYSTEM_24V ||
+             sys_state.battery_profile.nominal_voltage == VOLTAGE_SYSTEM_48V)
+                ? (voltage_system_t)sys_state.battery_profile.nominal_voltage
+                : VOLTAGE_SYSTEM_12V;
+        battery_profile_t regenerated;
+        if (battery_generate_profile(type, voltage,
+                                     (uint16_t)BATTERY_CAPACITY_DEFAULT_AH,
+                                     &regenerated))
+        {
+            sys_state.battery_profile = regenerated;
+            sync_battery_estimator_configuration();
+            corrected = true;
+        }
+    }
+
     /* ---- Battery cutoff voltage ---- */
     float cutoff_floor = sys_state.battery_profile.cutoff_voltage_min_v;
     if (sys_state.battery_profile.cutoff_voltage_v < cutoff_floor)
