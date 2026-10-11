@@ -786,6 +786,10 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     ++s_wifi_operation_generation;
     xSemaphoreGive(s_services_mutex);
 
+    /* Refresh the underlying menu before the transient result message returns
+     * control to it, so Connect/Disconnect always reflects authoritative state. */
+    app_wifi_sync_menu_if_visible();
+
     if (operation == APP_WIFI_OPERATION_DISABLE ||
         operation == APP_WIFI_OPERATION_DISCONNECT) {
         lcd_flash_info_to(message, "Wi-Fi updated", 1200U, LCD_SCREEN_MENU);
