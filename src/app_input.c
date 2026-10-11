@@ -296,6 +296,7 @@ extern void edit_auto_shutdown(void);
 extern void edit_scroll_enable(void);
 extern void edit_scroll_speed(void);
 extern void edit_battery_type(void);
+extern void edit_battery_capacity(void);
 extern void edit_battery_cutoff_voltage(void);
 extern void edit_battery_voltage_system(void);
 extern void edit_sound_enable(void);
@@ -1410,6 +1411,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             case 17:
                 edit_battery_cutoff_voltage();
                 break;
+            case 18:
+                edit_battery_capacity();
+                break;
             }
             break;
 
@@ -2005,18 +2009,13 @@ void handle_up_button_event(button_event_info_t *event_info,
         {
             exit_detail_view();
         }
-        else if (sys_state.menu_state != MENU_NONE)
-        {
-            sys_state.menu_selection = 0;
-            show_menu_screen(sys_state.menu_state, 0);
-        }
+        /* Holding UP outside a numerical editor is intentionally inert. */
         break;
 
     case BUTTON_EVENT_REPEAT:
-        /* Hold-repeat is reserved for accelerated value editing. A menu move
-         * requires a discrete click, preventing a retained press from
-         * continuously scrolling the menu. */
-        if (sys_state.value_edit_mode)
+        /* Hold-repeat is reserved for numerical value editing only. */
+        if (sys_state.value_edit_mode && config != NULL &&
+            config->edit_type == VALUE_EDIT_NUMERIC)
         {
             if (sys_state.hold_start_time == 0)
                 sys_state.hold_start_time = current_time;
@@ -2332,16 +2331,7 @@ void handle_down_button_event(button_event_info_t *event_info,
         {
             exit_detail_view();
         }
-        else if (sys_state.menu_state != MENU_NONE)
-        {
-            int n = 0;
-            const menu_item_t *items = get_menu_items(sys_state.menu_state, &n);
-            if (items && n > 0)
-            {
-                sys_state.menu_selection = n - 1;
-                show_menu_screen(sys_state.menu_state, n - 1);
-            }
-        }
+        /* Holding DOWN outside a numerical editor is intentionally inert. */
         break;
 
     case BUTTON_EVENT_REPEAT:
