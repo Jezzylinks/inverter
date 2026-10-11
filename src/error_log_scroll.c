@@ -1,94 +1,121 @@
 /*==============================================================================
   error_log_scroll.c
-  Scrollable error history — implementation.
+  Scrollable diagnostic view backed by the persistent system fault log.
 ==============================================================================*/
 #include "lcd/error_log_scroll.h"
 #include "lcd/lcd_writer.h"
+#include "events/fault_log.h"
+
 #include <stdio.h>
 #include <string.h>
 
-/* These are defined in main.c */
-extern uint8_t              error_log_head;
-extern uint8_t              error_log_count;
-extern error_log_entry_t    error_log_ring[];   /* [MAX_ERROR_LOG_ENTRIES]  */
+static error_log_entry_t s_entries[MAX_ERROR_LOG_ENTRIES];
+static uint8_t s_count;
+static uint8_t s_cursor; /* 0 = newest entry */
 
-#define MAX_ERROR_LOG_ENTRIES 10
-
-/* ── Scroll state ────────────────────────────────────────────────────── */
-static uint8_t s_cursor = 0;   /* 0 = newest entry, count-1 = oldest       */
-
-/* ── Private helpers ─────────────────────────────────────────────────── */
-
-/*
- * Convert a scroll cursor position (0=newest) to a ring buffer index.
- * head-1 is the newest write slot; we step backwards from there.
- */
-static uint8_t cursor_to_ring_index(uint8_t cursor)
+static void refresh_entries(void)
 {
-    /* newest slot = (head - 1 + MAX) % MAX */
-    return (uint8_t)((error_log_head + MAX_ERROR_LOG_ENTRIES - 1 - cursor)
-                     % MAX_ERROR_LOG_ENTRIES);
-}
+    fault_log_entry_t latest[MAX_ERROR_LOG_ENTRIES] = {0};
+    const uint32_t count = fault_log_get_entries(latest, MAX_ERROR_LOG_ENTRIES);
 
-/* ── Public API ──────────────────────────────────────────────────────── */
+    s_count = count > MAX_ERROR_LOG_ENTRIES
+                  ? MAX_ERROR_LOG_ENTRIES
+                  : (uint8_t)count;
+    memset(s_entries, 0, sizeof(s_entries));
+
+    for (uint8_t i = 0U; i < s_count; ++i)
+    {
+        s_entries[i].error_code = (uint8_t)latest[i].source;
+        s_entries[i].timestamp_ms = latest[i].timestamp_ms;
+        if (latest[i].message[0] != '\0')
+        {
+            snprintf(s_entries[i].description,
+                     sizeof(s_entries[i].description), "%s",
+                     latest[i].message);
+        }
+        else
+        {
+            snprintf(s_entries[i].description,
+                     sizeof(s_entries[i].description), "%s",
+                     fault_log_severity_name(latest[i].severity));
+        }
+    }
+
+    if (s_count == 0U)
+    {
+        s_cursor = 0U;
+    }
+    else if (s_cursor >= s_count)
+    {
+        s_cursor = (uint8_t)(s_count - 1U);
+    }
+}
 
 void error_log_scroll_enter(void)
 {
-    s_cursor = 0;   /* start at newest */
+    s_cursor = 0U;
+    refresh_entries();
     error_log_scroll_update_display();
 }
 
 void error_log_scroll_next(void)
 {
-    if (error_log_count == 0) return;
-    s_cursor = (s_cursor + 1) % error_log_count;
+    refresh_entries();
+    if (s_count == 0U)
+        return;
+    s_cursor = (uint8_t)((s_cursor + 1U) % s_count);
     error_log_scroll_update_display();
 }
 
 void error_log_scroll_prev(void)
 {
-    if (error_log_count == 0) return;
-    s_cursor = (s_cursor == 0) ? error_log_count - 1 : s_cursor - 1;
+    refresh_entries();
+    if (s_count == 0U)
+        return;
+    s_cursor = (s_cursor == 0U) ? (uint8_t)(s_count - 1U)
+                                : (uint8_t)(s_cursor - 1U);
     error_log_scroll_update_display();
 }
 
 void error_log_scroll_update_display(void)
 {
-    char row0[LCD_LINE_SIZE], row1[LCD_LINE_SIZE];
+    char row0[LCD_LINE_SIZE] = {0};
+    char row1[LCD_LINE_SIZE] = {0};
 
-    if (error_log_count == 0) {
-        snprintf(row0, LCD_LINE_SIZE, "%-16s", "Error Log       ");
-        snprintf(row1, LCD_LINE_SIZE, "%-16s", "No logs         ");
-    } else {
-        uint8_t idx = cursor_to_ring_index(s_cursor);
-        const error_log_entry_t *entry = &error_log_ring[idx];
+    refresh_entries();
+    if (s_count == 0U)
+    {
+        snprintf(row0, sizeof(row0), "%-*.*s", LCD_COLS, LCD_COLS, "Error Logs");
+        snprintf(row1, sizeof(row1), "%-*.*s", LCD_COLS, LCD_COLS, "No logs captured");
+    }
+    else
+    {
+        const error_log_entry_t *entry = &s_entries[s_cursor];
+        char indicator[12];
+        snprintf(indicator, sizeof(indicator), "[%u/%u]",
+                 (unsigned)(s_cursor + 1U), (unsigned)s_count);
+        const int indicator_len = (int)strlen(indicator);
+        int label_width = LCD_COLS - indicator_len;
+        if (label_width < 0)
+            label_width = 0;
+        snprintf(row0, sizeof(row0), "%-*.*s%s",
+                 label_width, label_width, "Error Log", indicator);
 
-        /* Row 0: label + position indicator  "ErrLog   [2/7]  " */
-        char indicator[10];
-        snprintf(indicator, sizeof(indicator), "[%d/%d]",
-                 s_cursor + 1, error_log_count);
-        int ind_len   = (int)strlen(indicator);
-        int label_w   = LCD_COLS - ind_len;
-        if (label_w < 0)
-            label_w = 0;
-        snprintf(row0, sizeof(row0), "%-6.*s%s", label_w,
-                 "ErrLog", indicator);
-
-        /* Row 1: description + timestamp hint  "OverTemp  1234s " */
-        /* Show description left-justified, timestamp (seconds) right */
-        uint32_t age_s = entry->timestamp_ms / 1000;
-        char ts[7];
-        if (age_s < 99999)
-            snprintf(ts, sizeof(ts), "%5lus", (unsigned long)age_s);
+        const uint32_t uptime_seconds = entry->timestamp_ms / 1000U;
+        char time_text[8];
+        if (uptime_seconds < 99999U)
+            snprintf(time_text, sizeof(time_text), "%5lus",
+                     (unsigned long)uptime_seconds);
         else
-            snprintf(ts, sizeof(ts), ">100ks");
+            snprintf(time_text, sizeof(time_text), ">100ks");
 
-        int desc_w = LCD_COLS - (int)strlen(ts) - 1;   /* -1 for space separator */
-        if (desc_w < 1) desc_w = 1;
-        snprintf(row1, LCD_LINE_SIZE, "%-*.*s %s",
-                 desc_w, desc_w,
+        int description_width = LCD_COLS - (int)strlen(time_text) - 1;
+        if (description_width < 1)
+            description_width = 1;
+        snprintf(row1, sizeof(row1), "%-*.*s %s",
+                 description_width, description_width,
                  entry->description[0] ? entry->description : "?",
-                 ts);
+                 time_text);
     }
 
     row0[LCD_COLS] = '\0';
@@ -98,7 +125,8 @@ void error_log_scroll_update_display(void)
 
 bool error_log_scroll_has_multiple(void)
 {
-    return (error_log_count > 1);
+    refresh_entries();
+    return s_count > 1U;
 }
 
 uint8_t error_log_scroll_index(void)
