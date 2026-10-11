@@ -1579,13 +1579,16 @@ const char *app_services_wifi_connect_action_label(void)
     const bool have_status = wifi_events_get_status_copy(&status) == ESP_OK;
     const wifi_controller_state_t controller_state = wifi_controller_get_state();
 
-    if (controller_state == WIFI_CONTROLLER_CONNECTING ||
-        controller_state == WIFI_CONTROLLER_STARTING ||
-        (have_status && status.state == WIFI_STATE_CONNECTING)) {
-        return "Connecting...";
-    }
+    /* A valid station IP is the completed state and takes precedence over
+     * stale controller bookkeeping left at CONNECTING. */
     if (have_status && status.connected && status.got_ip) {
         return "Disconnect";
+    }
+    if (controller_state == WIFI_CONTROLLER_CONNECTING ||
+        controller_state == WIFI_CONTROLLER_STARTING ||
+        (have_status && (status.state == WIFI_STATE_CONNECTING ||
+                         status.state == WIFI_STATE_RECONNECTING))) {
+        return "Connecting...";
     }
     return "Connect";
 }
