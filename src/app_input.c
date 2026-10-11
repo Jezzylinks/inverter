@@ -1234,11 +1234,17 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             {
                 const menu_state_t parent_menu = sys_state.menu_state;
                 const int parent_selection = sys_state.menu_selection;
-                if (exit_value_edit_mode(true))
+                const bool saved = exit_value_edit_mode(true);
+                show_menu_screen(parent_menu, parent_selection);
+                if (saved)
                 {
-                    show_menu_screen(parent_menu, parent_selection);
                     lcd_flash_info_to("Setting Saved", "Changes stored",
                                       900U, LCD_SCREEN_MENU);
+                }
+                else
+                {
+                    lcd_flash_warning_to("Save Failed", "Previous restored",
+                                         1400U, LCD_SCREEN_MENU);
                 }
             }
             break;
