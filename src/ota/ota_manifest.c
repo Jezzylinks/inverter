@@ -53,8 +53,32 @@ static bool parse_release_version(const char *text, uint32_t components[4],
 
 bool ota_manifest_is_https_url(const char *url)
 {
-    return url && strncasecmp(url, "https://", 8) == 0 &&
-           strlen(url) < OTA_MAX_URL_LENGTH;
+    if (url == NULL || strncasecmp(url, "https://", 8U) != 0) {
+        return false;
+    }
+
+    const size_t length = strlen(url);
+    if (length <= 8U || length >= OTA_MAX_URL_LENGTH) {
+        return false;
+    }
+
+    /* Require a non-empty authority/host. Reject whitespace, backslashes,
+     * and user-info so malformed persisted URLs fail before HTTP setup. */
+    const char *authority = url + 8U;
+    const char *authority_end = strpbrk(authority, "/?#");
+    const size_t authority_length = authority_end != NULL
+                                        ? (size_t)(authority_end - authority)
+                                        : strlen(authority);
+    if (authority_length == 0U) {
+        return false;
+    }
+    for (size_t i = 0U; i < authority_length; ++i) {
+        const unsigned char ch = (unsigned char)authority[i];
+        if (isspace(ch) || ch == '\\' || ch == '@') {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool ota_manifest_version_is_valid(const char *text)
