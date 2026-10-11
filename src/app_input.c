@@ -449,15 +449,19 @@ static void handle_wifi_menu_action(uint8_t selection)
         app_services_show_wifi_status();
         break;
     case APP_WIFI_MENU_CONNECT:
-        if (wifi_controller_is_connected())
+    {
+        const char *action_label = app_services_wifi_connect_action_label();
+        if (strcmp(action_label, "Disconnect") == 0)
         {
             (void)app_services_wifi_request_disconnect();
         }
-        else
+        else if (strcmp(action_label, "Connecting...") != 0)
         {
             (void)app_services_wifi_reconnect();
         }
+        /* A second ENTER while connecting is deliberately idempotent. */
         break;
+    }
     case APP_WIFI_MENU_SCAN:
         (void)app_services_wifi_scan();
         break;
