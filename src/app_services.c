@@ -37,8 +37,9 @@
 #ifdef CONFIG_INVERTER_OTA_MANIFEST_URL
 #define APP_OTA_DEFAULT_MANIFEST_URL CONFIG_INVERTER_OTA_MANIFEST_URL
 #else
-#define APP_OTA_DEFAULT_MANIFEST_URL \
-    "https://github.com/Jezzylinks/inverter/releases/latest/download/inverter.csv"
+/* Do not assume a production release asset exists. Configure a real HTTPS
+ * CSV manifest in menuconfig for deployments that enable OTA. */
+#define APP_OTA_DEFAULT_MANIFEST_URL ""
 #endif
 #define APP_SERVICES_NVS_NAMESPACE NVS_NS_SYSTEM
 #define APP_WIFI_ENABLED_KEY "wifi_enabled"
@@ -1084,20 +1085,20 @@ esp_err_t app_services_init(void)
 
     load_persisted_config();
 
-    if (s_manifest_url[0] == '\0')
+    if (s_manifest_url[0] == '\0' &&
+        APP_OTA_DEFAULT_MANIFEST_URL[0] != '\0')
     {
-        const char *bootstrap_manifest_url = APP_OTA_DEFAULT_MANIFEST_URL;
         const esp_err_t manifest_err =
-            app_services_set_ota_manifest_url(bootstrap_manifest_url);
+            app_services_set_ota_manifest_url(APP_OTA_DEFAULT_MANIFEST_URL);
         if (manifest_err != ESP_OK)
         {
             ESP_LOGW(APP_SERVICES_TAG,
-                     "Could not provision OTA manifest URL: %s",
+                     "Could not provision configured OTA manifest URL: %s",
                      esp_err_to_name(manifest_err));
         }
         else
         {
-            ESP_LOGI(APP_SERVICES_TAG, "OTA manifest URL provisioned");
+            ESP_LOGI(APP_SERVICES_TAG, "Configured OTA manifest URL provisioned");
         }
     }
 
@@ -2297,9 +2298,18 @@ esp_err_t app_services_check_for_update(bool user_initiated)
         ESP_LOGW(APP_SERVICES_TAG,
                  "Internet probe is not yet positive; attempting HTTPS manifest check");
     }
-    if (app_services_get_ota_manifest_url(manifest_url, sizeof(manifest_url)) != ESP_OK ||
-        strncmp(manifest_url, "https://", 8U) != 0 ||
-        strlen(manifest_url) >= sizeof(manifest_url)) {
+    if (app_services_get_ota_manifest_url(manifest_url, sizeof(manifest_url)) != ESP_OK) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (manifest_url[0] == '\0') {
+        ESP_LOGW(APP_SERVICES_TAG, "OTA manifest URL is not configured");
+        if (user_initiated) {
+            lcd_flash_warning_to("OTA URL Not Set", "Configure HTTPS URL",
+                                 1800U, LCD_SCREEN_MENU);
+        }
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!app_manifest_url_is_valid(manifest_url)) {
         if (user_initiated) {
             lcd_flash_warning_to("OTA URL Invalid", "HTTPS required",
                                  1500U, LCD_SCREEN_MENU);
