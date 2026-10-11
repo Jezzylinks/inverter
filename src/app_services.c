@@ -1543,6 +1543,28 @@ const char *app_services_wifi_connect_action_label(void)
     if (mode == WIFI_MODE_AP) {
         return "AP Clients";
     }
+
+    /* Reflect the in-flight operation so the menu doesn't advertise the
+     * opposite action while a connect/disconnect request is still pending. */
+    if (s_services_mutex != NULL) {
+        app_wifi_operation_t operation;
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        operation = s_wifi_operation;
+        xSemaphoreGive(s_services_mutex);
+        switch (operation) {
+        case APP_WIFI_OPERATION_CONNECT_SAVED:
+        case APP_WIFI_OPERATION_PROVISION:
+            return "Connecting...";
+        case APP_WIFI_OPERATION_DISCONNECT:
+            return "Disconnecting...";
+        case APP_WIFI_OPERATION_ENABLE:
+            return "Starting...";
+        case APP_WIFI_OPERATION_DISABLE:
+            return "Stopping...";
+        default:
+            break;
+        }
+    }
     return wifi_controller_is_connected() ? "Disconnect" : "Connect";
 }
 
