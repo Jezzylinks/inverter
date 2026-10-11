@@ -154,6 +154,14 @@ static bool app_manifest_url_is_valid(const char *url)
            strlen(url) < APP_OTA_MANIFEST_URL_MAX;
 }
 
+/* A station DHCP lease is the authoritative local-connectivity prerequisite.
+ * WIFI_STATE may be AP_ACTIVE in APSTA mode even while STA has a valid IP. */
+static bool app_wifi_station_has_ip(void)
+{
+    wifi_status_t status = {0};
+    return wifi_events_get_status_copy(&status) == ESP_OK && status.got_ip;
+}
+
 static bool app_wifi_scan_cancel_requested(void)
 {
     bool cancel = true;
@@ -274,7 +282,7 @@ static void app_wifi_prerequisite_task(void *parameter)
             continue;
         }
 
-        if (!wifi_controller_is_connected() || !wifi_monitor_is_online()) {
+        if (!app_wifi_station_has_ip() || !wifi_monitor_is_online()) {
             continue;
         }
 
@@ -347,9 +355,9 @@ static void app_wifi_operation_watch_task(void *parameter)
         if (timed_out) {
             ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi operation timed out after %ums",
                      (unsigned)APP_WIFI_OPERATION_TIMEOUT_MS);
-            lcd_show_wifi_result(false, true, true,
-                                 timed_out_ssid[0] ? timed_out_ssid : "Wi-Fi",
-                                 timed_out_rssi, "Connection timed out");
+            lcd_flash_warning_to("Connection Timeout",
+                                 timed_out_ssid[0] ? timed_out_ssid : "Try again",
+                                 1500U, LCD_SCREEN_MENU);
         }
     }
 }
@@ -716,7 +724,9 @@ static void app_wifi_status_callback(const wifi_status_t *status)
          * informational and must not race the runtime/NVS commit. */
         break;
     case APP_WIFI_OPERATION_CONNECT_SAVED:
-        if (status->state == WIFI_STATE_CONNECTED && status->got_ip) {
+        /* Do not require WIFI_STATE_CONNECTED: in APSTA mode AP_START can
+         * publish AP_ACTIVE while the station still has a valid DHCP lease. */
+        if (status->connected && status->got_ip) {
             terminal = true;
             connected = true;
             message = ssid[0] != '\0' ? ssid : "Connected";
@@ -760,13 +770,13 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     app_wifi_end_operation();
     if (operation == APP_WIFI_OPERATION_DISABLE ||
         operation == APP_WIFI_OPERATION_DISCONNECT) {
-        lcd_flash_message(message, "Saved", 1200U);
+        lcd_flash_info_to(message, "Wi-Fi updated", 1200U, LCD_SCREEN_MENU);
+    } else if (connected) {
+        lcd_flash_info_to("Connected", ssid[0] != '\0' ? ssid : "Wi-Fi ready",
+                          1500U, LCD_SCREEN_MENU);
     } else {
-        const char *display_ssid = ssid[0] != '\0' ? ssid : message;
-        const char *detail = connected ? "Connection succeeded" : message;
-        lcd_show_wifi_result(connected, failed, false, display_ssid,
-                             status->rssi != -127 ? status->rssi : operation_rssi,
-                             detail);
+        lcd_flash_warning_to(message != NULL ? message : "Connect failed",
+                             "Try again", 1500U, LCD_SCREEN_MENU);
     }
 }
 
@@ -2211,7 +2221,7 @@ esp_err_t app_services_check_for_update(bool user_initiated)
                  "Update check requested before app services initialization");
         return ESP_ERR_INVALID_STATE;
     }
-    if (!wifi_controller_is_connected()) {
+    if (!app_wifi_station_has_ip()) {
         if (user_initiated && !app_services_wifi_enabled()) {
             xSemaphoreTake(s_services_mutex, portMAX_DELAY);
             s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_OTA_CHECK;
@@ -2373,7 +2383,7 @@ esp_err_t app_services_request_update_confirmation(void)
                  "Update confirmation requested before app services initialization");
         return ESP_ERR_INVALID_STATE;
     }
-    if (!wifi_controller_is_connected() && !app_services_wifi_enabled()) {
+    if (!app_wifi_station_has_ip() && !app_services_wifi_enabled()) {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_OTA_INSTALL;
         s_wifi_prerequisite_pending = true;
