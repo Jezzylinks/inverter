@@ -397,8 +397,8 @@ void show_menu_screen(menu_state_t menu_st, int selection)
      *
      * Do not put Wi-Fi/NVS operations here.
      */
+#if LCD_GEOMETRY_20X4
     if (menu_st == MENU_WIFI_SETTINGS &&
-        lcd_geometry_is_20x4() &&
         app_services_wifi_mode_edit_active())
     {
         char rows[LCD_ROWS][LCD_LINE_SIZE];
@@ -421,6 +421,7 @@ void show_menu_screen(menu_state_t menu_st, int selection)
         lcd_show_menu_rows(row_ptrs, LCD_ROWS);
         return;
     }
+#endif
 
     if (menu_st == MENU_SECURITY)
     {
