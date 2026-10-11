@@ -708,7 +708,6 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     bool connection_uses_auth = false;
     bool terminal = false;
     bool connected = false;
-    bool failed = false;
     const char *message = NULL;
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
@@ -750,7 +749,6 @@ static void app_wifi_status_callback(const wifi_status_t *status)
              * serving clients. Exhausted STA retries are still a terminal
              * failure for this requested connection. */
             terminal = true;
-            failed = true;
             message = connection_uses_auth ? "Auth failed" : "Network unavailable";
         }
         break;
