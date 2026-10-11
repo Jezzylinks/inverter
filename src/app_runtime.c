@@ -24,6 +24,7 @@
 #include "system/system_state.h"
 #include "telemetry/telemetry_health.h"
 #include "diagnostics/system_diagnostics.h"
+#include "events/fault_log.h"
 
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_continuous.h>
@@ -4211,13 +4212,22 @@ void lcd_draw_diagnostics_screen(uint8_t index)
         break;
     }
 
-    case 1: /* Latest Error */
+    case 1: /* Latest Error from the shared persistent log */
     {
-        const error_log_entry_t *latest = error_log_get_latest();
-        if (!latest)
-            snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, "No errors logged");
+        fault_log_entry_t latest = {0};
+        if (fault_log_get_entries(&latest, 1U) == 0U)
+        {
+            snprintf(row1, LCD_LINE_SIZE, "%-*.*s",
+                     LCD_COLS, LCD_COLS, "No errors logged");
+        }
         else
-            snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, latest->description);
+        {
+            const char *description = latest.message[0] != '\0'
+                                          ? latest.message
+                                          : fault_log_source_name(latest.source);
+            snprintf(row1, LCD_LINE_SIZE, "%-*.*s",
+                     LCD_COLS, LCD_COLS, description);
+        }
         break;
     }
 
