@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "esp_log.h"
 #include "esp_wifi.h"
@@ -149,8 +150,10 @@ static TickType_t s_wifi_prerequisite_started_tick;
 
 static bool app_manifest_url_is_valid(const char *url)
 {
+    /* URI schemes are case-insensitive (RFC 3986). Keep this policy in
+     * step with ota_manifest_is_https_url(), which already accepts HTTPS://. */
     return url != NULL && url[0] != '\0' &&
-           strncmp(url, "https://", 8U) == 0 &&
+           strncasecmp(url, "https://", 8U) == 0 &&
            strlen(url) < APP_OTA_MANIFEST_URL_MAX;
 }
 
