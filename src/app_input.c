@@ -10,6 +10,7 @@
 #include "battery/battery_estimator.h"
 #include "events/system_events.h"
 #include "events/fault_log.h"
+#include "lcd/error_log_scroll.h"
 #include "system/system_error_codes.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -1442,7 +1443,14 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             if (!items || sys_state.menu_selection >= (uint8_t)cnt)
                 break;
             enter_detail_view(MENU_DIAGNOSTIC, sys_state.menu_selection);
-            lcd_draw_diagnostics_screen(sys_state.menu_selection);
+            if (sys_state.menu_selection == 1U)
+            {
+                error_log_scroll_enter();
+            }
+            else
+            {
+                lcd_draw_diagnostics_screen(sys_state.menu_selection);
+            }
             break;
         }
 
@@ -1623,7 +1631,14 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             if (!items || sys_state.menu_selection >= (uint8_t)cnt)
                 break;
             enter_detail_view(MENU_DIAGNOSTIC, sys_state.menu_selection);
-            lcd_draw_diagnostics_screen(sys_state.menu_selection);
+            if (sys_state.menu_selection == 1U)
+            {
+                error_log_scroll_enter();
+            }
+            else
+            {
+                lcd_draw_diagnostics_screen(sys_state.menu_selection);
+            }
             break;
         }
         case MENU_WIFI_CONFIG:
@@ -1762,6 +1777,17 @@ void handle_up_button_event(button_event_info_t *event_info,
             xSemaphoreGive(change_pin_mutex);
         }
         return; // Up just adjusts the current PIN digit -- never finishes the flow
+    }
+
+    if (sys_state.in_detail_view &&
+        sys_state.menu_state == MENU_DIAGNOSTIC &&
+        sys_state.menu_selection == 1U)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
+            error_log_scroll_prev();
+        }
+        return;
     }
 
     if (sys_lcd.screen == LCD_SCREEN_WIFI_PASSWORD)
@@ -2060,6 +2086,17 @@ void handle_down_button_event(button_event_info_t *event_info,
             xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
             change_pin_handle_button(&change_pin_ctx, BTN_DOWN);
             xSemaphoreGive(change_pin_mutex);
+        }
+        return;
+    }
+
+    if (sys_state.in_detail_view &&
+        sys_state.menu_state == MENU_DIAGNOSTIC &&
+        sys_state.menu_selection == 1U)
+    {
+        if (event_info->event == BUTTON_EVENT_CLICK)
+        {
+            error_log_scroll_next();
         }
         return;
     }
