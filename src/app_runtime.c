@@ -6012,11 +6012,19 @@ static bool validate_and_clamp_settings(void)
         battery_type_t type = sys_state.battery_profile.profile_id < BATTERY_TYPE_COUNT
                                   ? (battery_type_t)sys_state.battery_profile.profile_id
                                   : BATTERY_AGM;
-        uint16_t capacity = sys_state.battery_profile.capacity_ah > 0.0f
-                                ? (uint16_t)sys_state.battery_profile.capacity_ah
-                                : 100U;
-        battery_generate_profile(type, VOLTAGE_SYSTEM_12V, capacity, &regenerated);
-        sys_state.battery_profile = regenerated;
+        const float configured_capacity = sys_state.battery_profile.capacity_ah;
+        const uint16_t capacity =
+            isfinite(configured_capacity) &&
+            configured_capacity >= (float)BATTERY_CAPACITY_MIN_AH &&
+            configured_capacity <= (float)BATTERY_CAPACITY_MAX_AH
+                ? (uint16_t)lroundf(configured_capacity)
+                : (uint16_t)BATTERY_CAPACITY_DEFAULT_AH;
+        if (battery_generate_profile(type, VOLTAGE_SYSTEM_12V, capacity,
+                                     &regenerated))
+        {
+            sys_state.battery_profile = regenerated;
+            sync_battery_estimator_configuration();
+        }
         corrected = true;
     }
 
