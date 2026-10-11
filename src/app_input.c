@@ -757,7 +757,12 @@ void handle_power_button_event(button_event_info_t *event_info,
                                   fault_flags != 0U
                                       ? get_error_string(sys_state.error.error_flags)
                                       : "Inverter failed to start");
-                    inverter_show_last_start_error();
+                    /* inverter_power_on() already displays the detailed
+                     * start error when it enters INVERTER_FAULT. */
+                    if (sys_state.inverter.inverter_state != INVERTER_FAULT)
+                    {
+                        inverter_show_last_start_error();
+                    }
                 }
             }
             break;
