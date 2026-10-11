@@ -229,9 +229,9 @@ esp_err_t wifi_controller_start(void)
      * across the whole call, two tasks really can race here. */
     wifi_controller_lock();
 
-    /* Wi-Fi On starts the selected radio architecture only. Station
-     * association is an explicit Connect action, never a side effect of
-     * enabling the radio. */
+    /* Start the selected radio architecture, then automatically associate
+     * with the saved station when one exists. An empty SSID is not an error:
+     * AP-only/provisioning and first-boot installations remain usable. */
     wifi_manager_enable_auto_reconnect(false);
     s_state = WIFI_CONTROLLER_STARTING;
 
@@ -245,16 +245,47 @@ esp_err_t wifi_controller_start(void)
     }
 
     s_state = WIFI_CONTROLLER_IDLE;
-    const bool is_ap_mode = wifi_manager_get_mode() == WIFI_MODE_AP;
+    const wifi_mode_t mode = wifi_manager_get_mode();
     wifi_controller_unlock();
 
-    if (!is_ap_mode) {
+    if (mode != WIFI_MODE_AP) {
         (void)wifi_monitor_start();
+
+        wifi_manager_config_t config = {0};
+        if (wifi_manager_get_config(&config) == ESP_OK && config.ssid[0] != '\0') {
+            /* This is a saved-credential auto-connect, not a new user
+             * request. Enable the existing retry/backoff policy before the
+             * first association attempt. */
+            wifi_manager_enable_auto_reconnect(true);
+            wifi_controller_lock();
+            if (s_initialized) {
+                s_state = WIFI_CONTROLLER_CONNECTING;
+            }
+            wifi_controller_unlock();
+
+            const esp_err_t connect_err = wifi_manager_connect();
+            if (connect_err != ESP_OK && connect_err != ESP_ERR_WIFI_CONN) {
+                wifi_manager_enable_auto_reconnect(false);
+                wifi_controller_lock();
+                if (s_state == WIFI_CONTROLLER_CONNECTING) {
+                    s_state = WIFI_CONTROLLER_IDLE;
+                }
+                wifi_controller_unlock();
+                ESP_LOGW(TAG, "Saved-station auto-connect could not start: %s",
+                         esp_err_to_name(connect_err));
+            } else {
+                ESP_LOGI(TAG, "Saved station auto-connect initiated");
+            }
+        } else {
+            wifi_manager_enable_auto_reconnect(false);
+            ESP_LOGI(TAG, "No saved station SSID; automatic connection skipped");
+        }
     }
-    ESP_LOGI(TAG, "WiFi architecture started in %s mode; station connect awaits user action",
-             (wifi_manager_get_mode() == WIFI_MODE_STA) ? "STA" :
-             (wifi_manager_get_mode() == WIFI_MODE_AP) ? "AP" :
-             (wifi_manager_get_mode() == WIFI_MODE_APSTA) ? "APSTA" : "UNKNOWN");
+
+    ESP_LOGI(TAG, "WiFi architecture started in %s mode",
+             mode == WIFI_MODE_STA ? "STA" :
+             mode == WIFI_MODE_AP ? "AP" :
+             mode == WIFI_MODE_APSTA ? "APSTA" : "UNKNOWN");
     return ESP_OK;
 }
 
