@@ -740,8 +740,37 @@ bool battery_load_profile(battery_profile_t *profile_out)
     }
     else if (field_err == ESP_ERR_NVS_NOT_FOUND)
     {
-        ESP_LOGW("BAT_PROFILE", "NVS key '%s' missing; retaining loaded type=%u",
-                 BATTERY_TYPE_KEY, (unsigned)battery_type);
+        /* Firmware versions before the canonical battery_type key used
+         * bat_type. Recover that value without erasing unrelated settings;
+         * the normal settings transaction will persist it under the current
+         * key after legacy recovery. */
+        uint8_t legacy_key_type = 0U;
+        esp_err_t legacy_key_err = nvs_get_u8(nvs_handle, "bat_type",
+                                               &legacy_key_type);
+        if (legacy_key_err == ESP_ERR_NVS_TYPE_MISMATCH) {
+            int32_t legacy_key_i32 = -1;
+            legacy_key_err = nvs_get_i32(nvs_handle, "bat_type",
+                                         &legacy_key_i32);
+            if (legacy_key_err == ESP_OK &&
+                legacy_key_i32 >= BATTERY_LEAD_ACID &&
+                legacy_key_i32 < BATTERY_TYPE_COUNT) {
+                legacy_key_type = (uint8_t)legacy_key_i32;
+            } else {
+                legacy_key_err = ESP_ERR_INVALID_ARG;
+            }
+        }
+        if (legacy_key_err == ESP_OK &&
+            legacy_key_type >= BATTERY_LEAD_ACID &&
+            legacy_key_type < BATTERY_TYPE_COUNT) {
+            battery_type = legacy_key_type;
+            ESP_LOGW("BAT_PROFILE",
+                     "Recovered legacy battery type key 'bat_type'=%u",
+                     (unsigned)battery_type);
+        } else {
+            ESP_LOGW("BAT_PROFILE",
+                     "NVS key '%s' missing; retaining loaded type=%u",
+                     BATTERY_TYPE_KEY, (unsigned)battery_type);
+        }
     }
 
     field_err = nvs_get_u8(nvs_handle, BATTERY_VOLTAGE_SYSTEM_KEY,
