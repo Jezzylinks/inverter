@@ -754,10 +754,11 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         /* The controller return value, not WIFI_STATE_IDLE, proves STOP. */
         break;
     case APP_WIFI_OPERATION_DISCONNECT:
-        if (!status->connected &&
+        if (!status->connected && !status->got_ip &&
             (status->state == WIFI_STATE_IDLE ||
              status->state == WIFI_STATE_DISCONNECTED ||
-             status->state == WIFI_STATE_FAILED)) {
+             status->state == WIFI_STATE_FAILED ||
+             status->state == WIFI_STATE_AP_ACTIVE)) {
             terminal = true;
             message = "Disconnected";
         }
