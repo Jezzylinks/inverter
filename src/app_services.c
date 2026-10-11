@@ -1663,8 +1663,33 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
         return ESP_ERR_NOT_SUPPORTED;
     }
 
-    /* Avoid a needless reconnect when the selected SSID is already active. */
-    if (wifi_controller_is_connected()) {
+    /* Compare the complete credential pair, not just the SSID.  A saved
+     * password change for the same network must be allowed to trigger a new
+     * association; identical credentials must not create duplicate attempts. */
+    wifi_credentials_t saved_credentials = {0};
+    const bool same_saved_credentials =
+        wifi_storage_load_credentials(&saved_credentials) == ESP_OK &&
+        strcmp(saved_credentials.ssid, ssid) == 0 &&
+        strcmp(saved_credentials.password, password) == 0;
+
+    wifi_manager_config_t config = {0};
+    esp_err_t err = wifi_manager_get_config(&config);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    const bool same_active_config =
+        strcmp(config.ssid, ssid) == 0 &&
+        strcmp(config.password, password) == 0;
+
+    if (same_saved_credentials && same_active_config &&
+        wifi_controller_get_state() == WIFI_CONTROLLER_CONNECTING) {
+        /* An identical connection request is already in flight. */
+        return ESP_OK;
+    }
+
+    if (same_saved_credentials && same_active_config &&
+        wifi_controller_is_connected()) {
         wifi_ap_record_t current_ap = {0};
         if (esp_wifi_sta_get_ap_info(&current_ap) == ESP_OK &&
             strncmp((const char *)current_ap.ssid, ssid,
@@ -1673,9 +1698,6 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
             return ESP_OK;
         }
     }
-
-    wifi_manager_config_t config = {0};
-    esp_err_t err = wifi_manager_get_config(&config);
     if (err != ESP_OK) {
         return err;
     }
