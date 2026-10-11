@@ -1557,10 +1557,9 @@ const char *app_services_wifi_connect_action_label(void)
 
     /* Reflect the in-flight operation so the menu doesn't advertise the
      * opposite action while a connect/disconnect request is still pending. */
-    if (s_services_mutex != NULL) {
-        app_wifi_operation_t operation;
-        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-        operation = s_wifi_operation;
+    if (s_services_mutex != NULL &&
+        xSemaphoreTake(s_services_mutex, 0) == pdTRUE) {
+        app_wifi_operation_t operation = s_wifi_operation;
         xSemaphoreGive(s_services_mutex);
         switch (operation) {
         case APP_WIFI_OPERATION_CONNECT_SAVED:
