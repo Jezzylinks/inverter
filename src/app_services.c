@@ -720,9 +720,8 @@ static void app_wifi_lcd_status_callback(const wifi_monitor_status_t *status)
     LCD_LOCK();
     menu_visible = sys_lcd.screen == LCD_SCREEN_MENU;
     LCD_UNLOCK();
-    if (menu_visible && sys_state.menu_state == MENU_WIFI_CONFIG &&
-        !sys_state.value_edit_mode) {
-        show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
+    if (menu_visible) {
+        app_wifi_sync_menu_if_visible();
     }
 }
 
@@ -1756,7 +1755,12 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
         return ESP_OK;
     }
 
-    if (same_active_config && wifi_controller_is_connected()) {
+    wifi_status_t live_status = {0};
+    const bool station_ready =
+        wifi_events_get_status_copy(&live_status) == ESP_OK &&
+        live_status.connected && live_status.got_ip;
+    if (same_active_config && station_ready &&
+        wifi_controller_is_connected()) {
         wifi_ap_record_t current_ap = {0};
         if (esp_wifi_sta_get_ap_info(&current_ap) == ESP_OK &&
             strncmp((const char *)current_ap.ssid, ssid,
