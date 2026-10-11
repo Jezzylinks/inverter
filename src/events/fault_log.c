@@ -116,6 +116,11 @@ static void add_locked(fault_severity_t severity, fault_source_t source,
 
 void fault_log_add(fault_severity_t severity, fault_source_t source, float value, const char *message)
 {
+    if (s_mutex == NULL)
+    {
+        ESP_LOGW(TAG, "Ignoring log entry before fault log initialization");
+        return;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     add_locked(severity, source, value, message);
     xSemaphoreGive(s_mutex);
@@ -376,7 +381,7 @@ void fault_log_drain_isr_staged(void)
 
 uint32_t fault_log_get_entries(fault_log_entry_t *out_entries, uint32_t max_entries)
 {
-    if (!out_entries || max_entries == 0)
+    if (!out_entries || max_entries == 0 || s_mutex == NULL)
         return 0;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     uint32_t n = s_count < max_entries ? s_count : max_entries;
@@ -392,6 +397,8 @@ uint32_t fault_log_get_entries(fault_log_entry_t *out_entries, uint32_t max_entr
 
 bool fault_log_flush_to_nvs(void)
 {
+    if (s_mutex == NULL)
+        return false;
     if (!s_dirty)
         return true;
 
@@ -430,6 +437,8 @@ bool fault_log_flush_to_nvs(void)
 
 bool fault_log_clear(void)
 {
+    if (s_mutex == NULL)
+        return false;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     memset(s_entries, 0, sizeof(s_entries));
     s_head = 0;
@@ -508,9 +517,14 @@ void fault_log_event_task(void *pv)
                                       &evt,
                                       pdMS_TO_TICKS(1000U)))
         {
+            /* Persist warnings/informational events too, even if no later
+             * fault arrives to trigger an immediate flush. */
+            fault_log_drain_isr_staged();
+            (void)fault_log_flush_to_nvs();
             continue;
         }
 
         fault_log_add_event(&evt);
+        fault_log_drain_isr_staged();
     }
 }
