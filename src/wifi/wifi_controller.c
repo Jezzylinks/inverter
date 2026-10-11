@@ -252,7 +252,7 @@ esp_err_t wifi_controller_start(void)
     const bool have_saved_station =
         mode != WIFI_MODE_AP &&
         wifi_manager_get_config(&config) == ESP_OK &&
-        config.ssid[0] != '\\0';
+        config.ssid[0] != '\0';
     const bool should_auto_connect = have_saved_station && !s_manual_disconnect;
     wifi_controller_unlock();
 
