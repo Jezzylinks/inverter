@@ -340,14 +340,12 @@ static void app_wifi_operation_watch_task(void *parameter)
 
         bool timed_out = false;
         char timed_out_ssid[sizeof(s_wifi_operation_ssid)] = {0};
-        int8_t timed_out_rssi = -127;
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         if (s_wifi_operation != APP_WIFI_OPERATION_NONE &&
             (uint32_t)(xTaskGetTickCount() - s_wifi_operation_started_tick) >=
                 pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
             strncpy(timed_out_ssid, s_wifi_operation_ssid,
                     sizeof(timed_out_ssid) - 1U);
-            timed_out_rssi = s_wifi_operation_rssi;
             s_wifi_operation = APP_WIFI_OPERATION_NONE;
             s_wifi_operation_ssid[0] = '\0';
             s_wifi_operation_rssi = -127;
