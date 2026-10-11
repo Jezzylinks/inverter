@@ -701,6 +701,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     }
 
     app_wifi_operation_t operation;
+    uint32_t operation_generation;
     char ssid[sizeof(s_wifi_operation_ssid)] = {0};
     int8_t operation_rssi = -127;
     bool connection_uses_auth = false;
@@ -711,6 +712,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     operation = s_wifi_operation;
+    operation_generation = s_wifi_operation_generation;
     strncpy(ssid, s_wifi_operation_ssid, sizeof(ssid) - 1U);
     operation_rssi = s_wifi_operation_rssi;
     connection_uses_auth = s_wifi_connection_uses_auth;
@@ -770,7 +772,20 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         return;
     }
 
-    app_wifi_end_operation();
+    /* A delayed event from an older operation must never complete or
+     * dismiss the dialog belonging to a newer user request. */
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    if (s_wifi_operation != operation ||
+        s_wifi_operation_generation != operation_generation) {
+        xSemaphoreGive(s_services_mutex);
+        return;
+    }
+    s_wifi_operation = APP_WIFI_OPERATION_NONE;
+    s_wifi_operation_ssid[0] = '\0';
+    s_wifi_operation_rssi = -127;
+    ++s_wifi_operation_generation;
+    xSemaphoreGive(s_services_mutex);
+
     if (operation == APP_WIFI_OPERATION_DISABLE ||
         operation == APP_WIFI_OPERATION_DISCONNECT) {
         lcd_flash_info_to(message, "Wi-Fi updated", 1200U, LCD_SCREEN_MENU);
