@@ -434,6 +434,26 @@ static void app_wifi_sync_menu_if_visible(void)
     }
 }
 
+/* Connection result messages use a timed LCD overlay. Refresh after that
+ * overlay has expired so the underlying Connect/Disconnect label is current. */
+static void app_wifi_menu_refresh_task(void *parameter)
+{
+    (void)parameter;
+    vTaskDelay(pdMS_TO_TICKS(1800U));
+    app_wifi_sync_menu_if_visible();
+    vTaskDelete(NULL);
+}
+
+static void app_wifi_schedule_menu_refresh(void)
+{
+    TaskHandle_t task = NULL;
+    if (xTaskCreatePinnedToCore(app_wifi_menu_refresh_task, "wifi_menu_refresh",
+                                2048U, NULL, APP_WIFI_OPERATION_WATCH_PRIORITY,
+                                &task, APP_CORE_SYSTEM) != pdPASS) {
+        ESP_LOGW(APP_SERVICES_TAG, "Could not schedule Wi-Fi menu refresh");
+    }
+}
+
 static esp_err_t app_services_execute_wifi_toggle(bool enabled,
                                                     bool previous_enabled)
 {
@@ -489,10 +509,12 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
     if (controller_err == ESP_OK) {
         app_wifi_end_operation();
         app_wifi_sync_menu_if_visible();
-        if (nvs_err == ESP_OK) {
-            lcd_flash_message(enabled ? "Wi-Fi ON" : "Wi-Fi OFF", "Ready", 900U);
-        } else {
-            lcd_flash_message(enabled ? "Wi-Fi ON" : "Wi-Fi OFF", "Save failed", 1500U);
+        /* Successful ON/OFF transitions are reflected by the live menu and
+         * home-screen status; do not replace them with a redundant success
+         * flash. Persistence failures remain visible to the user. */
+        if (nvs_err != ESP_OK) {
+            lcd_flash_warning_to(enabled ? "Wi-Fi ON" : "Wi-Fi OFF",
+                                 "Save failed", 1500U, LCD_SCREEN_MENU);
         }
     } else {
         sys_state.wifi.enabled = previous_enabled;
@@ -689,6 +711,18 @@ static void app_wifi_lcd_status_callback(const wifi_monitor_status_t *status)
      * screen and used to gate remote services such as OTA. */
     const bool connected = status->connected && status->got_ip;
     lcd_update_wifi_status(connected, connected ? status->rssi : 0);
+
+    /* The callback is invoked only when the monitor snapshot changes. If the
+     * Wi-Fi menu is currently visible, redraw it immediately; never redraw
+     * over a connecting/result overlay. */
+    bool menu_visible = false;
+    LCD_LOCK();
+    menu_visible = sys_lcd.screen == LCD_SCREEN_MENU;
+    LCD_UNLOCK();
+    if (menu_visible && sys_state.menu_state == MENU_WIFI_CONFIG &&
+        !sys_state.value_edit_mode) {
+        show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
+    }
 }
 
 static void app_wifi_status_callback(const wifi_status_t *status)
@@ -778,6 +812,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         lcd_flash_warning_to(message != NULL ? message : "Connect failed",
                              "Try again", 1500U, LCD_SCREEN_MENU);
     }
+    app_wifi_schedule_menu_refresh();
 }
 
 static esp_err_t persist_u8(const char *key, uint8_t value)
@@ -1539,7 +1574,20 @@ const char *app_services_wifi_connect_action_label(void)
     if (mode == WIFI_MODE_AP) {
         return "AP Clients";
     }
-    return wifi_controller_is_connected() ? "Disconnect" : "Connect";
+
+    wifi_status_t status = {0};
+    const bool have_status = wifi_events_get_status_copy(&status) == ESP_OK;
+    const wifi_controller_state_t controller_state = wifi_controller_get_state();
+
+    if (controller_state == WIFI_CONTROLLER_CONNECTING ||
+        controller_state == WIFI_CONTROLLER_STARTING ||
+        (have_status && status.state == WIFI_STATE_CONNECTING)) {
+        return "Connecting...";
+    }
+    if (have_status && status.connected && status.got_ip) {
+        return "Disconnect";
+    }
+    return "Connect";
 }
 
 const char *app_services_wifi_secondary_action_label(void)
