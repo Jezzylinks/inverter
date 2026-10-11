@@ -704,7 +704,6 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     app_wifi_operation_t operation;
     uint32_t operation_generation;
     char ssid[sizeof(s_wifi_operation_ssid)] = {0};
-    int8_t operation_rssi = -127;
     bool connection_uses_auth = false;
     bool terminal = false;
     bool connected = false;
@@ -714,7 +713,6 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     operation = s_wifi_operation;
     operation_generation = s_wifi_operation_generation;
     strncpy(ssid, s_wifi_operation_ssid, sizeof(ssid) - 1U);
-    operation_rssi = s_wifi_operation_rssi;
     connection_uses_auth = s_wifi_connection_uses_auth;
     xSemaphoreGive(s_services_mutex);
 
