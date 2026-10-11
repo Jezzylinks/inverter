@@ -6033,7 +6033,9 @@ static bool validate_and_clamp_settings(void)
         ESP_LOGE(TAG_SYS, "Invalid battery type %d loaded — resetting to AGM",
                  sys_state.battery_profile.profile_id);
         battery_profile_t regenerated;
-        battery_generate_profile(BATTERY_AGM, VOLTAGE_SYSTEM_12V, 100, &regenerated);
+        battery_generate_profile(BATTERY_AGM, VOLTAGE_SYSTEM_12V,
+                                 (uint16_t)BATTERY_CAPACITY_DEFAULT_AH,
+                                 &regenerated);
         sys_state.battery_profile = regenerated;
         sys_state.battery_profile.profile_id = BATTERY_AGM;
         corrected = true;
