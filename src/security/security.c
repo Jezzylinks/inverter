@@ -162,6 +162,14 @@ esp_err_t security_init(void)
     nvs_handle_t handle;
     esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READONLY, &handle);
     if (err != ESP_OK) {
+        /* Only a genuinely missing namespace is a fresh install. A timeout,
+         * initialization error, or other storage failure must never trigger
+         * replacement of a previously configured PIN. */
+        if (err != ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGE(TAG, "Cannot read PIN storage: %s", esp_err_to_name(err));
+            security_cleanup_failed_init();
+            return err;
+        }
         const uint8_t default_pin[SECURITY_PIN_LEN] = SECURITY_DEFAULT_PIN;
         const esp_err_t provision_err = persist_pin(default_pin, true);
         if (provision_err != ESP_OK) {
