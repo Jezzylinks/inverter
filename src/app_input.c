@@ -2349,10 +2349,9 @@ void handle_down_button_event(button_event_info_t *event_info,
         break;
 
     case BUTTON_EVENT_REPEAT:
-        /* Hold-repeat is reserved for accelerated value editing. A menu move
-         * requires a discrete click, preventing a retained press from
-         * continuously scrolling the menu. */
-        if (sys_state.value_edit_mode)
+        /* Hold-repeat is reserved for numerical value editing only. */
+        if (sys_state.value_edit_mode && config != NULL &&
+            config->edit_type == VALUE_EDIT_NUMERIC)
         {
             if (sys_state.hold_start_time == 0)
                 sys_state.hold_start_time = current_time;
