@@ -17,6 +17,7 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "esp_netif.h"
 #include "lcd/lcd.h"
 #include <string.h>
@@ -50,6 +51,20 @@ extern SemaphoreHandle_t change_pin_mutex;
 extern system_state_t sys_state;
 extern led_pattern_t pattern;
 extern void lcd_draw_diagnostics_screen(uint8_t index);
+
+/* Live heap diagnostics. MALLOC_CAP_8BIT is the useful general-purpose heap
+ * for the allocations used by this firmware, rather than a stale boot value. */
+void lcd_show_memory_usage_diagnostic(void)
+{
+    const size_t free_bytes = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const size_t largest_bytes = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    char value[LCD_LINE_SIZE];
+
+    snprintf(value, sizeof(value), "Free %uK Max %uK",
+             (unsigned)(free_bytes / 1024U),
+             (unsigned)(largest_bytes / 1024U));
+    lcd_show_diagnostic_detail("Memory Usage", value);
+}
 
 /* lcd.h hardware config */
 /* Pass zero so lcd_init() scans the PCF8574T address range (0x20-0x27). */
@@ -2153,7 +2168,14 @@ void lcd_task(void *arg)
             (last_diagnostic_refresh_ms == 0U ||
              diagnostic_now_ms - last_diagnostic_refresh_ms >= 1000U))
         {
-            lcd_draw_diagnostics_screen(menu_selection_snapshot);
+            if (menu_selection_snapshot == 5U)
+            {
+                lcd_show_memory_usage_diagnostic();
+            }
+            else
+            {
+                lcd_draw_diagnostics_screen(menu_selection_snapshot);
+            }
             last_diagnostic_refresh_ms = diagnostic_now_ms;
         }
         else if (snap.screen != LCD_SCREEN_DIAGNOSTIC)
