@@ -1994,13 +1994,18 @@ void handle_up_button_event(button_event_info_t *event_info,
         break;
 
     case BUTTON_EVENT_LONG_PRESS:
-        if (sys_state.value_edit_mode)
+        if (sys_state.value_edit_mode && config != NULL &&
+            config->edit_type == VALUE_EDIT_NUMERIC)
         {
             sys_state.hold_start_time = current_time;
             sys_state.repeat_count = 0;
             sys_state.fast_increment_active = false;
             increase_value(false, false);
             lcd_show_value_edit_screen();
+        }
+        else if (sys_state.value_edit_mode)
+        {
+            /* Hold adjustment is disabled for selection/boolean editors. */
         }
         else if (sys_state.in_detail_view &&
                  sys_state.menu_state == MENU_DIAGNOSTIC)
@@ -2311,13 +2316,18 @@ void handle_down_button_event(button_event_info_t *event_info,
         break;
 
     case BUTTON_EVENT_LONG_PRESS:
-        if (sys_state.value_edit_mode)
+        if (sys_state.value_edit_mode && config != NULL &&
+            config->edit_type == VALUE_EDIT_NUMERIC)
         {
             sys_state.hold_start_time = current_time;
             sys_state.repeat_count = 0;
             sys_state.fast_increment_active = false;
             decrease_value(false, false);
             lcd_show_value_edit_screen();
+        }
+        else if (sys_state.value_edit_mode)
+        {
+            /* Hold adjustment is disabled for selection/boolean editors. */
         }
         else if (sys_state.in_detail_view &&
                  sys_state.menu_state == MENU_DIAGNOSTIC)
