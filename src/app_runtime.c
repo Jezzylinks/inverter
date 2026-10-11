@@ -179,7 +179,7 @@
 #define BUTTON_NONE -1
 #define BATTERY_MENU_COUNT 3
 #define BATTERY_PROFILE_VERSION 1
-#define BATTERY_TYPE_KEY "battery_type"
+#define BATTERY_TYPE_KEY "bat_type"
 _Static_assert(sizeof(BATTERY_TYPE_KEY) <= 16U,
                "Battery type NVS key exceeds ESP-IDF's 15-character limit");
 #define BATTERY_CAPACITY_KEY "bat_capacity"
@@ -706,16 +706,18 @@ bool battery_load_profile(battery_profile_t *profile_out)
     nvs_handle_t nvs_handle;
     uint8_t battery_type =
         profile_out->profile_id >= BATTERY_LEAD_ACID &&
-        profile_out->profile_id < BATTERY_TYPE_COUNT
-            ? (uint8_t)profile_out->profile_id : (uint8_t)BATTERY_AGM;
+                profile_out->profile_id < BATTERY_TYPE_COUNT
+            ? (uint8_t)profile_out->profile_id
+            : (uint8_t)BATTERY_AGM;
     uint8_t voltage_system =
         (profile_out->nominal_voltage == VOLTAGE_SYSTEM_12V ||
          profile_out->nominal_voltage == VOLTAGE_SYSTEM_24V ||
          profile_out->nominal_voltage == VOLTAGE_SYSTEM_48V)
-            ? (uint8_t)profile_out->nominal_voltage : (uint8_t)VOLTAGE_SYSTEM_12V;
+            ? (uint8_t)profile_out->nominal_voltage
+            : (uint8_t)VOLTAGE_SYSTEM_12V;
     uint16_t capacity_ah =
         profile_out->capacity_ah >= (float)BATTERY_CAPACITY_MIN_AH &&
-        profile_out->capacity_ah <= (float)BATTERY_CAPACITY_MAX_AH
+                profile_out->capacity_ah <= (float)BATTERY_CAPACITY_MAX_AH
             ? (uint16_t)lroundf(profile_out->capacity_ah)
             : (uint16_t)BATTERY_CAPACITY_DEFAULT_AH;
 
@@ -740,7 +742,7 @@ bool battery_load_profile(battery_profile_t *profile_out)
     {
         int32_t legacy_type = -1;
         const esp_err_t legacy_err = nvs_get_i32(nvs_handle, BATTERY_TYPE_KEY,
-                                                  &legacy_type);
+                                                 &legacy_type);
         if (legacy_err == ESP_OK && legacy_type >= BATTERY_LEAD_ACID &&
             legacy_type < BATTERY_TYPE_COUNT)
         {
@@ -767,27 +769,34 @@ bool battery_load_profile(battery_profile_t *profile_out)
          * key after legacy recovery. */
         uint8_t legacy_key_type = 0U;
         esp_err_t legacy_key_err = nvs_get_u8(nvs_handle, "bat_type",
-                                               &legacy_key_type);
-        if (legacy_key_err == ESP_ERR_NVS_TYPE_MISMATCH) {
+                                              &legacy_key_type);
+        if (legacy_key_err == ESP_ERR_NVS_TYPE_MISMATCH)
+        {
             int32_t legacy_key_i32 = -1;
             legacy_key_err = nvs_get_i32(nvs_handle, "bat_type",
                                          &legacy_key_i32);
             if (legacy_key_err == ESP_OK &&
                 legacy_key_i32 >= BATTERY_LEAD_ACID &&
-                legacy_key_i32 < BATTERY_TYPE_COUNT) {
+                legacy_key_i32 < BATTERY_TYPE_COUNT)
+            {
                 legacy_key_type = (uint8_t)legacy_key_i32;
-            } else {
+            }
+            else
+            {
                 legacy_key_err = ESP_ERR_INVALID_ARG;
             }
         }
         if (legacy_key_err == ESP_OK &&
             legacy_key_type >= BATTERY_LEAD_ACID &&
-            legacy_key_type < BATTERY_TYPE_COUNT) {
+            legacy_key_type < BATTERY_TYPE_COUNT)
+        {
             battery_type = legacy_key_type;
             ESP_LOGW("BAT_PROFILE",
                      "Recovered legacy battery type key 'bat_type'=%u",
                      (unsigned)battery_type);
-        } else {
+        }
+        else
+        {
             ESP_LOGW("BAT_PROFILE",
                      "NVS key '%s' missing; retaining loaded type=%u",
                      BATTERY_TYPE_KEY, (unsigned)battery_type);
@@ -800,8 +809,8 @@ bool battery_load_profile(battery_profile_t *profile_out)
     {
         int32_t legacy_voltage = 0;
         const esp_err_t legacy_err = nvs_get_i32(nvs_handle,
-                                                  BATTERY_VOLTAGE_SYSTEM_KEY,
-                                                  &legacy_voltage);
+                                                 BATTERY_VOLTAGE_SYSTEM_KEY,
+                                                 &legacy_voltage);
         if (legacy_err == ESP_OK &&
             (legacy_voltage == VOLTAGE_SYSTEM_12V ||
              legacy_voltage == VOLTAGE_SYSTEM_24V ||
@@ -828,8 +837,8 @@ bool battery_load_profile(battery_profile_t *profile_out)
     {
         int32_t legacy_capacity = 0;
         const esp_err_t legacy_err = nvs_get_i32(nvs_handle,
-                                                  BATTERY_CAPACITY_KEY,
-                                                  &legacy_capacity);
+                                                 BATTERY_CAPACITY_KEY,
+                                                 &legacy_capacity);
         if (legacy_err == ESP_OK && legacy_capacity > 0 &&
             legacy_capacity <= UINT16_MAX)
         {
@@ -1761,7 +1770,7 @@ esp_err_t init_hardware(void)
     // ==========================================================
     ESP_LOGI("STARTUP", "display timeout task creation");
     if (xTaskCreatePinnedToCore(display_timeout_task, "Display Timeout", 2048,
-                    NULL, 5, NULL, APP_CORE_SYSTEM) != pdPASS)
+                                NULL, 5, NULL, APP_CORE_SYSTEM) != pdPASS)
     {
         ESP_LOGE(APP_TAG, "Display timeout task creation failed");
         if (init_err == ESP_OK)
@@ -1797,8 +1806,8 @@ typedef struct
     float default_val;
     bool is_scaled_float;
     const char *label; /* friendly name for the View Settings screen */
-    bool is_signed_8; /* true for signed int8_t storage such as UTC offset */
-    bool is_bool;     /* true for a C bool stored as NVS u8 */
+    bool is_signed_8;  /* true for signed int8_t storage such as UTC offset */
+    bool is_bool;      /* true for a C bool stored as NVS u8 */
 } nvs_setting_t;
 
 static nvs_setting_t g_settings[] = {
@@ -1902,7 +1911,6 @@ static size_t settings_index_for_editor(const value_edit_context_t *ctx)
      * persistence. */
     return (size_t)-1;
 }
-
 
 /* Store the canonical on-NVS representation so a failed transaction can
  * restore every setting, not only the field currently being edited. */
@@ -2598,11 +2606,11 @@ void app_runtime_start_deferred_settings_persistence(void)
     }
 
     if (xTaskCreatePinnedToCore(settings_persistence_task,
-                    "settings_save",
-                    SETTINGS_PERSISTENCE_TASK_STACK_SIZE,
-                    NULL,
-                    SETTINGS_PERSISTENCE_TASK_PRIORITY,
-                    NULL, APP_CORE_SYSTEM) != pdPASS)
+                                "settings_save",
+                                SETTINGS_PERSISTENCE_TASK_STACK_SIZE,
+                                NULL,
+                                SETTINGS_PERSISTENCE_TASK_PRIORITY,
+                                NULL, APP_CORE_SYSTEM) != pdPASS)
     {
         atomic_store(&s_settings_persistence_active, false);
         ESP_LOGE("NVS_SAVE", "Could not create deferred settings persistence task");
@@ -4165,7 +4173,8 @@ static void sync_battery_protection_thresholds(void)
 
 static void apply_battery_type(float v)
 {
-    if (v < 0.0f || v >= (float)BATTERY_TYPE_COUNT) {
+    if (v < 0.0f || v >= (float)BATTERY_TYPE_COUNT)
+    {
         ESP_LOGW("BAT_PROFILE", "Rejected battery type value %.2f", (double)v);
         return;
     }
@@ -4192,7 +4201,8 @@ static void apply_battery_type(float v)
 
 static void apply_battery_capacity(float v)
 {
-    if (!isfinite(v) || v < 1.0f || v > 5000.0f) {
+    if (!isfinite(v) || v < 1.0f || v > 5000.0f)
+    {
         ESP_LOGW("BAT_PROFILE", "Rejected battery capacity %.2fAh", (double)v);
         return;
     }
@@ -4201,7 +4211,8 @@ static void apply_battery_capacity(float v)
     battery_profile_t regenerated;
     if (battery_generate_profile((battery_type_t)sys_state.battery_profile.profile_id,
                                  (voltage_system_t)sys_state.battery_profile.nominal_voltage,
-                                 capacity_ah, &regenerated)) {
+                                 capacity_ah, &regenerated))
+    {
         regenerated.profile_id = sys_state.battery_profile.profile_id;
         regenerated.cutoff_voltage_v = sys_state.battery_profile.cutoff_voltage_v;
         sys_state.battery_profile = regenerated;
@@ -4425,9 +4436,11 @@ void lcd_draw_diagnostics_screen(uint8_t index)
             const size_t free_kb_raw = heap_free / 1024U;
             const size_t largest_kb_raw = largest / 1024U;
             const unsigned free_kb = free_kb_raw > 9999U
-                                         ? 9999U : (unsigned)free_kb_raw;
+                                         ? 9999U
+                                         : (unsigned)free_kb_raw;
             const unsigned largest_kb = largest_kb_raw > 9999U
-                                            ? 9999U : (unsigned)largest_kb_raw;
+                                            ? 9999U
+                                            : (unsigned)largest_kb_raw;
 
             snprintf(row1, LCD_LINE_SIZE, "F:%uK M:%uK",
                      free_kb, largest_kb);
@@ -4452,34 +4465,51 @@ void lcd_draw_diagnostics_screen(uint8_t index)
  * the 20×4 build uses the available width to show the full setting name. */
 static const char *settings_display_label(const nvs_setting_t *setting)
 {
-    if (setting == NULL || setting->label == NULL || !lcd_geometry_is_20x4()) {
+    if (setting == NULL || setting->label == NULL || !lcd_geometry_is_20x4())
+    {
         return setting != NULL && setting->label != NULL ? setting->label : "(unnamed)";
     }
 
-    if (strcmp(setting->key, BATTERY_VOLTAGE_SYSTEM_KEY) == 0) return "Battery Voltage Sys.";
-    if (strcmp(setting->key, "bat_charge_cur") == 0) return "Max Charge Current";
-    if (strcmp(setting->key, "bat_disc_cur") == 0) return "Discharge Current";
-    if (strcmp(setting->key, "bat_full_volt") == 0) return "Battery Full Voltage";
-    if (strcmp(setting->key, "bat_cutoff_volt") == 0) return "Cutoff Voltage";
-    if (strcmp(setting->key, "bat_rech_volt") == 0) return "Recharge Voltage";
-    if (strcmp(setting->key, "backlight_time") == 0) return "Backlight Timeout";
-    if (strcmp(setting->key, "out_freq") == 0) return "Output Frequency";
-    if (strcmp(setting->key, "volt_threshold") == 0) return "Voltage Threshold";
-    if (strcmp(setting->key, "temp_alarm") == 0) return "Temperature Alarm";
-    if (strcmp(setting->key, "frequency_range") == 0) return "Frequency Range";
-    if (strcmp(setting->key, "system_timeout") == 0) return "System Timeout";
-    if (strcmp(setting->key, "security_en") == 0) return "Security Enable";
+    if (strcmp(setting->key, BATTERY_VOLTAGE_SYSTEM_KEY) == 0)
+        return "Battery Voltage Sys.";
+    if (strcmp(setting->key, "bat_charge_cur") == 0)
+        return "Max Charge Current";
+    if (strcmp(setting->key, "bat_disc_cur") == 0)
+        return "Discharge Current";
+    if (strcmp(setting->key, "bat_full_volt") == 0)
+        return "Battery Full Voltage";
+    if (strcmp(setting->key, "bat_cutoff_volt") == 0)
+        return "Cutoff Voltage";
+    if (strcmp(setting->key, "bat_rech_volt") == 0)
+        return "Recharge Voltage";
+    if (strcmp(setting->key, "backlight_time") == 0)
+        return "Backlight Timeout";
+    if (strcmp(setting->key, "out_freq") == 0)
+        return "Output Frequency";
+    if (strcmp(setting->key, "volt_threshold") == 0)
+        return "Voltage Threshold";
+    if (strcmp(setting->key, "temp_alarm") == 0)
+        return "Temperature Alarm";
+    if (strcmp(setting->key, "frequency_range") == 0)
+        return "Frequency Range";
+    if (strcmp(setting->key, "system_timeout") == 0)
+        return "System Timeout";
+    if (strcmp(setting->key, "security_en") == 0)
+        return "Security Enable";
     return setting->label;
 }
 
 /* 20×4 value-edit labels can use the full physical width. */
 static const char *value_edit_display_label(const value_edit_context_t *config)
 {
-    if (config == NULL || config->label == NULL || !lcd_geometry_is_20x4()) {
+    if (config == NULL || config->label == NULL || !lcd_geometry_is_20x4())
+    {
         return config != NULL && config->label != NULL ? config->label : "Param";
     }
-    if (strcmp(config->label, "Frequency") == 0) return "Frequency Range";
-    if (strcmp(config->label, "Temperature Limit") == 0) return "Temperature Alarm";
+    if (strcmp(config->label, "Frequency") == 0)
+        return "Frequency Range";
+    if (strcmp(config->label, "Temperature Limit") == 0)
+        return "Temperature Alarm";
     return config->label;
 }
 
@@ -4521,9 +4551,12 @@ void lcd_draw_settings_view_screen(uint8_t index)
     char counter[8];
     snprintf(counter, sizeof(counter), "%u/%u", (unsigned)(index + 1), (unsigned)NVS_SETTINGS_COUNT);
     const char *display_label = settings_display_label(s);
-    if (lcd_geometry_is_20x4()) {
+    if (lcd_geometry_is_20x4())
+    {
         snprintf(row0, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, display_label);
-    } else {
+    }
+    else
+    {
         snprintf(row0, LCD_LINE_SIZE, "%-11.11s%5.5s", display_label, counter);
     }
 
@@ -4961,7 +4994,8 @@ void handle_menu_timeout(void)
     if (app_services_wifi_operation_in_progress() ||
         sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING ||
         (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN &&
-         app_services_wifi_scan_is_active())) {
+         app_services_wifi_scan_is_active()))
+    {
         sys_state.last_activity_time = now;
         return;
     }
@@ -5687,7 +5721,8 @@ void handle_value_confirmation(void)
                 char rows[4][LCD_LINE_SIZE];
                 snprintf(rows[0], LCD_LINE_SIZE, "Setting ID: %02u",
                          (unsigned)(saved_setting_index < NVS_SETTINGS_COUNT
-                                        ? saved_setting_index : 0U));
+                                        ? saved_setting_index
+                                        : 0U));
                 snprintf(rows[1], LCD_LINE_SIZE, "%-*.*s",
                          LCD_COLS, LCD_COLS, "New Value Saved");
                 snprintf(rows[2], LCD_LINE_SIZE, "%-*.*s",
@@ -6076,8 +6111,8 @@ static bool validate_and_clamp_settings(void)
         const float configured_capacity = sys_state.battery_profile.capacity_ah;
         const uint16_t capacity =
             isfinite(configured_capacity) &&
-            configured_capacity >= (float)BATTERY_CAPACITY_MIN_AH &&
-            configured_capacity <= (float)BATTERY_CAPACITY_MAX_AH
+                    configured_capacity >= (float)BATTERY_CAPACITY_MIN_AH &&
+                    configured_capacity <= (float)BATTERY_CAPACITY_MAX_AH
                 ? (uint16_t)lroundf(configured_capacity)
                 : (uint16_t)BATTERY_CAPACITY_DEFAULT_AH;
         if (battery_generate_profile(type, VOLTAGE_SYSTEM_12V, capacity,
@@ -6115,7 +6150,8 @@ static bool validate_and_clamp_settings(void)
                  (unsigned)BATTERY_CAPACITY_DEFAULT_AH);
         const battery_type_t type =
             sys_state.battery_profile.profile_id < BATTERY_TYPE_COUNT
-                ? (battery_type_t)sys_state.battery_profile.profile_id : BATTERY_AGM;
+                ? (battery_type_t)sys_state.battery_profile.profile_id
+                : BATTERY_AGM;
         const voltage_system_t voltage =
             (sys_state.battery_profile.nominal_voltage == VOLTAGE_SYSTEM_12V ||
              sys_state.battery_profile.nominal_voltage == VOLTAGE_SYSTEM_24V ||
@@ -6634,7 +6670,7 @@ void display_timeout_task(void *arg)
             now_ms - sys_state.last_activity_time >= UI_STANDBY_TIMEOUT_MS)
         {
             const uint8_t soc = (uint8_t)fmaxf(0.0f,
-                fminf(100.0f, battery_estimator_get_soc(&bat_estimate)));
+                                               fminf(100.0f, battery_estimator_get_soc(&bat_estimate)));
             const bool ac_connected = sys_state.inverter.connected;
             lcd_show_standby(sys_state.inverter.battery.voltage,
                              soc, ac_connected);
@@ -7302,7 +7338,7 @@ void edit_battery_capacity(void)
 {
     const float capacity =
         sys_state.battery_profile.capacity_ah >= (float)BATTERY_CAPACITY_MIN_AH &&
-        sys_state.battery_profile.capacity_ah <= (float)BATTERY_CAPACITY_MAX_AH
+                sys_state.battery_profile.capacity_ah <= (float)BATTERY_CAPACITY_MAX_AH
             ? sys_state.battery_profile.capacity_ah
             : (float)BATTERY_CAPACITY_DEFAULT_AH;
     begin_setting_edit(VALUE_TYPE_BATTERY_CAPACITY, capacity);
