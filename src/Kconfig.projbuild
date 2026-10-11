@@ -51,8 +51,8 @@ choice INVERTER_WIFI_OPERATION_MODE
     help
         Select the complete runtime architecture. STA connects to the
         configured home network only. AP exposes the inverter network only.
-        APSTA exposes the inverter network and may connect to the home network
-        when the user explicitly requests it.
+        APSTA exposes the inverter network and auto-connects a valid saved
+        station network when Wi-Fi is enabled, unless the user disconnected it.
 
 config INVERTER_WIFI_MODE_STA
     bool "Station only"
