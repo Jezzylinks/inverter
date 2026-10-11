@@ -150,7 +150,7 @@ static TickType_t s_wifi_prerequisite_started_tick;
 static bool app_manifest_url_is_valid(const char *url)
 {
     return url != NULL && url[0] != '\0' &&
-           strncmp(url, "https://", 8U) == 0 &&
+           ota_manifest_is_https_url(url) &&
            strlen(url) < APP_OTA_MANIFEST_URL_MAX;
 }
 
