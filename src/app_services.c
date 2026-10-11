@@ -438,17 +438,18 @@ static void app_wifi_sync_menu_if_visible(void)
  * overlay has expired so the underlying Connect/Disconnect label is current. */
 static void app_wifi_menu_refresh_task(void *parameter)
 {
-    (void)parameter;
-    vTaskDelay(pdMS_TO_TICKS(1800U));
+    const uint32_t delay_ms = (uint32_t)(uintptr_t)parameter;
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
     app_wifi_sync_menu_if_visible();
     vTaskDelete(NULL);
 }
 
-static void app_wifi_schedule_menu_refresh(void)
+static void app_wifi_schedule_menu_refresh(uint32_t delay_ms)
 {
     TaskHandle_t task = NULL;
     if (xTaskCreatePinnedToCore(app_wifi_menu_refresh_task, "wifi_menu_refresh",
-                                2048U, NULL, APP_WIFI_OPERATION_WATCH_PRIORITY,
+                                2048U, (void *)(uintptr_t)delay_ms,
+                                APP_WIFI_OPERATION_WATCH_PRIORITY,
                                 &task, APP_CORE_SYSTEM) != pdPASS) {
         ESP_LOGW(APP_SERVICES_TAG, "Could not schedule Wi-Fi menu refresh");
     }
@@ -802,17 +803,25 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     }
 
     app_wifi_end_operation();
-    if (operation == APP_WIFI_OPERATION_DISABLE ||
-        operation == APP_WIFI_OPERATION_DISCONNECT) {
+    if (operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
+        /* Mark the connecting screen as terminal. Otherwise its stale
+         * connected=false snapshot reappears after a flash overlay closes. */
+        lcd_show_wifi_result(connected, failed, false, ssid, operation_rssi,
+                             message != NULL ? message : "Connect failed");
+        app_wifi_schedule_menu_refresh(5200U);
+    } else if (operation == APP_WIFI_OPERATION_DISABLE ||
+               operation == APP_WIFI_OPERATION_DISCONNECT) {
         lcd_flash_info_to(message, "Wi-Fi updated", 1200U, LCD_SCREEN_MENU);
-    } else if (connected) {
-        lcd_flash_info_to("Connected", ssid[0] != '\0' ? ssid : "Wi-Fi ready",
-                          1500U, LCD_SCREEN_MENU);
-    } else {
-        lcd_flash_warning_to(message != NULL ? message : "Connect failed",
+        app_wifi_schedule_menu_refresh(1800U);
+    } else if (failed) {
+        lcd_flash_warning_to(message != NULL ? message : "Operation failed",
                              "Try again", 1500U, LCD_SCREEN_MENU);
+        app_wifi_schedule_menu_refresh(1800U);
+    } else {
+        lcd_flash_info_to(message != NULL ? message : "Wi-Fi ready",
+                          "Wi-Fi updated", 1200U, LCD_SCREEN_MENU);
+        app_wifi_schedule_menu_refresh(1500U);
     }
-    app_wifi_schedule_menu_refresh();
 }
 
 static esp_err_t persist_u8(const char *key, uint8_t value)
