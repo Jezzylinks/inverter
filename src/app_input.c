@@ -270,6 +270,7 @@ extern void reload_default_settings(void);
 extern bool save_settings(void);
 extern void erase_logs(void);
 extern void lcd_draw_diagnostics_screen(uint8_t index);
+extern void lcd_show_memory_usage_diagnostic(void);
 extern void lcd_draw_settings_view_screen(uint8_t index);
 extern void lcd_show_monitoring_detail(const char *label, float value, const char *unit);
 extern void enter_detail_view(menu_state_t parent_menu, int parent_selection);
@@ -1447,6 +1448,10 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             {
                 error_log_scroll_enter();
             }
+            else if (sys_state.menu_selection == 5U)
+            {
+                lcd_show_memory_usage_diagnostic();
+            }
             else
             {
                 lcd_draw_diagnostics_screen(sys_state.menu_selection);
@@ -1634,6 +1639,10 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             if (sys_state.menu_selection == 1U)
             {
                 error_log_scroll_enter();
+            }
+            else if (sys_state.menu_selection == 5U)
+            {
+                lcd_show_memory_usage_diagnostic();
             }
             else
             {
