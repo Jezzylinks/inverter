@@ -743,7 +743,12 @@ static void app_wifi_status_callback(const wifi_status_t *status)
                 connected = true;
                 message = ssid;
             }
-        } else if (status->state == WIFI_STATE_FAILED) {
+        } else if (status->state == WIFI_STATE_FAILED ||
+                   (!status->connected &&
+                    status->retry_count >= wifi_manager_get_retry_limit())) {
+            /* APSTA intentionally keeps publishing AP_ACTIVE while the AP is
+             * serving clients. Exhausted STA retries are still a terminal
+             * failure for this requested connection. */
             terminal = true;
             failed = true;
             message = connection_uses_auth ? "Auth failed" : "Network unavailable";
