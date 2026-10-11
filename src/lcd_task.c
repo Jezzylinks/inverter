@@ -60,9 +60,17 @@ void lcd_show_memory_usage_diagnostic(void)
     const size_t largest_bytes = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     char value[LCD_LINE_SIZE];
 
-    snprintf(value, sizeof(value), "Free %uK Max %uK",
-             (unsigned)(free_bytes / 1024U),
-             (unsigned)(largest_bytes / 1024U));
+    /* Keep the memory figures bounded so the text fits both LCD layouts
+     * and does not trigger -Wformat-truncation under the CI compiler. */
+    const size_t free_kb_raw = free_bytes / 1024U;
+    const size_t largest_kb_raw = largest_bytes / 1024U;
+    const unsigned free_kb = free_kb_raw > 9999U
+                                 ? 9999U : (unsigned)free_kb_raw;
+    const unsigned largest_kb = largest_kb_raw > 9999U
+                                    ? 9999U : (unsigned)largest_kb_raw;
+
+    snprintf(value, sizeof(value), "F:%uK M:%uK",
+             free_kb, largest_kb);
     lcd_show_diagnostic_detail("Memory Usage", value);
 }
 
