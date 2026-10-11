@@ -217,21 +217,10 @@ esp_err_t wifi_controller_start(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    /* The whole operation -- not just the s_state bookkeeping -- must be
-     * serialized against wifi_controller_stop()/reconnect()/disconnect().
-     * Those functions call straight through to the real esp_wifi_start()/
-     * esp_wifi_stop() driver calls, and ESP-IDF's own Wi-Fi stack panics if
-     * a start and a stop overlap. This function can be entered from the
-     * app_services Wi-Fi-toggle worker task, while wifi_controller_stop()/
-     * disconnect() can also be entered independently from an HTTP request
-     * task (POST /api/v1/wifi/disconnect is reachable by default, not
-     * gated behind runtime provisioning) -- so without holding the lock
-     * across the whole call, two tasks really can race here. */
+    /* Serialize radio start and auto-connect admission with stop/disconnect.
+     * Keep STARTING visible until saved-station handling has been decided so
+     * an explicit disconnect can cancel the pending automatic association. */
     wifi_controller_lock();
-
-    /* Start the selected radio architecture, then automatically associate
-     * with the saved station when one exists. An empty SSID is not an error:
-     * AP-only/provisioning and first-boot installations remain usable. */
     wifi_manager_enable_auto_reconnect(false);
     s_state = WIFI_CONTROLLER_STARTING;
 
@@ -244,8 +233,10 @@ esp_err_t wifi_controller_start(void)
         return err;
     }
 
-    s_state = WIFI_CONTROLLER_IDLE;
     const wifi_mode_t mode = wifi_manager_get_mode();
+    if (mode == WIFI_MODE_AP) {
+        s_state = WIFI_CONTROLLER_IDLE;
+    }
     wifi_controller_unlock();
 
     if (mode != WIFI_MODE_AP) {
@@ -253,30 +244,54 @@ esp_err_t wifi_controller_start(void)
 
         wifi_manager_config_t config = {0};
         if (wifi_manager_get_config(&config) == ESP_OK && config.ssid[0] != '\0') {
-            /* This is a saved-credential auto-connect, not a new user
-             * request. Enable the existing retry/backoff policy before the
-             * first association attempt. */
-            wifi_manager_enable_auto_reconnect(true);
+            bool connect_started = false;
+            bool already_active = false;
+            esp_err_t connect_err = ESP_ERR_INVALID_STATE;
+
             wifi_controller_lock();
-            if (s_initialized) {
-                s_state = WIFI_CONTROLLER_CONNECTING;
+            /* A concurrent explicit disconnect/stop changes s_state away
+             * from STARTING and wins over this pending auto-connect. */
+            if (s_initialized && s_state == WIFI_CONTROLLER_STARTING) {
+                wifi_manager_enable_auto_reconnect(true);
+                const wifi_connection_state_t current_state = wifi_manager_get_state();
+                if (current_state == WIFI_STATE_CONNECTED &&
+                    wifi_manager_is_connected()) {
+                    s_state = WIFI_CONTROLLER_CONNECTED;
+                    already_active = true;
+                } else if (current_state == WIFI_STATE_CONNECTING ||
+                           current_state == WIFI_STATE_RECONNECTING) {
+                    s_state = WIFI_CONTROLLER_CONNECTING;
+                    already_active = true;
+                } else {
+                    s_state = WIFI_CONTROLLER_CONNECTING;
+                    connect_err = wifi_manager_connect();
+                    if (connect_err == ESP_OK ||
+                        connect_err == ESP_ERR_WIFI_CONN) {
+                        connect_started = true;
+                    } else {
+                        s_state = WIFI_CONTROLLER_IDLE;
+                        wifi_manager_enable_auto_reconnect(false);
+                    }
+                }
             }
             wifi_controller_unlock();
 
-            const esp_err_t connect_err = wifi_manager_connect();
-            if (connect_err != ESP_OK && connect_err != ESP_ERR_WIFI_CONN) {
-                wifi_manager_enable_auto_reconnect(false);
-                wifi_controller_lock();
-                if (s_state == WIFI_CONTROLLER_CONNECTING) {
-                    s_state = WIFI_CONTROLLER_IDLE;
-                }
-                wifi_controller_unlock();
+            if (connect_started) {
+                ESP_LOGI(TAG, "Saved station auto-connect initiated");
+            } else if (already_active) {
+                ESP_LOGI(TAG, "Saved station is already connected or connecting");
+            } else if (connect_err != ESP_ERR_INVALID_STATE) {
                 ESP_LOGW(TAG, "Saved-station auto-connect could not start: %s",
                          esp_err_to_name(connect_err));
             } else {
-                ESP_LOGI(TAG, "Saved station auto-connect initiated");
+                ESP_LOGI(TAG, "Saved-station auto-connect cancelled by newer Wi-Fi state");
             }
         } else {
+            wifi_controller_lock();
+            if (s_state == WIFI_CONTROLLER_STARTING) {
+                s_state = WIFI_CONTROLLER_IDLE;
+            }
+            wifi_controller_unlock();
             wifi_manager_enable_auto_reconnect(false);
             ESP_LOGI(TAG, "No saved station SSID; automatic connection skipped");
         }
