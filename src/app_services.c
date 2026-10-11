@@ -824,7 +824,8 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         /* Mark the connecting screen as terminal. Otherwise its stale
          * connected=false snapshot reappears after a flash overlay closes. */
         lcd_show_wifi_result(connected, failed, false, ssid, operation_rssi,
-                             message != NULL ? message : "Connect failed");
+                             connected ? "LINK ESTABLISHED" :
+                             (message != NULL ? message : "Connect failed"));
         app_wifi_schedule_menu_refresh(5200U);
     } else if (operation == APP_WIFI_OPERATION_DISABLE ||
                operation == APP_WIFI_OPERATION_DISCONNECT) {
