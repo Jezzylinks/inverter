@@ -29,9 +29,17 @@ static void refresh_entries(void)
         s_entries[i].timestamp_ms = latest[i].timestamp_ms;
         if (latest[i].message[0] != '\0')
         {
-            snprintf(s_entries[i].description,
-                     sizeof(s_entries[i].description), "%s",
-                     latest[i].message);
+            /* Fault messages can be longer than the compact LCD
+             * history entry. Limit the copy to the destination capacity. */
+            const size_t max_len = sizeof(s_entries[i].description) - 1U;
+            size_t message_len = 0U;
+            while (message_len < max_len &&
+                   latest[i].message[message_len] != '\0')
+            {
+                ++message_len;
+            }
+            memcpy(s_entries[i].description, latest[i].message, message_len);
+            s_entries[i].description[message_len] = '\0';
         }
         else
         {
