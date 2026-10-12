@@ -379,14 +379,13 @@ static void app_wifi_operation_watch_task(void *parameter)
                 app_wifi_schedule_menu_refresh(1000U);
             }
         } else if (polled_operation == APP_WIFI_OPERATION_DISCONNECT) {
-            wifi_status_t live_status = {0};
             wifi_ap_record_t live_ap = {0};
-            const bool have_status =
-                wifi_events_get_status_copy(&live_status) == ESP_OK;
+            /* The driver's station association is authoritative here.
+             * In APSTA the AP side may remain active, and the event snapshot
+             * can lag the station disconnect by a tick. */
             const bool station_gone =
                 esp_wifi_sta_get_ap_info(&live_ap) != ESP_OK;
-            if (have_status && !live_status.connected && !live_status.got_ip &&
-                station_gone &&
+            if (station_gone &&
                 app_wifi_end_operation_if_generation(polled_generation)) {
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Live Wi-Fi poll confirmed station disconnection");
