@@ -1,6 +1,6 @@
 /*==============================================================================
   error_log_scroll.c
-  Scrollable diagnostic view backed by the persistent system fault log.
+  Scrollable fault history and four-row error-definition reader.
 ==============================================================================*/
 #include "lcd/error_log_scroll.h"
 #include "lcd/lcd_writer.h"
@@ -11,146 +11,158 @@
 
 static error_log_entry_t s_entries[MAX_ERROR_LOG_ENTRIES];
 static uint8_t s_count;
-static uint8_t s_cursor; /* 0 = newest entry */
+static uint8_t s_cursor;
+static bool s_detail_mode;
+static uint8_t s_detail_page;
+
+static const char *source_definition(fault_source_t source)
+{
+    switch (source) {
+    case FAULT_SRC_PROTECTION_AC_VOLTAGE: return "AC voltage left its safe range. Check source and output wiring.";
+    case FAULT_SRC_PROTECTION_CURRENT: return "Output current exceeded its limit. Reduce the connected load.";
+    case FAULT_SRC_PROTECTION_TEMPERATURE: return "Internal temperature is too high. Clear vents and allow cooling.";
+    case FAULT_SRC_PROTECTION_BATTERY: return "Battery voltage is outside limits. Check battery, wiring and charge.";
+    case FAULT_SRC_WATCHDOG: return "A monitored task stopped responding. Review logs and task health.";
+    case FAULT_SRC_BROWNOUT: return "Supply voltage dropped unexpectedly. Check battery and connections.";
+    case FAULT_SRC_NVS: return "Settings or log storage failed. Check NVS and flash health.";
+    case FAULT_SRC_LCD: return "LCD communication failed. Check I2C wiring and the 25 kHz bus.";
+    case FAULT_SRC_BUTTON: return "Button input fault detected. Check switches and button wiring.";
+    case FAULT_SRC_RESTART_POLICY: return "Repeated restart detected. Inspect the cause before continued use.";
+    case FAULT_SRC_FAN: return "Cooling fan did not respond as expected. Check fan and tachometer.";
+    case FAULT_SRC_POWER_METER: return "Measurement or telemetry event. Verify sensors and ADC readings.";
+    case FAULT_SRC_OTHER:
+    default: return "General system event. Check the event text and system status.";
+    }
+}
 
 static void refresh_entries(void)
 {
     fault_log_entry_t latest[MAX_ERROR_LOG_ENTRIES] = {0};
     const uint32_t count = fault_log_get_entries(latest, MAX_ERROR_LOG_ENTRIES);
-
-    s_count = count > MAX_ERROR_LOG_ENTRIES
-                  ? MAX_ERROR_LOG_ENTRIES
-                  : (uint8_t)count;
+    s_count = count > MAX_ERROR_LOG_ENTRIES ? MAX_ERROR_LOG_ENTRIES : (uint8_t)count;
     memset(s_entries, 0, sizeof(s_entries));
-
-    for (uint8_t i = 0U; i < s_count; ++i)
-    {
+    for (uint8_t i = 0U; i < s_count; ++i) {
         s_entries[i].error_code = (uint8_t)latest[i].source;
         s_entries[i].timestamp_ms = latest[i].timestamp_ms;
         if (latest[i].message[0] != '\0')
-        {
-            /* Fault messages can be longer than the compact LCD
-             * history entry. Limit the copy to the destination capacity. */
-            const size_t max_len = sizeof(s_entries[i].description) - 1U;
-            size_t message_len = 0U;
-            while (message_len < max_len &&
-                   latest[i].message[message_len] != '\0')
-            {
-                ++message_len;
-            }
-            memcpy(s_entries[i].description, latest[i].message, message_len);
-            s_entries[i].description[message_len] = '\0';
-        }
+            snprintf(s_entries[i].description, sizeof(s_entries[i].description), "%s", latest[i].message);
         else
-        {
-            snprintf(s_entries[i].description,
-                     sizeof(s_entries[i].description), "%s",
+            snprintf(s_entries[i].description, sizeof(s_entries[i].description), "%s",
                      fault_log_severity_name(latest[i].severity));
-        }
     }
-
-    if (s_count == 0U)
-    {
-        s_cursor = 0U;
-    }
-    else if (s_cursor >= s_count)
-    {
-        s_cursor = (uint8_t)(s_count - 1U);
-    }
+    if (s_count == 0U) s_cursor = 0U;
+    else if (s_cursor >= s_count) s_cursor = (uint8_t)(s_count - 1U);
 }
 
 void error_log_scroll_enter(void)
 {
-    s_cursor = 0U;
+    s_cursor = 0U; s_detail_mode = false; s_detail_page = 0U;
     refresh_entries();
     error_log_scroll_update_display();
+}
+
+void error_log_scroll_select_detail(void)
+{
+    refresh_entries();
+    if (s_count == 0U) return;
+    s_detail_mode = true; s_detail_page = 0U;
+    error_log_scroll_update_display();
+}
+
+void error_log_scroll_return_to_list(void)
+{
+    if (!s_detail_mode) return;
+    s_detail_mode = false; s_detail_page = 0U;
+    error_log_scroll_update_display();
+}
+
+bool error_log_scroll_is_detail(void) { return s_detail_mode; }
+
+static void scroll_definition_page(int direction)
+{
+    const uint8_t max_page = 2U;
+    if (direction > 0) s_detail_page = (uint8_t)((s_detail_page + 1U) % (max_page + 1U));
+    else s_detail_page = (s_detail_page == 0U) ? max_page : (uint8_t)(s_detail_page - 1U);
 }
 
 void error_log_scroll_next(void)
 {
     refresh_entries();
-    if (s_count == 0U)
-        return;
-    s_cursor = (uint8_t)((s_cursor + 1U) % s_count);
+    if (s_count == 0U) return;
+    if (s_detail_mode) scroll_definition_page(1);
+    else s_cursor = (uint8_t)((s_cursor + 1U) % s_count);
     error_log_scroll_update_display();
 }
 
 void error_log_scroll_prev(void)
 {
     refresh_entries();
-    if (s_count == 0U)
-        return;
-    s_cursor = (s_cursor == 0U) ? (uint8_t)(s_count - 1U)
-                                : (uint8_t)(s_cursor - 1U);
+    if (s_count == 0U) return;
+    if (s_detail_mode) scroll_definition_page(-1);
+    else s_cursor = (s_cursor == 0U) ? (uint8_t)(s_count - 1U) : (uint8_t)(s_cursor - 1U);
     error_log_scroll_update_display();
+}
+
+static void wrap_definition(const char *text, uint8_t page,
+                            char row2[LCD_LINE_SIZE], char row3[LCD_LINE_SIZE])
+{
+    const size_t width = LCD_COLS, len = strlen(text);
+    size_t starts[8] = {0}, line_count = 0U, pos = 0U;
+    while (pos < len && line_count < 7U) {
+        starts[line_count++] = pos;
+        size_t end = pos + width;
+        if (end >= len) break;
+        size_t split = end;
+        while (split > pos && text[split] != ' ') --split;
+        pos = split > pos ? split + 1U : end;
+    }
+    if (line_count == 0U) line_count = 1U;
+    char *rows[2] = {row2, row3};
+    for (size_t r = 0U; r < 2U; ++r) {
+        rows[r][0] = '\0';
+        const size_t line = (size_t)page * 2U + r;
+        if (line >= line_count) continue;
+        const size_t start = starts[line];
+        size_t end = line + 1U < line_count ? starts[line + 1U] : len;
+        while (end > start && text[end - 1U] == ' ') --end;
+        size_t n = end - start;
+        if (n > LCD_COLS) n = LCD_COLS;
+        memcpy(rows[r], text + start, n);
+        rows[r][n] = '\0';
+    }
 }
 
 void error_log_scroll_update_display(void)
 {
-    char row0[LCD_LINE_SIZE] = {0};
-    char row1[LCD_LINE_SIZE] = {0};
-
+    char row0[LCD_LINE_SIZE] = {0}, row1[LCD_LINE_SIZE] = {0};
+    char row2[LCD_LINE_SIZE] = {0}, row3[LCD_LINE_SIZE] = {0};
     refresh_entries();
-    if (s_count == 0U)
-    {
+    if (s_count == 0U) {
         snprintf(row0, sizeof(row0), "%-*.*s", LCD_COLS, LCD_COLS, "Error Logs");
         snprintf(row1, sizeof(row1), "%-*.*s", LCD_COLS, LCD_COLS, "No logs captured");
-    }
-    else
-    {
+    } else {
         const error_log_entry_t *entry = &s_entries[s_cursor];
-        char indicator[12];
-        snprintf(indicator, sizeof(indicator), "[%u/%u]",
-                 (unsigned)(s_cursor + 1U), (unsigned)s_count);
-        const int indicator_len = (int)strlen(indicator);
-        int label_width = LCD_COLS - indicator_len;
-        if (label_width < 0)
-            label_width = 0;
-        /* Build the row in a bounded buffer instead of appending an
-         * unbounded %s. GCC's 16x2 format-truncation analysis correctly
-         * notes that label_width may be zero, even though indicator is small. */
-        memset(row0, ' ', LCD_COLS);
-        row0[LCD_COLS] = '\0';
-        const size_t label_len = strlen("Error Log");
-        const size_t label_copy =
-            label_len < (size_t)label_width ? label_len : (size_t)label_width;
-        if (label_copy > 0U) {
-            memcpy(row0, "Error Log", label_copy);
+        if (s_detail_mode) {
+            snprintf(row0, sizeof(row0), "Error E%02u [%u/%u]",
+                     (unsigned)(entry->error_code + 1U), (unsigned)(s_cursor + 1U), (unsigned)s_count);
+            snprintf(row1, sizeof(row1), "%-*.*s", LCD_COLS, LCD_COLS,
+                     fault_log_source_name((fault_source_t)entry->error_code));
+            wrap_definition(source_definition((fault_source_t)entry->error_code),
+                            s_detail_page, row2, row3);
+        } else {
+            snprintf(row0, sizeof(row0), "Error Logs [%u/%u]",
+                     (unsigned)(s_cursor + 1U), (unsigned)s_count);
+            snprintf(row1, sizeof(row1), "E%02u %-*.*s",
+                     (unsigned)(entry->error_code + 1U),
+                     LCD_COLS > 4U ? LCD_COLS - 4U : 1U,
+                     LCD_COLS > 4U ? LCD_COLS - 4U : 1U,
+                     entry->description[0] ? entry->description : "Unknown event");
         }
-        if (indicator_len > 0 && indicator_len <= LCD_COLS) {
-            memcpy(row0 + LCD_COLS - indicator_len, indicator,
-                   (size_t)indicator_len);
-        }
-
-        const uint32_t uptime_seconds = entry->timestamp_ms / 1000U;
-        char time_text[8];
-        if (uptime_seconds < 99999U)
-            snprintf(time_text, sizeof(time_text), "%5lus",
-                     (unsigned long)uptime_seconds);
-        else
-            snprintf(time_text, sizeof(time_text), ">100ks");
-
-        int description_width = LCD_COLS - (int)strlen(time_text) - 1;
-        if (description_width < 1)
-            description_width = 1;
-        snprintf(row1, sizeof(row1), "%-*.*s %s",
-                 description_width, description_width,
-                 entry->description[0] ? entry->description : "?",
-                 time_text);
     }
-
-    row0[LCD_COLS] = '\0';
-    row1[LCD_COLS] = '\0';
-    lcd_show_diagnostic_detail(row0, row1);
+    row0[LCD_COLS] = '\0'; row1[LCD_COLS] = '\0';
+    row2[LCD_COLS] = '\0'; row3[LCD_COLS] = '\0';
+    lcd_show_diagnostic_detail_rows(row0, row1, row2, row3);
 }
 
-bool error_log_scroll_has_multiple(void)
-{
-    refresh_entries();
-    return s_count > 1U;
-}
-
-uint8_t error_log_scroll_index(void)
-{
-    return s_cursor;
-}
+bool error_log_scroll_has_multiple(void) { refresh_entries(); return s_count > 1U; }
+uint8_t error_log_scroll_index(void) { return s_cursor; }
