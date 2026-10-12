@@ -413,7 +413,7 @@ static void app_wifi_operation_watch_task(void *parameter)
             wifi_status_t status = {0};
             const bool connected =
                 wifi_events_get_status_copy(&status) == ESP_OK &&
-                status.connected && status.got_ip;
+                status.got_ip;
             int8_t rssi = 0;
             if (connected) {
                 rssi = wifi_manager_get_rssi();
@@ -814,7 +814,7 @@ static void app_wifi_lcd_status_callback(const wifi_monitor_status_t *status)
     /* This indicator represents station connectivity, not internet access.
      * Internet availability is a separate status shown on the Wi-Fi details
      * screen and used to gate remote services such as OTA. */
-    const bool connected = status->connected && status->got_ip;
+    const bool connected = status->got_ip;
     lcd_update_wifi_status(connected, connected ? status->rssi : 0);
 
     /* The callback is invoked only when the monitor snapshot changes. If the
@@ -868,7 +868,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
          * requested connection succeeded. Confirm the actual associated SSID
          * before completing the pending operation (important for same-SSID
          * password changes and delayed monitor callbacks). */
-        if (status->connected && status->got_ip && ssid[0] != '\0') {
+        if (status->got_ip && ssid[0] != '\0') {
             wifi_ap_record_t active_ap = {0};
             if (esp_wifi_sta_get_ap_info(&active_ap) == ESP_OK &&
                 strncmp((const char *)active_ap.ssid, ssid,
@@ -1728,7 +1728,7 @@ const char *app_services_wifi_connect_action_label(void)
     const bool have_status = wifi_events_get_status_copy(&status) == ESP_OK;
     const wifi_controller_state_t controller_state = wifi_controller_get_state();
 
-    if (have_status && status.connected && status.got_ip) {
+    if (have_status && status.got_ip) {
         return "Disconnect";
     }
     if (controller_state == WIFI_CONTROLLER_CONNECTING ||
@@ -1881,7 +1881,7 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
     wifi_status_t live_status = {0};
     const bool station_ready =
         wifi_events_get_status_copy(&live_status) == ESP_OK &&
-        live_status.connected && live_status.got_ip;
+        live_status.got_ip;
     if (station_ready && wifi_controller_is_connected()) {
         wifi_ap_record_t current_ap = {0};
         if (esp_wifi_sta_get_ap_info(&current_ap) == ESP_OK &&
@@ -2037,7 +2037,7 @@ esp_err_t app_services_wifi_reconnect(void)
 {
     wifi_status_t current_status = {0};
     if (wifi_events_get_status_copy(&current_status) == ESP_OK &&
-        current_status.connected && current_status.got_ip &&
+        current_status.got_ip &&
         wifi_controller_is_connected()) {
         lcd_flash_message("Already Connected", "No action needed", 1000U);
         return ESP_OK;
@@ -2143,7 +2143,7 @@ void app_services_show_wifi_status(void)
         snprintf(state_text, sizeof(state_text), "%s",
                  wifi_state_text(wifi_controller_get_state()));
     }
-    const int8_t rssi = status.connected ? wifi_manager_get_rssi() : status.rssi;
+    const int8_t rssi = status.got_ip ? wifi_manager_get_rssi() : status.rssi;
     lcd_show_wifi_status(state_text, ssid, ip, gateway, rssi,
                          status.connected, status.got_ip,
                          status.connected && status.internet_available);
