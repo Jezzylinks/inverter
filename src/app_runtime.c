@@ -5087,7 +5087,7 @@ void lcd_animation_reset(void)
 /* ── lcd_display_confirmation_screen() ──────────────────────────────────── */
 void lcd_display_confirmation_screen(void)
 {
-    lcd_show_confirm("Save Changes?   ", "Enter=Yes Back=N");
+    lcd_show_confirm("Save Changes?   ", "Confirm change? ");
 }
 
 // Advanced value adjustment implementation — handles all edit_type variants
@@ -5763,7 +5763,7 @@ void handle_value_confirmation(void)
             }
             else
             {
-                const char *rows[2] = {"New Value Saved", saved_value};
+                const char *rows[2] = {"                ", saved_value};
                 lcd_flash_enqueue_rows_to(rows, 2U, 1400U,
                                           FLASH_PRI_INFO, LCD_SCREEN_MENU);
             }
@@ -7189,7 +7189,7 @@ void error_handler(void)
     }
     // Log the error state for debugging
     log_all_error_flags(sys_state.error.error_flags);
-    lcd_show_confirm("Press BACK to   ", "Reset system... ");
+    lcd_show_confirm("Reset system?   ", "                ");
 
     uint32_t elapsed = 0;
     while (elapsed < RESET_TIMEOUT_MS)
