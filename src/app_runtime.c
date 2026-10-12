@@ -3797,13 +3797,8 @@ void lcd_show_bt_edit_screen(const char *label, const char *value)
 /* ── lcd_show_value_saved_screen() ─────────────────────────────────────── */
 void lcd_show_value_saved_screen(void)
 {
-    value_edit_context_t *config = get_current_value_config();
-    float *current_value = get_current_value_pointer();
-    char v[LCD_LINE_SIZE] = "                ";
-    if (config && current_value)
-        snprintf(v, LCD_LINE_SIZE, "%.2f %-11.11s", *current_value,
-                 config->unit ? config->unit : "");
-    lcd_flash_saved("Value Saved!    ", v);
+    /* The caller has already committed the value and refreshed its parent
+     * menu; avoid covering that live state with a redundant success flash. */
 }
 
 /* ── lcd_show_value_canceled_screen() ──────────────────────────────────── */
