@@ -1440,6 +1440,8 @@ esp_err_t app_services_wifi_toggle_init(void)
         ESP_LOGW(APP_SERVICES_TAG,
                  "Wi-Fi controller initialization deferred: %s",
                  esp_err_to_name(controller_err));
+    } else {
+        wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
     }
     return controller_err;
 }
@@ -1495,6 +1497,7 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
                  esp_err_to_name(controller_init_err));
         return controller_init_err;
     }
+    wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
 
     ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle request: %s",
              enabled ? "ON" : "OFF");
@@ -1591,6 +1594,7 @@ esp_err_t app_services_wifi_mode_edit_begin(void)
     if (err != ESP_OK) {
         return err;
     }
+    wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
 
     wifi_manager_config_t config = {0};
     err = wifi_manager_get_config(&config);
