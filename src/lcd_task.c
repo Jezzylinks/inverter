@@ -424,7 +424,9 @@ static void draw_detail(const lcd_detail_data_t *d)
     }
     else
     {
-        draw_commit(d->label, d->value_str);
+        /* On 16x2, use the first definition line when present; normal
+         * detail views continue to show their original value row. */
+        draw_commit(d->label, d->row2[0] != '\0' ? d->row2 : d->value_str);
     }
 }
 static void draw_confirm(const lcd_two_line_t *d)
