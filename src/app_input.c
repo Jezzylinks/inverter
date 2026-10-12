@@ -1018,6 +1018,11 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         return;
     }
 
+    if (flash_message_blocks_input())
+    {
+        return;
+    }
+
     if (event_info->event == BUTTON_EVENT_PRESS)
     {
         post_button_click_event();
