@@ -136,6 +136,8 @@ static esp_err_t persist_u8(const char *key, uint8_t value);
 static void app_wifi_toggle_task(void *parameter);
 static void app_wifi_prerequisite_task(void *parameter);
 static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode);
+static bool app_wifi_end_operation_if_generation(uint32_t generation);
+static void app_wifi_schedule_menu_refresh(uint32_t delay_ms);
 
 typedef enum {
     APP_WIFI_PREREQUISITE_NONE = 0,
@@ -341,14 +343,68 @@ static void app_wifi_operation_watch_task(void *parameter)
     TickType_t last_rssi_poll = 0U;
 
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(500U));
+        /* One-second polling is fast enough for an interactive character LCD
+         * and lets the UI recover even if a Wi-Fi event callback was missed. */
+        vTaskDelay(pdMS_TO_TICKS(1000U));
+
+        /* Poll the live station/DHCP handshake while an operation is active.
+         * Do not depend exclusively on an event callback to finish the
+         * Connecting/Disconnecting state. Generation checks arbitrate with a
+         * callback that may complete concurrently. */
+        app_wifi_operation_t polled_operation = APP_WIFI_OPERATION_NONE;
+        uint32_t polled_generation = 0U;
+        char polled_ssid[sizeof(s_wifi_operation_ssid)] = {0};
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        polled_operation = s_wifi_operation;
+        polled_generation = s_wifi_operation_generation;
+        strncpy(polled_ssid, s_wifi_operation_ssid, sizeof(polled_ssid) - 1U);
+        xSemaphoreGive(s_services_mutex);
+
+        if (polled_operation == APP_WIFI_OPERATION_CONNECT_SAVED &&
+            polled_ssid[0] != '\0') {
+            wifi_status_t live_status = {0};
+            wifi_ap_record_t live_ap = {0};
+            const bool got_ip =
+                wifi_events_get_status_copy(&live_status) == ESP_OK &&
+                live_status.got_ip;
+            const bool ap_matches =
+                esp_wifi_sta_get_ap_info(&live_ap) == ESP_OK &&
+                strncmp((const char *)live_ap.ssid, polled_ssid,
+                        sizeof(live_ap.ssid)) == 0;
+            if (got_ip && ap_matches &&
+                app_wifi_end_operation_if_generation(polled_generation)) {
+                ESP_LOGI(APP_SERVICES_TAG,
+                         "Live Wi-Fi poll confirmed connection to '%s'",
+                         polled_ssid);
+                lcd_flash_info_to("Connected", polled_ssid, 900U,
+                                  LCD_SCREEN_MENU);
+                app_wifi_schedule_menu_refresh(1000U);
+            }
+        } else if (polled_operation == APP_WIFI_OPERATION_DISCONNECT) {
+            wifi_ap_record_t live_ap = {0};
+            /* The driver's station association is authoritative here.
+             * In APSTA the AP side may remain active, and the event snapshot
+             * can lag the station disconnect by a tick. */
+            const bool station_gone =
+                esp_wifi_sta_get_ap_info(&live_ap) != ESP_OK;
+            if (station_gone &&
+                app_wifi_end_operation_if_generation(polled_generation)) {
+                ESP_LOGI(APP_SERVICES_TAG,
+                         "Live Wi-Fi poll confirmed station disconnection");
+                lcd_flash_info_to("Disconnected", "Wi-Fi is idle", 700U,
+                                  LCD_SCREEN_MENU);
+                app_wifi_schedule_menu_refresh(800U);
+            }
+        }
 
         bool timed_out = false;
+        app_wifi_operation_t timed_out_operation = APP_WIFI_OPERATION_NONE;
         char timed_out_ssid[sizeof(s_wifi_operation_ssid)] = {0};
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         if (s_wifi_operation != APP_WIFI_OPERATION_NONE &&
             (uint32_t)(xTaskGetTickCount() - s_wifi_operation_started_tick) >=
                 pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
+            timed_out_operation = s_wifi_operation;
             strncpy(timed_out_ssid, s_wifi_operation_ssid,
                     sizeof(timed_out_ssid) - 1U);
             s_wifi_operation = APP_WIFI_OPERATION_NONE;
@@ -360,16 +416,53 @@ static void app_wifi_operation_watch_task(void *parameter)
         xSemaphoreGive(s_services_mutex);
 
         if (timed_out) {
-            ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi operation timed out after %ums",
-                     (unsigned)APP_WIFI_OPERATION_TIMEOUT_MS);
-            lcd_flash_warning_to("Connection Timeout",
-                                 timed_out_ssid[0] ? timed_out_ssid : "Try again",
-                                 1500U, LCD_SCREEN_MENU);
+            /* A delayed/missed monitor callback must not report failure if
+             * the live station state already proves completion. */
+            bool connection_really_succeeded = false;
+            bool disconnection_really_succeeded = false;
+            if (timed_out_operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
+                wifi_status_t current = {0};
+                wifi_ap_record_t active_ap = {0};
+                const bool have_ip =
+                    wifi_events_get_status_copy(&current) == ESP_OK &&
+                    current.got_ip;
+                if (have_ip && esp_wifi_sta_get_ap_info(&active_ap) == ESP_OK) {
+                    connection_really_succeeded =
+                        timed_out_ssid[0] != '\0' &&
+                        strncmp((const char *)active_ap.ssid, timed_out_ssid,
+                                sizeof(active_ap.ssid)) == 0;
+                }
+            } else if (timed_out_operation == APP_WIFI_OPERATION_DISCONNECT) {
+                wifi_ap_record_t active_ap = {0};
+                disconnection_really_succeeded =
+                    esp_wifi_sta_get_ap_info(&active_ap) != ESP_OK;
+            }
+
+            if (connection_really_succeeded) {
+                ESP_LOGI(APP_SERVICES_TAG,
+                         "Wi-Fi callback was delayed; confirmed connected to '%s'",
+                         timed_out_ssid);
+                lcd_flash_info_to("Connected", timed_out_ssid, 900U,
+                                  LCD_SCREEN_MENU);
+                app_wifi_schedule_menu_refresh(1000U);
+            } else if (disconnection_really_succeeded) {
+                ESP_LOGI(APP_SERVICES_TAG,
+                         "Wi-Fi callback was delayed; station is disconnected");
+                lcd_flash_info_to("Disconnected", "Wi-Fi is idle", 700U,
+                                  LCD_SCREEN_MENU);
+                app_wifi_schedule_menu_refresh(800U);
+            } else {
+                ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi operation timed out after %ums",
+                         (unsigned)APP_WIFI_OPERATION_TIMEOUT_MS);
+                lcd_flash_warning_to("Connection Timeout",
+                                     timed_out_ssid[0] ? timed_out_ssid : "Try again",
+                                     1500U, LCD_SCREEN_MENU);
+                app_wifi_schedule_menu_refresh(1700U);
+            }
         }
 
-        /* Reconcile the Connect/Disconnect row when the user returns from a
-         * child screen or an overlay expires. Redraw only when the underlying
-         * state changed; a periodic full redraw would visibly flicker. */
+        /* Poll the actual station state every second. Redraw only when the
+         * action label changes, avoiding a full-screen LCD flash every cycle. */
         lcd_screen_id_t screen;
         LCD_LOCK();
         screen = sys_lcd.screen;
@@ -400,13 +493,10 @@ static void app_wifi_operation_watch_task(void *parameter)
                 show_menu_screen(MENU_WIFI_CONFIG, selection);
             }
         } else {
-            /* Force one state reconciliation when the Wi-Fi menu is revisited. */
             have_menu_snapshot = false;
         }
 
-        /* RSSI changes without a Wi-Fi state transition, so the monitor's
-         * state-change callback alone leaves the home indicator stale. Poll
-         * in this service task (never in the LCD renderer) every five seconds. */
+        /* RSSI can change without a state transition; keep home telemetry live. */
         const TickType_t now = xTaskGetTickCount();
         if (last_rssi_poll == 0U ||
             (TickType_t)(now - last_rssi_poll) >= pdMS_TO_TICKS(5000U)) {
@@ -870,9 +960,15 @@ static void app_wifi_status_callback(const wifi_status_t *status)
          * password changes and delayed monitor callbacks). */
         if (status->got_ip && ssid[0] != '\0') {
             wifi_ap_record_t active_ap = {0};
-            if (esp_wifi_sta_get_ap_info(&active_ap) == ESP_OK &&
-                strncmp((const char *)active_ap.ssid, ssid,
-                        sizeof(active_ap.ssid)) == 0) {
+            const esp_err_t ap_info_err = esp_wifi_sta_get_ap_info(&active_ap);
+            if ((ap_info_err == ESP_OK &&
+                 strncmp((const char *)active_ap.ssid, ssid,
+                         sizeof(active_ap.ssid)) == 0) ||
+                (ap_info_err != ESP_OK && wifi_controller_is_connected())) {
+                /* got_ip is the station/DHCP handshake. If the driver can
+                 * provide the AP record, require an SSID match; only fall
+                 * back to controller connectivity when AP info is transiently
+                 * unavailable. */
                 terminal = true;
                 connected = true;
                 message = ssid;
@@ -925,12 +1021,16 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         return;
     }
     if (operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
-        /* Mark the connecting screen as terminal. Otherwise its stale
-         * connected=false snapshot reappears after a flash overlay closes. */
-        lcd_show_wifi_result(connected, failed, false, ssid, operation_rssi,
-                             connected ? "LINK ESTABLISHED" :
-                             (message != NULL ? message : "Connect failed"));
-        app_wifi_schedule_menu_refresh(5200U);
+        if (connected) {
+            /* Confirmed station association + DHCP: acknowledge briefly and
+             * return quickly to the live Wi-Fi menu. */
+            lcd_flash_info_to("Connected", ssid, 900U, LCD_SCREEN_MENU);
+            app_wifi_schedule_menu_refresh(1000U);
+        } else {
+            lcd_show_wifi_result(false, failed, false, ssid, operation_rssi,
+                                 message != NULL ? message : "Connect failed");
+            app_wifi_schedule_menu_refresh(1800U);
+        }
     } else if (operation == APP_WIFI_OPERATION_DISABLE ||
                operation == APP_WIFI_OPERATION_DISCONNECT) {
         lcd_flash_info_to(message, "Wi-Fi updated", 1200U, LCD_SCREEN_MENU);
@@ -1728,13 +1828,21 @@ const char *app_services_wifi_connect_action_label(void)
     const bool have_status = wifi_events_get_status_copy(&status) == ESP_OK;
     const wifi_controller_state_t controller_state = wifi_controller_get_state();
 
-    if (have_status && status.got_ip) {
+    /* Reconcile event snapshots against the live driver state. In APSTA,
+     * the AP can remain active while station state changes, so AP_ACTIVE
+     * alone must never be treated as station disconnection. */
+    wifi_ap_record_t active_ap = {0};
+    const bool station_associated =
+        esp_wifi_sta_get_ap_info(&active_ap) == ESP_OK;
+    if (have_status && status.got_ip && station_associated &&
+        wifi_controller_is_connected()) {
         return "Disconnect";
     }
     if (controller_state == WIFI_CONTROLLER_CONNECTING ||
         controller_state == WIFI_CONTROLLER_STARTING ||
         (have_status && (status.state == WIFI_STATE_CONNECTING ||
-                         status.state == WIFI_STATE_RECONNECTING))) {
+                         status.state == WIFI_STATE_RECONNECTING)) ||
+        station_associated) {
         return "Connecting...";
     }
     return "Connect";
@@ -2252,12 +2360,11 @@ esp_err_t app_services_wifi_confirm_disconnect(void)
     s_wifi_disconnect_pending = false;
     xSemaphoreGive(s_services_mutex);
 
-    /* Start the async disconnect first so the menu label becomes
-     * Disconnecting... before the confirmation screen is dismissed. */
+    /* Dismiss the confirmation unconditionally. The radio may have already
+     * dropped its association before the controller's completion callback,
+     * so gating this navigation on operation_pending can strand the dialog. */
     const esp_err_t err = app_services_wifi_disconnect();
-    if (err == ESP_OK && app_wifi_operation_pending()) {
-        show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
-    }
+    show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
     return err;
 }
 
