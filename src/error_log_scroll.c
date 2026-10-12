@@ -144,15 +144,15 @@ void error_log_scroll_update_display(void)
     } else {
         const error_log_entry_t *entry = &s_entries[s_cursor];
         if (s_detail_mode) {
-            snprintf(row0, sizeof(row0), "Error E%02u [%u/%u]",
+            snprintf(row0, sizeof(row0), "E%02u D[%u/%u]",
                      (unsigned)(entry->error_code + 1U), (unsigned)(s_cursor + 1U), (unsigned)s_count);
             snprintf(row1, sizeof(row1), "%-*.*s", LCD_COLS, LCD_COLS,
                      fault_log_source_name((fault_source_t)entry->error_code));
             wrap_definition(source_definition((fault_source_t)entry->error_code),
                             s_detail_page, row2, row3);
         } else {
-            snprintf(row0, sizeof(row0), "Error Logs [%u/%u]",
-                     (unsigned)(s_cursor + 1U), (unsigned)s_count);
+            snprintf(row0, sizeof(row0), "E%02u [%u/%u]",
+                     (unsigned)(entry->error_code + 1U), (unsigned)(s_cursor + 1U), (unsigned)s_count);
             const unsigned error_number = (unsigned)entry->error_code + 1U;
             const char *event_text = entry->description[0]
                                          ? entry->description
