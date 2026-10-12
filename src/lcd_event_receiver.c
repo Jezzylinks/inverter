@@ -48,13 +48,11 @@ static void display_event_notice(const system_event_t *event)
         return;
     }
 
-    /* Wi-Fi lifecycle success events include AP_ACTIVE, which means the
-     * local access point started—not that a user connection completed. The
-     * generic "WiFi / Success" flash is misleading during a radio toggle;
-     * real connect/disconnect results are already shown by app_services. Keep
-     * error events visible and leave logging/LED/buzzer subscribers intact. */
-    if (event->category == EVENT_CATEGORY_WIFI &&
-        event->action == EVENT_ACTION_SUCCESS) {
+    /* Successful operations are reflected by the owning screen/state. Do
+     * not replace that screen with a generic "System / Success" notice (this
+     * also avoids the misleading OTA PIN-change success warning). Events
+     * still reach logging, LED, buzzer and other subscribers. */
+    if (event->action == EVENT_ACTION_SUCCESS) {
         return;
     }
 
