@@ -738,10 +738,9 @@ void lcd_flash_message(const char *line0, const char *line1,
 
 void lcd_flash_saved(const char *label, const char *value_str)
 {
-    /* Show "Value Saved! / <label>: <value>" for 800ms */
-    char line1[LCD_LINE_SIZE];
-    snprintf(line1, sizeof(line1), "%-*.*s", LCD_COLS, LCD_COLS, value_str ? value_str : "");
-    lcd_flash_message("Value Saved!    ", line1, 800);
+    /* Success is represented by the updated value in its owning screen. */
+    (void)label;
+    (void)value_str;
 }
 
 void lcd_flash_cancelled(void)
