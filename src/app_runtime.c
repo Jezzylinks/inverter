@@ -5744,30 +5744,8 @@ void handle_value_confirmation(void)
         {
             ESP_LOGI("SETTINGS_TRANSACTION", "SUCCESS label=%s value=%s",
                      ctx->label, saved_value);
-            if (lcd_geometry_is_20x4())
-            {
-                char rows[4][LCD_LINE_SIZE];
-                snprintf(rows[0], LCD_LINE_SIZE, "Setting ID: %02u",
-                         (unsigned)(saved_setting_index < NVS_SETTINGS_COUNT
-                                        ? saved_setting_index
-                                        : 0U));
-                snprintf(rows[1], LCD_LINE_SIZE, "%-*.*s",
-                         LCD_COLS, LCD_COLS, "New Value Saved");
-                snprintf(rows[2], LCD_LINE_SIZE, "%-*.*s",
-                         LCD_COLS, LCD_COLS, ctx->label ? ctx->label : "Setting");
-                snprintf(rows[3], LCD_LINE_SIZE, "%-*.*s",
-                         LCD_COLS, LCD_COLS, saved_value);
-                const char *row_ptrs[4] = {rows[0], rows[1], rows[2], rows[3]};
-                lcd_flash_enqueue_rows_to(row_ptrs, 4U, 1400U,
-                                          FLASH_PRI_INFO, LCD_SCREEN_MENU);
-            }
-            else
-            {
-                const char *rows[2] = {"                ", saved_value};
-                lcd_flash_enqueue_rows_to(rows, 2U, 1400U,
-                                          FLASH_PRI_INFO, LCD_SCREEN_MENU);
-            }
-            printf("AUDIT: Parameter changed - %s\n", ctx->label);
+            /* The committed value is shown by the restored settings menu. */
+            printf("AUDIT: Parameter changed - %s\\n", ctx->label);
         }
         else
         {
