@@ -100,7 +100,7 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
             {
                 if (ctx->mode == CHANGE_PIN_MODE_VERIFY_ONLY)
                 {
-                    post_security_event(true);
+                    /* Successful PIN operations return to their owning screen. */
                     ctx->phase = CHANGE_PIN_SUCCESS;
                     return true;
                 }
