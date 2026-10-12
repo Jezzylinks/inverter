@@ -911,7 +911,7 @@ menu_state_t display_menu_state(void)
         break;
     case MAIN_MENU:
         r0 = "Main Menu       ";
-        r1 = "Use Up/Down     ";
+        r1 = "                ";
         break;
     case MENU_SETTINGS:
         r0 = "Settings        ";
@@ -927,11 +927,11 @@ menu_state_t display_menu_state(void)
         break;
     case MENU_FACTORY_RESET:
         r0 = "Factory Reset?  ";
-        r1 = "Enter=Yes Back=N";
+        r1 = "Confirm reset?  ";
         break;
     case MENU_WIFI_CONFIG:
         r0 = "WiFi Config     ";
-        r1 = "Enter=Setup     ";
+        r1 = "                ";
         break;
     default:
         r0 = "Unknown Menu    ";
