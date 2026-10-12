@@ -226,6 +226,8 @@ void lcd_show_monitor_detail(const char *label, const char *value_str)
         sys_lcd.screen = LCD_SCREEN_MONITORING_DETAIL;
     set_line(sys_lcd.monitor_detail.label, label);
     set_line(sys_lcd.monitor_detail.value_str, value_str);
+    set_line(sys_lcd.monitor_detail.row2, "");
+    set_line(sys_lcd.monitor_detail.row3, "");
     LCD_UNLOCK();
 }
 
@@ -236,6 +238,21 @@ void lcd_show_diagnostic_detail(const char *label, const char *value_str)
         sys_lcd.screen = LCD_SCREEN_DIAGNOSTIC;
     set_line(sys_lcd.diagnostic.label, label);
     set_line(sys_lcd.diagnostic.value_str, value_str);
+    set_line(sys_lcd.diagnostic.row2, "");
+    set_line(sys_lcd.diagnostic.row3, "");
+    LCD_UNLOCK();
+}
+
+void lcd_show_diagnostic_detail_rows(const char *row0, const char *row1,
+                                     const char *row2, const char *row3)
+{
+    LCD_LOCK();
+    if (s_startup_released)
+        sys_lcd.screen = LCD_SCREEN_DIAGNOSTIC;
+    set_line(sys_lcd.diagnostic.label, row0);
+    set_line(sys_lcd.diagnostic.value_str, row1);
+    set_line(sys_lcd.diagnostic.row2, row2);
+    set_line(sys_lcd.diagnostic.row3, row3);
     LCD_UNLOCK();
 }
 
@@ -246,6 +263,8 @@ void lcd_show_settings_view_detail(const char *label, const char *value_str)
         sys_lcd.screen = LCD_SCREEN_SETTINGS_VIEW;
     set_line(sys_lcd.settings_view.label, label);
     set_line(sys_lcd.settings_view.value_str, value_str);
+    set_line(sys_lcd.settings_view.row2, "");
+    set_line(sys_lcd.settings_view.row3, "");
     LCD_UNLOCK();
 }
 
