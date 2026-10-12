@@ -5745,7 +5745,7 @@ void handle_value_confirmation(void)
             ESP_LOGI("SETTINGS_TRANSACTION", "SUCCESS label=%s value=%s",
                      ctx->label, saved_value);
             /* The committed value is shown by the restored settings menu. */
-            printf("AUDIT: Parameter changed - %s\\n", ctx->label);
+            printf("AUDIT: Parameter changed - %s\n", ctx->label);
         }
         else
         {
