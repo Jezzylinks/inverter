@@ -300,6 +300,7 @@ extern void edit_battery_capacity(void);
 extern void edit_battery_cutoff_voltage(void);
 extern void edit_battery_capacity(void);
 extern void edit_battery_voltage_system(void);
+extern void edit_wifi_auto_rec(void);
 extern void edit_sound_enable(void);
 extern void edit_quiet_hours_enable(void);
 extern void edit_quiet_hours_start(void);
@@ -451,12 +452,18 @@ static void handle_wifi_menu_action(uint8_t selection)
         break;
     case APP_WIFI_MENU_CONNECT:
     {
+        /* Avoid reopening the disconnect confirmation or submitting duplicate
+         * station requests while a Wi-Fi operation is still active. */
+        if (app_services_wifi_operation_in_progress()) {
+            break;
+        }
         const char *action_label = app_services_wifi_connect_action_label();
         if (strcmp(action_label, "Disconnect") == 0)
         {
             (void)app_services_wifi_request_disconnect();
         }
-        else if (strcmp(action_label, "Connecting...") != 0)
+        else if (strcmp(action_label, "Connecting...") != 0 &&
+                 strcmp(action_label, "Disconnecting...") != 0)
         {
             (void)app_services_wifi_reconnect();
         }
@@ -1418,6 +1425,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 break;
             case 18:
                 edit_battery_capacity();
+                break;
+            case 19:
+                edit_wifi_auto_rec();
                 break;
             }
             break;
