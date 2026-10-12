@@ -473,7 +473,17 @@ static void app_wifi_operation_watch_task(void *parameter)
             xSemaphoreGive(sys_state_mutex);
         }
 
-        if (screen == LCD_SCREEN_MENU && menu_state == MENU_WIFI_CONFIG) {
+        /*
+         * The connect action can temporarily replace the menu with the
+         * LCD_SCREEN_WIFI_CONNECTING screen. Keep reconciling while that
+         * screen is active too; otherwise the menu watcher stops observing
+         * the label transition and the user must press UP/DOWN to redraw it.
+         * Re-rendering the menu restores the current selection and lets the
+         * next poll animate the label until the operation finishes.
+         */
+        if ((screen == LCD_SCREEN_MENU ||
+             screen == LCD_SCREEN_WIFI_CONNECTING) &&
+            menu_state == MENU_WIFI_CONFIG) {
             const char *connect_label = app_services_wifi_connect_action_label();
             const bool wifi_enabled = app_services_wifi_enabled();
             if (!have_menu_snapshot ||
@@ -2170,12 +2180,20 @@ esp_err_t app_services_wifi_reconnect(void)
         lcd_flash_message("Wi-Fi Not Config", "Scan a network", 1800U);
         return ESP_ERR_NOT_FOUND;
     }
+    /*
+     * This path is invoked from the Wi-Fi menu's Connect item. Keep that menu
+     * visible so its action label can animate in place (Connecting. / .. / ...)
+     * and then change to Disconnect or Connect without a button press.
+     * The separate full-screen Wi-Fi connecting view is reserved for scan/
+     * password-driven connections where the user has left the menu.
+     */
     app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, config.ssid, -127);
-    lcd_show_wifi_connecting(config.ssid, -127);
     esp_err_t err = wifi_controller_reconnect();
     if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
         app_wifi_end_operation();
-        lcd_show_wifi_result(false, true, false, config.ssid, -127, "Connect failed");
+        app_wifi_sync_menu_if_visible();
+        ESP_LOGW(APP_SERVICES_TAG, "Saved Wi-Fi reconnect request failed: %s",
+                 esp_err_to_name(err));
     }
     return err;
 }
