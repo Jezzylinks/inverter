@@ -153,11 +153,20 @@ void error_log_scroll_update_display(void)
         } else {
             snprintf(row0, sizeof(row0), "Error Logs [%u/%u]",
                      (unsigned)(s_cursor + 1U), (unsigned)s_count);
-            snprintf(row1, sizeof(row1), "E%02u %-*.*s",
-                     (unsigned)(entry->error_code + 1U),
-                     (int)(LCD_COLS > 4U ? LCD_COLS - 4U : 1U),
-                     (int)(LCD_COLS > 4U ? LCD_COLS - 4U : 1U),
-                     entry->description[0] ? entry->description : "Unknown event");
+            const unsigned error_number = (unsigned)entry->error_code + 1U;
+            const char *event_text = entry->description[0]
+                                         ? entry->description
+                                         : "Unknown event";
+            const size_t event_width = LCD_COLS - 4U;
+            memset(row1, ' ', LCD_COLS);
+            row1[0] = 'E';
+            row1[1] = (char)('0' + ((error_number / 10U) % 10U));
+            row1[2] = (char)('0' + (error_number % 10U));
+            row1[3] = ' ';
+            size_t event_len = strlen(event_text);
+            if (event_len > event_width) event_len = event_width;
+            memcpy(row1 + 4U, event_text, event_len);
+            row1[LCD_COLS] = '\0';
         }
     }
     row0[LCD_COLS] = '\0'; row1[LCD_COLS] = '\0';
