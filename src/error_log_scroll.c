@@ -80,7 +80,7 @@ bool error_log_scroll_is_detail(void) { return s_detail_mode; }
 
 static void scroll_definition_page(int direction)
 {
-    const uint8_t max_page = 2U;
+    const uint8_t max_page = (LCD_COLS >= 20U) ? 2U : 5U;
     if (direction > 0) s_detail_page = (uint8_t)((s_detail_page + 1U) % (max_page + 1U));
     else s_detail_page = (s_detail_page == 0U) ? max_page : (uint8_t)(s_detail_page - 1U);
 }
@@ -118,9 +118,10 @@ static void wrap_definition(const char *text, uint8_t page,
     }
     if (line_count == 0U) line_count = 1U;
     char *rows[2] = {row2, row3};
+    const size_t lines_per_page = (LCD_COLS >= 20U) ? 2U : 1U;
     for (size_t r = 0U; r < 2U; ++r) {
         rows[r][0] = '\0';
-        const size_t line = (size_t)page * 2U + r;
+        const size_t line = (size_t)page * lines_per_page + r;
         if (line >= line_count) continue;
         const size_t start = starts[line];
         size_t end = line + 1U < line_count ? starts[line + 1U] : len;
