@@ -753,10 +753,7 @@ static void app_wifi_toggle_task(void *parameter)
                          esp_err_to_name(mode_err));
                 lcd_flash_message("Mode Change Failed", "Previous kept", 1400U);
             } else {
-                lcd_flash_message("Wi-Fi Mode Saved",
-                                  request.mode == WIFI_MODE_STA ? "STA" :
-                                  request.mode == WIFI_MODE_AP ? "AP" : "APSTA",
-                                  1200U);
+                show_menu_screen(MENU_WIFI_SETTINGS, sys_state.menu_selection);
             }
             __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
             continue;
