@@ -419,21 +419,21 @@ static void draw_detail(const lcd_detail_data_t *d)
 {
     if (lcd_geometry_is_20x4())
     {
-        const char *rows[] = {d->label, d->value_str,
-                              "UP/DN  More", "BACK    Return"};
+        const char *rows[] = {d->label, d->value_str, d->row2, d->row3};
         draw_commit_rows(rows);
     }
     else
     {
-        draw_commit(d->label, d->value_str);
+        /* On 16x2, use the first definition line when present; normal
+         * detail views continue to show their original value row. */
+        draw_commit(d->label, d->row2[0] != '\0' ? d->row2 : d->value_str);
     }
 }
 static void draw_confirm(const lcd_two_line_t *d)
 {
     if (lcd_geometry_is_20x4())
     {
-        const char *rows[] = {d->row0, d->row1,
-                              "ENTER   Confirm", "BACK    Cancel"};
+        const char *rows[] = {d->row0, d->row1, "", ""};
         draw_commit_rows(rows);
     }
     else
@@ -448,8 +448,7 @@ static void draw_value_edit(const lcd_value_edit_data_t *d)
     static int64_t last_blink_time_ms = 0;
     if (lcd_geometry_is_20x4())
     {
-        const char *rows[] = {d->label, d->value_str,
-                              "UP/DN   Change", "ENTER   Save  BACK"};
+        const char *rows[] = {d->label, d->value_str, "", ""};
         draw_commit_rows(rows);
     }
     else
@@ -596,7 +595,7 @@ static void draw_standby(const lcd_standby_data_t *d)
             snprintf(rows[2], LCD_LINE_SIZE, "SOC     %3u%% %s",
                      d->battery_pct,
                      d->battery_voltage < d->low_voltage_threshold ? "LOW" : "OK");
-            snprintf(rows[3], LCD_LINE_SIZE, "ENTER:NEXT PWR:START");
+            rows[3][0] = '\0';
         }
         else
         {
@@ -609,7 +608,7 @@ static void draw_standby(const lcd_standby_data_t *d)
                      d->battery_voltage < d->low_voltage_threshold
                          ? "LOW BATTERY WARNING"
                          : "BATTERY MONITOR OK");
-            snprintf(rows[3], LCD_LINE_SIZE, "ENTER:NEXT PWR:START");
+            rows[3][0] = '\0';
         }
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
         draw_commit_rows(row_ptrs);
@@ -620,7 +619,7 @@ static void draw_standby(const lcd_standby_data_t *d)
         if (page == LCD_STANDBY_PAGE_BATTERY)
         {
             snprintf(r0, LCD_LINE_SIZE, "BAT%3u%% %.5s", d->battery_pct, wifi);
-            snprintf(r1, LCD_LINE_SIZE, "ENTER>NEXT PWR");
+            r1[0] = '\0';
         }
         else if (d->battery_voltage < d->low_voltage_threshold)
         {
@@ -701,13 +700,13 @@ static void draw_ota(const lcd_ota_data_t *d)
             snprintf(rows[0], LCD_LINE_SIZE, "FIRMWARE UPDATE");
             snprintf(rows[1], LCD_LINE_SIZE, "CHECKING UPDATE");
             snprintf(rows[2], LCD_LINE_SIZE, "PLEASE WAIT...");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_PREPARING:
             snprintf(rows[0], LCD_LINE_SIZE, "FIRMWARE UPDATE");
             snprintf(rows[1], LCD_LINE_SIZE, "CONNECTING SERVER");
             snprintf(rows[2], LCD_LINE_SIZE, "PREPARING UPDATE");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_DOWNLOADING:
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATING FIRMWARE");
@@ -719,32 +718,32 @@ static void draw_ota(const lcd_ota_data_t *d)
             snprintf(rows[0], LCD_LINE_SIZE, "VERIFYING UPDATE");
             snprintf(rows[1], LCD_LINE_SIZE, "CHECKING SHA-256");
             snprintf(rows[2], LCD_LINE_SIZE, "PLEASE WAIT...");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_CANCELLING:
             snprintf(rows[0], LCD_LINE_SIZE, "CANCELLING UPDATE");
             snprintf(rows[1], LCD_LINE_SIZE, "PLEASE WAIT...");
             snprintf(rows[2], LCD_LINE_SIZE, "ABORTING SAFELY");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_AVAILABLE:
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATE AVAILABLE");
             snprintf(rows[1], LCD_LINE_SIZE, "%.8s -> %.8s",
                      d->current_version, d->available_version);
-            snprintf(rows[2], LCD_LINE_SIZE, "ENTER=INSTALL");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            rows[2][0] = '\0';
+            rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_CURRENT:
             snprintf(rows[0], LCD_LINE_SIZE, "FIRMWARE CURRENT");
             snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", d->current_version);
             snprintf(rows[2], LCD_LINE_SIZE, "NO UPDATE");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_CANCELLED:
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATE CANCELLED");
             snprintf(rows[1], LCD_LINE_SIZE, "CURRENT KEPT");
-            snprintf(rows[2], LCD_LINE_SIZE, "ENTER=MENU");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            rows[2][0] = '\0';
+            rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_COMPLETE:
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATE COMPLETE");
@@ -756,8 +755,8 @@ static void draw_ota(const lcd_ota_data_t *d)
         default:
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATE FAILED");
             snprintf(rows[1], LCD_LINE_SIZE, "%.20s", d->detail[0] ? d->detail : "TRY AGAIN");
-            snprintf(rows[2], LCD_LINE_SIZE, "ENTER=RETRY");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            rows[2][0] = '\0';
+            rows[3][0] = '\0';
             break;
         }
         draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
@@ -809,7 +808,7 @@ static void draw_ota(const lcd_ota_data_t *d)
     case LCD_OTA_VIEW_ERROR:
     default:
         snprintf(row0, LCD_LINE_SIZE, "UPDATE FAILED");
-        snprintf(row1, LCD_LINE_SIZE, "ENTER=RETRY");
+        row1[0] = '\0';
         break;
     }
     draw_commit(row0, row1);
@@ -1225,19 +1224,19 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
                     }
                 }
             }
-            snprintf(rows[3], LCD_LINE_SIZE, "ENTER=STOP       ");
+            rows[3][0] = '\0';
         }
         else if (d->stage == LCD_WIFI_SCAN_FAILED)
         {
-            const char *failed_rows[] = {"WI-FI SCAN FAILED", "ENTER=RETRY",
-                                         "BACK=EXIT", ""};
+            const char *failed_rows[] = {"WI-FI SCAN FAILED", "",
+                                         "", ""};
             draw_commit_rows(failed_rows);
             return;
         }
         else if (d->count == 0U)
         {
-            const char *done_rows[] = {"NO NETWORKS FOUND", "ENTER=RETRY",
-                                       "BACK=EXIT", ""};
+            const char *done_rows[] = {"NO NETWORKS FOUND", "",
+                                       "", ""};
             draw_commit_rows(done_rows);
             return;
         }
@@ -1268,7 +1267,7 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
         snprintf(row0, LCD_LINE_SIZE, "SCAN %c FOUND:%02u", spin, d->count);
         if (d->count == 0U)
         {
-            snprintf(row1, LCD_LINE_SIZE, "ENTER=STOP");
+            row1[0] = '\0';
         }
         else
         {
@@ -1280,11 +1279,11 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
     }
     else if (d->stage == LCD_WIFI_SCAN_FAILED)
     {
-        draw_commit("SCAN FAILED", "ENTER=RETRY");
+        draw_commit("SCAN FAILED", "");
     }
     else if (d->count == 0U)
     {
-        draw_commit("NO NETWORKS", "ENTER=RETRY");
+        draw_commit("NO NETWORKS", "");
     }
     else
     {
@@ -1330,12 +1329,12 @@ static void draw_wifi_network_details(const lcd_wifi_network_detail_data_t *d)
         snprintf(rows[2], LCD_LINE_SIZE, "Signal:%4d dBm", (int)d->rssi);
         if (d->channel > 0U)
         {
-            snprintf(rows[3], LCD_LINE_SIZE, "%-6.6s C%02u ENTER",
+            snprintf(rows[3], LCD_LINE_SIZE, "%-6.6s C%02u",
                      wifi_auth_label(d->authmode), (unsigned)d->channel);
         }
         else
         {
-            snprintf(rows[3], LCD_LINE_SIZE, "%-8.8s C-- ENTER",
+            snprintf(rows[3], LCD_LINE_SIZE, "%-8.8s C--",
                      wifi_auth_label(d->authmode));
         }
         draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
@@ -1365,7 +1364,7 @@ static void draw_wifi_network_details(const lcd_wifi_network_detail_data_t *d)
             break;
         default:
             snprintf(row0, LCD_LINE_SIZE, "CONNECT?");
-            snprintf(row1, LCD_LINE_SIZE, "ENT=YES BACK=NO");
+            snprintf(row1, LCD_LINE_SIZE, "Confirm selection");
             break;
         }
         draw_commit(row0, row1);
@@ -1437,7 +1436,7 @@ static void draw_wifi_password(const lcd_wifi_password_data_t *d)
         snprintf(rows[0], LCD_LINE_SIZE, "%-20.20s", positions);
         snprintf(rows[1], LCD_LINE_SIZE, "P:%02u C:%c HOLD=GO", position, current);
         snprintf(rows[2], LCD_LINE_SIZE, "SSID:%-15.15s", d->ssid);
-        snprintf(rows[3], LCD_LINE_SIZE, "UP/DN CHAR HOLD=GO");
+        rows[3][0] = '\0';
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
         draw_commit_rows(row_ptrs);
     }
@@ -1460,21 +1459,21 @@ static void draw_wifi_status(const lcd_wifi_status_data_t *d)
             snprintf(rows[0], LCD_LINE_SIZE, "WI-FI STATUS");
             snprintf(rows[1], LCD_LINE_SIZE, "State: %-13.13s", d->state);
             snprintf(rows[2], LCD_LINE_SIZE, "SSID: %-14.14s", d->ssid);
-            snprintf(rows[3], LCD_LINE_SIZE, "ENTER NEXT BACK EXIT");
+            rows[3][0] = '\0';
             break;
         case 1:
             snprintf(rows[0], LCD_LINE_SIZE, "IP: %-16.16s", d->ip);
             snprintf(rows[1], LCD_LINE_SIZE, "GW: %-16.16s", d->gateway);
             snprintf(rows[2], LCD_LINE_SIZE, "IP: %-3s LINK: %-5s",
                      d->got_ip ? "YES" : "NO", d->connected ? "UP" : "DOWN");
-            snprintf(rows[3], LCD_LINE_SIZE, "ENTER NEXT BACK EXIT");
+            rows[3][0] = '\0';
             break;
         default:
             snprintf(rows[0], LCD_LINE_SIZE, "Signal: %d dBm", d->rssi);
             snprintf(rows[1], LCD_LINE_SIZE, "Internet: %-8s",
                      d->internet_available ? "ONLINE" : "OFFLINE");
             snprintf(rows[2], LCD_LINE_SIZE, "Wi-Fi: %-10.10s", d->state);
-            snprintf(rows[3], LCD_LINE_SIZE, "ENTER NEXT BACK EXIT");
+            rows[3][0] = '\0';
             break;
         }
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
@@ -1514,11 +1513,11 @@ static void draw_wifi_clients(const lcd_wifi_clients_data_t *d)
     {
         if (lcd_geometry_is_20x4())
         {
-            draw_commit_rows((const char *[]){"AP CLIENTS: 0", "No devices", "BACK Return", ""});
+            draw_commit_rows((const char *[]){"AP CLIENTS: 0", "No devices", "", ""});
         }
         else
         {
-            draw_commit("AP CLIENTS: 0", "BACK Return");
+            draw_commit("AP CLIENTS: 0", "");
         }
         return;
     }
@@ -1545,7 +1544,7 @@ static void draw_wifi_clients(const lcd_wifi_clients_data_t *d)
     {
         char row0[LCD_LINE_SIZE];
         snprintf(row0, LCD_LINE_SIZE, ">%-.15s", d->mac[d->selected]);
-        draw_commit(row0, "UP/DN SEL ENT DEL");
+        draw_commit(row0, "");
     }
 }
 
@@ -1572,7 +1571,7 @@ static void draw_wifi_connecting(const lcd_wifi_connect_data_t *d)
             snprintf(rows[1], LCD_LINE_SIZE, "FAILED: %-12.12s",
                      d->detail[0] ? d->detail : "Try again");
             snprintf(rows[2], LCD_LINE_SIZE, "RSSI: %4d dBm", (int)d->rssi);
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK TO RETURN");
+            rows[3][0] = '\0';
         }
         else if (d->timed_out)
         {
@@ -1662,16 +1661,16 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
         {
         case FACTORY_ACTION_CLEAR_SETTINGS:
             r0 = "CLEAR SETTINGS? ";
-            r1 = "[OK]=Yes Back=No";
+            r1 = "Confirm selection";
             break;
         case FACTORY_ACTION_ERASE_LOGS:
             r0 = "ERASE LOGS?     ";
-            r1 = "[OK]=Yes Back=No";
+            r1 = "Confirm selection";
             break;
         case FACTORY_ACTION_RESET_ALL:
         default:
             r0 = "FACTORY RESET?  ";
-            r1 = "[OK]=Yes Back=No";
+            r1 = "Confirm selection";
             break;
         }
         draw_commit(r0, r1);
@@ -1723,7 +1722,7 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
                 snprintf(rows[0], LCD_LINE_SIZE, "FACTORY RESET");
                 snprintf(rows[1], LCD_LINE_SIZE, "PIN LOCKED");
                 snprintf(rows[2], LCD_LINE_SIZE, "%-16s", pin_line);
-                snprintf(rows[3], LCD_LINE_SIZE, "Retry %2lus  BACK",
+                snprintf(rows[3], LCD_LINE_SIZE, "Retry in %2lus",
                          (unsigned long)remaining_s);
                 const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
                 draw_commit_rows(row_ptrs);
@@ -1736,7 +1735,7 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
                 "FACTORY RESET PIN",
                 pin_line,
                 attempt_line,
-                "ENT=SUBMIT BACK=EXIT"};
+                ""};
             draw_commit_rows(rows);
             return;
         }
@@ -1948,7 +1947,7 @@ static bool draw_security_pin_flow(change_pin_phase_t flow_phase,
             format_empty_pin_slots(rows[1], sizeof(rows[1]));
             snprintf(rows[2], sizeof(rows[2]), "Retry in %2lus",
                      (unsigned long)remaining_s);
-            snprintf(rows[3], sizeof(rows[3]), "BACK=EXIT");
+            rows[3][0] = '\0';
             const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
             draw_commit_rows(row_ptrs);
         }

@@ -462,8 +462,8 @@ static void handle_wifi_menu_action(uint8_t selection)
         {
             (void)app_services_wifi_request_disconnect();
         }
-        else if (strcmp(action_label, "Connecting...") != 0 &&
-                 strcmp(action_label, "Disconnecting...") != 0)
+        else if (strncmp(action_label, "Connecting", 10U) != 0 &&
+                 strncmp(action_label, "Disconnecting", 13U) != 0)
         {
             (void)app_services_wifi_reconnect();
         }
@@ -867,7 +867,7 @@ void handle_power_button_event(button_event_info_t *event_info,
         sys_state.menu_selection = 0;
         sys_state.power_button_sequence_count = 1;
         sys_state.power_sequence_start_time = current_time;
-        lcd_show_confirm("FACTORY RESET?  ", "Hold=Yes Back=No");
+        lcd_show_confirm("FACTORY RESET?  ", "Confirm reset?  ");
         break;
     }
 
@@ -911,7 +911,7 @@ menu_state_t display_menu_state(void)
         break;
     case MAIN_MENU:
         r0 = "Main Menu       ";
-        r1 = "Use Up/Down     ";
+        r1 = "                ";
         break;
     case MENU_SETTINGS:
         r0 = "Settings        ";
@@ -927,11 +927,11 @@ menu_state_t display_menu_state(void)
         break;
     case MENU_FACTORY_RESET:
         r0 = "Factory Reset?  ";
-        r1 = "Enter=Yes Back=N";
+        r1 = "Confirm reset?  ";
         break;
     case MENU_WIFI_CONFIG:
         r0 = "WiFi Config     ";
-        r1 = "Enter=Setup     ";
+        r1 = "                ";
         break;
     default:
         r0 = "Unknown Menu    ";
@@ -984,6 +984,27 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
 
     sys_state.last_activity_time = event_info->timestamp_us / 1000;
     sys_state.flags.last_user_activity = xTaskGetTickCount();
+
+    /* Error-log selection and definition reading are separate states.
+     * Short ENTER opens the selected error definition; long ENTER returns
+     * to the scrollable log list. UP/DOWN are handled by error_log_scroll. */
+    if (sys_state.in_detail_view &&
+        sys_state.menu_state == MENU_DIAGNOSTIC &&
+        sys_state.menu_selection == 1U) {
+        if (event_info->event == BUTTON_EVENT_CLICK) {
+            if (!error_log_scroll_is_detail())
+                error_log_scroll_select_detail();
+            return;
+        }
+        if (event_info->event == BUTTON_EVENT_LONG_PRESS) {
+            error_log_scroll_return_to_list();
+            return;
+        }
+        if (event_info->event != BUTTON_EVENT_PRESS &&
+            event_info->event != BUTTON_EVENT_RELEASE) {
+            return;
+        }
+    }
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
         app_services_wifi_prerequisite_pending())
@@ -1254,12 +1275,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 const int parent_selection = sys_state.menu_selection;
                 const bool saved = exit_value_edit_mode(true);
                 show_menu_screen(parent_menu, parent_selection);
-                if (saved)
-                {
-                    lcd_flash_info_to("Setting Saved", "Changes stored",
-                                      900U, LCD_SCREEN_MENU);
-                }
-                else
+                if (!saved)
                 {
                     lcd_flash_warning_to("Save Failed", "Previous restored",
                                          1400U, LCD_SCREEN_MENU);
@@ -1314,7 +1330,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             sys_state.menu_selection = 0;
             clear_menu_history();
             go_to_main_screen();
-            lcd_flash_info("Done            ", done_msg, 1500);
+            (void)done_msg;
             break;
         }
 
@@ -1710,8 +1726,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 sys_state.value_changed = true;
                 exit_value_edit_mode(true);
                 show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
-                lcd_flash_info_to("Value Saved!    ", "                ",
-                                  800, LCD_SCREEN_MENU);
+                /* The updated menu value is the success feedback. */
             }
         }
         else if (sys_state.menu_state == MAIN_MENU)

@@ -3797,13 +3797,8 @@ void lcd_show_bt_edit_screen(const char *label, const char *value)
 /* ── lcd_show_value_saved_screen() ─────────────────────────────────────── */
 void lcd_show_value_saved_screen(void)
 {
-    value_edit_context_t *config = get_current_value_config();
-    float *current_value = get_current_value_pointer();
-    char v[LCD_LINE_SIZE] = "                ";
-    if (config && current_value)
-        snprintf(v, LCD_LINE_SIZE, "%.2f %-11.11s", *current_value,
-                 config->unit ? config->unit : "");
-    lcd_flash_saved("Value Saved!    ", v);
+    /* The caller has already committed the value and refreshed its parent
+     * menu; avoid covering that live state with a redundant success flash. */
 }
 
 /* ── lcd_show_value_canceled_screen() ──────────────────────────────────── */
@@ -5092,7 +5087,7 @@ void lcd_animation_reset(void)
 /* ── lcd_display_confirmation_screen() ──────────────────────────────────── */
 void lcd_display_confirmation_screen(void)
 {
-    lcd_show_confirm("Save Changes?   ", "Enter=Yes Back=N");
+    lcd_show_confirm("Save Changes?   ", "Confirm change? ");
 }
 
 // Advanced value adjustment implementation — handles all edit_type variants
@@ -5730,7 +5725,6 @@ void handle_value_confirmation(void)
         }
 
         const bool wifi_async_save = (ctx == &value_edit[VALUE_TYPE_WIFI]);
-        const size_t saved_setting_index = settings_index_for_editor(ctx);
         const bool saved = exit_value_edit_mode(true);
 
         /* The menu is rebuilt from the canonical runtime state only after
@@ -5749,29 +5743,7 @@ void handle_value_confirmation(void)
         {
             ESP_LOGI("SETTINGS_TRANSACTION", "SUCCESS label=%s value=%s",
                      ctx->label, saved_value);
-            if (lcd_geometry_is_20x4())
-            {
-                char rows[4][LCD_LINE_SIZE];
-                snprintf(rows[0], LCD_LINE_SIZE, "Setting ID: %02u",
-                         (unsigned)(saved_setting_index < NVS_SETTINGS_COUNT
-                                        ? saved_setting_index
-                                        : 0U));
-                snprintf(rows[1], LCD_LINE_SIZE, "%-*.*s",
-                         LCD_COLS, LCD_COLS, "New Value Saved");
-                snprintf(rows[2], LCD_LINE_SIZE, "%-*.*s",
-                         LCD_COLS, LCD_COLS, ctx->label ? ctx->label : "Setting");
-                snprintf(rows[3], LCD_LINE_SIZE, "%-*.*s",
-                         LCD_COLS, LCD_COLS, saved_value);
-                const char *row_ptrs[4] = {rows[0], rows[1], rows[2], rows[3]};
-                lcd_flash_enqueue_rows_to(row_ptrs, 4U, 1400U,
-                                          FLASH_PRI_INFO, LCD_SCREEN_MENU);
-            }
-            else
-            {
-                const char *rows[2] = {"New Value Saved", saved_value};
-                lcd_flash_enqueue_rows_to(rows, 2U, 1400U,
-                                          FLASH_PRI_INFO, LCD_SCREEN_MENU);
-            }
+            /* The committed value is shown by the restored settings menu. */
             printf("AUDIT: Parameter changed - %s\n", ctx->label);
         }
         else
@@ -7194,7 +7166,7 @@ void error_handler(void)
     }
     // Log the error state for debugging
     log_all_error_flags(sys_state.error.error_flags);
-    lcd_show_confirm("Press BACK to   ", "Reset system... ");
+    lcd_show_confirm("Reset system?   ", "                ");
 
     uint32_t elapsed = 0;
     while (elapsed < RESET_TIMEOUT_MS)

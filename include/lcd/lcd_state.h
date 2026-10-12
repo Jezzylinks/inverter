@@ -175,6 +175,8 @@ extern "C"
     {
         char label[LCD_LINE_SIZE];
         char value_str[LCD_LINE_SIZE];
+        char row2[LCD_LINE_SIZE];
+        char row3[LCD_LINE_SIZE];
     } lcd_detail_data_t; /* monitoring detail, diagnostic detail, AND settings view */
 
     typedef struct

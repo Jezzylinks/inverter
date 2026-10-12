@@ -19,7 +19,7 @@ typedef struct
 {
     uint8_t error_code;    /* system_errors_t cast to uint8_t           */
     uint32_t timestamp_ms; /* xTaskGetTickCount()*portTICK_PERIOD_MS     */
-    char description[16];  /* NUL-terminated human-readable string       */
+    char description[48];  /* NUL-terminated human-readable string       */
 } error_log_entry_t;
 
 /*
@@ -48,6 +48,9 @@ void error_log_scroll_prev(void);
  * Row 1: "<error description>" or "No logs        "
  */
 void error_log_scroll_update_display(void);
+void error_log_scroll_select_detail(void);
+void error_log_scroll_return_to_list(void);
+bool error_log_scroll_is_detail(void);
 
 /*
  * Returns true if there is more than one entry to scroll through.

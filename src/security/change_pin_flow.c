@@ -100,7 +100,7 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
             {
                 if (ctx->mode == CHANGE_PIN_MODE_VERIFY_ONLY)
                 {
-                    post_security_event(true);
+                    /* Successful PIN operations return to their owning screen. */
                     ctx->phase = CHANGE_PIN_SUCCESS;
                     return true;
                 }
@@ -110,8 +110,7 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
                     esp_err_t err = security_set_pin(default_pin);
                     if (err == ESP_OK)
                     {
-                        lcd_flash_info_to("PIN reset", "                ", 1500, LCD_SCREEN_SECURITY);
-                        post_security_event(true);
+                        /* Return to the owning menu without a success overlay. */
                     }
                     else
                     {
@@ -182,8 +181,7 @@ bool change_pin_handle_button(change_pin_ctx_t *ctx, button_id_t btn)
                 esp_err_t err = security_set_pin(ctx->new_pin_staged);
                 if (err == ESP_OK)
                 {
-                    lcd_flash_info_to("PIN updated", "                ", 2000, LCD_SCREEN_SECURITY);
-                    post_security_event(true);
+                    /* Return to the owning menu without a success overlay. */
                 }
                 else
                 {

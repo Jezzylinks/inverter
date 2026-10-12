@@ -103,6 +103,8 @@ void lcd_show_value_edit(const char *label, const char *value_str,
 /* ── Monitoring / diagnostic detail ─────────────────────────────────────── */
 void lcd_show_monitor_detail(const char *label, const char *value_str);
 void lcd_show_diagnostic_detail(const char *label, const char *value_str);
+void lcd_show_diagnostic_detail_rows(const char *row0, const char *row1,
+                                     const char *row2, const char *row3);
 void lcd_show_settings_view_detail(const char *label, const char *value_str);
 
 /* ── Inverter sequences ──────────────────────────────────────────────────── */
