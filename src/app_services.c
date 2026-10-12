@@ -727,26 +727,6 @@ static void app_wifi_notify_watcher(void)
     }
 }
 
-static esp_err_t app_wifi_ensure_watcher(void)
-{
-    if (s_wifi_operation_watch_task != NULL) {
-        return ESP_OK;
-    }
-    if (xTaskCreatePinnedToCore(app_wifi_operation_watch_task,
-                                "wifi_op_watch",
-                                APP_WIFI_OPERATION_WATCH_STACK_SIZE,
-                                NULL,
-                                APP_WIFI_OPERATION_WATCH_PRIORITY,
-                                &s_wifi_operation_watch_task,
-                                APP_CORE_SYSTEM) != pdPASS) {
-        s_wifi_operation_watch_task = NULL;
-        ESP_LOGW(APP_SERVICES_TAG, "Could not create Wi-Fi operation watcher");
-        return ESP_ERR_NO_MEM;
-    }
-    task_watchdog_register_health_only("wifi_op_watch");
-    return ESP_OK;
-}
-
 static void app_wifi_sync_menu_if_visible(void)
 {
     menu_state_t menu_state;
@@ -1648,6 +1628,26 @@ esp_err_t app_services_init(void)
         }
     }
     return err == ESP_OK ? ota_err : err;
+}
+
+static esp_err_t app_wifi_ensure_watcher(void)
+{
+    if (s_wifi_operation_watch_task != NULL) {
+        return ESP_OK;
+    }
+    if (xTaskCreatePinnedToCore(app_wifi_operation_watch_task,
+                                "wifi_op_watch",
+                                APP_WIFI_OPERATION_WATCH_STACK_SIZE,
+                                NULL,
+                                APP_WIFI_OPERATION_WATCH_PRIORITY,
+                                &s_wifi_operation_watch_task,
+                                APP_CORE_SYSTEM) != pdPASS) {
+        s_wifi_operation_watch_task = NULL;
+        ESP_LOGW(APP_SERVICES_TAG, "Could not create Wi-Fi operation watcher");
+        return ESP_ERR_NO_MEM;
+    }
+    task_watchdog_register_health_only("wifi_op_watch");
+    return ESP_OK;
 }
 
 esp_err_t app_services_wifi_toggle_init(void)
