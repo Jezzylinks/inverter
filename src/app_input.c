@@ -867,7 +867,7 @@ void handle_power_button_event(button_event_info_t *event_info,
         sys_state.menu_selection = 0;
         sys_state.power_button_sequence_count = 1;
         sys_state.power_sequence_start_time = current_time;
-        lcd_show_confirm("FACTORY RESET?  ", "Hold=Yes Back=No");
+        lcd_show_confirm("FACTORY RESET?  ", "Confirm reset?  ");
         break;
     }
 
