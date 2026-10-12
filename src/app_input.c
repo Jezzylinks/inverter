@@ -98,7 +98,7 @@ static void format_saved_setting_value(const value_edit_context_t *ctx,
     if (out == NULL || out_size == 0U)
         return;
 
-    out[0] = '\\0';
+    out[0] = '\0';
     if (ctx == NULL)
         return;
 
@@ -1323,6 +1323,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 const int parent_selection = sys_state.menu_selection;
                 const bool had_changes = sys_state.value_changed;
                 value_edit_context_t *edit_ctx = sys_state.current_value_type;
+                const bool wifi_async_save =
+                    edit_ctx != NULL && edit_ctx->label != NULL &&
+                    strcmp(edit_ctx->label, "WiFi") == 0;
                 char saved_value[LCD_LINE_SIZE] = {0};
                 char saved_label[LCD_LINE_SIZE] = {0};
                 if (edit_ctx != NULL)
@@ -1339,12 +1342,12 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                     lcd_flash_warning_to("Save Failed", "Previous restored",
                                          1400U, LCD_SCREEN_MENU);
                 }
-                else if (had_changes)
+                else if (had_changes && !wifi_async_save)
                 {
-                    lcd_flash_saved(saved_label[0] != '\\0' ? saved_label : "Setting",
+                    lcd_flash_saved(saved_label[0] != '\0' ? saved_label : "Setting",
                                     saved_value);
                 }
-                else
+                else if (!had_changes)
                 {
                     lcd_flash_message("No Changes Made", "Setting unchanged", 1000U);
                 }
