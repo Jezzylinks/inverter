@@ -2203,7 +2203,7 @@ esp_err_t app_services_wifi_disconnect(void)
         lcd_show_wifi_result(false, true, false, "", -127, "Disconnect failed");
     } else if (!wifi_controller_is_connected() && app_wifi_operation_pending()) {
         app_wifi_end_operation();
-        lcd_flash_message("Disconnected", "Wi-Fi is idle", 1000U);
+        app_wifi_sync_menu_if_visible();
     }
     return err;
 }
