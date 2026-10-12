@@ -2195,7 +2195,7 @@ esp_err_t app_services_wifi_disconnect(void)
     const esp_err_t err = wifi_controller_disconnect();
     if (err == ESP_ERR_WIFI_NOT_CONNECT || err == ESP_ERR_WIFI_NOT_STARTED) {
         app_wifi_end_operation();
-        lcd_flash_message("Disconnected", "Wi-Fi is idle", 1000U);
+        app_wifi_sync_menu_if_visible();
         return ESP_OK;
     }
     if (err != ESP_OK) {
@@ -2348,7 +2348,7 @@ bool app_services_wifi_disconnect_confirmation_pending(void)
 esp_err_t app_services_wifi_request_disconnect(void)
 {
     if (!wifi_controller_is_connected()) {
-        lcd_flash_message("Already Disconnected", "Wi-Fi is idle", 1000U);
+        show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
         return ESP_OK;
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
@@ -2771,7 +2771,7 @@ esp_err_t app_services_request_update_confirmation(void)
         s_wifi_prerequisite_waiting = false;
         s_wifi_prerequisite_ready = false;
         xSemaphoreGive(s_services_mutex);
-        lcd_show_confirm("Wi-Fi is OFF", "ENTER=Yes BACK=No");
+        lcd_show_confirm("Wi-Fi is OFF", "Enable to continue");
         ESP_LOGI(APP_SERVICES_TAG,
                  "OTA install paused: Wi-Fi is OFF; prerequisite prompt shown");
         return ESP_ERR_INVALID_STATE;
