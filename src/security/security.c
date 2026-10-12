@@ -18,6 +18,9 @@ extern system_state_t sys_state;
 #define NVS_KEY_HASH "sec_pin_hash"
 #define NVS_KEY_SALT "sec_pin_salt"
 #define NVS_KEY_FORCE_CHG "sec_force_chg"
+/* One-time migration for firmware deployments that already had a PIN hash
+ * before the default-PIN requirement was made explicit. */
+#define NVS_KEY_DEFAULT_PIN_MIGRATION "sec_pin_def_v1"
 #define SALT_LEN 16U
 #define HASH_LEN 32U
 
@@ -140,6 +143,51 @@ static void security_cleanup_failed_init(void)
     memset(&s_sec, 0, sizeof(s_sec));
 }
 
+/* Deliberate one-time migration: the requested factory PIN is 0000, but older
+ * firmware may already have a different hash in NVS. There is no way to
+ * reverse a salted hash to identify that old PIN. Reset it once, mark the
+ * migration in NVS, and never overwrite a PIN changed after this migration. */
+static esp_err_t security_apply_default_pin_migration(void)
+{
+    nvs_handle_t handle = 0U;
+    esp_err_t err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    uint8_t migrated = 0U;
+    err = nvs_get_u8(handle, NVS_KEY_DEFAULT_PIN_MIGRATION, &migrated);
+    storage_nvs_close(handle);
+
+    if (err == ESP_OK && migrated == 1U) {
+        return ESP_OK;
+    }
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        return err;
+    }
+
+    const uint8_t default_pin[SECURITY_PIN_LEN] = SECURITY_DEFAULT_PIN;
+    err = persist_pin(default_pin, true);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    handle = 0U;
+    err = storage_nvs_open(NVS_NS_SYSTEM, NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(handle, NVS_KEY_DEFAULT_PIN_MIGRATION, 1U);
+        if (err == ESP_OK) {
+            err = nvs_commit(handle);
+        }
+        storage_nvs_close(handle);
+    }
+    if (err == ESP_OK) {
+        ESP_LOGW(TAG,
+                 "One-time PIN migration completed: default PIN is 0000; change it after access");
+    }
+    return err;
+}
+
 esp_err_t security_init(void)
 {
     if (s_sec.initialized) {
@@ -152,11 +200,14 @@ esp_err_t security_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    if (!sys_state.security.enabled) {
-        s_sec.initialized = true;
-        s_sec.force_change = false;
-        ESP_LOGW(TAG, "panel PIN security is disabled by configuration");
-        return ESP_OK;
+    /* Factory reset and OTA still require a valid PIN even when the ordinary
+     * panel lock is disabled, so always initialize the persisted PIN. */
+    const esp_err_t migration_err = security_apply_default_pin_migration();
+    if (migration_err != ESP_OK) {
+        ESP_LOGE(TAG, "PIN default migration failed: %s",
+                 esp_err_to_name(migration_err));
+        security_cleanup_failed_init();
+        return migration_err;
     }
 
     nvs_handle_t handle;
