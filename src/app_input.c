@@ -89,6 +89,46 @@ extern battery_estimator_t bat_estimate;
 extern SemaphoreHandle_t change_pin_mutex;
 extern change_pin_ctx_t change_pin_ctx;
 
+/* Format the value that was actually committed for the reusable settings
+ * confirmation. Keep this in the input layer so every editor entry path uses
+ * the same LCD feedback without changing persistence or apply semantics. */
+static void format_saved_setting_value(const value_edit_context_t *ctx,
+                                       char *out, size_t out_size)
+{
+    if (out == NULL || out_size == 0U)
+        return;
+
+    out[0] = '\\0';
+    if (ctx == NULL)
+        return;
+
+    switch (ctx->edit_type)
+    {
+    case VALUE_EDIT_NUMERIC:
+        (void)snprintf(out, out_size, "%.*f %s",
+                       ctx->decimal_places, ctx->current_value,
+                       ctx->unit != NULL ? ctx->unit : "");
+        break;
+    case VALUE_EDIT_BOOL:
+        (void)snprintf(out, out_size, "%s",
+                       ctx->current_value != 0.0f ? "ON" : "OFF");
+        break;
+    case VALUE_EDIT_SELECT:
+        if (ctx->options != NULL && ctx->selection_index >= 0 &&
+            ctx->selection_index < ctx->max_selection)
+            (void)snprintf(out, out_size, "%s",
+                           ctx->options[ctx->selection_index]);
+        break;
+    case VALUE_EDIT_LIST:
+        if (ctx->list != NULL && ctx->list_index >= 0 &&
+            ctx->list_index < ctx->list_size)
+            (void)snprintf(out, out_size, "%s", ctx->list[ctx->list_index]);
+        break;
+    default:
+        break;
+    }
+}
+
 static uint8_t s_ota_auth_selection = 1U;
 static bool s_ota_feedback_active = false;
 static bool s_wifi_settings_child_active = false;
@@ -1281,12 +1321,32 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             {
                 const menu_state_t parent_menu = sys_state.menu_state;
                 const int parent_selection = sys_state.menu_selection;
+                const bool had_changes = sys_state.value_changed;
+                value_edit_context_t *edit_ctx = sys_state.current_value_type;
+                char saved_value[LCD_LINE_SIZE] = {0};
+                char saved_label[LCD_LINE_SIZE] = {0};
+                if (edit_ctx != NULL)
+                {
+                    (void)snprintf(saved_label, sizeof(saved_label), "%s",
+                                   edit_ctx->label != NULL ? edit_ctx->label : "Setting");
+                    format_saved_setting_value(edit_ctx, saved_value,
+                                               sizeof(saved_value));
+                }
                 const bool saved = exit_value_edit_mode(true);
                 show_menu_screen(parent_menu, parent_selection);
                 if (!saved)
                 {
                     lcd_flash_warning_to("Save Failed", "Previous restored",
                                          1400U, LCD_SCREEN_MENU);
+                }
+                else if (had_changes)
+                {
+                    lcd_flash_saved(saved_label[0] != '\\0' ? saved_label : "Setting",
+                                    saved_value);
+                }
+                else
+                {
+                    lcd_flash_message("No Changes Made", "Setting unchanged", 1000U);
                 }
             }
             break;
