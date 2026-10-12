@@ -415,8 +415,9 @@ static void app_wifi_operation_watch_task(void *parameter)
 
         if (timed_out) {
             /* A delayed/missed monitor callback must not report failure if
-             * DHCP and the station association have already completed. */
+             * the live station state already proves completion. */
             bool connection_really_succeeded = false;
+            bool disconnection_really_succeeded = false;
             if (timed_out_operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
                 wifi_status_t current = {0};
                 wifi_ap_record_t active_ap = {0};
@@ -429,6 +430,10 @@ static void app_wifi_operation_watch_task(void *parameter)
                         strncmp((const char *)active_ap.ssid, timed_out_ssid,
                                 sizeof(active_ap.ssid)) == 0;
                 }
+            } else if (timed_out_operation == APP_WIFI_OPERATION_DISCONNECT) {
+                wifi_ap_record_t active_ap = {0};
+                disconnection_really_succeeded =
+                    esp_wifi_sta_get_ap_info(&active_ap) != ESP_OK;
             }
 
             if (connection_really_succeeded) {
@@ -438,6 +443,12 @@ static void app_wifi_operation_watch_task(void *parameter)
                 lcd_flash_info_to("Connected", timed_out_ssid, 900U,
                                   LCD_SCREEN_MENU);
                 app_wifi_schedule_menu_refresh(1000U);
+            } else if (disconnection_really_succeeded) {
+                ESP_LOGI(APP_SERVICES_TAG,
+                         "Wi-Fi callback was delayed; station is disconnected");
+                lcd_flash_info_to("Disconnected", "Wi-Fi is idle", 700U,
+                                  LCD_SCREEN_MENU);
+                app_wifi_schedule_menu_refresh(800U);
             } else {
                 ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi operation timed out after %ums",
                          (unsigned)APP_WIFI_OPERATION_TIMEOUT_MS);
