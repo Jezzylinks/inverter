@@ -1464,7 +1464,7 @@ static void draw_wifi_status(const lcd_wifi_status_data_t *d)
             snprintf(rows[1], LCD_LINE_SIZE, "GW: %-16.16s", d->gateway);
             snprintf(rows[2], LCD_LINE_SIZE, "IP: %-3s LINK: %-5s",
                      d->got_ip ? "YES" : "NO", d->connected ? "UP" : "DOWN");
-            snprintf(rows[3], LCD_LINE_SIZE, "ENTER NEXT BACK EXIT");
+            snprintf(rows[3], LCD_LINE_SIZE, "");
             break;
         default:
             snprintf(rows[0], LCD_LINE_SIZE, "Signal: %d dBm", d->rssi);
