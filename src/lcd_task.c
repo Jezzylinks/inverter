@@ -1364,7 +1364,7 @@ static void draw_wifi_network_details(const lcd_wifi_network_detail_data_t *d)
             break;
         default:
             snprintf(row0, LCD_LINE_SIZE, "CONNECT?");
-            snprintf(row1, LCD_LINE_SIZE, "Confirm selection");
+            snprintf(row1, LCD_LINE_SIZE, "Confirm choice");
             break;
         }
         draw_commit(row0, row1);
@@ -1661,16 +1661,16 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
         {
         case FACTORY_ACTION_CLEAR_SETTINGS:
             r0 = "CLEAR SETTINGS? ";
-            r1 = "Confirm selection";
+            r1 = "Confirm choice";
             break;
         case FACTORY_ACTION_ERASE_LOGS:
             r0 = "ERASE LOGS?     ";
-            r1 = "Confirm selection";
+            r1 = "Confirm choice";
             break;
         case FACTORY_ACTION_RESET_ALL:
         default:
             r0 = "FACTORY RESET?  ";
-            r1 = "Confirm selection";
+            r1 = "Confirm choice";
             break;
         }
         draw_commit(r0, r1);

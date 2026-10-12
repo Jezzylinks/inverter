@@ -103,6 +103,34 @@ void error_log_scroll_prev(void)
     error_log_scroll_update_display();
 }
 
+static void append_two_digit_number(char *row, size_t *position,
+                                    unsigned value)
+{
+    value %= 100U;
+    if (value >= 10U)
+        row[(*position)++] = (char)('0' + ((value / 10U) % 10U));
+    row[(*position)++] = (char)('0' + (value % 10U));
+}
+
+static void format_log_header(char row[LCD_LINE_SIZE],
+                              const error_log_entry_t *entry,
+                              uint8_t cursor, uint8_t count, bool detail)
+{
+    memset(row, ' ', LCD_COLS);
+    size_t pos = 0U;
+    const unsigned code = (unsigned)entry->error_code + 1U;
+    row[pos++] = 'E';
+    append_two_digit_number(row, &pos, code);
+    row[pos++] = ' ';
+    if (detail) row[pos++] = 'D';
+    row[pos++] = '[';
+    append_two_digit_number(row, &pos, (unsigned)cursor + 1U);
+    row[pos++] = '/';
+    append_two_digit_number(row, &pos, count);
+    row[pos++] = ']';
+    row[LCD_COLS] = '\0';
+}
+
 static void wrap_definition(const char *text, uint8_t page,
                             char row2[LCD_LINE_SIZE], char row3[LCD_LINE_SIZE])
 {
@@ -144,15 +172,13 @@ void error_log_scroll_update_display(void)
     } else {
         const error_log_entry_t *entry = &s_entries[s_cursor];
         if (s_detail_mode) {
-            snprintf(row0, sizeof(row0), "Error E%02u [%u/%u]",
-                     (unsigned)(entry->error_code + 1U), (unsigned)(s_cursor + 1U), (unsigned)s_count);
+            format_log_header(row0, entry, s_cursor, s_count, true);
             snprintf(row1, sizeof(row1), "%-*.*s", LCD_COLS, LCD_COLS,
                      fault_log_source_name((fault_source_t)entry->error_code));
             wrap_definition(source_definition((fault_source_t)entry->error_code),
                             s_detail_page, row2, row3);
         } else {
-            snprintf(row0, sizeof(row0), "Error Logs [%u/%u]",
-                     (unsigned)(s_cursor + 1U), (unsigned)s_count);
+            format_log_header(row0, entry, s_cursor, s_count, false);
             const unsigned error_number = (unsigned)entry->error_code + 1U;
             const char *event_text = entry->description[0]
                                          ? entry->description
