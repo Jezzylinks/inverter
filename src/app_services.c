@@ -327,7 +327,7 @@ static void app_wifi_prerequisite_task(void *parameter)
             s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_NONE;
             xSemaphoreGive(s_services_mutex);
 
-            lcd_flash_message("Wi-Fi Ready", "Press ENTER", 1200U);
+            lcd_flash_message("Wi-Fi Ready", "Ready to continue", 1200U);
             show_menu_screen(MENU_OTA, 1);
         }
     }
@@ -1999,7 +1999,7 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
         if (esp_wifi_sta_get_ap_info(&current_ap) == ESP_OK &&
             strncmp((const char *)current_ap.ssid, ssid,
                     sizeof(current_ap.ssid)) == 0) {
-            lcd_flash_message("Already Connected", "Returning to menu", 1000U);
+            show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
             return ESP_OK;
         }
     }
@@ -2118,7 +2118,7 @@ esp_err_t app_services_wifi_submit_password(void)
     LCD_UNLOCK();
 
     if (password[0] == '\0') {
-        lcd_flash_message("ENTER PASSWORD", "Hold=submit", 1200U);
+        lcd_flash_message("Password required", "Enter network key", 1200U);
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -2151,7 +2151,7 @@ esp_err_t app_services_wifi_reconnect(void)
     if (wifi_events_get_status_copy(&current_status) == ESP_OK &&
         current_status.got_ip &&
         wifi_controller_is_connected()) {
-        lcd_flash_message("Already Connected", "No action needed", 1000U);
+        app_wifi_sync_menu_if_visible();
         return ESP_OK;
     }
     if (wifi_controller_get_state() == WIFI_CONTROLLER_CONNECTING) {
@@ -2187,7 +2187,7 @@ esp_err_t app_services_wifi_disconnect(void)
     /* A disconnect request is idempotent when STA is already disconnected. */
     if (!wifi_controller_is_connected()) {
         app_wifi_end_operation();
-        lcd_flash_message("Disconnected", "Wi-Fi is idle", 1000U);
+        app_wifi_sync_menu_if_visible();
         return ESP_OK;
     }
 
@@ -2296,7 +2296,7 @@ esp_err_t app_services_wifi_request_forget_saved(void)
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_wifi_forget_pending = true;
     xSemaphoreGive(s_services_mutex);
-    lcd_show_confirm("Forget network?", "Enter=Yes Back=No");
+    lcd_show_confirm("Forget network?", "Confirm removal?");
     return ESP_OK;
 }
 
@@ -2354,7 +2354,7 @@ esp_err_t app_services_wifi_request_disconnect(void)
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_wifi_disconnect_pending = true;
     xSemaphoreGive(s_services_mutex);
-    lcd_show_confirm("Disconnect Wi-Fi?", "Enter=Yes Back=No");
+    lcd_show_confirm("Disconnect Wi-Fi?", "Confirm disconnect?");
     return ESP_OK;
 }
 
@@ -2606,7 +2606,7 @@ esp_err_t app_services_check_for_update(bool user_initiated)
             s_wifi_prerequisite_waiting = false;
             s_wifi_prerequisite_ready = false;
             xSemaphoreGive(s_services_mutex);
-            lcd_show_confirm("Wi-Fi is OFF", "ENTER=Yes BACK=No");
+            lcd_show_confirm("Wi-Fi is OFF", "Enable to continue");
             ESP_LOGI(APP_SERVICES_TAG,
                      "OTA check paused: Wi-Fi is OFF; prerequisite prompt shown");
             return ESP_ERR_INVALID_STATE;
@@ -2795,7 +2795,7 @@ esp_err_t app_services_request_update_confirmation(void)
         lcd_flash_message("No Update Ready", "Check first", 1400U);
         return ESP_ERR_INVALID_STATE;
     }
-    lcd_show_confirm("Install Update?", "Enter=Yes Back=No");
+    lcd_show_confirm("Install Update?", "Confirm install?");
     return ESP_OK;
 }
 
@@ -2871,7 +2871,7 @@ esp_err_t app_services_request_cancel_update(void)
         lcd_flash_message("No Update Running", "Current kept", 1200U);
         return ESP_ERR_INVALID_STATE;
     }
-    lcd_show_confirm("Cancel update?", "ENTER=Yes BACK=No");
+    lcd_show_confirm("Cancel update?", "Confirm cancel?");
     return ESP_OK;
 }
 
