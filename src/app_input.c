@@ -244,16 +244,24 @@ static void return_from_ota_auth(bool authenticated)
     sys_state.menu_state = MENU_OTA;
     sys_state.menu_selection = s_ota_auth_selection;
 
+    /* The PIN flow left LCD_SCREEN_SECURITY as the current screen. Any flash
+     * raised while it was current (PIN feedback, or "No Update Ready" below)
+     * captures it as its AUTO return target, and the flash-expiry handler then
+     * restores it with security.phase == IDLE -- which draws the Security
+     * submenu (Change PIN / View PIN Status / Reset PIN) instead of OTA.
+     * Drop such a flash and make the OTA menu the current screen *before*
+     * anything below can flash or show a confirmation. */
+    lcd_flash_clear();
+    show_menu_screen(MENU_OTA, sys_state.menu_selection);
+
     if (authenticated)
     {
-        if (app_services_request_update_confirmation() != ESP_OK)
-        {
-            show_menu_screen(MENU_OTA, sys_state.menu_selection);
-        }
-    }
-    else
-    {
-        show_menu_screen(MENU_OTA, sys_state.menu_selection);
+        /* The OTA menu is already current. Do not redraw it on failure:
+         * request_update_confirmation() may have shown the "Wi-Fi is OFF"
+         * prerequisite prompt (it returns an error while waiting for the
+         * user), and redrawing the menu here would cover that prompt. A
+         * "No Update Ready" flash returns to the OTA menu by itself. */
+        (void)app_services_request_update_confirmation();
     }
 }
 
