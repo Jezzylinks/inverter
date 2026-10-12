@@ -256,14 +256,12 @@ static void return_from_ota_auth(bool authenticated)
 
     if (authenticated)
     {
-        if (app_services_request_update_confirmation() != ESP_OK)
-        {
-            show_menu_screen(MENU_OTA, sys_state.menu_selection);
-        }
-    }
-    else
-    {
-        show_menu_screen(MENU_OTA, sys_state.menu_selection);
+        /* The OTA menu is already current. Do not redraw it on failure:
+         * request_update_confirmation() may have shown the "Wi-Fi is OFF"
+         * prerequisite prompt (it returns an error while waiting for the
+         * user), and redrawing the menu here would cover that prompt. A
+         * "No Update Ready" flash returns to the OTA menu by itself. */
+        (void)app_services_request_update_confirmation();
     }
 }
 
