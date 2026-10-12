@@ -606,7 +606,7 @@ static void draw_standby(const lcd_standby_data_t *d)
                      d->battery_voltage < d->low_voltage_threshold
                          ? "LOW BATTERY WARNING"
                          : "BATTERY MONITOR OK");
-            snprintf(rows[3], LCD_LINE_SIZE, "ENTER:NEXT PWR:START");
+            snprintf(rows[3], LCD_LINE_SIZE, "");
         }
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
         draw_commit_rows(row_ptrs);
@@ -704,7 +704,7 @@ static void draw_ota(const lcd_ota_data_t *d)
             snprintf(rows[0], LCD_LINE_SIZE, "FIRMWARE UPDATE");
             snprintf(rows[1], LCD_LINE_SIZE, "CONNECTING SERVER");
             snprintf(rows[2], LCD_LINE_SIZE, "PREPARING UPDATE");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            snprintf(rows[3], LCD_LINE_SIZE, "");
             break;
         case LCD_OTA_VIEW_DOWNLOADING:
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATING FIRMWARE");
@@ -716,32 +716,32 @@ static void draw_ota(const lcd_ota_data_t *d)
             snprintf(rows[0], LCD_LINE_SIZE, "VERIFYING UPDATE");
             snprintf(rows[1], LCD_LINE_SIZE, "CHECKING SHA-256");
             snprintf(rows[2], LCD_LINE_SIZE, "PLEASE WAIT...");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            snprintf(rows[3], LCD_LINE_SIZE, "");
             break;
         case LCD_OTA_VIEW_CANCELLING:
             snprintf(rows[0], LCD_LINE_SIZE, "CANCELLING UPDATE");
             snprintf(rows[1], LCD_LINE_SIZE, "PLEASE WAIT...");
             snprintf(rows[2], LCD_LINE_SIZE, "ABORTING SAFELY");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            snprintf(rows[3], LCD_LINE_SIZE, "");
             break;
         case LCD_OTA_VIEW_AVAILABLE:
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATE AVAILABLE");
             snprintf(rows[1], LCD_LINE_SIZE, "%.8s -> %.8s",
                      d->current_version, d->available_version);
             snprintf(rows[2], LCD_LINE_SIZE, "");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            snprintf(rows[3], LCD_LINE_SIZE, "");
             break;
         case LCD_OTA_VIEW_CURRENT:
             snprintf(rows[0], LCD_LINE_SIZE, "FIRMWARE CURRENT");
             snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", d->current_version);
             snprintf(rows[2], LCD_LINE_SIZE, "NO UPDATE");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            snprintf(rows[3], LCD_LINE_SIZE, "");
             break;
         case LCD_OTA_VIEW_CANCELLED:
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATE CANCELLED");
             snprintf(rows[1], LCD_LINE_SIZE, "CURRENT KEPT");
             snprintf(rows[2], LCD_LINE_SIZE, "");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            snprintf(rows[3], LCD_LINE_SIZE, "");
             break;
         case LCD_OTA_VIEW_COMPLETE:
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATE COMPLETE");
@@ -754,7 +754,7 @@ static void draw_ota(const lcd_ota_data_t *d)
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATE FAILED");
             snprintf(rows[1], LCD_LINE_SIZE, "%.20s", d->detail[0] ? d->detail : "TRY AGAIN");
             snprintf(rows[2], LCD_LINE_SIZE, "");
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK=MENU");
+            snprintf(rows[3], LCD_LINE_SIZE, "");
             break;
         }
         draw_commit_rows((const char *[]){rows[0], rows[1], rows[2], rows[3]});
@@ -1226,15 +1226,15 @@ static void draw_wifi_scan(const lcd_wifi_scan_data_t *d)
         }
         else if (d->stage == LCD_WIFI_SCAN_FAILED)
         {
-            const char *failed_rows[] = {"WI-FI SCAN FAILED", "ENTER=RETRY",
-                                         "BACK=EXIT", ""};
+            const char *failed_rows[] = {"WI-FI SCAN FAILED", "",
+                                         "", ""};
             draw_commit_rows(failed_rows);
             return;
         }
         else if (d->count == 0U)
         {
-            const char *done_rows[] = {"NO NETWORKS FOUND", "ENTER=RETRY",
-                                       "BACK=EXIT", ""};
+            const char *done_rows[] = {"NO NETWORKS FOUND", "",
+                                       "", ""};
             draw_commit_rows(done_rows);
             return;
         }
@@ -1362,7 +1362,7 @@ static void draw_wifi_network_details(const lcd_wifi_network_detail_data_t *d)
             break;
         default:
             snprintf(row0, LCD_LINE_SIZE, "CONNECT?");
-            snprintf(row1, LCD_LINE_SIZE, "ENT=YES BACK=NO");
+            snprintf(row1, LCD_LINE_SIZE, "Confirm selection");
             break;
         }
         draw_commit(row0, row1);
@@ -1659,16 +1659,16 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
         {
         case FACTORY_ACTION_CLEAR_SETTINGS:
             r0 = "CLEAR SETTINGS? ";
-            r1 = "[OK]=Yes Back=No";
+            r1 = "Confirm selection";
             break;
         case FACTORY_ACTION_ERASE_LOGS:
             r0 = "ERASE LOGS?     ";
-            r1 = "[OK]=Yes Back=No";
+            r1 = "Confirm selection";
             break;
         case FACTORY_ACTION_RESET_ALL:
         default:
             r0 = "FACTORY RESET?  ";
-            r1 = "[OK]=Yes Back=No";
+            r1 = "Confirm selection";
             break;
         }
         draw_commit(r0, r1);
@@ -1733,7 +1733,7 @@ static void draw_factory_reset(const factory_reset_ctx_t *d)
                 "FACTORY RESET PIN",
                 pin_line,
                 attempt_line,
-                "ENT=SUBMIT BACK=EXIT"};
+                ""};
             draw_commit_rows(rows);
             return;
         }
