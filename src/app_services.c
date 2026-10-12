@@ -2559,21 +2559,55 @@ esp_err_t app_services_set_ota_manifest_url(const char *url)
     return err;
 }
 
-esp_err_t app_services_get_ota_manifest_url(char *buffer, size_t buffer_len)
+/* Effective manifest URL: the stored runtime URL when it is valid, otherwise
+ * the compile-time default. The default must not depend on app_services_init()
+ * having run or on the NVS provisioning write having succeeded; previously a
+ * failed/skipped write left s_manifest_url empty and the check reported
+ * "OTA URL Invalid" although a valid default was configured. Caller must NOT
+ * hold s_services_mutex. */
+static esp_err_t app_ota_effective_manifest_url(char *buffer, size_t buffer_len)
 {
     if (!buffer || buffer_len == 0U)
     {
         return ESP_ERR_INVALID_ARG;
     }
-    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    if (strlen(s_manifest_url) >= buffer_len)
+    if (s_services_mutex != NULL)
+    {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    }
+    const char *chosen = NULL;
+    if (s_manifest_url[0] != '\0' && app_manifest_url_is_valid(s_manifest_url))
+    {
+        chosen = s_manifest_url;
+    }
+    else if (APP_OTA_DEFAULT_MANIFEST_URL[0] != '\0' &&
+             app_manifest_url_is_valid(APP_OTA_DEFAULT_MANIFEST_URL))
+    {
+        chosen = APP_OTA_DEFAULT_MANIFEST_URL;
+    }
+    esp_err_t err = ESP_OK;
+    if (chosen == NULL)
+    {
+        buffer[0] = '\0';
+    }
+    else if (strlen(chosen) >= buffer_len)
+    {
+        err = ESP_ERR_INVALID_SIZE;
+    }
+    else
+    {
+        strcpy(buffer, chosen);
+    }
+    if (s_services_mutex != NULL)
     {
         xSemaphoreGive(s_services_mutex);
-        return ESP_ERR_INVALID_SIZE;
     }
-    strcpy(buffer, s_manifest_url);
-    xSemaphoreGive(s_services_mutex);
-    return ESP_OK;
+    return err;
+}
+
+esp_err_t app_services_get_ota_manifest_url(char *buffer, size_t buffer_len)
+{
+    return app_ota_effective_manifest_url(buffer, buffer_len);
 }
 
 typedef struct {
@@ -2680,7 +2714,7 @@ esp_err_t app_services_check_for_update(bool user_initiated)
                  ota_manifest_is_https_url(manifest_url) ? 1 : 0);
         if (user_initiated) {
             lcd_flash_warning_to("OTA URL Invalid",
-                                 url_err == ESP_OK ? "HTTPS required" : "Set manifest URL",
+                                 url_err == ESP_OK ? "Set manifest URL" : "URL too long",
                                  1500U, LCD_SCREEN_MENU);
         }
         return url_err == ESP_OK ? ESP_ERR_INVALID_ARG : url_err;
@@ -2863,10 +2897,13 @@ esp_err_t app_services_confirm_update(void)
         s_ota_status.state = APP_OTA_PREPARING;
         s_ota_status.progress_percent = 0;
     }
-    strncpy(manifest_url, s_manifest_url, sizeof(manifest_url) - 1U);
     snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
 
+    if (confirmed)
+    {
+        (void)app_ota_effective_manifest_url(manifest_url, sizeof(manifest_url));
+    }
     if (!confirmed || manifest_url[0] == '\0')
     {
         return ESP_ERR_INVALID_STATE;
