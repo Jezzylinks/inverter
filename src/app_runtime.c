@@ -4443,7 +4443,7 @@ void lcd_draw_diagnostics_screen(uint8_t index)
              * free memory and RAM percentage in a guaranteed 20-column row. */
             if (detailed_len >= 0 && detailed_len <= LCD_COLS)
             {
-                snprintf(row1, LCD_LINE_SIZE, "%s", detailed_row);
+                snprintf(row1, LCD_LINE_SIZE, "%.*s", LCD_COLS, detailed_row);
             }
             else
             {
