@@ -136,6 +136,8 @@ static esp_err_t persist_u8(const char *key, uint8_t value);
 static void app_wifi_toggle_task(void *parameter);
 static void app_wifi_prerequisite_task(void *parameter);
 static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode);
+static bool app_wifi_end_operation_if_generation(uint32_t generation);
+static void app_wifi_schedule_menu_refresh(uint32_t delay_ms);
 
 typedef enum {
     APP_WIFI_PREREQUISITE_NONE = 0,
