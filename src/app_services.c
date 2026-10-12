@@ -343,9 +343,9 @@ static void app_wifi_operation_watch_task(void *parameter)
     TickType_t last_rssi_poll = 0U;
 
     while (true) {
-        /* One-second polling is fast enough for an interactive character LCD
-         * and lets the UI recover even if a Wi-Fi event callback was missed. */
-        vTaskDelay(pdMS_TO_TICKS(1000U));
+        /* Poll faster during connect/disconnect so the animated state and
+         * final menu label respond promptly; idle monitoring remains 1 second. */
+        vTaskDelay(pdMS_TO_TICKS(app_wifi_operation_pending() ? 250U : 1000U));
 
         /* Poll the live station/DHCP handshake while an operation is active.
          * Do not depend exclusively on an event callback to finish the
@@ -376,9 +376,7 @@ static void app_wifi_operation_watch_task(void *parameter)
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Live Wi-Fi poll confirmed connection to '%s'",
                          polled_ssid);
-                lcd_flash_info_to("Connected", polled_ssid, 900U,
-                                  LCD_SCREEN_MENU);
-                app_wifi_schedule_menu_refresh(1000U);
+                app_wifi_sync_menu_if_visible();
             }
         } else if (polled_operation == APP_WIFI_OPERATION_DISCONNECT) {
             wifi_ap_record_t live_ap = {0};
@@ -391,9 +389,7 @@ static void app_wifi_operation_watch_task(void *parameter)
                 app_wifi_end_operation_if_generation(polled_generation)) {
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Live Wi-Fi poll confirmed station disconnection");
-                lcd_flash_info_to("Disconnected", "Wi-Fi is idle", 700U,
-                                  LCD_SCREEN_MENU);
-                app_wifi_schedule_menu_refresh(800U);
+                app_wifi_sync_menu_if_visible();
             }
         }
 
@@ -442,15 +438,11 @@ static void app_wifi_operation_watch_task(void *parameter)
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Wi-Fi callback was delayed; confirmed connected to '%s'",
                          timed_out_ssid);
-                lcd_flash_info_to("Connected", timed_out_ssid, 900U,
-                                  LCD_SCREEN_MENU);
-                app_wifi_schedule_menu_refresh(1000U);
+                app_wifi_sync_menu_if_visible();
             } else if (disconnection_really_succeeded) {
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Wi-Fi callback was delayed; station is disconnected");
-                lcd_flash_info_to("Disconnected", "Wi-Fi is idle", 700U,
-                                  LCD_SCREEN_MENU);
-                app_wifi_schedule_menu_refresh(800U);
+                app_wifi_sync_menu_if_visible();
             } else {
                 ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi operation timed out after %ums",
                          (unsigned)APP_WIFI_OPERATION_TIMEOUT_MS);
@@ -589,7 +581,8 @@ static void app_wifi_sync_menu_if_visible(void)
     LCD_LOCK();
     visible = (sys_lcd.screen == LCD_SCREEN_MENU) ||
               (sys_lcd.screen == LCD_SCREEN_FLASH_MSG &&
-               lcd_flash_is_active());
+               lcd_flash_is_active()) ||
+              (sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING);
     LCD_UNLOCK();
     if (!visible) {
         return;
@@ -1024,8 +1017,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         if (connected) {
             /* Confirmed station association + DHCP: acknowledge briefly and
              * return quickly to the live Wi-Fi menu. */
-            lcd_flash_info_to("Connected", ssid, 900U, LCD_SCREEN_MENU);
-            app_wifi_schedule_menu_refresh(1000U);
+            app_wifi_sync_menu_if_visible();
         } else {
             lcd_show_wifi_result(false, failed, false, ssid, operation_rssi,
                                  message != NULL ? message : "Connect failed");
@@ -1033,8 +1025,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         }
     } else if (operation == APP_WIFI_OPERATION_DISABLE ||
                operation == APP_WIFI_OPERATION_DISCONNECT) {
-        lcd_flash_info_to(message, "Wi-Fi updated", 1200U, LCD_SCREEN_MENU);
-        app_wifi_schedule_menu_refresh(1800U);
+        app_wifi_sync_menu_if_visible();
     } else if (failed) {
         lcd_flash_warning_to(message != NULL ? message : "Operation failed",
                              "Try again", 1500U, LCD_SCREEN_MENU);
@@ -1817,11 +1808,18 @@ const char *app_services_wifi_connect_action_label(void)
         operation = s_wifi_operation;
         xSemaphoreGive(s_services_mutex);
     }
-    if (operation == APP_WIFI_OPERATION_DISCONNECT) {
-        return "Disconnecting...";
-    }
-    if (operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
-        return "Connecting...";
+    if (operation == APP_WIFI_OPERATION_DISCONNECT ||
+        operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
+        static char animated_label[20];
+        const bool disconnecting = operation == APP_WIFI_OPERATION_DISCONNECT;
+        const unsigned dots = (unsigned)((esp_timer_get_time() / 350000LL) % 4LL);
+        const char *base = disconnecting ? "Disconnecting" : "Connecting";
+        const size_t base_len = strlen(base);
+        memcpy(animated_label, base, base_len);
+        for (unsigned i = 0U; i < dots; ++i)
+            animated_label[base_len + i] = '.';
+        animated_label[base_len + dots] = '\0';
+        return animated_label;
     }
 
     wifi_status_t status = {0};
@@ -1843,7 +1841,13 @@ const char *app_services_wifi_connect_action_label(void)
         (have_status && (status.state == WIFI_STATE_CONNECTING ||
                          status.state == WIFI_STATE_RECONNECTING)) ||
         station_associated) {
-        return "Connecting...";
+        static char auto_connect_label[16];
+        const unsigned dots = (unsigned)((esp_timer_get_time() / 350000LL) % 4LL);
+        memcpy(auto_connect_label, "Connecting", 10U);
+        for (unsigned i = 0U; i < dots; ++i)
+            auto_connect_label[10U + i] = '.';
+        auto_connect_label[10U + dots] = '\0';
+        return auto_connect_label;
     }
     return "Connect";
 }
