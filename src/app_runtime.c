@@ -1061,6 +1061,7 @@ typedef enum
     VALUE_TYPE_UTC_OFFSET,
     VALUE_TYPE_SET_TIME_HOUR,
     VALUE_TYPE_SET_TIME_MINUTE,
+    VALUE_TYPE_WIFI_AUTO_REC,
     VALUE_TYPE_COUNT
 } value_edit_param_t;
 
@@ -1214,6 +1215,7 @@ static void apply_current_limit(float v);
 static void apply_temperature_limit(float v);
 static void apply_battery_cutoff(float v);
 static void apply_wifi(float v);
+static void apply_wifi_auto_rec(float v);
 static void apply_bluetooth(float v);
 static void apply_auto_shutdown(float v);
 static void apply_scroll_enable(float v);
@@ -1442,6 +1444,15 @@ static value_edit_context_t value_edit[] = {
         .is_critical = false,
         .live_update = true,
         .apply = apply_wifi,
+    },
+    [VALUE_TYPE_WIFI_AUTO_REC] = {
+        .edit_type = VALUE_EDIT_BOOL,
+        .current_value = 1.0f,
+        .unit = "",
+        .label = "Wi-Fi Auto Rec",
+        .is_critical = false,
+        .live_update = false,
+        .apply = apply_wifi_auto_rec,
     },
     [VALUE_TYPE_TIMEOUT] = {
         .edit_type = VALUE_EDIT_NUMERIC,
@@ -1782,7 +1793,7 @@ esp_err_t init_hardware(void)
 }
 
 #define NVS_FLOAT_SCALE 100.0f
-#define NVS_SETTINGS_TXN_VERSION 2U
+#define NVS_SETTINGS_TXN_VERSION 3U
 #define NVS_SETTINGS_TXN_VALID_KEY "set_txn_ok"
 #define NVS_SETTINGS_TXN_GEN_KEY "set_txn_gen"
 #define NVS_SETTINGS_TXN_CRC_KEY "set_txn_crc"
@@ -1840,6 +1851,7 @@ static nvs_setting_t g_settings[] = {
     {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300000, false, "Sys Timeout", false, false},
     {"security_en", &sys_state.security.enabled, sizeof(uint8_t), 1, false, "Security Enable", false, true},
     {"bluetooth_en", &sys_state.bluetooth.enabled, sizeof(bool), 0, false, "Bluetooth", false, true},
+    {"wifi_auto_rec", &sys_state.wifi.auto_reconnect, sizeof(bool), 1, false, "Wi-Fi Auto Rec", false, true},
 };
 
 #define NVS_SETTINGS_COUNT (sizeof(g_settings) / sizeof(g_settings[0]))
@@ -1903,6 +1915,8 @@ static size_t settings_index_for_editor(const value_edit_context_t *ctx)
         return settings_index_for_key("man_min");
     if (ctx == &value_edit[VALUE_TYPE_BLUETOOTH])
         return settings_index_for_key("bluetooth_en");
+    if (ctx == &value_edit[VALUE_TYPE_WIFI_AUTO_REC])
+        return settings_index_for_key("wifi_auto_rec");
 
     /* Wi-Fi is intentionally excluded. Its ON/OFF transition is asynchronous
      * and app_services owns the radio operation and APP_WIFI_ENABLED_KEY
@@ -4085,6 +4099,10 @@ static void apply_wifi(float v)
         ESP_LOGW(APP_TAG, "Wi-Fi preference applied with error: %s", esp_err_to_name(err));
     }
 }
+static void apply_wifi_auto_rec(float v)
+{
+    sys_state.wifi.auto_reconnect = (v != 0.0f);
+}
 static void apply_bluetooth(float v) { sys_state.bluetooth.enabled = (bool)v; } /* adjust to your actual field */
 static void apply_auto_shutdown(float v) { sys_state.display.auto_shutdown_enabled = (uint8_t)v; }
 static void apply_scroll_enable(float v) { sys_state.display.scroll_enabled = (uint8_t)v; }
@@ -5366,6 +5384,24 @@ bool exit_value_edit_mode(bool save_changes)
         {
             ESP_LOGI("SETTINGS_APPLY", "committed %s", ctx->label);
             printf("Value saved successfully\n");
+
+            if (ctx == &value_edit[VALUE_TYPE_WIFI_AUTO_REC])
+            {
+                wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
+                if (sys_state.wifi.auto_reconnect &&
+                    sys_state.wifi.enabled &&
+                    !wifi_controller_is_connected() &&
+                    wifi_controller_get_state() != WIFI_CONTROLLER_CONNECTING)
+                {
+                    const esp_err_t connect_err = app_services_wifi_reconnect();
+                    if (connect_err != ESP_OK && connect_err != ESP_ERR_WIFI_CONN)
+                    {
+                        ESP_LOGW(APP_TAG,
+                                 "Auto-reconnect preference saved but immediate connect failed: %s",
+                                 esp_err_to_name(connect_err));
+                    }
+                }
+            }
         }
         else
         {
@@ -7255,6 +7291,12 @@ void edit_sound_enable(void)
 {
     begin_setting_edit(VALUE_TYPE_SOUND_ENABLE,
                        sys_state.sound_enabled ? 1.0f : 0.0f);
+}
+
+void edit_wifi_auto_rec(void)
+{
+    begin_setting_edit(VALUE_TYPE_WIFI_AUTO_REC,
+                       sys_state.wifi.auto_reconnect ? 1.0f : 0.0f);
 }
 
 void edit_quiet_hours_enable(void)
