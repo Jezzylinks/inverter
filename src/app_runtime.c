@@ -4418,10 +4418,13 @@ void lcd_draw_diagnostics_screen(uint8_t index)
         const size_t heap_free_raw = heap_caps_get_free_size(MALLOC_CAP_8BIT);
         const size_t heap_free = heap_free_raw > heap_total ? heap_total : heap_free_raw;
         const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-        const unsigned used_percent = heap_total > 0U
-                                          ? (unsigned)(((heap_total - heap_free) * 100U) /
-                                                       heap_total)
-                                          : 0U;
+        const unsigned used_percent_raw = heap_total > 0U
+                                              ? (unsigned)(((heap_total - heap_free) * 100U) /
+                                                           heap_total)
+                                              : 0U;
+        const unsigned used_percent = used_percent_raw > 100U
+                                          ? 100U
+                                          : used_percent_raw;
 
         if (lcd_geometry_is_20x4())
         {
