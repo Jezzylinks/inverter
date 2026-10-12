@@ -333,6 +333,7 @@ static void app_wifi_prerequisite_task(void *parameter)
 }
 
 static bool app_wifi_operation_pending(void);
+static bool app_wifi_ui_animation_active(void);
 static void app_wifi_sync_menu_if_visible(void);
 
 static void app_wifi_operation_watch_task(void *parameter)
