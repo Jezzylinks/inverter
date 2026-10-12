@@ -473,7 +473,17 @@ static void app_wifi_operation_watch_task(void *parameter)
             xSemaphoreGive(sys_state_mutex);
         }
 
-        if (screen == LCD_SCREEN_MENU && menu_state == MENU_WIFI_CONFIG) {
+        /*
+         * The connect action can temporarily replace the menu with the
+         * LCD_SCREEN_WIFI_CONNECTING screen. Keep reconciling while that
+         * screen is active too; otherwise the menu watcher stops observing
+         * the label transition and the user must press UP/DOWN to redraw it.
+         * Re-rendering the menu restores the current selection and lets the
+         * next poll animate the label until the operation finishes.
+         */
+        if ((screen == LCD_SCREEN_MENU ||
+             screen == LCD_SCREEN_WIFI_CONNECTING) &&
+            menu_state == MENU_WIFI_CONFIG) {
             const char *connect_label = app_services_wifi_connect_action_label();
             const bool wifi_enabled = app_services_wifi_enabled();
             if (!have_menu_snapshot ||
