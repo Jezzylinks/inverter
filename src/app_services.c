@@ -353,7 +353,7 @@ static void app_wifi_operation_watch_task(void *parameter)
          * a button causes the menu to be redrawn. Poll at 100 ms while either
          * the explicit operation or the live station state is transitioning.
          */
-        vTaskDelay(pdMS_TO_TICKS(app_wifi_ui_animation_active() ? 100U : 1000U));
+        vTaskDelay(pdMS_TO_TICKS(app_wifi_ui_animation_active() ? 100U : 250U));
 
         /* Poll the live station/DHCP handshake while an operation is active.
          * Do not depend exclusively on an event callback to finish the
