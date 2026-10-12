@@ -987,7 +987,6 @@ void select_battery_type(button_id_t btn)
 {
     static battery_chemistry_t selected = BATTERY_AGM;
     static bool updated = true;
-    char display_char[20];
 
     switch (btn)
     {
