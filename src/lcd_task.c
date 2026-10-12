@@ -419,8 +419,7 @@ static void draw_detail(const lcd_detail_data_t *d)
 {
     if (lcd_geometry_is_20x4())
     {
-        const char *rows[] = {d->label, d->value_str,
-                              "UP/DN  More", "BACK    Return"};
+        const char *rows[] = {d->label, d->value_str, d->row2, d->row3};
         draw_commit_rows(rows);
     }
     else
@@ -432,8 +431,7 @@ static void draw_confirm(const lcd_two_line_t *d)
 {
     if (lcd_geometry_is_20x4())
     {
-        const char *rows[] = {d->row0, d->row1,
-                              "ENTER   Confirm", "BACK    Cancel"};
+        const char *rows[] = {d->row0, d->row1, "", ""};
         draw_commit_rows(rows);
     }
     else
@@ -448,8 +446,7 @@ static void draw_value_edit(const lcd_value_edit_data_t *d)
     static int64_t last_blink_time_ms = 0;
     if (lcd_geometry_is_20x4())
     {
-        const char *rows[] = {d->label, d->value_str,
-                              "UP/DN   Change", "ENTER   Save  BACK"};
+        const char *rows[] = {d->label, d->value_str, "", ""};
         draw_commit_rows(rows);
     }
     else
@@ -1437,7 +1434,7 @@ static void draw_wifi_password(const lcd_wifi_password_data_t *d)
         snprintf(rows[0], LCD_LINE_SIZE, "%-20.20s", positions);
         snprintf(rows[1], LCD_LINE_SIZE, "P:%02u C:%c HOLD=GO", position, current);
         snprintf(rows[2], LCD_LINE_SIZE, "SSID:%-15.15s", d->ssid);
-        snprintf(rows[3], LCD_LINE_SIZE, "UP/DN CHAR HOLD=GO");
+        snprintf(rows[3], LCD_LINE_SIZE, "");
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
         draw_commit_rows(row_ptrs);
     }
@@ -1460,7 +1457,7 @@ static void draw_wifi_status(const lcd_wifi_status_data_t *d)
             snprintf(rows[0], LCD_LINE_SIZE, "WI-FI STATUS");
             snprintf(rows[1], LCD_LINE_SIZE, "State: %-13.13s", d->state);
             snprintf(rows[2], LCD_LINE_SIZE, "SSID: %-14.14s", d->ssid);
-            snprintf(rows[3], LCD_LINE_SIZE, "ENTER NEXT BACK EXIT");
+            snprintf(rows[3], LCD_LINE_SIZE, "");
             break;
         case 1:
             snprintf(rows[0], LCD_LINE_SIZE, "IP: %-16.16s", d->ip);
@@ -1514,11 +1511,11 @@ static void draw_wifi_clients(const lcd_wifi_clients_data_t *d)
     {
         if (lcd_geometry_is_20x4())
         {
-            draw_commit_rows((const char *[]){"AP CLIENTS: 0", "No devices", "BACK Return", ""});
+            draw_commit_rows((const char *[]){"AP CLIENTS: 0", "No devices", "", ""});
         }
         else
         {
-            draw_commit("AP CLIENTS: 0", "BACK Return");
+            draw_commit("AP CLIENTS: 0", "");
         }
         return;
     }
@@ -1545,7 +1542,7 @@ static void draw_wifi_clients(const lcd_wifi_clients_data_t *d)
     {
         char row0[LCD_LINE_SIZE];
         snprintf(row0, LCD_LINE_SIZE, ">%-.15s", d->mac[d->selected]);
-        draw_commit(row0, "UP/DN SEL ENT DEL");
+        draw_commit(row0, "");
     }
 }
 
@@ -1572,7 +1569,7 @@ static void draw_wifi_connecting(const lcd_wifi_connect_data_t *d)
             snprintf(rows[1], LCD_LINE_SIZE, "FAILED: %-12.12s",
                      d->detail[0] ? d->detail : "Try again");
             snprintf(rows[2], LCD_LINE_SIZE, "RSSI: %4d dBm", (int)d->rssi);
-            snprintf(rows[3], LCD_LINE_SIZE, "BACK TO RETURN");
+            snprintf(rows[3], LCD_LINE_SIZE, "");
         }
         else if (d->timed_out)
         {
