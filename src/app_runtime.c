@@ -3508,6 +3508,7 @@ void reload_default_settings(void)
     sys_state.system_timeout = 60;
 
     sys_state.wifi.enabled = false;
+    sys_state.wifi.auto_reconnect = true;
     sys_state.wifi.ssid[0] = '\0';
     sys_state.wifi.password[0] = '\0';
 
@@ -4424,8 +4425,6 @@ void lcd_draw_diagnostics_screen(uint8_t index)
 
         if (lcd_geometry_is_20x4())
         {
-            /* Keep both values bounded to four digits so the output is
-             * guaranteed to fit the 20-character LCD row. */
             const size_t free_kb_raw = heap_free / 1024U;
             const size_t largest_kb_raw = largest / 1024U;
             const unsigned free_kb = free_kb_raw > 9999U
@@ -4434,14 +4433,30 @@ void lcd_draw_diagnostics_screen(uint8_t index)
             const unsigned largest_kb = largest_kb_raw > 9999U
                                             ? 9999U
                                             : (unsigned)largest_kb_raw;
+            char detailed_row[48];
+            const int detailed_len = snprintf(
+                detailed_row, sizeof(detailed_row),
+                "F:%uK M:%uK RAM:%u%%", free_kb, largest_kb, used_percent);
 
-            snprintf(row1, LCD_LINE_SIZE, "F:%uK M:%uK",
-                     free_kb, largest_kb);
+            /* Include RAM usage at the end of row 2 whenever the free and
+             * largest-block figures fit. If the values are too wide, retain
+             * free memory and RAM percentage in a guaranteed 20-column row. */
+            if (detailed_len >= 0 && detailed_len <= LCD_COLS)
+            {
+                snprintf(row1, LCD_LINE_SIZE, "%s", detailed_row);
+            }
+            else
+            {
+                snprintf(row1, LCD_LINE_SIZE, "Free:%uK RAM:%u%%",
+                         free_kb, used_percent);
+            }
         }
         else
         {
-            snprintf(row1, LCD_LINE_SIZE, "F:%uK U:%u%%",
-                     (unsigned)(heap_free / 1024U), used_percent);
+            /* On 16x2 the full RAM label takes priority over the abbreviated
+             * U: indicator while keeping the free-memory value visible. */
+            snprintf(row1, LCD_LINE_SIZE, "RAM:%u%% F:%uK",
+                     used_percent, (unsigned)(heap_free / 1024U));
         }
         break;
     }
