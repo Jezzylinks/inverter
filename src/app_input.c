@@ -35,21 +35,19 @@
 
 extern system_state_t sys_state;
 
-/* A PIN flow must not consume navigation keys while its reminder/feedback
- * flash is visible. The flash queue owns the display until its expiry. */
-static bool security_flash_message_blocks_input(void)
+/* A timed flash notification owns the LCD until it expires. Ignore all
+ * navigation input during that interval so a save confirmation cannot be
+ * overwritten or accidentally navigate away before the user sees it. */
+static bool flash_message_blocks_input(void)
 {
-    if (sys_state.menu_state != MENU_SECURITY ||
-        atomic_load(&sys_lcd.security.phase) != SECURITY_PHASE_PIN_FLOW)
-    {
+    if (!lcd_flash_is_active())
         return false;
-    }
 
     bool flash_screen;
     LCD_LOCK();
     flash_screen = (sys_lcd.screen == LCD_SCREEN_FLASH_MSG);
     LCD_UNLOCK();
-    return flash_screen && lcd_flash_is_active();
+    return flash_screen;
 }
 
 static void log_button_callback(const char *name,
@@ -648,7 +646,7 @@ void handle_power_button_event(button_event_info_t *event_info,
         return;
     }
 
-    if (security_flash_message_blocks_input())
+    if (flash_message_blocks_input())
     {
         return;
     }
@@ -1850,7 +1848,7 @@ void handle_up_button_event(button_event_info_t *event_info,
         return;
     }
 
-    if (security_flash_message_blocks_input())
+    if (flash_message_blocks_input())
     {
         return;
     }
@@ -2162,7 +2160,7 @@ void handle_down_button_event(button_event_info_t *event_info,
         return;
     }
 
-    if (security_flash_message_blocks_input())
+    if (flash_message_blocks_input())
     {
         return;
     }
@@ -2488,7 +2486,7 @@ void handle_back_button_event(button_event_info_t *event_info,
         return;
     }
 
-    if (security_flash_message_blocks_input())
+    if (flash_message_blocks_input())
     {
         return;
     }
