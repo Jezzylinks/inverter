@@ -64,6 +64,10 @@ extern "C"
      */
     esp_err_t wifi_controller_start(void);
 
+    /** Enable or disable automatic saved-station reconnects. Manual connect
+     * requests remain available when this preference is disabled. */
+    void wifi_controller_set_auto_connect(bool enabled);
+
     /**
      * @brief Stop Wi-Fi system
      */
