@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <strings.h>
 
 #include "esp_log.h"
@@ -49,7 +50,7 @@
 #define APP_OTA_TASK_STACK_SIZE 4096U
 #define APP_OTA_CHECK_TASK_STACK_SIZE 6144U
 #define APP_OTA_CHECK_TASK_PRIORITY 5U
-#define APP_WIFI_OPERATION_WATCH_STACK_SIZE 3072U
+#define APP_WIFI_OPERATION_WATCH_STACK_SIZE 4096U
 #define APP_WIFI_OPERATION_WATCH_PRIORITY 5U
 /* This task's call chain runs the full Wi-Fi driver start/stop path
  * (wifi_controller_start/stop -> wifi_manager -> esp_wifi_*) and, on
@@ -332,9 +333,30 @@ static void app_wifi_prerequisite_task(void *parameter)
     }
 }
 
-static bool app_wifi_operation_pending(void);
 static bool app_wifi_ui_animation_active(void);
 static void app_wifi_sync_menu_if_visible(void);
+
+/* Single authoritative UI view of the Wi-Fi action label. It is derived from
+ * the live operation/controller/event/driver state in app_wifi_ui_state();
+ * nothing else decides what the Connect/Disconnect item shows. */
+typedef enum {
+    APP_WIFI_UI_CONNECT = 0,
+    APP_WIFI_UI_CONNECTING,
+    APP_WIFI_UI_DISCONNECT,
+    APP_WIFI_UI_DISCONNECTING,
+} app_wifi_ui_state_t;
+
+#define APP_WIFI_ANIM_STEP_MS        400U  /* one dot phase                  */
+#define APP_WIFI_ANIM_PHASES         3U    /* ".", "..", "..."               */
+#define APP_WIFI_DISCONNECT_MIN_MS   900U  /* keep "Disconnecting" visible   */
+
+/* Animation phase owned by the watcher task; read by label renderers. */
+static uint8_t s_wifi_anim_phase;
+
+static app_wifi_ui_state_t app_wifi_ui_state(void);
+static bool app_wifi_menu_snapshot_stale(const char *want);
+static void app_wifi_notify_watcher(void);
+static esp_err_t app_wifi_ensure_watcher(void);
 
 static void app_wifi_operation_watch_task(void *parameter)
 {
@@ -344,6 +366,8 @@ static void app_wifi_operation_watch_task(void *parameter)
     bool last_wifi_enabled = false;
     bool have_menu_snapshot = false;
     TickType_t last_rssi_poll = 0U;
+    TickType_t last_phase_tick = xTaskGetTickCount();
+    app_wifi_ui_state_t last_ui_state = APP_WIFI_UI_CONNECT;
 
     while (true) {
         /*
@@ -353,7 +377,10 @@ static void app_wifi_operation_watch_task(void *parameter)
          * a button causes the menu to be redrawn. Poll at 100 ms while either
          * the explicit operation or the live station state is transitioning.
          */
-        vTaskDelay(pdMS_TO_TICKS(app_wifi_ui_animation_active() ? 100U : 250U));
+        /* Wake early when an operation starts/ends; otherwise the timeout is
+         * only the animation/reconciliation cadence. */
+        (void)ulTaskNotifyTake(pdTRUE,
+            pdMS_TO_TICKS(app_wifi_ui_animation_active() ? 100U : 250U));
 
         /* Poll the live station/DHCP handshake while an operation is active.
          * Do not depend exclusively on an event callback to finish the
@@ -461,8 +488,27 @@ static void app_wifi_operation_watch_task(void *parameter)
             }
         }
 
-        /* Poll the actual station state every second. Redraw only when the
-         * action label changes, avoiding a full-screen LCD flash every cycle. */
+        /* Advance the animation phase from real state: restart only when the
+         * UI state changes, step every APP_WIFI_ANIM_STEP_MS while animating. */
+        const app_wifi_ui_state_t ui_state = app_wifi_ui_state();
+        const bool animating = ui_state == APP_WIFI_UI_CONNECTING ||
+                               ui_state == APP_WIFI_UI_DISCONNECTING;
+        const TickType_t phase_now = xTaskGetTickCount();
+        if (ui_state != last_ui_state) {
+            last_ui_state = ui_state;
+            last_phase_tick = phase_now;
+            __atomic_store_n(&s_wifi_anim_phase, 0U, __ATOMIC_RELAXED);
+        } else if (animating &&
+                   (TickType_t)(phase_now - last_phase_tick) >=
+                       pdMS_TO_TICKS(APP_WIFI_ANIM_STEP_MS)) {
+            last_phase_tick = phase_now;
+            const uint8_t phase =
+                __atomic_load_n(&s_wifi_anim_phase, __ATOMIC_RELAXED);
+            __atomic_store_n(&s_wifi_anim_phase,
+                             (uint8_t)((phase + 1U) % APP_WIFI_ANIM_PHASES),
+                             __ATOMIC_RELAXED);
+        }
+
         lcd_screen_id_t screen;
         LCD_LOCK();
         screen = sys_lcd.screen;
@@ -480,21 +526,20 @@ static void app_wifi_operation_watch_task(void *parameter)
         }
 
         /*
-         * The connect action can temporarily replace the menu with the
-         * LCD_SCREEN_WIFI_CONNECTING screen. Keep reconciling while that
-         * screen is active too; otherwise the menu watcher stops observing
-         * the label transition and the user must press UP/DOWN to redraw it.
-         * Re-rendering the menu restores the current selection and lets the
-         * next poll animate the label until the operation finishes.
+         * Only redraw while the menu itself owns the LCD. Full-screen Wi-Fi
+         * result/connecting screens and flash messages own the display until
+         * they expire; overwriting them here was a competing writer. When the
+         * LCD returns to LCD_SCREEN_MENU its snapshot may be stale, so compare
+         * the snapshot itself (not a private cached string) with the label
+         * that should be shown.
          */
-        if ((screen == LCD_SCREEN_MENU ||
-             screen == LCD_SCREEN_WIFI_CONNECTING) &&
-            menu_state == MENU_WIFI_CONFIG) {
+        if (screen == LCD_SCREEN_MENU && menu_state == MENU_WIFI_CONFIG) {
             const char *connect_label = app_services_wifi_connect_action_label();
             const bool wifi_enabled = app_services_wifi_enabled();
             if (!have_menu_snapshot ||
                 strcmp(last_connect_label, connect_label) != 0 ||
-                last_wifi_enabled != wifi_enabled) {
+                last_wifi_enabled != wifi_enabled ||
+                app_wifi_menu_snapshot_stale(connect_label)) {
                 strncpy(last_connect_label, connect_label,
                         sizeof(last_connect_label) - 1U);
                 last_connect_label[sizeof(last_connect_label) - 1U] = '\0';
@@ -544,6 +589,7 @@ static void app_wifi_begin_operation(app_wifi_operation_t operation,
         s_wifi_operation_ssid[sizeof(s_wifi_operation_ssid) - 1U] = '\0';
     }
     xSemaphoreGive(s_services_mutex);
+    app_wifi_notify_watcher();
 }
 
 static void app_wifi_end_operation(void)
@@ -556,6 +602,7 @@ static void app_wifi_end_operation(void)
     s_wifi_operation_ssid[0] = '\0';
     s_wifi_operation_rssi = -127;
     xSemaphoreGive(s_services_mutex);
+    app_wifi_notify_watcher();
 }
 
 /* End a monitor-reported operation only if it is still the operation whose
@@ -568,50 +615,136 @@ static bool app_wifi_end_operation_if_generation(uint32_t generation)
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    const bool matches = (s_wifi_operation != APP_WIFI_OPERATION_NONE) &&
-                         (s_wifi_operation_generation == generation);
+    bool matches = (s_wifi_operation != APP_WIFI_OPERATION_NONE) &&
+                   (s_wifi_operation_generation == generation);
+    /* Keep "Disconnecting" on screen long enough to be seen. The watcher
+     * keeps polling the live station state and ends it afterwards. */
+    if (matches && s_wifi_operation == APP_WIFI_OPERATION_DISCONNECT &&
+        (uint32_t)(xTaskGetTickCount() - s_wifi_operation_started_tick) <
+            pdMS_TO_TICKS(APP_WIFI_DISCONNECT_MIN_MS)) {
+        matches = false;
+    }
     if (matches) {
         s_wifi_operation = APP_WIFI_OPERATION_NONE;
         s_wifi_operation_ssid[0] = '\0';
         s_wifi_operation_rssi = -127;
     }
     xSemaphoreGive(s_services_mutex);
+    if (matches) {
+        app_wifi_notify_watcher();
+    }
     return matches;
 }
 
-static bool app_wifi_operation_pending(void)
+static app_wifi_ui_state_t app_wifi_ui_state(void)
 {
-    if (s_services_mutex == NULL) {
-        return false;
+    app_wifi_operation_t operation = APP_WIFI_OPERATION_NONE;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        operation = s_wifi_operation;
+        xSemaphoreGive(s_services_mutex);
     }
-    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    const bool pending = s_wifi_operation != APP_WIFI_OPERATION_NONE;
-    xSemaphoreGive(s_services_mutex);
-    return pending;
-}
-
-/*
- * Include controller/event-driven station transitions, not just app-owned
- * operations. Enabling Wi-Fi may trigger an automatic saved-network reconnect
- * without setting s_wifi_operation to CONNECT_SAVED, so checking only the
- * operation flag leaves the UI watcher at its 1-second idle interval.
- */
-static bool app_wifi_ui_animation_active(void)
-{
-    if (app_wifi_operation_pending()) {
-        return true;
+    if (operation == APP_WIFI_OPERATION_DISCONNECT) {
+        return APP_WIFI_UI_DISCONNECTING;
     }
-
-    const wifi_controller_state_t controller_state = wifi_controller_get_state();
-    if (controller_state == WIFI_CONTROLLER_STARTING ||
-        controller_state == WIFI_CONTROLLER_CONNECTING) {
-        return true;
+    if (operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
+        return APP_WIFI_UI_CONNECTING;
     }
 
     wifi_status_t status = {0};
-    return wifi_events_get_status_copy(&status) == ESP_OK &&
-           (status.state == WIFI_STATE_CONNECTING ||
-            status.state == WIFI_STATE_RECONNECTING);
+    const bool have_status = wifi_events_get_status_copy(&status) == ESP_OK;
+    const wifi_controller_state_t controller_state = wifi_controller_get_state();
+    wifi_ap_record_t active_ap = {0};
+    const bool station_associated =
+        esp_wifi_sta_get_ap_info(&active_ap) == ESP_OK;
+    const bool got_ip = have_status && status.got_ip;
+
+    /* Connected requires IP + driver association + controller agreement. */
+    if (got_ip && station_associated && wifi_controller_is_connected()) {
+        return APP_WIFI_UI_DISCONNECT;
+    }
+    /* In progress: controller/event transition, or associated but DHCP not
+     * finished. Association alone with an IP is not "connecting". */
+    if (controller_state == WIFI_CONTROLLER_CONNECTING ||
+        controller_state == WIFI_CONTROLLER_STARTING ||
+        (have_status && (status.state == WIFI_STATE_CONNECTING ||
+                         status.state == WIFI_STATE_RECONNECTING)) ||
+        (station_associated && !got_ip)) {
+        return APP_WIFI_UI_CONNECTING;
+    }
+    return APP_WIFI_UI_CONNECT;
+}
+
+static bool app_wifi_ui_animation_active(void)
+{
+    const app_wifi_ui_state_t state = app_wifi_ui_state();
+    return state == APP_WIFI_UI_CONNECTING ||
+           state == APP_WIFI_UI_DISCONNECTING;
+}
+
+/* True when the menu snapshot shows a Connect-family label that differs
+ * from `want`. If no such label is on a visible row (item scrolled out of
+ * view) there is nothing to correct. Tokens are matched exactly so
+ * "Connecting." is not mistaken for "Connecting..". */
+static bool app_wifi_menu_snapshot_stale(const char *want)
+{
+    static const char *const labels[] = {
+        "Connect", "Disconnect",
+        "Connecting.", "Connecting..", "Connecting...",
+        "Disconnecting.", "Disconnecting..", "Disconnecting...",
+    };
+    const char *found = NULL;
+
+    LCD_LOCK();
+    for (uint8_t row = 0U; row < LCD_ROWS && found == NULL; ++row) {
+        const char *text = sys_lcd.menu.rows[row];
+        for (size_t i = 0U; i < sizeof(labels) / sizeof(labels[0]); ++i) {
+            const size_t len = strlen(labels[i]);
+            for (const char *at = strstr(text, labels[i]); at != NULL;
+                 at = strstr(at + 1, labels[i])) {
+                const char before = (at == text) ? ' ' : at[-1];
+                const char after = at[len];
+                if (!isalnum((unsigned char)before) &&
+                    !isalnum((unsigned char)after) && after != '.') {
+                    found = labels[i];
+                    break;
+                }
+            }
+            if (found != NULL) {
+                break;
+            }
+        }
+    }
+    const bool stale = (found != NULL) && (strcmp(found, want) != 0);
+    LCD_UNLOCK();
+    return stale;
+}
+
+static void app_wifi_notify_watcher(void)
+{
+    if (s_wifi_operation_watch_task != NULL) {
+        xTaskNotifyGive(s_wifi_operation_watch_task);
+    }
+}
+
+static esp_err_t app_wifi_ensure_watcher(void)
+{
+    if (s_wifi_operation_watch_task != NULL) {
+        return ESP_OK;
+    }
+    if (xTaskCreatePinnedToCore(app_wifi_operation_watch_task,
+                                "wifi_op_watch",
+                                APP_WIFI_OPERATION_WATCH_STACK_SIZE,
+                                NULL,
+                                APP_WIFI_OPERATION_WATCH_PRIORITY,
+                                &s_wifi_operation_watch_task,
+                                APP_CORE_SYSTEM) != pdPASS) {
+        s_wifi_operation_watch_task = NULL;
+        ESP_LOGW(APP_SERVICES_TAG, "Could not create Wi-Fi operation watcher");
+        return ESP_ERR_NO_MEM;
+    }
+    task_watchdog_register_health_only("wifi_op_watch");
+    return ESP_OK;
 }
 
 static void app_wifi_sync_menu_if_visible(void)
@@ -621,10 +754,11 @@ static void app_wifi_sync_menu_if_visible(void)
     bool visible;
 
     LCD_LOCK();
+    /* LCD_SCREEN_WIFI_CONNECTING owns the display (connect/result view) and
+     * returns to the menu itself; the watcher repairs the stale snapshot then. */
     visible = (sys_lcd.screen == LCD_SCREEN_MENU) ||
               (sys_lcd.screen == LCD_SCREEN_FLASH_MSG &&
-               lcd_flash_is_active()) ||
-              (sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING);
+               lcd_flash_is_active());
     LCD_UNLOCK();
     if (!visible) {
         return;
@@ -1495,23 +1629,7 @@ esp_err_t app_services_init(void)
         }
         task_watchdog_register_health_only("wifi_toggle");
     }
-    if (!s_wifi_operation_watch_task)
-    {
-        if (xTaskCreatePinnedToCore(app_wifi_operation_watch_task,
-                        "wifi_op_watch",
-                        APP_WIFI_OPERATION_WATCH_STACK_SIZE,
-                        NULL,
-                        APP_WIFI_OPERATION_WATCH_PRIORITY,
-                        &s_wifi_operation_watch_task, APP_CORE_SYSTEM) != pdPASS)
-        {
-            s_wifi_operation_watch_task = NULL;
-            ESP_LOGW(APP_SERVICES_TAG, "Could not create Wi-Fi operation watcher");
-        }
-        else
-        {
-            task_watchdog_register_health_only("wifi_op_watch");
-        }
-    }
+    (void)app_wifi_ensure_watcher();
     if (!s_wifi_prerequisite_task)
     {
         if (xTaskCreatePinnedToCore(app_wifi_prerequisite_task,
@@ -1572,6 +1690,9 @@ esp_err_t app_services_wifi_toggle_init(void)
     } else {
         wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
     }
+    /* The label watcher must exist even when broader services are suppressed
+     * after a failed POST; it only reads state and redraws the Wi-Fi menu. */
+    (void)app_wifi_ensure_watcher();
     return controller_err;
 }
 
@@ -1835,59 +1956,31 @@ bool app_services_wifi_mode_edit_active(void)
 
 const char *app_services_wifi_connect_action_label(void)
 {
-    const wifi_mode_t mode = wifi_manager_get_mode();
-    if (mode == WIFI_MODE_AP) {
+    static const char *const k_connecting[APP_WIFI_ANIM_PHASES] = {
+        "Connecting.", "Connecting..", "Connecting..."};
+    static const char *const k_disconnecting[APP_WIFI_ANIM_PHASES] = {
+        "Disconnecting.", "Disconnecting..", "Disconnecting..."};
+
+    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
         return "AP Clients";
     }
 
-    app_wifi_operation_t operation = APP_WIFI_OPERATION_NONE;
-    if (s_services_mutex != NULL) {
-        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-        operation = s_wifi_operation;
-        xSemaphoreGive(s_services_mutex);
-    }
-    if (operation == APP_WIFI_OPERATION_DISCONNECT ||
-        operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
-        static char animated_label[20];
-        const bool disconnecting = operation == APP_WIFI_OPERATION_DISCONNECT;
-        const unsigned dots = (unsigned)((esp_timer_get_time() / 350000LL) % 4LL);
-        const char *base = disconnecting ? "Disconnecting" : "Connecting";
-        const size_t base_len = strlen(base);
-        memcpy(animated_label, base, base_len);
-        for (unsigned i = 0U; i < dots; ++i)
-            animated_label[base_len + i] = '.';
-        animated_label[base_len + dots] = '\0';
-        return animated_label;
-    }
-
-    wifi_status_t status = {0};
-    const bool have_status = wifi_events_get_status_copy(&status) == ESP_OK;
-    const wifi_controller_state_t controller_state = wifi_controller_get_state();
-
-    /* Reconcile event snapshots against the live driver state. In APSTA,
-     * the AP can remain active while station state changes, so AP_ACTIVE
-     * alone must never be treated as station disconnection. */
-    wifi_ap_record_t active_ap = {0};
-    const bool station_associated =
-        esp_wifi_sta_get_ap_info(&active_ap) == ESP_OK;
-    if (have_status && status.got_ip && station_associated &&
-        wifi_controller_is_connected()) {
+    /* All labels are string literals: no shared mutable buffer, so concurrent
+     * callers (watcher, menu renderer, input task) cannot tear each other. */
+    const uint8_t phase =
+        __atomic_load_n(&s_wifi_anim_phase, __ATOMIC_RELAXED) %
+        APP_WIFI_ANIM_PHASES;
+    switch (app_wifi_ui_state()) {
+    case APP_WIFI_UI_DISCONNECTING:
+        return k_disconnecting[phase];
+    case APP_WIFI_UI_CONNECTING:
+        return k_connecting[phase];
+    case APP_WIFI_UI_DISCONNECT:
         return "Disconnect";
+    case APP_WIFI_UI_CONNECT:
+    default:
+        return "Connect";
     }
-    if (controller_state == WIFI_CONTROLLER_CONNECTING ||
-        controller_state == WIFI_CONTROLLER_STARTING ||
-        (have_status && (status.state == WIFI_STATE_CONNECTING ||
-                         status.state == WIFI_STATE_RECONNECTING)) ||
-        station_associated) {
-        static char auto_connect_label[16];
-        const unsigned dots = (unsigned)((esp_timer_get_time() / 350000LL) % 4LL);
-        memcpy(auto_connect_label, "Connecting", 10U);
-        for (unsigned i = 0U; i < dots; ++i)
-            auto_connect_label[10U + i] = '.';
-        auto_connect_label[10U + dots] = '\0';
-        return auto_connect_label;
-    }
-    return "Connect";
 }
 
 const char *app_services_wifi_secondary_action_label(void)
@@ -2247,10 +2340,9 @@ esp_err_t app_services_wifi_disconnect(void)
     if (err != ESP_OK) {
         app_wifi_end_operation();
         lcd_show_wifi_result(false, true, false, "", -127, "Disconnect failed");
-    } else if (!wifi_controller_is_connected() && app_wifi_operation_pending()) {
-        app_wifi_end_operation();
-        app_wifi_sync_menu_if_visible();
     }
+    /* Otherwise the watcher confirms the live station state and ends the
+     * operation after the minimum visible time. */
     return err;
 }
 
