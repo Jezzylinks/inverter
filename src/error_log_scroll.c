@@ -154,8 +154,8 @@ void error_log_scroll_update_display(void)
                      (unsigned)(s_cursor + 1U), (unsigned)s_count);
             snprintf(row1, sizeof(row1), "E%02u %-*.*s",
                      (unsigned)(entry->error_code + 1U),
-                     LCD_COLS > 4U ? LCD_COLS - 4U : 1U,
-                     LCD_COLS > 4U ? LCD_COLS - 4U : 1U,
+                     (int)(LCD_COLS > 4U ? LCD_COLS - 4U : 1U),
+                     (int)(LCD_COLS > 4U ? LCD_COLS - 4U : 1U),
                      entry->description[0] ? entry->description : "Unknown event");
         }
     }
