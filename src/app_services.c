@@ -342,8 +342,59 @@ static void app_wifi_operation_watch_task(void *parameter)
 
     while (true) {
         /* One-second polling is fast enough for an interactive character LCD
-         * and lets the menu recover even if a Wi-Fi event callback was missed. */
+         * and lets the UI recover even if a Wi-Fi event callback was missed. */
         vTaskDelay(pdMS_TO_TICKS(1000U));
+
+        /* Poll the live station/DHCP handshake while an operation is active.
+         * Do not depend exclusively on an event callback to finish the
+         * Connecting/Disconnecting state. Generation checks arbitrate with a
+         * callback that may complete concurrently. */
+        app_wifi_operation_t polled_operation = APP_WIFI_OPERATION_NONE;
+        uint32_t polled_generation = 0U;
+        char polled_ssid[sizeof(s_wifi_operation_ssid)] = {0};
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        polled_operation = s_wifi_operation;
+        polled_generation = s_wifi_operation_generation;
+        strncpy(polled_ssid, s_wifi_operation_ssid, sizeof(polled_ssid) - 1U);
+        xSemaphoreGive(s_services_mutex);
+
+        if (polled_operation == APP_WIFI_OPERATION_CONNECT_SAVED &&
+            polled_ssid[0] != '\0') {
+            wifi_status_t live_status = {0};
+            wifi_ap_record_t live_ap = {0};
+            const bool got_ip =
+                wifi_events_get_status_copy(&live_status) == ESP_OK &&
+                live_status.got_ip;
+            const bool ap_matches =
+                esp_wifi_sta_get_ap_info(&live_ap) == ESP_OK &&
+                strncmp((const char *)live_ap.ssid, polled_ssid,
+                        sizeof(live_ap.ssid)) == 0;
+            if (got_ip && ap_matches &&
+                app_wifi_end_operation_if_generation(polled_generation)) {
+                ESP_LOGI(APP_SERVICES_TAG,
+                         "Live Wi-Fi poll confirmed connection to '%s'",
+                         polled_ssid);
+                lcd_flash_info_to("Connected", polled_ssid, 900U,
+                                  LCD_SCREEN_MENU);
+                app_wifi_schedule_menu_refresh(1000U);
+            }
+        } else if (polled_operation == APP_WIFI_OPERATION_DISCONNECT) {
+            wifi_status_t live_status = {0};
+            wifi_ap_record_t live_ap = {0};
+            const bool have_status =
+                wifi_events_get_status_copy(&live_status) == ESP_OK;
+            const bool station_gone =
+                esp_wifi_sta_get_ap_info(&live_ap) != ESP_OK;
+            if (have_status && !live_status.connected && !live_status.got_ip &&
+                station_gone &&
+                app_wifi_end_operation_if_generation(polled_generation)) {
+                ESP_LOGI(APP_SERVICES_TAG,
+                         "Live Wi-Fi poll confirmed station disconnection");
+                lcd_flash_info_to("Disconnected", "Wi-Fi is idle", 700U,
+                                  LCD_SCREEN_MENU);
+                app_wifi_schedule_menu_refresh(800U);
+            }
+        }
 
         bool timed_out = false;
         app_wifi_operation_t timed_out_operation = APP_WIFI_OPERATION_NONE;
