@@ -345,9 +345,14 @@ static void app_wifi_operation_watch_task(void *parameter)
     TickType_t last_rssi_poll = 0U;
 
     while (true) {
-        /* Poll faster during connect/disconnect so the animated state and
-         * final menu label respond promptly; idle monitoring remains 1 second. */
-        vTaskDelay(pdMS_TO_TICKS(app_wifi_operation_pending() ? 250U : 1000U));
+        /*
+         * The menu label also animates during controller-driven auto-reconnect,
+         * when s_wifi_operation is NONE. Polling only once per second in that
+         * case skips animation phases and makes dots appear to jump whenever
+         * a button causes the menu to be redrawn. Poll at 100 ms while either
+         * the explicit operation or the live station state is transitioning.
+         */
+        vTaskDelay(pdMS_TO_TICKS(app_wifi_ui_animation_active() ? 100U : 1000U));
 
         /* Poll the live station/DHCP handshake while an operation is active.
          * Do not depend exclusively on an event callback to finish the
@@ -582,6 +587,30 @@ static bool app_wifi_operation_pending(void)
     const bool pending = s_wifi_operation != APP_WIFI_OPERATION_NONE;
     xSemaphoreGive(s_services_mutex);
     return pending;
+}
+
+/*
+ * Include controller/event-driven station transitions, not just app-owned
+ * operations. Enabling Wi-Fi may trigger an automatic saved-network reconnect
+ * without setting s_wifi_operation to CONNECT_SAVED, so checking only the
+ * operation flag leaves the UI watcher at its 1-second idle interval.
+ */
+static bool app_wifi_ui_animation_active(void)
+{
+    if (app_wifi_operation_pending()) {
+        return true;
+    }
+
+    const wifi_controller_state_t controller_state = wifi_controller_get_state();
+    if (controller_state == WIFI_CONTROLLER_STARTING ||
+        controller_state == WIFI_CONTROLLER_CONNECTING) {
+        return true;
+    }
+
+    wifi_status_t status = {0};
+    return wifi_events_get_status_copy(&status) == ESP_OK &&
+           (status.state == WIFI_STATE_CONNECTING ||
+            status.state == WIFI_STATE_RECONNECTING);
 }
 
 static void app_wifi_sync_menu_if_visible(void)
