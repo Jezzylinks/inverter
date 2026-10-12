@@ -383,6 +383,7 @@ extern "C"
     typedef struct
     {
         bool enabled;
+        bool auto_reconnect;
         char ssid[32];
         char password[64];
     } wifi_state_t;

@@ -39,7 +39,7 @@
 #else
 /* Do not assume a production release asset exists. Configure a real HTTPS
  * CSV manifest in menuconfig for deployments that enable OTA. */
-#define APP_OTA_DEFAULT_MANIFEST_URL ""
+#define APP_OTA_DEFAULT_MANIFEST_URL "https://github.com/Jezzylinks/inverter/releases/latest/download/inverter.csv"
 #endif
 #define APP_SERVICES_NVS_NAMESPACE NVS_NS_SYSTEM
 #define APP_WIFI_ENABLED_KEY "wifi_enabled"
@@ -335,6 +335,11 @@ static void app_wifi_operation_watch_task(void *parameter)
 {
     (void)parameter;
 
+    char last_connect_label[24] = {0};
+    bool last_wifi_enabled = false;
+    bool have_menu_snapshot = false;
+    TickType_t last_rssi_poll = 0U;
+
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(500U));
 
@@ -360,6 +365,64 @@ static void app_wifi_operation_watch_task(void *parameter)
             lcd_flash_warning_to("Connection Timeout",
                                  timed_out_ssid[0] ? timed_out_ssid : "Try again",
                                  1500U, LCD_SCREEN_MENU);
+        }
+
+        /* Reconcile the Connect/Disconnect row when the user returns from a
+         * child screen or an overlay expires. Redraw only when the underlying
+         * state changed; a periodic full redraw would visibly flicker. */
+        lcd_screen_id_t screen;
+        LCD_LOCK();
+        screen = sys_lcd.screen;
+        LCD_UNLOCK();
+
+        menu_state_t menu_state;
+        uint8_t selection;
+        if (sys_state_mutex != NULL) {
+            xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+        }
+        menu_state = sys_state.menu_state;
+        selection = sys_state.menu_selection;
+        if (sys_state_mutex != NULL) {
+            xSemaphoreGive(sys_state_mutex);
+        }
+
+        if (screen == LCD_SCREEN_MENU && menu_state == MENU_WIFI_CONFIG) {
+            const char *connect_label = app_services_wifi_connect_action_label();
+            const bool wifi_enabled = app_services_wifi_enabled();
+            if (!have_menu_snapshot ||
+                strcmp(last_connect_label, connect_label) != 0 ||
+                last_wifi_enabled != wifi_enabled) {
+                strncpy(last_connect_label, connect_label,
+                        sizeof(last_connect_label) - 1U);
+                last_connect_label[sizeof(last_connect_label) - 1U] = '\0';
+                last_wifi_enabled = wifi_enabled;
+                have_menu_snapshot = true;
+                show_menu_screen(MENU_WIFI_CONFIG, selection);
+            }
+        } else {
+            /* Force one state reconciliation when the Wi-Fi menu is revisited. */
+            have_menu_snapshot = false;
+        }
+
+        /* RSSI changes without a Wi-Fi state transition, so the monitor's
+         * state-change callback alone leaves the home indicator stale. Poll
+         * in this service task (never in the LCD renderer) every five seconds. */
+        const TickType_t now = xTaskGetTickCount();
+        if (last_rssi_poll == 0U ||
+            (TickType_t)(now - last_rssi_poll) >= pdMS_TO_TICKS(5000U)) {
+            wifi_status_t status = {0};
+            const bool connected =
+                wifi_events_get_status_copy(&status) == ESP_OK &&
+                status.got_ip;
+            int8_t rssi = 0;
+            if (connected) {
+                rssi = wifi_manager_get_rssi();
+                if (rssi == -127) {
+                    rssi = wifi_monitor_get_rssi();
+                }
+            }
+            lcd_update_wifi_status(connected, connected ? rssi : 0);
+            last_rssi_poll = now;
         }
     }
 }
@@ -751,7 +814,7 @@ static void app_wifi_lcd_status_callback(const wifi_monitor_status_t *status)
     /* This indicator represents station connectivity, not internet access.
      * Internet availability is a separate status shown on the Wi-Fi details
      * screen and used to gate remote services such as OTA. */
-    const bool connected = status->connected && status->got_ip;
+    const bool connected = status->got_ip;
     lcd_update_wifi_status(connected, connected ? status->rssi : 0);
 
     /* The callback is invoked only when the monitor snapshot changes. If the
@@ -805,7 +868,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
          * requested connection succeeded. Confirm the actual associated SSID
          * before completing the pending operation (important for same-SSID
          * password changes and delayed monitor callbacks). */
-        if (status->connected && status->got_ip && ssid[0] != '\0') {
+        if (status->got_ip && ssid[0] != '\0') {
             wifi_ap_record_t active_ap = {0};
             if (esp_wifi_sta_get_ap_info(&active_ap) == ESP_OK &&
                 strncmp((const char *)active_ap.ssid, ssid,
@@ -1209,6 +1272,7 @@ esp_err_t app_services_init(void)
     }
     else
     {
+        wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
         const esp_err_t callback_err =
             wifi_events_register_status_callback(app_wifi_status_callback);
         if (callback_err != ESP_OK)
@@ -1376,6 +1440,8 @@ esp_err_t app_services_wifi_toggle_init(void)
         ESP_LOGW(APP_SERVICES_TAG,
                  "Wi-Fi controller initialization deferred: %s",
                  esp_err_to_name(controller_err));
+    } else {
+        wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
     }
     return controller_err;
 }
@@ -1431,6 +1497,7 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
                  esp_err_to_name(controller_init_err));
         return controller_init_err;
     }
+    wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
 
     ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle request: %s",
              enabled ? "ON" : "OFF");
@@ -1527,6 +1594,7 @@ esp_err_t app_services_wifi_mode_edit_begin(void)
     if (err != ESP_OK) {
         return err;
     }
+    wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
 
     wifi_manager_config_t config = {0};
     err = wifi_manager_get_config(&config);
@@ -1643,13 +1711,24 @@ const char *app_services_wifi_connect_action_label(void)
         return "AP Clients";
     }
 
+    app_wifi_operation_t operation = APP_WIFI_OPERATION_NONE;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        operation = s_wifi_operation;
+        xSemaphoreGive(s_services_mutex);
+    }
+    if (operation == APP_WIFI_OPERATION_DISCONNECT) {
+        return "Disconnecting...";
+    }
+    if (operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
+        return "Connecting...";
+    }
+
     wifi_status_t status = {0};
     const bool have_status = wifi_events_get_status_copy(&status) == ESP_OK;
     const wifi_controller_state_t controller_state = wifi_controller_get_state();
 
-    /* A valid station IP is the completed state and takes precedence over
-     * stale controller bookkeeping left at CONNECTING. */
-    if (have_status && status.connected && status.got_ip) {
+    if (have_status && status.got_ip) {
         return "Disconnect";
     }
     if (controller_state == WIFI_CONTROLLER_CONNECTING ||
@@ -1796,9 +1875,26 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
         return ESP_ERR_NOT_SUPPORTED;
     }
 
-    /* Compare the active station's full credential pair, not just SSID.
-     * The manager config is loaded from saved credentials during init and is
-     * updated whenever a new credential pair is accepted. */
+    /* Compare the currently associated SSID before changing credentials.
+     * An already-working station must not be needlessly disconnected and
+     * reconnected, even if the scan result used a different auth-mode label. */
+    wifi_status_t live_status = {0};
+    const bool station_ready =
+        wifi_events_get_status_copy(&live_status) == ESP_OK &&
+        live_status.got_ip;
+    if (station_ready && wifi_controller_is_connected()) {
+        wifi_ap_record_t current_ap = {0};
+        if (esp_wifi_sta_get_ap_info(&current_ap) == ESP_OK &&
+            strncmp((const char *)current_ap.ssid, ssid,
+                    sizeof(current_ap.ssid)) == 0) {
+            lcd_flash_message("Already Connected", "Returning to menu", 1000U);
+            return ESP_OK;
+        }
+    }
+
+    /* The manager config represents the saved target, not necessarily the
+     * currently associated AP. Avoid duplicate in-flight requests to that
+     * same target, but permit a fresh attempt after a failed authentication. */
     wifi_manager_config_t config = {0};
     esp_err_t err = wifi_manager_get_config(&config);
     if (err != ESP_OK) {
@@ -1808,32 +1904,29 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
     const bool same_active_config =
         strcmp(config.ssid, ssid) == 0 &&
         strcmp(config.password, password) == 0;
-
     if (same_active_config &&
         wifi_controller_get_state() == WIFI_CONTROLLER_CONNECTING) {
-        /* An identical connection request is already in flight. */
         return ESP_OK;
     }
 
-    wifi_status_t live_status = {0};
-    const bool station_ready =
-        wifi_events_get_status_copy(&live_status) == ESP_OK &&
-        live_status.connected && live_status.got_ip;
-    if (same_active_config && station_ready &&
-        wifi_controller_is_connected()) {
-        wifi_ap_record_t current_ap = {0};
-        if (esp_wifi_sta_get_ap_info(&current_ap) == ESP_OK &&
-            strncmp((const char *)current_ap.ssid, ssid,
-                    sizeof(current_ap.ssid)) == 0) {
-            lcd_flash_message("Already Connected", "Returning to list", 1200U);
-            return ESP_OK;
+    /* ESP32 has one station association. Explicitly drop a different active
+     * or in-flight station before replacing the target credentials. */
+    if (station_ready || wifi_controller_get_state() == WIFI_CONTROLLER_CONNECTING) {
+        const esp_err_t disconnect_err = wifi_controller_disconnect();
+        if (disconnect_err != ESP_OK &&
+            disconnect_err != ESP_ERR_WIFI_NOT_CONNECT &&
+            disconnect_err != ESP_ERR_WIFI_NOT_STARTED) {
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Could not disconnect previous station before switching: %s",
+                     esp_err_to_name(disconnect_err));
+            return disconnect_err;
         }
     }
-    if (err != ESP_OK) {
-        return err;
-    }
+
     strncpy(config.ssid, ssid, sizeof(config.ssid) - 1U);
+    config.ssid[sizeof(config.ssid) - 1U] = '\0';
     strncpy(config.password, password, sizeof(config.password) - 1U);
+    config.password[sizeof(config.password) - 1U] = '\0';
     config.authmode = authmode;
     err = wifi_manager_set_config(&config);
     if (err != ESP_OK) {
@@ -1942,6 +2035,18 @@ esp_err_t app_services_wifi_connect_saved(void)
 
 esp_err_t app_services_wifi_reconnect(void)
 {
+    wifi_status_t current_status = {0};
+    if (wifi_events_get_status_copy(&current_status) == ESP_OK &&
+        current_status.got_ip &&
+        wifi_controller_is_connected()) {
+        lcd_flash_message("Already Connected", "No action needed", 1000U);
+        return ESP_OK;
+    }
+    if (wifi_controller_get_state() == WIFI_CONTROLLER_CONNECTING) {
+        /* A request already in flight is idempotent; a FAILED state remains
+         * retryable so the user can correct a password and try again. */
+        return ESP_OK;
+    }
     if (wifi_manager_get_mode() == WIFI_MODE_AP) {
         lcd_flash_message("AP Mode", "No STA Connect", 1400U);
         return ESP_ERR_NOT_SUPPORTED;
@@ -2038,7 +2143,7 @@ void app_services_show_wifi_status(void)
         snprintf(state_text, sizeof(state_text), "%s",
                  wifi_state_text(wifi_controller_get_state()));
     }
-    const int8_t rssi = status.connected ? wifi_manager_get_rssi() : status.rssi;
+    const int8_t rssi = status.got_ip ? wifi_manager_get_rssi() : status.rssi;
     lcd_show_wifi_status(state_text, ssid, ip, gateway, rssi,
                          status.connected, status.got_ip,
                          status.connected && status.internet_available);
@@ -2131,7 +2236,8 @@ bool app_services_wifi_disconnect_confirmation_pending(void)
 esp_err_t app_services_wifi_request_disconnect(void)
 {
     if (!wifi_controller_is_connected()) {
-        return app_services_wifi_reconnect();
+        lcd_flash_message("Already Disconnected", "Wi-Fi is idle", 1000U);
+        return ESP_OK;
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_wifi_disconnect_pending = true;
@@ -2145,7 +2251,14 @@ esp_err_t app_services_wifi_confirm_disconnect(void)
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_wifi_disconnect_pending = false;
     xSemaphoreGive(s_services_mutex);
-    return app_services_wifi_disconnect();
+
+    /* Start the async disconnect first so the menu label becomes
+     * Disconnecting... before the confirmation screen is dismissed. */
+    const esp_err_t err = app_services_wifi_disconnect();
+    if (err == ESP_OK && app_wifi_operation_pending()) {
+        show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
+    }
+    return err;
 }
 
 void app_services_wifi_cancel_disconnect(void)

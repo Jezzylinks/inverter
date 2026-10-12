@@ -1061,6 +1061,7 @@ typedef enum
     VALUE_TYPE_UTC_OFFSET,
     VALUE_TYPE_SET_TIME_HOUR,
     VALUE_TYPE_SET_TIME_MINUTE,
+    VALUE_TYPE_WIFI_AUTO_REC,
     VALUE_TYPE_COUNT
 } value_edit_param_t;
 
@@ -1214,6 +1215,7 @@ static void apply_current_limit(float v);
 static void apply_temperature_limit(float v);
 static void apply_battery_cutoff(float v);
 static void apply_wifi(float v);
+static void apply_wifi_auto_rec(float v);
 static void apply_bluetooth(float v);
 static void apply_auto_shutdown(float v);
 static void apply_scroll_enable(float v);
@@ -1442,6 +1444,15 @@ static value_edit_context_t value_edit[] = {
         .is_critical = false,
         .live_update = true,
         .apply = apply_wifi,
+    },
+    [VALUE_TYPE_WIFI_AUTO_REC] = {
+        .edit_type = VALUE_EDIT_BOOL,
+        .current_value = 1.0f,
+        .unit = "",
+        .label = "Wi-Fi Auto Rec",
+        .is_critical = false,
+        .live_update = false,
+        .apply = apply_wifi_auto_rec,
     },
     [VALUE_TYPE_TIMEOUT] = {
         .edit_type = VALUE_EDIT_NUMERIC,
@@ -1782,7 +1793,7 @@ esp_err_t init_hardware(void)
 }
 
 #define NVS_FLOAT_SCALE 100.0f
-#define NVS_SETTINGS_TXN_VERSION 2U
+#define NVS_SETTINGS_TXN_VERSION 3U
 #define NVS_SETTINGS_TXN_VALID_KEY "set_txn_ok"
 #define NVS_SETTINGS_TXN_GEN_KEY "set_txn_gen"
 #define NVS_SETTINGS_TXN_CRC_KEY "set_txn_crc"
@@ -1840,6 +1851,7 @@ static nvs_setting_t g_settings[] = {
     {"system_timeout", &sys_state.settings.system_timeout, sizeof(int32_t), 300000, false, "Sys Timeout", false, false},
     {"security_en", &sys_state.security.enabled, sizeof(uint8_t), 1, false, "Security Enable", false, true},
     {"bluetooth_en", &sys_state.bluetooth.enabled, sizeof(bool), 0, false, "Bluetooth", false, true},
+    {"wifi_auto_rec", &sys_state.wifi.auto_reconnect, sizeof(bool), 1, false, "Wi-Fi Auto Rec", false, true},
 };
 
 #define NVS_SETTINGS_COUNT (sizeof(g_settings) / sizeof(g_settings[0]))
@@ -1903,6 +1915,8 @@ static size_t settings_index_for_editor(const value_edit_context_t *ctx)
         return settings_index_for_key("man_min");
     if (ctx == &value_edit[VALUE_TYPE_BLUETOOTH])
         return settings_index_for_key("bluetooth_en");
+    if (ctx == &value_edit[VALUE_TYPE_WIFI_AUTO_REC])
+        return settings_index_for_key("wifi_auto_rec");
 
     /* Wi-Fi is intentionally excluded. Its ON/OFF transition is asynchronous
      * and app_services owns the radio operation and APP_WIFI_ENABLED_KEY
@@ -3494,6 +3508,7 @@ void reload_default_settings(void)
     sys_state.system_timeout = 60;
 
     sys_state.wifi.enabled = false;
+    sys_state.wifi.auto_reconnect = true;
     sys_state.wifi.ssid[0] = '\0';
     sys_state.wifi.password[0] = '\0';
 
@@ -4085,6 +4100,10 @@ static void apply_wifi(float v)
         ESP_LOGW(APP_TAG, "Wi-Fi preference applied with error: %s", esp_err_to_name(err));
     }
 }
+static void apply_wifi_auto_rec(float v)
+{
+    sys_state.wifi.auto_reconnect = (v != 0.0f);
+}
 static void apply_bluetooth(float v) { sys_state.bluetooth.enabled = (bool)v; } /* adjust to your actual field */
 static void apply_auto_shutdown(float v) { sys_state.display.auto_shutdown_enabled = (uint8_t)v; }
 static void apply_scroll_enable(float v) { sys_state.display.scroll_enabled = (uint8_t)v; }
@@ -4399,15 +4418,16 @@ void lcd_draw_diagnostics_screen(uint8_t index)
         const size_t heap_free_raw = heap_caps_get_free_size(MALLOC_CAP_8BIT);
         const size_t heap_free = heap_free_raw > heap_total ? heap_total : heap_free_raw;
         const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-        const unsigned used_percent = heap_total > 0U
-                                          ? (unsigned)(((heap_total - heap_free) * 100U) /
-                                                       heap_total)
-                                          : 0U;
+        const unsigned used_percent_raw = heap_total > 0U
+                                              ? (unsigned)(((heap_total - heap_free) * 100U) /
+                                                           heap_total)
+                                              : 0U;
+        const unsigned used_percent = used_percent_raw > 100U
+                                          ? 100U
+                                          : used_percent_raw;
 
         if (lcd_geometry_is_20x4())
         {
-            /* Keep both values bounded to four digits so the output is
-             * guaranteed to fit the 20-character LCD row. */
             const size_t free_kb_raw = heap_free / 1024U;
             const size_t largest_kb_raw = largest / 1024U;
             const unsigned free_kb = free_kb_raw > 9999U
@@ -4416,14 +4436,34 @@ void lcd_draw_diagnostics_screen(uint8_t index)
             const unsigned largest_kb = largest_kb_raw > 9999U
                                             ? 9999U
                                             : (unsigned)largest_kb_raw;
+            char detailed_row[48];
+            const int detailed_len = snprintf(
+                detailed_row, sizeof(detailed_row),
+                "F:%uK M:%uK RAM:%u%%", free_kb, largest_kb, used_percent);
 
-            snprintf(row1, LCD_LINE_SIZE, "F:%uK M:%uK",
-                     free_kb, largest_kb);
+            /* Include RAM usage at the end of row 2 whenever the free and
+             * largest-block figures fit. If the values are too wide, retain
+             * free memory and RAM percentage in a guaranteed 20-column row. */
+            if (detailed_len >= 0 && detailed_len <= LCD_COLS)
+            {
+                snprintf(row1, LCD_LINE_SIZE, "%.*s", LCD_COLS, detailed_row);
+            }
+            else
+            {
+                snprintf(row1, LCD_LINE_SIZE, "Free:%uK RAM:%u%%",
+                         free_kb, used_percent);
+            }
         }
         else
         {
-            snprintf(row1, LCD_LINE_SIZE, "F:%uK U:%u%%",
-                     (unsigned)(heap_free / 1024U), used_percent);
+            /* On 16x2 the full RAM label takes priority over the abbreviated
+             * U: indicator while keeping the free-memory value visible. */
+            const size_t free_kb_raw = heap_free / 1024U;
+            const unsigned free_kb = free_kb_raw > 999U
+                                         ? 999U
+                                         : (unsigned)free_kb_raw;
+            snprintf(row1, LCD_LINE_SIZE, "RAM:%u%% F:%uK",
+                     used_percent, free_kb);
         }
         break;
     }
@@ -5366,6 +5406,24 @@ bool exit_value_edit_mode(bool save_changes)
         {
             ESP_LOGI("SETTINGS_APPLY", "committed %s", ctx->label);
             printf("Value saved successfully\n");
+
+            if (ctx == &value_edit[VALUE_TYPE_WIFI_AUTO_REC])
+            {
+                wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
+                if (sys_state.wifi.auto_reconnect &&
+                    sys_state.wifi.enabled &&
+                    !wifi_controller_is_connected() &&
+                    wifi_controller_get_state() != WIFI_CONTROLLER_CONNECTING)
+                {
+                    const esp_err_t connect_err = app_services_wifi_reconnect();
+                    if (connect_err != ESP_OK && connect_err != ESP_ERR_WIFI_CONN)
+                    {
+                        ESP_LOGW(APP_TAG,
+                                 "Auto-reconnect preference saved but immediate connect failed: %s",
+                                 esp_err_to_name(connect_err));
+                    }
+                }
+            }
         }
         else
         {
@@ -7255,6 +7313,12 @@ void edit_sound_enable(void)
 {
     begin_setting_edit(VALUE_TYPE_SOUND_ENABLE,
                        sys_state.sound_enabled ? 1.0f : 0.0f);
+}
+
+void edit_wifi_auto_rec(void)
+{
+    begin_setting_edit(VALUE_TYPE_WIFI_AUTO_REC,
+                       sys_state.wifi.auto_reconnect ? 1.0f : 0.0f);
 }
 
 void edit_quiet_hours_enable(void)

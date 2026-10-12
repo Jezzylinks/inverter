@@ -138,12 +138,12 @@ config INVERTER_WIFI_RUNTIME_PROVISIONING
 
 config INVERTER_OTA_MANIFEST_URL
     string "Default OTA manifest URL"
-    default ""
+    default "https://github.com/Jezzylinks/inverter/releases/latest/download/inverter.csv"
     help
         HTTPS CSV manifest URL used when no runtime OTA URL has been stored.
-        Set this to a real CSV manifest hosted under your trusted release
-        process. Leave it empty when no production manifest endpoint exists;
-        OTA checks will report that the URL is not configured. The firmware
-        rejects non-HTTPS URLs and retains HTTPS certificate verification.
+        The release asset must contain version,url,sha256,size and point to a
+        firmware binary published by the trusted GitHub Releases workflow.
+        Runtime storage and every OTA request validate the HTTPS URL, and
+        HTTPS certificate verification remains enabled.
 
 endmenu
