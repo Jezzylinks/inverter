@@ -1005,9 +1005,7 @@ void select_battery_type(button_id_t btn)
             (battery_type_t)selected, VOLTAGE_SYSTEM_48V, 200);
         if (saved == true)
         {
-            snprintf(display_char, sizeof(display_char),
-                     "Saved: %s", battery_type_names[selected]);
-            lcd_flash_info("Battery Type    ", display_char, 1500);
+            lcd_flash_saved("Battery Type", battery_type_names[selected]);
         }
         else
         {
@@ -5743,7 +5741,11 @@ void handle_value_confirmation(void)
         {
             ESP_LOGI("SETTINGS_TRANSACTION", "SUCCESS label=%s value=%s",
                      ctx->label, saved_value);
-            /* The committed value is shown by the restored settings menu. */
+            /* The menu has already been restored. Overlay a timed confirmation
+             * only after the full NVS transaction and read-back verification
+             * succeeded; the flash queue restores the menu when it expires. */
+            lcd_flash_saved(ctx->label != NULL ? ctx->label : "Setting",
+                            saved_value);
             printf("AUDIT: Parameter changed - %s\n", ctx->label);
         }
         else
