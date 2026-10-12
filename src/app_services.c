@@ -327,7 +327,6 @@ static void app_wifi_prerequisite_task(void *parameter)
             s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_NONE;
             xSemaphoreGive(s_services_mutex);
 
-            lcd_flash_message("Wi-Fi Ready", "Ready to continue", 1200U);
             show_menu_screen(MENU_OTA, 1);
         }
     }
@@ -1028,9 +1027,8 @@ static void app_wifi_status_callback(const wifi_status_t *status)
                              "Try again", 1500U, LCD_SCREEN_MENU);
         app_wifi_schedule_menu_refresh(1800U);
     } else {
-        lcd_flash_info_to(message != NULL ? message : "Wi-Fi ready",
-                          "Wi-Fi updated", 1200U, LCD_SCREEN_MENU);
-        app_wifi_schedule_menu_refresh(1500U);
+        /* Successful state transitions are shown by the owning menu. */
+        app_wifi_sync_menu_if_visible();
     }
 }
 
