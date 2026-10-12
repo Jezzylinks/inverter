@@ -5725,7 +5725,6 @@ void handle_value_confirmation(void)
         }
 
         const bool wifi_async_save = (ctx == &value_edit[VALUE_TYPE_WIFI]);
-        const size_t saved_setting_index = settings_index_for_editor(ctx);
         const bool saved = exit_value_edit_mode(true);
 
         /* The menu is rebuilt from the canonical runtime state only after
