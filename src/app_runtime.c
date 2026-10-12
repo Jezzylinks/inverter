@@ -4455,8 +4455,12 @@ void lcd_draw_diagnostics_screen(uint8_t index)
         {
             /* On 16x2 the full RAM label takes priority over the abbreviated
              * U: indicator while keeping the free-memory value visible. */
+            const size_t free_kb_raw = heap_free / 1024U;
+            const unsigned free_kb = free_kb_raw > 999U
+                                         ? 999U
+                                         : (unsigned)free_kb_raw;
             snprintf(row1, LCD_LINE_SIZE, "RAM:%u%% F:%uK",
-                     used_percent, (unsigned)(heap_free / 1024U));
+                     used_percent, free_kb);
         }
         break;
     }
