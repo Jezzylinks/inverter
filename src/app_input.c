@@ -1726,8 +1726,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 sys_state.value_changed = true;
                 exit_value_edit_mode(true);
                 show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
-                lcd_flash_info_to("Value Saved!    ", "                ",
-                                  800, LCD_SCREEN_MENU);
+                /* The updated menu value is the success feedback. */
             }
         }
         else if (sys_state.menu_state == MAIN_MENU)
