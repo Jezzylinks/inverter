@@ -365,7 +365,7 @@
     els.passwordForm.addEventListener('submit', (event) => { event.preventDefault(); connectNetwork(state.selectedSsid, els.networkPassword.value); });
     els.scanButton.addEventListener('click', scanNetworks);
     els.disconnectButton.addEventListener('click', disconnect);
-    els.refreshButton.addEventListener('click', async () => { await loadStatus(true); await loadDeviceData(); await loadServices(); await loadOta(); });
+    els.refreshButton.addEventListener('click', async () => { await loadStatus(); await loadDeviceData(); await loadServices(); await loadOta(); });
     els.mqttToggleButton.addEventListener('click', () => { els.mqttPanel.hidden = !els.mqttPanel.hidden; });
     els.mqttCloseButton.addEventListener('click', () => { els.mqttPanel.hidden = true; });
     els.mqttForm.addEventListener('submit', saveMqtt);
