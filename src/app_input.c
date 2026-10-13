@@ -659,9 +659,20 @@ static void handle_ota_menu_action(uint8_t selection)
              * Keep the service's "No Update Running / Current kept" flash for
              * genuine cancel races; do not make the Back item flash forever. */
             s_ota_feedback_active = false;
-            sys_state.menu_state = MAIN_MENU;
-            sys_state.menu_selection = 4U;
-            show_menu_screen(MAIN_MENU, 4);
+            menu_state_t previous_menu;
+            int previous_selection;
+            if (pop_menu_history(&previous_menu, &previous_selection) &&
+                previous_menu != MENU_NONE)
+            {
+                sys_state.menu_state = previous_menu;
+                sys_state.menu_selection = previous_selection;
+            }
+            else
+            {
+                sys_state.menu_state = MAIN_MENU;
+                sys_state.menu_selection = 4U;
+            }
+            show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
             break;
         }
         s_ota_feedback_active = true;
