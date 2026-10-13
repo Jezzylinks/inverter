@@ -654,6 +654,10 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("refreshHealthStrip", js)
         self.assertIn("Stale ·", js)
         self.assertIn("Device reachable · live updates reconnecting", js)
+        self.assertIn("PIN required", js)
+        css = root.joinpath("data", "assets", "app.css").read_text()
+        self.assertNotIn(".topbar .icon-button { display: none; }", css)
+        self.assertIn(".topbar .icon-button { display: inline-flex", css)
 
     def test_dashboard_websocket_respects_measurement_availability(self):
         root = Path(__file__).parents[1]
