@@ -346,9 +346,6 @@ esp_err_t ota_http_open_following_redirects(esp_http_client_handle_t client,
         const int status = esp_http_client_get_status_code(client);
         if (is_redirect_status(status))
         {
-            char old_url[2048] = {0};
-            char new_url[2048] = {0};
-            (void)esp_http_client_get_url(client, old_url, sizeof(old_url));
             err = esp_http_client_set_redirection(client);
             esp_http_client_close(client);
             if (err != ESP_OK)
@@ -357,9 +354,9 @@ esp_err_t ota_http_open_following_redirects(esp_http_client_handle_t client,
                          hop, status, esp_err_to_name(err));
                 return err;
             }
-            (void)esp_http_client_get_url(client, new_url, sizeof(new_url));
-            ESP_LOGI(TAG, "HTTPS redirect hop=%u status=%d: %s -> %s",
-                     hop, status, old_url, new_url);
+            /* The next iteration logs the new host without signed query data. */
+            ESP_LOGI(TAG, "HTTPS redirect hop=%u status=%d; following securely",
+                     hop, status);
             /* Never follow a redirect that downgrades to plain HTTP. */
             if (esp_http_client_get_transport_type(client) != HTTP_TRANSPORT_OVER_SSL)
             {
