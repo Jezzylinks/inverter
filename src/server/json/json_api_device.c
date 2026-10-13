@@ -390,9 +390,6 @@ static esp_err_t api_solar_handler(httpd_req_t *req)
     if (auth_err != ESP_OK) {
         return auth_err;
     }
-    system_state_t state;
-    snapshot_system_state(&state);
-    (void)state;
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) {
         return ESP_ERR_NO_MEM;
