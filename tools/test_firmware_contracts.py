@@ -612,5 +612,15 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('uri = "/assets/app.js"', server)
         self.assertIn('esp_vfs_spiffs_register(&config)', server)
 
+
+    def test_navigation_guide_rows_are_removed_from_lcd_screens(self):
+        root = Path(__file__).parents[1]
+        input_source = root.joinpath("src", "app_input.c").read_text()
+        lcd_source = root.joinpath("src", "lcd_task.c").read_text()
+        for text in ('"Press Enter     "', '"Select Option   "', '"View Stats      "', '"Run Tests       "'):
+            self.assertNotIn(text, input_source)
+        self.assertNotIn('"MENU: CANCEL"', lcd_source)
+        self.assertNotIn('HOLD=GO', lcd_source)
+
 if __name__ == "__main__":
     unittest.main()
