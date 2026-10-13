@@ -544,5 +544,13 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('add_float_or_null(root, "temperature", 0.0f, false)', api)
         self.assertIn('"temperature_available", false', api)
 
+
+    def test_dashboard_labels_battery_state_of_charge_as_estimated(self):
+        root = Path(__file__).parents[1]
+        html = root.joinpath("data", "index.html").read_text()
+        js = root.joinpath("data", "assets", "app.js").read_text()
+        self.assertIn("Battery · estimated SOC", html)
+        self.assertIn("socText === '—' ? socText", js)
+
 if __name__ == "__main__":
     unittest.main()
