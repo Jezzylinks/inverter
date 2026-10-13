@@ -4,9 +4,62 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
+#include "esp_log.h"
+
+static const char *TAG = "OTA_TLS_DIAG";
+
+/*
+ * Log only the scheme and host: redirected GitHub asset URLs can contain
+ * time-limited signed query parameters that must not be printed to UART.
+ */
+static void ota_log_current_endpoint(esp_http_client_handle_t client,
+                                     unsigned hop)
+{
+    char url[2048] = {0};
+    char host[256] = "unknown";
+    char utc[32] = "unavailable";
+
+    if (esp_http_client_get_url(client, url, sizeof(url)) == ESP_OK)
+    {
+        const char *scheme_end = strstr(url, "://");
+        const char *authority = scheme_end ? scheme_end + 3 : url;
+        size_t host_len = strcspn(authority, "/?#:");
+        if (host_len > 0U && host_len < sizeof(host))
+        {
+            memcpy(host, authority, host_len);
+            host[host_len] = '\0';
+        }
+    }
+
+    const time_t now = time(NULL);
+    if (now >= 1704067200) /* 2024-01-01 UTC: reject obvious unset RTC time */
+    {
+        struct tm utc_tm;
+        if (gmtime_r(&now, &utc_tm) != NULL)
+        {
+            (void)strftime(utc, sizeof(utc), "%Y-%m-%dT%H:%M:%SZ", &utc_tm);
+        }
+    }
+
+#if defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE) && CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
+    #if defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL) && CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL
+    ESP_LOGI(TAG, "Trust config: certificate bundle enabled, default FULL");
+    #elif defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN) && CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN
+    ESP_LOGI(TAG, "Trust config: certificate bundle enabled, default CMN");
+    #else
+    ESP_LOGI(TAG, "Trust config: certificate bundle enabled, default bundle not identified");
+    #endif
+#else
+    ESP_LOGE(TAG, "Trust config: certificate bundle is NOT enabled in this build");
+#endif
+
+    ESP_LOGI(TAG, "HTTPS attempt hop=%u host=%s UTC=%s (epoch=%lld)",
+             hop, host, utc, (long long)now);
+}
 
 static bool parse_release_version(const char *text, uint32_t components[4],
                                   size_t *component_count)
@@ -280,9 +333,13 @@ esp_err_t ota_http_open_following_redirects(esp_http_client_handle_t client,
     }
     for (unsigned hop = 0U; hop <= OTA_HTTP_MAX_REDIRECTS; ++hop)
     {
+        ota_log_current_endpoint(client, hop);
         esp_err_t err = esp_http_client_open(client, 0);
         if (err != ESP_OK)
         {
+            ESP_LOGE(TAG, "HTTPS connect/TLS handshake failed at hop=%u: %s (0x%x)",
+                     hop, esp_err_to_name(err), (unsigned)err);
+            ESP_LOGE(TAG, "TLS verification remains enabled; inspect preceding esp-tls/mbedTLS logs for certificate failure details");
             return err;
         }
         const int64_t length = esp_http_client_fetch_headers(client);
@@ -293,11 +350,17 @@ esp_err_t ota_http_open_following_redirects(esp_http_client_handle_t client,
             esp_http_client_close(client);
             if (err != ESP_OK)
             {
+                ESP_LOGE(TAG, "Redirect processing failed at hop=%u status=%d: %s",
+                         hop, status, esp_err_to_name(err));
                 return err;
             }
+            /* The next iteration logs the new host without signed query data. */
+            ESP_LOGI(TAG, "HTTPS redirect hop=%u status=%d; following securely",
+                     hop, status);
             /* Never follow a redirect that downgrades to plain HTTP. */
             if (esp_http_client_get_transport_type(client) != HTTP_TRANSPORT_OVER_SSL)
             {
+                ESP_LOGE(TAG, "Rejected redirect because it downgraded from HTTPS");
                 return ESP_ERR_INVALID_RESPONSE;
             }
             continue;
