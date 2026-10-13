@@ -541,7 +541,8 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('"current_available", false', load)
         self.assertIn('cJSON_AddNullToObject(root, "voltage")', grid)
         self.assertIn('"voltage_available", false', grid)
-        self.assertIn('cJSON_AddNullToObject(root, "temperature")', api)
+        self.assertIn('add_float_or_null(root, "temperature", 0.0f, false)', api)
+        self.assertIn('"temperature_available", false', api)
 
 if __name__ == "__main__":
     unittest.main()
