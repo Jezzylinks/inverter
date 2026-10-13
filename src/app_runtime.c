@@ -4527,6 +4527,23 @@ static const char *value_edit_display_label(const value_edit_context_t *config)
  * nothing else to wire. */
 static const char *settings_view_unit_for(const char *label)
 {
+    if (label == NULL)
+        return "";
+
+    /* Use the units of the underlying setting, not a broad substring rule:
+     * system_timeout is milliseconds, while backlight_time is seconds. */
+    if (strcmp(label, "Sys Timeout") == 0)
+        return "ms";
+    if (strcmp(label, "Backlight Time") == 0)
+        return "s";
+    if (strcmp(label, "UTC Offset") == 0)
+        return "h";
+    if (strcmp(label, "Quiet Start") == 0 ||
+        strcmp(label, "Quiet End") == 0 ||
+        strcmp(label, "Set Hour") == 0)
+        return "h";
+    if (strcmp(label, "Set Minute") == 0)
+        return "min";
     if (strstr(label, "Volt"))
         return "V";
     if (strstr(label, "Cur"))
@@ -4535,7 +4552,9 @@ static const char *settings_view_unit_for(const char *label)
         return "Hz";
     if (strstr(label, "Temp"))
         return "C";
-    if (strstr(label, "Timeout") || strstr(label, "Time"))
+    if (strstr(label, "Timeout"))
+        return "ms";
+    if (strstr(label, "Time"))
         return "s";
     if (strstr(label, "Capacity"))
         return "Ah";
