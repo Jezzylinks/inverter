@@ -190,11 +190,10 @@
     }
   }
 
-  async function loadStatus(showLog = false) {
+  async function loadStatus() {
     try {
       const [status, wifi] = await Promise.all([request('/api/v1/status'), request('/api/v1/wifi')]);
       renderStatus({ ...status, ...wifi });
-      if (showLog) log('Device status refreshed', 'good');
     } catch (error) {
       if (error.message !== 'Security PIN required') {
         setConnection('bad', 'API unavailable');
@@ -237,14 +236,12 @@
       state.socketRetry = 0;
       setConnection('warn', 'Authenticating live updates');
       sendSocket({ cmd: 'authenticate', pin: state.pin });
-      log('Live update channel opened');
     });
     state.socket.addEventListener('message', (event) => {
       let message;
       try { message = JSON.parse(event.data); } catch (_) { return; }
       if (message.type === 'authenticated') {
         if (message.ok) {
-          log('Live updates authorized', 'good');
           sendSocket({ cmd: 'subscribe' });
           sendSocket({ cmd: 'get_status' });
         } else {
@@ -299,7 +296,7 @@
 
   async function scanNetworks() {
     setBusy(els.scanButton, true); setNotice('Scanning nearby networks…');
-    try { const payload = await request('/api/v1/wifi/scan'); renderNetworks(payload.networks); setNotice(`${payload.count || 0} network${payload.count === 1 ? '' : 's'} found.`, 'good'); log(`Network scan complete: ${payload.count || 0} found`, 'good'); }
+    try { const payload = await request('/api/v1/wifi/scan'); renderNetworks(payload.networks); setNotice(''); }
     catch (error) { setNotice(error.message, 'error'); log(`Network scan failed: ${error.message}`, 'error'); }
     finally { setBusy(els.scanButton, false); }
   }
@@ -318,9 +315,8 @@
 
   async function connectNetwork(ssid, password) {
     try {
-      const payload = await request('/api/v1/wifi/connect', { method: 'POST', body: JSON.stringify({ ssid, password }) });
-      setNotice(payload.message || 'Connection request accepted.', 'good');
-      toast('Connection request accepted', 'good'); log(`Connecting to ${ssid}`, 'good');
+      await request('/api/v1/wifi/connect', { method: 'POST', body: JSON.stringify({ ssid, password }) });
+      setNotice('Connecting…');
       els.passwordDialog.close();
       window.setTimeout(loadStatus, 1000);
     } catch (error) { els.passwordError.hidden = false; els.passwordError.textContent = error.message; log(`Connection failed: ${error.message}`, 'error'); }
@@ -328,7 +324,7 @@
 
   async function disconnect() {
     setBusy(els.disconnectButton, true);
-    try { await request('/api/v1/wifi/disconnect', { method: 'POST', body: '{}' }); toast('Wi‑Fi disconnected', 'good'); log('Wi‑Fi disconnected', 'warn'); await loadStatus(); }
+    try { await request('/api/v1/wifi/disconnect', { method: 'POST', body: '{}' }); await loadStatus(); }
     catch (error) { toast(error.message, 'error'); log(error.message, 'error'); }
     finally { setBusy(els.disconnectButton, false); }
   }
@@ -337,22 +333,22 @@
     event.preventDefault();
     const body = { enabled: els.mqttEnabled.checked, broker: els.mqttBroker.value.trim(), client_id: els.mqttClientId.value.trim(), username: els.mqttUsername.value.trim(), publish_topic: els.mqttPublishTopic.value.trim(), subscribe_topic: els.mqttSubscribeTopic.value.trim(), keepalive_sec: 60, qos: 0, retain: false };
     if (els.mqttPassword.value) body.password = els.mqttPassword.value;
-    try { await request('/api/v1/mqtt/config', { method: 'POST', body: JSON.stringify(body) }); els.mqttPassword.value = ''; toast('MQTT settings saved', 'good'); log('MQTT configuration saved', 'good'); await loadServices(); }
+    try { await request('/api/v1/mqtt/config', { method: 'POST', body: JSON.stringify(body) }); els.mqttPassword.value = ''; await loadServices(); }
     catch (error) { toast(error.message, 'error'); log(`MQTT save failed: ${error.message}`, 'error'); }
   }
 
   async function connectMqtt() {
     setBusy(els.mqttConnectButton, true);
-    try { const result = await request('/api/v1/mqtt/connect', { method: 'POST', body: '{}' }); toast(result.message || 'MQTT connection requested', 'good'); log('MQTT connection requested'); await loadServices(); }
+    try { await request('/api/v1/mqtt/connect', { method: 'POST', body: '{}' }); await loadServices(); }
     catch (error) { toast(error.message, 'error'); log(`MQTT connection failed: ${error.message}`, 'error'); }
     finally { setBusy(els.mqttConnectButton, false); }
   }
 
-  async function otaAction(path, message) {
+  async function otaAction(path) {
     try {
-      const result = await request(path, { method: 'POST', body: '{}' });
-      toast(result.message || message, 'good');
-      log(result.message || message, 'good');
+      /* OTA progress/result is already represented by the OTA status panel.
+       * Avoid redundant success toasts; retain actionable failures. */
+      await request(path, { method: 'POST', body: '{}' });
       await loadOta();
     } catch (error) {
       toast(error.message, 'error');
@@ -365,7 +361,7 @@
     els.pinButton.addEventListener('click', requestPin);
     els.pinCloseButton.addEventListener('click', () => els.pinDialog.close());
     els.passwordCloseButton.addEventListener('click', () => els.passwordDialog.close());
-    els.pinForm.addEventListener('submit', async (event) => { event.preventDefault(); state.pin = els.pinInput.value.trim(); sessionStorage.setItem('inverterPin', state.pin); els.pinDialog.close(); await loadStatus(true); await loadDeviceData(); await loadServices(); await loadOta(); if (state.socket) state.socket.close(); connectSocket(); });
+    els.pinForm.addEventListener('submit', async (event) => { event.preventDefault(); state.pin = els.pinInput.value.trim(); sessionStorage.setItem('inverterPin', state.pin); els.pinDialog.close(); await loadStatus(); await loadDeviceData(); await loadServices(); await loadOta(); if (state.socket) state.socket.close(); connectSocket(); });
     els.passwordForm.addEventListener('submit', (event) => { event.preventDefault(); connectNetwork(state.selectedSsid, els.networkPassword.value); });
     els.scanButton.addEventListener('click', scanNetworks);
     els.disconnectButton.addEventListener('click', disconnect);
@@ -374,11 +370,11 @@
     els.mqttCloseButton.addEventListener('click', () => { els.mqttPanel.hidden = true; });
     els.mqttForm.addEventListener('submit', saveMqtt);
     els.mqttConnectButton.addEventListener('click', connectMqtt);
-    els.otaCheckButton.addEventListener('click', () => otaAction('/api/v1/ota/check', 'OTA check started'));
-    els.otaStartButton.addEventListener('click', () => otaAction('/api/v1/ota/start', 'OTA update started'));
-    els.otaCancelButton.addEventListener('click', () => otaAction('/api/v1/ota/cancel', 'OTA operation cancelled'));
+    els.otaCheckButton.addEventListener('click', () => otaAction('/api/v1/ota/check'));
+    els.otaStartButton.addEventListener('click', () => otaAction('/api/v1/ota/start'));
+    els.otaCancelButton.addEventListener('click', () => otaAction('/api/v1/ota/cancel'));
     els.clearLogButton.addEventListener('click', () => { els.eventLog.innerHTML = '<div class="log-empty">No events yet.</div>'; });
-    window.addEventListener('online', () => { log('Browser network available', 'good'); loadStatus(); loadDeviceData(); loadOta(); connectSocket(); });
+    window.addEventListener('online', () => { loadStatus(); loadDeviceData(); loadOta(); connectSocket(); });
   }
 
   async function start() {
