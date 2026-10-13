@@ -680,8 +680,7 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('"%02u/%02u"', view)
         self.assertIn('"%.5s %.14s"', view)
         self.assertIn('BATTERY_CAPACITY_KEY, &sys_state.battery_profile.capacity_ah, sizeof(float)', runtime)
-        units = runtime[runtime.index("static const char *settings_view_unit_for"):
-                        runtime.index("void lcd_draw_settings_view_screen")]
+        units = runtime[runtime.index("static const char *settings_view_unit_for"):start]
         self.assertIn('strcmp(label, "Sys Timeout") == 0', units)
         self.assertIn('return "ms";', units)
 
