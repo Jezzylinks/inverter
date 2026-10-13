@@ -12,6 +12,7 @@
     status: null,
     services: null,
     apiReachable: false,
+    apiAuthRequired: false,
     socketConnected: false,
     lastTelemetryAt: 0,
     lastApiError: ''
@@ -105,7 +106,9 @@
   }
 
   function refreshHealthStrip() {
-    setHealth(els.apiHealth, els.apiHealthDot, state.apiReachable ? 'Reachable' : 'Unavailable', state.apiReachable ? 'good' : 'bad');
+    const apiLabel = state.apiAuthRequired ? 'PIN required' : state.apiReachable ? 'Reachable' : 'Unavailable';
+    const apiTone = state.apiAuthRequired ? 'warn' : state.apiReachable ? 'good' : 'bad';
+    setHealth(els.apiHealth, els.apiHealthDot, apiLabel, apiTone);
     setHealth(els.liveHealth, els.liveHealthDot, state.socketConnected ? 'Streaming' : 'Reconnecting', state.socketConnected ? 'good' : 'warn');
     if (!state.lastTelemetryAt) {
       setHealth(els.telemetryHealth, els.telemetryHealthDot, 'No valid measurements yet', 'neutral');
@@ -276,12 +279,18 @@
     try {
       const [status, wifi] = await Promise.all([request('/api/v1/status'), request('/api/v1/wifi')]);
       state.apiReachable = true;
+      state.apiAuthRequired = false;
       state.lastApiError = '';
       refreshHealthStrip();
       renderStatus({ ...status, ...wifi });
     } catch (error) {
-      if (error.message !== 'Security PIN required') {
+      if (error.message === 'Security PIN required') {
+        state.apiReachable = true;
+        state.apiAuthRequired = true;
+        refreshHealthStrip();
+      } else {
         state.apiReachable = false;
+        state.apiAuthRequired = false;
         state.lastApiError = error.message;
         refreshHealthStrip();
         setConnection('bad', 'Device API unavailable');
