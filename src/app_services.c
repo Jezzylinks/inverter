@@ -1559,19 +1559,39 @@ static void ota_status_callback(ota_status_t status, int percent)
         s_ota_status.error_detail[0] = '\0';
         s_ota_status.confirmation_pending = false;
         s_ota_status.cancel_confirmation_pending = false;
+        s_ota_cancel_confirmation_pending = false;
         break;
     case OTA_STATUS_CANCELLED:
         s_ota_status.state = APP_OTA_CANCELLED;
         s_ota_status.confirmation_pending = false;
         s_ota_status.cancel_confirmation_pending = false;
+        s_ota_cancel_confirmation_pending = false;
         break;
     case OTA_STATUS_FAILED:
-        s_ota_status.state = APP_OTA_ERROR;
-        snprintf(s_ota_status.error_detail, sizeof(s_ota_status.error_detail),
-                 "ERR:IMAGE");
+    {
+        const esp_err_t cause = ota_service_get_last_error();
         s_ota_status.confirmation_pending = false;
         s_ota_status.cancel_confirmation_pending = false;
+        s_ota_cancel_confirmation_pending = false;
+        if (cause == ESP_ERR_INVALID_VERSION) {
+            /* The manifest is not newer than the running firmware: this is
+             * "up to date", not a failed update. */
+            s_ota_status.state = APP_OTA_IDLE;
+            s_ota_status.update_available = false;
+            s_ota_status.available_version[0] = '\0';
+            s_ota_status.error_detail[0] = '\0';
+        } else {
+            const char *name = esp_err_to_name(cause);
+            if (strncmp(name, "ESP_", 4) == 0) {
+                name += 4;
+            }
+            s_ota_status.state = APP_OTA_ERROR;
+            snprintf(s_ota_status.error_detail,
+                     sizeof(s_ota_status.error_detail), "ERR:%s",
+                     cause == ESP_OK ? "IMAGE" : name);
+        }
         break;
+    }
     case OTA_STATUS_IDLE:
     default:
         break;
@@ -2918,6 +2938,9 @@ static void ota_manifest_check_task(void *parameter)
     snapshot = s_ota_status;
     s_ota_manifest_check_task = NULL;
     s_ota_manifest_check_active = false;
+    /* A "Cancel update?" prompt for this check is moot once it has ended;
+     * a stale flag would swallow the next physical Back press. */
+    s_ota_cancel_confirmation_pending = false;
     xSemaphoreGive(s_services_mutex);
 
     if (err != ESP_OK && !cancelled) {
@@ -3180,15 +3203,24 @@ esp_err_t app_services_confirm_update(void)
         app_services_record_ota_error("OTA URL Invalid", true);
         return ESP_ERR_INVALID_ARG;
     }
-    if (!wifi_monitor_is_online())
+    /* Require a station IP, as the update check does. The monitor's internet
+     * probe can lag a fresh DHCP lease or fail while HTTPS still works, and
+     * used to block a confirmed install; the HTTPS request itself validates
+     * reachability and reports a real error. */
+    if (!app_wifi_station_has_ip())
     {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_ota_status.confirmation_pending = false;
         s_ota_status.state = APP_OTA_AVAILABLE;
         xSemaphoreGive(s_services_mutex);
-        lcd_flash_warning_to("Wi-Fi Connected", "Internet OFF",
+        lcd_flash_warning_to("Wi-Fi ON", "Connect first",
                              1800U, LCD_SCREEN_MENU);
         return ESP_ERR_INVALID_STATE;
+    }
+    if (!wifi_monitor_is_online())
+    {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Internet probe is not yet positive; attempting HTTPS install");
     }
     const esp_err_t err = ota_service_start_from_csv(manifest_url);
     if (err != ESP_OK)

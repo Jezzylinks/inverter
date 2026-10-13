@@ -69,6 +69,9 @@ esp_err_t ota_service_check_version(const char *version_url,
                                     char *new_version,
                                     size_t version_len);
 esp_err_t ota_service_get_current_version(char *buffer, size_t len);
+/** Result of the most recent failed install job (ESP_ERR_INVALID_VERSION when
+ * the manifest was not newer than the running firmware). */
+esp_err_t ota_service_get_last_error(void);
 esp_err_t ota_service_register_progress_callback(ota_progress_callback_t callback);
 esp_err_t ota_service_register_status_callback(ota_status_callback_t callback);
 bool ota_service_in_progress(void);

@@ -734,9 +734,9 @@ static void draw_ota(const lcd_ota_data_t *d)
             rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_CURRENT:
-            snprintf(rows[0], LCD_LINE_SIZE, "FIRMWARE CURRENT");
+            snprintf(rows[0], LCD_LINE_SIZE, "SOFTWARE UP TO DATE");
             snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", d->current_version);
-            snprintf(rows[2], LCD_LINE_SIZE, "NO UPDATE");
+            snprintf(rows[2], LCD_LINE_SIZE, "NO UPDATE NEEDED");
             rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_CANCELLED:
@@ -794,7 +794,7 @@ static void draw_ota(const lcd_ota_data_t *d)
         snprintf(row1, LCD_LINE_SIZE, "%.7s>%.7s", d->current_version, d->available_version);
         break;
     case LCD_OTA_VIEW_CURRENT:
-        snprintf(row0, LCD_LINE_SIZE, "FIRMWARE CURRENT");
+        snprintf(row0, LCD_LINE_SIZE, "UP TO DATE");
         snprintf(row1, LCD_LINE_SIZE, "%.12s", d->current_version);
         break;
     case LCD_OTA_VIEW_CANCELLED:

@@ -29,6 +29,7 @@ static SemaphoreHandle_t s_ota_mutex;
 static bool s_in_progress;
 static bool s_cancel_requested;
 static bool s_rollback_notification_pending;
+static volatile esp_err_t s_last_error = ESP_OK;
 
 typedef struct {
     char url[OTA_MAX_URL_LENGTH];
@@ -156,6 +157,7 @@ static void ota_task(void *parameter)
     }
     if (result != ESP_OK) {
         ESP_LOGE(TAG, "Verified OTA failed: %s", esp_err_to_name(result));
+        s_last_error = result;
         if (result == ESP_ERR_INVALID_STATE) {
             notify_status(OTA_STATUS_CANCELLED, 0);
         } else {
@@ -379,6 +381,11 @@ esp_err_t ota_service_check_version(const char *version_url, char *new_version,
     }
     strcpy(new_version, version);
     return ESP_OK;
+}
+
+esp_err_t ota_service_get_last_error(void)
+{
+    return s_last_error;
 }
 
 esp_err_t ota_service_get_current_version(char *buffer, size_t len)

@@ -6,11 +6,16 @@ extern "C" {
 #endif
 
 #include "esp_err.h"
+#include "esp_http_client.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #define OTA_HTTP_TIMEOUT_MS 10000
+/* GitHub release URLs redirect to a signed asset URL several hundred bytes
+ * long. The default 512-byte HTTP buffers cannot carry that request line. */
+#define OTA_HTTP_BUFFER_SIZE 2048
+#define OTA_HTTP_MAX_REDIRECTS 5U
 #define OTA_MAX_URL_LENGTH 256U
 #define OTA_MAX_VERSION_LENGTH 32U
 #define OTA_MAX_SHA256_LENGTH 65U
@@ -29,6 +34,18 @@ bool ota_manifest_is_https_url(const char *url);
 bool ota_manifest_version_is_valid(const char *text);
 int ota_manifest_compare_versions(const char *candidate, const char *installed);
 char *ota_manifest_trim(char *text);
+
+/**
+ * Open an HTTPS request and read its response headers, following 301/302/303/
+ * 307/308 redirects. esp_http_client only follows redirects inside
+ * esp_http_client_perform(); the open/fetch_headers/read flow used for
+ * streaming returns the 30x status itself, which made every GitHub release
+ * URL (always a redirect) look like a failure. A redirect that leaves HTTPS is
+ * rejected. On ESP_OK the client is positioned at the start of the body.
+ */
+esp_err_t ota_http_open_following_redirects(esp_http_client_handle_t client,
+                                            int64_t *content_length,
+                                            int *status_code);
 
 esp_err_t ota_manifest_fetch_text(const char *url, char *buffer, size_t capacity,
                                   size_t *out_len, ota_manifest_cancel_cb_t cancel_cb,

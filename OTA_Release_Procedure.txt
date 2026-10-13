@@ -16,6 +16,11 @@ gh auth status
 $VERSION = "1.4.0"
 $TAG = "v$VERSION"
 
+# The firmware must report the version it is released as. If this header is not
+# updated before pio run, a device updated to this release still sees the
+# manifest as newer than itself and keeps offering the same update.
+(Get-Content include\system\firmware_version.h) -replace '#define INVERTER_FIRMWARE_VERSION ".*"', "#define INVERTER_FIRMWARE_VERSION `"v$VERSION`"" | Set-Content include\system\firmware_version.h -Encoding ascii
+
 git add .
 
 git commit -m "Prepare OTA firmware release 1.4.0"

@@ -264,6 +264,56 @@ esp_err_t ota_manifest_parse_csv(const char *csv, size_t csv_len,
     return ESP_ERR_NOT_FOUND;
 }
 
+static bool is_redirect_status(int status)
+{
+    return status == 301 || status == 302 || status == 303 ||
+           status == 307 || status == 308;
+}
+
+esp_err_t ota_http_open_following_redirects(esp_http_client_handle_t client,
+                                            int64_t *content_length,
+                                            int *status_code)
+{
+    if (client == NULL || content_length == NULL || status_code == NULL)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+    for (unsigned hop = 0U; hop <= OTA_HTTP_MAX_REDIRECTS; ++hop)
+    {
+        esp_err_t err = esp_http_client_open(client, 0);
+        if (err != ESP_OK)
+        {
+            return err;
+        }
+        const int64_t length = esp_http_client_fetch_headers(client);
+        const int status = esp_http_client_get_status_code(client);
+        if (is_redirect_status(status))
+        {
+            err = esp_http_client_set_redirection(client);
+            esp_http_client_close(client);
+            if (err != ESP_OK)
+            {
+                return err;
+            }
+            /* Never follow a redirect that downgrades to plain HTTP. */
+            if (esp_http_client_get_transport_type(client) != HTTP_TRANSPORT_OVER_SSL)
+            {
+                return ESP_ERR_INVALID_RESPONSE;
+            }
+            continue;
+        }
+        if (status == 0 && length < 0)
+        {
+            esp_http_client_close(client);
+            return ESP_FAIL;
+        }
+        *content_length = length;
+        *status_code = status;
+        return ESP_OK;
+    }
+    return ESP_ERR_INVALID_RESPONSE; /* too many redirects */
+}
+
 esp_err_t ota_manifest_fetch_text(const char *url, char *buffer, size_t capacity,
                                   size_t *out_len, ota_manifest_cancel_cb_t cancel_cb,
                                   void *context)
@@ -275,7 +325,9 @@ esp_err_t ota_manifest_fetch_text(const char *url, char *buffer, size_t capacity
     *out_len = 0U;
     esp_http_client_config_t config = {
         .url = url,
-        .timeout_ms = 10000,
+        .timeout_ms = OTA_HTTP_TIMEOUT_MS,
+        .buffer_size = OTA_HTTP_BUFFER_SIZE,
+        .buffer_size_tx = OTA_HTTP_BUFFER_SIZE,
         .crt_bundle_attach = esp_crt_bundle_attach,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -284,15 +336,17 @@ esp_err_t ota_manifest_fetch_text(const char *url, char *buffer, size_t capacity
         return ESP_ERR_NO_MEM;
     }
 
-    esp_err_t err = esp_http_client_open(client, 0);
+    int64_t content_length = 0;
+    int status_code = 0;
+    esp_err_t err = ota_http_open_following_redirects(client, &content_length,
+                                                      &status_code);
     if (err == ESP_OK)
     {
-        const int64_t content_length = esp_http_client_fetch_headers(client);
         if (content_length > (int64_t)(capacity - 1U))
         {
             err = ESP_ERR_INVALID_SIZE;
         }
-        else if (esp_http_client_get_status_code(client) != 200)
+        else if (status_code != 200)
         {
             err = ESP_FAIL;
         }
