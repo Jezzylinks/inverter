@@ -137,7 +137,7 @@
     const inverterValid = inverter.telemetry_valid !== false;
     els.inverterState.textContent = inverter.state || 'Unknown';
     els.inverterDetail.textContent = inverterValid
-      ? `${formatValue(inverter.voltage, ' V')} · ${formatValue(inverter.frequency, ' Hz')}${inverter.current_available ? ` · ${formatValue(inverter.current, ' A')}` : ' · Current not measured'}`
+      ? `${formatValue(inverter.voltage, ' V')} · ${inverter.frequency_available === true ? formatValue(inverter.frequency, ' Hz') : 'Frequency not measured'}${inverter.current_available === true ? ` · ${formatValue(inverter.current, ' A')}` : ' · Current not measured'}`
       : 'Telemetry unavailable';
     const socText = formatValue(battery.state_of_charge, '%');
     els.batteryMetric.textContent = socText === '—' ? socText : `~${socText}`;
