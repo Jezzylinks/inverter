@@ -380,7 +380,7 @@ static esp_err_t api_battery_handler(httpd_req_t *req)
     cJSON_AddNullToObject(root, "power_kw");
     cJSON_AddBoolToObject(root, "current_available", false);
     cJSON_AddBoolToObject(root, "power_available", false);
-    cJSON_AddStringToObject(root, "state_of_charge_source", "voltage_estimate");
+    cJSON_AddStringToObject(root, "state_of_charge_source", "firmware_estimate");
     return json_api_send(req, root, 200);
 }
 
@@ -449,8 +449,6 @@ static esp_err_t api_grid_handler(httpd_req_t *req)
     if (auth_err != ESP_OK) {
         return auth_err;
     }
-    system_state_t state;
-    snapshot_system_state(&state);
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) {
         return ESP_ERR_NO_MEM;
