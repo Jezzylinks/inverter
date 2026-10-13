@@ -582,6 +582,30 @@ static void handle_wifi_settings_action(uint8_t selection)
     }
 }
 
+static bool ota_operation_active(app_ota_state_t state)
+{
+    return state == APP_OTA_CHECKING ||
+           state == APP_OTA_PREPARING ||
+           state == APP_OTA_DOWNLOADING ||
+           state == APP_OTA_VERIFYING;
+}
+
+static void show_ota_entry_screen(void)
+{
+    app_ota_status_t status;
+    app_services_get_ota_status(&status);
+    if (ota_operation_active(status.state))
+    {
+        s_ota_feedback_active = true;
+        app_services_show_ota_status_screen();
+    }
+    else
+    {
+        s_ota_feedback_active = false;
+        show_menu_screen(MENU_OTA, sys_state.menu_selection);
+    }
+}
+
 static void handle_ota_menu_action(uint8_t selection)
 {
     switch (selection)
@@ -626,9 +650,35 @@ static void handle_ota_menu_action(uint8_t selection)
         break;
     }
     case 2:
+    {
+        app_ota_status_t ota_status;
+        app_services_get_ota_status(&ota_status);
+        if (!ota_operation_active(ota_status.state))
+        {
+            /* "Back" is a real navigation action when nothing is running.
+             * Keep the service's "No Update Running / Current kept" flash for
+             * genuine cancel races; do not make the Back item flash forever. */
+            s_ota_feedback_active = false;
+            menu_state_t previous_menu;
+            int previous_selection;
+            if (pop_menu_history(&previous_menu, &previous_selection) &&
+                previous_menu != MENU_NONE)
+            {
+                sys_state.menu_state = previous_menu;
+                sys_state.menu_selection = previous_selection;
+            }
+            else
+            {
+                sys_state.menu_state = MAIN_MENU;
+                sys_state.menu_selection = 4U;
+            }
+            show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
+            break;
+        }
         s_ota_feedback_active = true;
         (void)app_services_request_cancel_update();
         break;
+    }
     default:
         break;
     }
@@ -1277,13 +1327,13 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 (void)app_services_request_update_confirmation();
             }
         }
-        else if (ota_view == LCD_OTA_VIEW_ERROR)
+        else if (ota_view == LCD_OTA_VIEW_ERROR ||
+                 ota_view == LCD_OTA_VIEW_CURRENT ||
+                 ota_view == LCD_OTA_VIEW_CANCELLED ||
+                 ota_view == LCD_OTA_VIEW_COMPLETE)
         {
-            (void)app_services_check_for_update(true);
-        }
-        else if (ota_view == LCD_OTA_VIEW_CURRENT ||
-                 ota_view == LCD_OTA_VIEW_CANCELLED)
-        {
+            /* Status pages are informational. Return to the OTA menu so the
+             * user can explicitly retry, install, or go Back. */
             s_ota_feedback_active = false;
             show_menu_screen(MENU_OTA, sys_state.menu_selection);
         }
@@ -1446,7 +1496,14 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 push_menu_history(sys_state.menu_state, sys_state.menu_selection);
                 sys_state.menu_state = next;
                 sys_state.menu_selection = 0;
-                show_menu_screen(next, sys_state.menu_selection);
+                if (next == MENU_OTA)
+                {
+                    show_ota_entry_screen();
+                }
+                else
+                {
+                    show_menu_screen(next, sys_state.menu_selection);
+                }
 
                 if (next == MENU_SYSTEM_INFO)
                 {
@@ -1711,7 +1768,14 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 push_menu_history(sys_state.menu_state, sys_state.menu_selection);
                 sys_state.menu_state = next;
                 sys_state.menu_selection = 0;
-                show_menu_screen(next, 0);
+                if (next == MENU_OTA)
+                {
+                    show_ota_entry_screen();
+                }
+                else
+                {
+                    show_menu_screen(next, 0);
+                }
             }
             break;
         }
@@ -2590,10 +2654,10 @@ void handle_back_button_event(button_event_info_t *event_info,
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
         sys_state.menu_state == MENU_OTA &&
-        s_ota_feedback_active &&
-        (sys_lcd.screen == LCD_SCREEN_FLASH_MSG ||
-         sys_lcd.screen == LCD_SCREEN_OTA))
+        sys_lcd.screen == LCD_SCREEN_OTA)
     {
+        /* The physical Back button leaves the progress/status page without
+         * cancelling an OTA transfer. Reopening Firmware Update resumes it. */
         s_ota_feedback_active = false;
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
         return;

@@ -220,7 +220,8 @@ static const char *ota_menu_label(int index)
         }
         return "Install";
     case 2:
-        return status.state == APP_OTA_PREPARING ||
+        return status.state == APP_OTA_CHECKING ||
+                       status.state == APP_OTA_PREPARING ||
                        status.state == APP_OTA_DOWNLOADING ||
                        status.state == APP_OTA_VERIFYING
                    ? "Cancel Update"

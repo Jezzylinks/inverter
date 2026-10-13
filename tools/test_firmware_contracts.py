@@ -668,5 +668,73 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("Current not measured", js)
         self.assertNotIn("if (showLog)", js)
 
+
+    def test_view_settings_uses_correct_runtime_types_and_numbers_entries(self):
+        root = Path(__file__).parents[1]
+        runtime = root.joinpath("src", "app_runtime.c").read_text()
+        start = runtime.index("void lcd_draw_settings_view_screen(uint8_t index)\n{")
+        view = runtime[start:runtime.index("/* ── perform_factory_reset()", start)]
+        self.assertIn('strcmp(s->key, BATTERY_CAPACITY_KEY) == 0', view)
+        self.assertIn('s->is_signed_8', view)
+        self.assertIn('s->is_bool || strcmp(s->key, "inverter_active") == 0', view)
+        self.assertIn('"%02u/%02u"', view)
+        self.assertIn('"%.5s %.14s"', view)
+        self.assertIn('BATTERY_CAPACITY_KEY, &sys_state.battery_profile.capacity_ah, sizeof(float)', runtime)
+        units = runtime[runtime.index("static const char *settings_view_unit_for"):start]
+        self.assertIn('strcmp(label, "Sys Timeout") == 0', units)
+        self.assertIn('return "ms";', units)
+
+    def test_setting_save_feedback_uses_a_real_flash_message(self):
+        root = Path(__file__).parents[1]
+        writer = root.joinpath("src", "lcd_writer.c").read_text()
+        saved = writer[writer.index("void lcd_flash_saved"):
+                       writer.index("void lcd_flash_cancelled", writer.index("void lcd_flash_saved"))]
+        self.assertIn("lcd_flash_enqueue_rows_to", saved)
+        self.assertIn("New Value Saved", saved)
+        self.assertIn("#if LCD_GEOMETRY_20X4", saved)
+        self.assertIn("safe_label", saved)
+        self.assertIn("safe_value", saved)
+
+    def test_ota_failure_is_a_flash_and_retry_menu_is_restored(self):
+        root = Path(__file__).parents[1]
+        services = root.joinpath("src", "app_services.c").read_text()
+        input_source = root.joinpath("src", "app_input.c").read_text()
+        menu = root.joinpath("src", "app_menu.c").read_text()
+        ota_ui = services[services.index("static void app_services_show_ota_lcd"):
+                          services.index("static const char *app_ota_state_text")]
+        self.assertIn('lcd_flash_warning_to("Update Failed"', ota_ui)
+        self.assertIn("show_menu_screen(MENU_OTA, 0)", ota_ui)
+        self.assertIn('return "Retry";', menu)
+        self.assertIn("app_services_show_ota_status_screen();", input_source)
+        self.assertIn('lcd_flash_message("No Update Running", "Current kept", 1200U)', services)
+        self.assertIn("static void app_services_record_ota_error", services)
+        self.assertIn('"Manifest URL unavailable"', services)
+        self.assertIn('app_services_record_ota_error("OTA URL Invalid", true)', services)
+        self.assertIn('app_services_record_ota_error("ERR:NO_MEM", user_initiated)', services)
+
+    def test_firmware_update_reopens_active_ota_and_back_returns_to_menu(self):
+        root = Path(__file__).parents[1]
+        input_source = root.joinpath("src", "app_input.c").read_text()
+        services = root.joinpath("src", "app_services.c").read_text()
+        self.assertIn("static bool ota_operation_active(app_ota_state_t state)", input_source)
+        self.assertIn("show_ota_entry_screen();", input_source)
+        self.assertIn("void app_services_show_ota_status_screen(void)", services)
+        self.assertIn("sys_lcd.screen == LCD_SCREEN_OTA", input_source)
+        self.assertIn("show_menu_screen(MENU_OTA, sys_state.menu_selection)", input_source)
+
+
+    def test_ota_release_workflow_publishes_binary_and_integrity_manifest(self):
+        root = Path(__file__).parents[1]
+        workflow = root.joinpath(".github", "workflows", "ota-release.yml").read_text()
+        self.assertIn('tags:', workflow)
+        self.assertIn('INVERTER_FIRMWARE_VERSION', workflow)
+        self.assertIn('pio run -e esp32dev', workflow)
+        self.assertIn('max_size=$((0x180000))', workflow)
+        self.assertIn('sha256sum', workflow)
+        self.assertIn('firmware.bin', workflow)
+        self.assertIn('inverter.csv', workflow)
+        self.assertIn('releases/download/${GITHUB_REF_NAME}/firmware.bin', workflow)
+        self.assertIn('gh release create', workflow)
+
 if __name__ == "__main__":
     unittest.main()

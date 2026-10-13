@@ -738,9 +738,26 @@ void lcd_flash_message(const char *line0, const char *line1,
 
 void lcd_flash_saved(const char *label, const char *value_str)
 {
-    /* Success is represented by the updated value in its owning screen. */
-    (void)label;
-    (void)value_str;
+    const char *safe_label = (label != NULL && label[0] != '\0')
+                                 ? label : "Setting";
+    const char *safe_value = (value_str != NULL && value_str[0] != '\0')
+                                 ? value_str : "Saved successfully";
+#if LCD_GEOMETRY_20X4
+    const char *rows[3] = {
+        safe_label,
+        "New Value Saved",
+        safe_value
+    };
+    lcd_flash_enqueue_rows_to(rows, 3U, 1600U, FLASH_PRI_INFO,
+                              LCD_FLASH_RETURN_AUTO);
+#else
+    const char *rows[2] = {
+        "New Value Saved",
+        safe_value
+    };
+    lcd_flash_enqueue_rows_to(rows, 2U, 1600U, FLASH_PRI_INFO,
+                              LCD_FLASH_RETURN_AUTO);
+#endif
 }
 
 void lcd_flash_cancelled(void)

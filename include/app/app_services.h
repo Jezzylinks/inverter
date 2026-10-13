@@ -143,6 +143,8 @@ esp_err_t app_services_cancel_update(void);
 
 /** Copy menu-visible update state. */
 void app_services_get_ota_status(app_ota_status_t *status);
+/** Restore the OTA progress screen if a check or firmware transfer is active. */
+void app_services_show_ota_status_screen(void);
 
 #ifdef __cplusplus
 }

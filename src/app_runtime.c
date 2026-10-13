@@ -4527,6 +4527,25 @@ static const char *value_edit_display_label(const value_edit_context_t *config)
  * nothing else to wire. */
 static const char *settings_view_unit_for(const char *label)
 {
+    if (label == NULL)
+        return "";
+
+    /* Use the units of the underlying setting, not a broad substring rule:
+     * system_timeout is milliseconds, while backlight_time is seconds. */
+    if (strcmp(label, "Sys Timeout") == 0)
+        return "ms";
+    if (strcmp(label, "Backlight Time") == 0)
+        return "s";
+    if (strcmp(label, "Battery Cutoff") == 0)
+        return "V";
+    if (strcmp(label, "UTC Offset") == 0)
+        return "h";
+    if (strcmp(label, "Quiet Start") == 0 ||
+        strcmp(label, "Quiet End") == 0 ||
+        strcmp(label, "Set Hour") == 0)
+        return "h";
+    if (strcmp(label, "Set Minute") == 0)
+        return "min";
     if (strstr(label, "Volt"))
         return "V";
     if (strstr(label, "Cur"))
@@ -4535,7 +4554,9 @@ static const char *settings_view_unit_for(const char *label)
         return "Hz";
     if (strstr(label, "Temp"))
         return "C";
-    if (strstr(label, "Timeout") || strstr(label, "Time"))
+    if (strstr(label, "Timeout"))
+        return "ms";
+    if (strstr(label, "Time"))
         return "s";
     if (strstr(label, "Capacity"))
         return "Ah";
@@ -4553,46 +4574,96 @@ void lcd_draw_settings_view_screen(uint8_t index)
     }
 
     const nvs_setting_t *s = &g_settings[index];
-    char row0[LCD_LINE_SIZE], row1[LCD_LINE_SIZE];
+    char row0[LCD_LINE_SIZE] = {0};
+    char row1[LCD_LINE_SIZE] = {0};
+    char value_text[LCD_LINE_SIZE] = {0};
+    char counter[8] = {0};
 
-    char counter[8];
-    snprintf(counter, sizeof(counter), "%u/%u", (unsigned)(index + 1), (unsigned)NVS_SETTINGS_COUNT);
+    (void)snprintf(counter, sizeof(counter), "%02u/%02u",
+                   (unsigned)(index + 1U), (unsigned)NVS_SETTINGS_COUNT);
     const char *display_label = settings_display_label(s);
-    if (lcd_geometry_is_20x4())
-    {
-        snprintf(row0, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, display_label);
-    }
-    else
-    {
-        snprintf(row0, LCD_LINE_SIZE, "%-11.11s%5.5s", display_label, counter);
-    }
 
+    /* A float-backed setting is not necessarily stored as a scaled integer.
+     * Battery capacity is a native float, while is_scaled_float describes
+     * float fields encoded as an integer in NVS. Both must be read as float. */
     if (s->is_scaled_float)
     {
-        float val = *(float *)s->field;
-        snprintf(row1, LCD_LINE_SIZE, "%.2f%-3s        ", val, settings_view_unit_for(s->label));
+        const float value = *(const float *)s->field;
+        (void)snprintf(value_text, sizeof(value_text), "%.2f %s",
+                       (double)value, settings_view_unit_for(s->label));
     }
-    else if (s->size == sizeof(uint8_t))
+    else if (strcmp(s->key, BATTERY_CAPACITY_KEY) == 0)
     {
-        uint8_t val = *(uint8_t *)s->field;
-
-        if (strcmp(s->key, BATTERY_TYPE_KEY) == 0 && val < BATTERY_TYPE_COUNT)
+        /* Battery capacity is the one native float in this table that is not
+         * marked is_scaled_float. Do not infer a C type from sizeof alone:
+         * int32 settings have the same size as float. */
+        const float value = *(const float *)s->field;
+        (void)snprintf(value_text, sizeof(value_text), "%.0f %s",
+                       (double)value, settings_view_unit_for(s->label));
+    }
+    else if (strcmp(s->key, BATTERY_TYPE_KEY) == 0)
+    {
+        const uint8_t value = *(const uint8_t *)s->field;
+        if (value < BATTERY_TYPE_COUNT)
         {
-            snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, battery_type_names[val]);
-        }
-        else if (val == 0 || val == 1)
-        {
-            snprintf(row1, LCD_LINE_SIZE, "%u (%-3s)        ", val, val ? "ON" : "OFF");
+            (void)snprintf(value_text, sizeof(value_text), "%s",
+                           battery_type_names[value]);
         }
         else
         {
-            snprintf(row1, LCD_LINE_SIZE, "%u        ", val);
+            (void)snprintf(value_text, sizeof(value_text), "Unknown (%u)",
+                           (unsigned)value);
+        }
+    }
+    else if (s->is_signed_8)
+    {
+        const int8_t value = *(const int8_t *)s->field;
+        if (strcmp(s->key, "utc_offset") == 0)
+        {
+            (void)snprintf(value_text, sizeof(value_text), "%+d h",
+                           (int)value);
+        }
+        else
+        {
+            (void)snprintf(value_text, sizeof(value_text), "%d %s",
+                           (int)value, settings_view_unit_for(s->label));
+        }
+    }
+    else if (s->size == sizeof(uint8_t) || s->is_bool)
+    {
+        const uint8_t value = *(const uint8_t *)s->field;
+        if (s->is_bool || strcmp(s->key, "inverter_active") == 0)
+        {
+            (void)snprintf(value_text, sizeof(value_text), "%s",
+                           value != 0U ? "ON" : "OFF");
+        }
+        else
+        {
+            (void)snprintf(value_text, sizeof(value_text), "%u %s",
+                           (unsigned)value, settings_view_unit_for(s->label));
         }
     }
     else
     {
-        int32_t val = *(int32_t *)s->field;
-        snprintf(row1, LCD_LINE_SIZE, "%ld%-3s           ", (long)val, settings_view_unit_for(s->label));
+        const int32_t value = *(const int32_t *)s->field;
+        (void)snprintf(value_text, sizeof(value_text), "%ld %s",
+                       (long)value, settings_view_unit_for(s->label));
+    }
+
+    if (lcd_geometry_is_20x4())
+    {
+        /* Keep the complete setting name on row 0 and put the index beside
+         * its actual runtime value on row 1. This also works for long labels. */
+        (void)snprintf(row0, sizeof(row0), "%-*.*s",
+                       LCD_COLS, LCD_COLS, display_label);
+        (void)snprintf(row1, sizeof(row1), "%.5s %.14s", counter, value_text);
+    }
+    else
+    {
+        (void)snprintf(row0, sizeof(row0), "%-11.11s%5.5s",
+                       display_label, counter);
+        (void)snprintf(row1, sizeof(row1), "%.*s",
+                       LCD_COLS, value_text);
     }
 
     lcd_show_settings_view_detail(row0, row1);

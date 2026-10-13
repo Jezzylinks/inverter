@@ -1,0 +1,82 @@
+name: Publish verified OTA release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Build firmware and publish OTA manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Validate release tag and firmware version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="$(sed -n 's/^#define INVERTER_FIRMWARE_VERSION "\([^"]*\)".*/\1/p' include/system/firmware_version.h)"
+          if [[ -z "${version}" ]]; then
+            echo "::error::INVERTER_FIRMWARE_VERSION was not found."
+            exit 1
+          fi
+          if [[ "${tag}" != "${version}" ]]; then
+            echo "::error::Release tag ${tag} does not match firmware version ${version}. Update include/system/firmware_version.h before tagging."
+            exit 1
+          fi
+          python - "${version}" <<'PY'
+          import re
+          import sys
+          version = sys.argv[1]
+          if not re.fullmatch(r"v?\d+\.\d+\.\d+(?:\.\d+)?", version):
+              raise SystemExit(f"Unsupported OTA version format: {version}")
+          PY
+
+      - name: Build production firmware
+        run: pio run -e esp32dev
+
+      - name: Generate integrity-checked OTA manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin=".pio/build/esp32dev/firmware.bin"
+          test -s "${bin}"
+          size="$(wc -c < "${bin}" | tr -d '[:space:]')"
+          max_size=$((0x180000))
+          if (( size <= 0 || size > max_size )); then
+            echo "::error::Firmware size ${size} bytes does not fit the 0x180000-byte OTA app partition."
+            exit 1
+          fi
+          sha256="$(sha256sum "${bin}" | awk '{print $1}')"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/firmware.bin"
+          mkdir -p release-assets
+          cp "${bin}" release-assets/firmware.bin
+          printf 'version,url,sha256,size\n%s,%s,%s,%s\n' "${GITHUB_REF_NAME}" "${url}" "${sha256}" "${size}" > release-assets/inverter.csv
+          echo "Prepared manifest:"
+          cat release-assets/inverter.csv
+
+      - name: Publish firmware and manifest assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            release-assets/firmware.bin \
+            release-assets/inverter.csv \
+            --title "Inverter Firmware ${GITHUB_REF_NAME}" \
+            --generate-notes
