@@ -4536,6 +4536,8 @@ static const char *settings_view_unit_for(const char *label)
         return "ms";
     if (strcmp(label, "Backlight Time") == 0)
         return "s";
+    if (strcmp(label, "Battery Cutoff") == 0)
+        return "V";
     if (strcmp(label, "UTC Offset") == 0)
         return "h";
     if (strcmp(label, "Quiet Start") == 0 ||
