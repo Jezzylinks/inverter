@@ -528,5 +528,16 @@ class FirmwareContracts(unittest.TestCase):
             body = source[start:] if next_handler < 0 else source[start:next_handler]
             self.assertIn("lcd_is_startup_active()", body)
 
+
+    def test_fault_history_api_is_pin_protected_and_exposes_persisted_diagnostics(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("src", "server", "json", "json_api_system.c").read_text()
+        self.assertIn('json_api_require_pin(req)', source)
+        self.assertIn('"/api/v1/faults"', source)
+        self.assertIn('fault_log_get_entries(entries, API_FAULT_HISTORY_LIMIT)', source)
+        self.assertIn('system_diagnostics_get_snapshot(&snapshot)', source)
+        self.assertIn('"last_reset_reason"', source)
+        self.assertIn('"last_battery_voltage"', source)
+
 if __name__ == "__main__":
     unittest.main()
