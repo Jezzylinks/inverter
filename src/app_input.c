@@ -2657,11 +2657,13 @@ void handle_back_button_event(button_event_info_t *event_info,
     }
 
     if (event_info->event == BUTTON_EVENT_CLICK &&
-        sys_state.menu_state == MENU_OTA &&
         sys_lcd.screen == LCD_SCREEN_OTA)
     {
         /* Back leaves the progress/status page without cancelling OTA.
-         * Reopening Firmware Update resumes an active operation. */
+         * Reopening Firmware Update resumes an active operation. The screen,
+         * not menu_state, decides: a background OTA completion can raise this
+         * page after the menu state was reset, and Back must still return to
+         * the OTA menu rather than fall through to a parent-menu handler. */
         s_ota_feedback_active = false;
         sys_state.menu_state = MENU_OTA;
         if (sys_state.menu_selection >= 3U) {

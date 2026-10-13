@@ -139,6 +139,7 @@ static void app_wifi_prerequisite_task(void *parameter);
 static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode);
 static bool app_wifi_end_operation_if_generation(uint32_t generation);
 static void app_wifi_schedule_menu_refresh(uint32_t delay_ms);
+static void app_wifi_report_connected(const char *ssid, int8_t rssi);
 
 typedef enum {
     APP_WIFI_PREREQUISITE_NONE = 0,
@@ -167,6 +168,49 @@ static bool app_wifi_station_has_ip(void)
 {
     wifi_status_t status = {0};
     return wifi_events_get_status_copy(&status) == ESP_OK && status.got_ip;
+}
+
+/* Single live-state test for "the station is connected to the requested SSID
+ * and has an IP". Used by the status callback, the watcher poll and the
+ * timeout reconciliation so they cannot disagree.
+ *
+ *  - got_ip comes from the station event snapshot and is required, so an
+ *    active AP (APSTA) alone is never mistaken for a station connection.
+ *  - When the driver can return the AP record, its SSID is authoritative
+ *    (a DHCP lease on a previous AP does not satisfy a new request).
+ *  - When the AP record is transiently unavailable, fall back to other live
+ *    state: the controller reports connected, the STA netif holds a non-zero
+ *    address, and the target the driver was configured with is the requested
+ *    SSID. A connection to an unrelated network cannot satisfy all three
+ *    because switching networks disconnects first and rewrites the target. */
+static bool app_wifi_station_connected_to(const char *ssid)
+{
+    if (ssid == NULL || ssid[0] == '\0') {
+        return false;
+    }
+
+    wifi_status_t status = {0};
+    if (wifi_events_get_status_copy(&status) != ESP_OK || !status.got_ip) {
+        return false;
+    }
+
+    wifi_ap_record_t ap = {0};
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+        return strncmp((const char *)ap.ssid, ssid, sizeof(ap.ssid)) == 0;
+    }
+
+    if (!wifi_controller_is_connected()) {
+        return false;
+    }
+    esp_netif_ip_info_t ip = {0};
+    if (wifi_manager_get_ip(&ip) != ESP_OK || ip.ip.addr == 0U) {
+        return false;
+    }
+    wifi_manager_config_t target = {0};
+    if (wifi_manager_get_config(&target) != ESP_OK) {
+        return false;
+    }
+    return strcmp(target.ssid, ssid) == 0;
 }
 
 static bool app_wifi_scan_cancel_requested(void)
@@ -390,29 +434,22 @@ static void app_wifi_operation_watch_task(void *parameter)
         app_wifi_operation_t polled_operation = APP_WIFI_OPERATION_NONE;
         uint32_t polled_generation = 0U;
         char polled_ssid[sizeof(s_wifi_operation_ssid)] = {0};
+        int8_t polled_rssi = -127;
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         polled_operation = s_wifi_operation;
         polled_generation = s_wifi_operation_generation;
+        polled_rssi = s_wifi_operation_rssi;
         strncpy(polled_ssid, s_wifi_operation_ssid, sizeof(polled_ssid) - 1U);
         xSemaphoreGive(s_services_mutex);
 
         if (polled_operation == APP_WIFI_OPERATION_CONNECT_SAVED &&
             polled_ssid[0] != '\0') {
-            wifi_status_t live_status = {0};
-            wifi_ap_record_t live_ap = {0};
-            const bool got_ip =
-                wifi_events_get_status_copy(&live_status) == ESP_OK &&
-                live_status.got_ip;
-            const bool ap_matches =
-                esp_wifi_sta_get_ap_info(&live_ap) == ESP_OK &&
-                strncmp((const char *)live_ap.ssid, polled_ssid,
-                        sizeof(live_ap.ssid)) == 0;
-            if (got_ip && ap_matches &&
+            if (app_wifi_station_connected_to(polled_ssid) &&
                 app_wifi_end_operation_if_generation(polled_generation)) {
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Live Wi-Fi poll confirmed connection to '%s'",
                          polled_ssid);
-                app_wifi_sync_menu_if_visible();
+                app_wifi_report_connected(polled_ssid, polled_rssi);
             }
         } else if (polled_operation == APP_WIFI_OPERATION_DISCONNECT) {
             wifi_ap_record_t live_ap = {0};
@@ -432,11 +469,13 @@ static void app_wifi_operation_watch_task(void *parameter)
         bool timed_out = false;
         app_wifi_operation_t timed_out_operation = APP_WIFI_OPERATION_NONE;
         char timed_out_ssid[sizeof(s_wifi_operation_ssid)] = {0};
+        int8_t timed_out_rssi = -127;
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         if (s_wifi_operation != APP_WIFI_OPERATION_NONE &&
             (uint32_t)(xTaskGetTickCount() - s_wifi_operation_started_tick) >=
                 pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
             timed_out_operation = s_wifi_operation;
+            timed_out_rssi = s_wifi_operation_rssi;
             strncpy(timed_out_ssid, s_wifi_operation_ssid,
                     sizeof(timed_out_ssid) - 1U);
             s_wifi_operation = APP_WIFI_OPERATION_NONE;
@@ -453,17 +492,8 @@ static void app_wifi_operation_watch_task(void *parameter)
             bool connection_really_succeeded = false;
             bool disconnection_really_succeeded = false;
             if (timed_out_operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
-                wifi_status_t current = {0};
-                wifi_ap_record_t active_ap = {0};
-                const bool have_ip =
-                    wifi_events_get_status_copy(&current) == ESP_OK &&
-                    current.got_ip;
-                if (have_ip && esp_wifi_sta_get_ap_info(&active_ap) == ESP_OK) {
-                    connection_really_succeeded =
-                        timed_out_ssid[0] != '\0' &&
-                        strncmp((const char *)active_ap.ssid, timed_out_ssid,
-                                sizeof(active_ap.ssid)) == 0;
-                }
+                connection_really_succeeded =
+                    app_wifi_station_connected_to(timed_out_ssid);
             } else if (timed_out_operation == APP_WIFI_OPERATION_DISCONNECT) {
                 wifi_ap_record_t active_ap = {0};
                 disconnection_really_succeeded =
@@ -474,7 +504,7 @@ static void app_wifi_operation_watch_task(void *parameter)
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Wi-Fi callback was delayed; confirmed connected to '%s'",
                          timed_out_ssid);
-                app_wifi_sync_menu_if_visible();
+                app_wifi_report_connected(timed_out_ssid, timed_out_rssi);
             } else if (disconnection_really_succeeded) {
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Wi-Fi callback was delayed; station is disconnected");
@@ -787,6 +817,30 @@ static void app_wifi_menu_refresh_task(void *parameter)
             app_wifi_sync_menu_if_visible();
             break;
         }
+        if (screen == LCD_SCREEN_WIFI_CONNECTING) {
+            /* A confirmed connection leaves the connect screen on its own.
+             * Failure/timeout results stay up until the user presses Back. */
+            bool connected_result;
+            LCD_LOCK();
+            connected_result = sys_lcd.wifi_connect.connected;
+            LCD_UNLOCK();
+            if (connected_result) {
+                menu_state_t menu_state;
+                uint8_t selection;
+                if (sys_state_mutex != NULL) {
+                    xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+                }
+                menu_state = sys_state.menu_state;
+                selection = sys_state.menu_selection;
+                if (sys_state_mutex != NULL) {
+                    xSemaphoreGive(sys_state_mutex);
+                }
+                if (menu_state == MENU_WIFI_CONFIG) {
+                    show_menu_screen(MENU_WIFI_CONFIG, selection);
+                }
+                break;
+            }
+        }
         if (screen != LCD_SCREEN_FLASH_MSG &&
             screen != LCD_SCREEN_WIFI_CONNECTING) {
             break;
@@ -794,6 +848,52 @@ static void app_wifi_menu_refresh_task(void *parameter)
         vTaskDelay(pdMS_TO_TICKS(250U));
     }
     vTaskDelete(NULL);
+}
+
+#define APP_WIFI_CONNECTED_RESULT_MS 1500U
+
+/* Report a confirmed station connection. The scan/password flow shows a
+ * full-screen "connecting" view that app_wifi_sync_menu_if_visible() never
+ * redraws, so without this the LCD stayed on CONNECTING after a successful
+ * association. Convert that view to the success result and return to the
+ * Wi-Fi menu. Menu-driven reconnects (no full-screen view) just re-sync. */
+static void app_wifi_report_connected(const char *ssid, int8_t rssi)
+{
+    bool newer_operation = false;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        newer_operation = s_wifi_operation != APP_WIFI_OPERATION_NONE;
+        xSemaphoreGive(s_services_mutex);
+    }
+    if (newer_operation) {
+        /* A newer request owns the display; a late result must not
+         * overwrite its connecting view. */
+        return;
+    }
+
+    bool owns_connect_view;
+    LCD_LOCK();
+    owns_connect_view = sys_lcd.screen == LCD_SCREEN_WIFI_CONNECTING &&
+                        !sys_lcd.wifi_connect.connected &&
+                        !sys_lcd.wifi_connect.failed &&
+                        !sys_lcd.wifi_connect.timed_out &&
+                        /* The LCD copy is truncated to LCD_WIFI_SSID_MAX_LEN. */
+                        strncmp(sys_lcd.wifi_connect.ssid,
+                                ssid != NULL ? ssid : "",
+                                LCD_WIFI_SSID_MAX_LEN) == 0;
+    LCD_UNLOCK();
+
+    if (!owns_connect_view) {
+        app_wifi_sync_menu_if_visible();
+        return;
+    }
+
+    const int8_t live_rssi = wifi_manager_get_rssi();
+    if (live_rssi != -127 && live_rssi != 0) {
+        rssi = live_rssi;
+    }
+    lcd_show_wifi_result(true, false, false, ssid, rssi, "LINK ESTABLISHED");
+    app_wifi_schedule_menu_refresh(APP_WIFI_CONNECTED_RESULT_MS);
 }
 
 static void app_wifi_schedule_menu_refresh(uint32_t delay_ms)
@@ -1114,16 +1214,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
          * before completing the pending operation (important for same-SSID
          * password changes and delayed monitor callbacks). */
         if (status->got_ip && ssid[0] != '\0') {
-            wifi_ap_record_t active_ap = {0};
-            const esp_err_t ap_info_err = esp_wifi_sta_get_ap_info(&active_ap);
-            if ((ap_info_err == ESP_OK &&
-                 strncmp((const char *)active_ap.ssid, ssid,
-                         sizeof(active_ap.ssid)) == 0) ||
-                (ap_info_err != ESP_OK && wifi_controller_is_connected())) {
-                /* got_ip is the station/DHCP handshake. If the driver can
-                 * provide the AP record, require an SSID match; only fall
-                 * back to controller connectivity when AP info is transiently
-                 * unavailable. */
+            if (app_wifi_station_connected_to(ssid)) {
                 terminal = true;
                 connected = true;
                 message = ssid;
@@ -1179,7 +1270,7 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         if (connected) {
             /* Confirmed station association + DHCP: acknowledge briefly and
              * return quickly to the live Wi-Fi menu. */
-            app_wifi_sync_menu_if_visible();
+            app_wifi_report_connected(ssid, operation_rssi);
         } else {
             lcd_show_wifi_result(false, failed, false, ssid, operation_rssi,
                                  message != NULL ? message : "Connect failed");
