@@ -235,26 +235,31 @@ void websocket_broadcast_device_status(void)
         cJSON_AddItemToObject(data, "power_control", power);
     }
     cJSON_AddNumberToObject(data, "operating_mode", snapshot.inverter.operating_mode);
-    cJSON_AddNumberToObject(data, "load_percentage", snapshot.inverter.load_percentage);
+    cJSON_AddNullToObject(data, "load_percentage");
+    cJSON_AddBoolToObject(data, "load_percentage_available", false);
     cJSON_AddNumberToObject(data, "fault_flags", (double)snapshot.error.error_flags);
     if (valid) {
         cJSON_AddNumberToObject(data, "battery_voltage", snapshot.inverter.battery.voltage);
         cJSON_AddNumberToObject(data, "battery_soc",
                                 snapshot.inverter.battery.battery_soc);
+        cJSON_AddBoolToObject(data, "battery_soc_estimated", true);
         cJSON_AddNumberToObject(data, "output_voltage", snapshot.inverter.output_voltage);
-        cJSON_AddNumberToObject(data, "output_current", snapshot.inverter.output_current);
-        cJSON_AddNumberToObject(data, "output_frequency", snapshot.inverter.output_frequency);
-        cJSON_AddNumberToObject(data, "solar_voltage", snapshot.dc_input_voltage);
-        cJSON_AddNumberToObject(data, "solar_current", snapshot.dc_input_current);
     } else {
         cJSON_AddNullToObject(data, "battery_voltage");
         cJSON_AddNullToObject(data, "battery_soc");
         cJSON_AddNullToObject(data, "output_voltage");
-        cJSON_AddNullToObject(data, "output_current");
-        cJSON_AddNullToObject(data, "output_frequency");
-        cJSON_AddNullToObject(data, "solar_voltage");
-        cJSON_AddNullToObject(data, "solar_current");
+        cJSON_AddBoolToObject(data, "battery_soc_estimated", true);
     }
+    /* No current, frequency, solar, or load sensors are configured in this
+     * production hardware profile. Do not publish default struct values as
+     * telemetry just because unrelated ADC channels are healthy. */
+    cJSON_AddNullToObject(data, "output_current");
+    cJSON_AddBoolToObject(data, "output_current_available", false);
+    cJSON_AddNullToObject(data, "output_frequency");
+    cJSON_AddBoolToObject(data, "output_frequency_available", false);
+    cJSON_AddNullToObject(data, "solar_voltage");
+    cJSON_AddNullToObject(data, "solar_current");
+    cJSON_AddBoolToObject(data, "solar_available", false);
     cJSON_AddBoolToObject(data, "telemetry_valid", valid);
     cJSON_AddItemToObject(root, "data", data);
     websocket_broadcast_json(root, true);

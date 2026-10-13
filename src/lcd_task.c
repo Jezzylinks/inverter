@@ -712,7 +712,7 @@ static void draw_ota(const lcd_ota_data_t *d)
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATING FIRMWARE");
             snprintf(rows[1], LCD_LINE_SIZE, "%3u%% COMPLETE", (unsigned)pct);
             snprintf(rows[2], LCD_LINE_SIZE, "%s", bar);
-            snprintf(rows[3], LCD_LINE_SIZE, "MENU: CANCEL");
+            rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_VERIFYING:
             snprintf(rows[0], LCD_LINE_SIZE, "VERIFYING UPDATE");
@@ -1434,7 +1434,7 @@ static void draw_wifi_password(const lcd_wifi_password_data_t *d)
     {
         char rows[4][LCD_LINE_SIZE];
         snprintf(rows[0], LCD_LINE_SIZE, "%-20.20s", positions);
-        snprintf(rows[1], LCD_LINE_SIZE, "P:%02u C:%c HOLD=GO", position, current);
+        snprintf(rows[1], LCD_LINE_SIZE, "P:%02u C:%c", position, current);
         snprintf(rows[2], LCD_LINE_SIZE, "SSID:%-15.15s", d->ssid);
         rows[3][0] = '\0';
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
@@ -1443,7 +1443,7 @@ static void draw_wifi_password(const lcd_wifi_password_data_t *d)
     else
     {
         char row1[LCD_LINE_SIZE];
-        snprintf(row1, LCD_LINE_SIZE, "P:%02u C:%c HOLD=GO", position, current);
+        snprintf(row1, LCD_LINE_SIZE, "P:%02u C:%c", position, current);
         draw_commit(positions, row1);
     }
 }

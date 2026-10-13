@@ -21,6 +21,9 @@ jobs:
       - name: Run firmware contract tests
         run: python tools/test_firmware_contracts.py
 
+      - name: Check dashboard JavaScript syntax
+        run: node --check data/assets/app.js
+
       - name: Install PlatformIO
         run: pip install platformio
 

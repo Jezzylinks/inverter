@@ -528,5 +528,120 @@ class FirmwareContracts(unittest.TestCase):
             body = source[start:] if next_handler < 0 else source[start:next_handler]
             self.assertIn("lcd_is_startup_active()", body)
 
+
+    def test_wifi_mode_editor_has_no_navigation_guide_rows(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("src", "app_menu.c").read_text()
+        self.assertNotIn('"UP/DOWN: CHANGE"', source)
+        self.assertNotIn('"ENT=SAVE BACK=CANCEL"', source)
+
+    def test_error_log_detail_preserves_specific_event_and_shows_recovery_advice(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("src", "error_log_scroll.c").read_text()
+        self.assertIn('entry->description[0]', source)
+        self.assertIn('wrap_definition(source_definition((fault_source_t)entry->error_code)', source)
+
+
+    def test_wifi_connect_animation_forces_menu_redraw_on_phase_change(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("src", "app_services.c").read_text()
+        self.assertIn("last_rendered_anim_phase", source)
+        self.assertIn("(animating && last_rendered_anim_phase != anim_phase)", source)
+        self.assertIn("show_menu_screen(MENU_WIFI_CONFIG, selection);", source)
+
+
+    def test_api_does_not_report_unmeasured_solar_grid_or_load_as_zero(self):
+        root = Path(__file__).parents[1]
+        api = root.joinpath("src", "server", "json", "json_api_device.c").read_text()
+        solar = api[api.index("static esp_err_t api_solar_handler"):api.index("static esp_err_t api_load_handler")]
+        load = api[api.index("static esp_err_t api_load_handler"):api.index("static esp_err_t api_grid_handler")]
+        grid = api[api.index("static esp_err_t api_grid_handler"):api.index("static const httpd_uri_t s_device_uris")]
+        self.assertIn('cJSON_AddNullToObject(root, "power_kw")', solar)
+        self.assertIn('"No dedicated solar/DC-input sensors are configured"', solar)
+        self.assertIn('cJSON_AddNullToObject(root, "current")', load)
+        self.assertIn('"current_available", false', load)
+        self.assertIn('cJSON_AddNullToObject(root, "voltage")', grid)
+        self.assertIn('"voltage_available", false', grid)
+        self.assertIn('add_float_or_null(root, "temperature", 0.0f, false)', api)
+        self.assertIn('"temperature_available", false', api)
+
+    def test_dashboard_labels_battery_state_of_charge_as_estimated(self):
+        root = Path(__file__).parents[1]
+        html = root.joinpath("data", "index.html").read_text()
+        js = root.joinpath("data", "assets", "app.js").read_text()
+        self.assertIn("Battery · estimated SOC", html)
+        self.assertIn("socText === '—' ? socText", js)
+
+    def test_api_does_not_claim_unmeasured_frequency_temperature_or_load_percent(self):
+        root = Path(__file__).parents[1]
+        api = root.joinpath("src", "server", "json", "json_api_device.c").read_text()
+        inverter = api[api.index("static esp_err_t api_inverter_handler"):api.index("static esp_err_t api_inverter_control_handler")]
+        self.assertIn('"frequency_available", false', inverter)
+        self.assertIn('"temperature_available", false', inverter)
+        self.assertIn('cJSON_AddNullToObject(root, "load_percentage")', inverter)
+
+    def test_fault_history_api_is_pin_protected_and_exposes_persisted_diagnostics(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("src", "server", "json", "json_api_system.c").read_text()
+        self.assertIn('json_api_require_pin(req)', source)
+        self.assertIn('"/api/v1/faults"', source)
+        self.assertIn('fault_log_get_entries(entries, API_FAULT_HISTORY_LIMIT)', source)
+        self.assertIn('system_diagnostics_get_snapshot(&snapshot)', source)
+        self.assertIn('"last_reset_reason"', source)
+        self.assertIn('"last_battery_voltage"', source)
+
+    def test_dashboard_suppresses_redundant_success_toasts_for_operations(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("data", "assets", "app.js").read_text()
+        ota = source[source.index("async function otaAction"):source.index("function bind()")]
+        self.assertNotIn("toast(result.message", ota)
+        self.assertNotIn("log(result.message", ota)
+        self.assertIn("OTA progress/result is already represented", ota)
+        self.assertNotIn("toast('Wi‑Fi disconnected'", source)
+        self.assertNotIn("toast('MQTT settings saved'", source)
+
+
+    def test_dashboard_assets_are_registered_and_present(self):
+        root = Path(__file__).parents[1]
+        html = root.joinpath("data", "index.html").read_text()
+        server = root.joinpath("src", "server", "web", "web_dashboard_server.c").read_text()
+        self.assertTrue(root.joinpath("data", "assets", "app.css").is_file())
+        self.assertTrue(root.joinpath("data", "assets", "app.js").is_file())
+        self.assertIn('href="/assets/app.css"', html)
+        self.assertIn('uri = "/assets/app.css"', server)
+        self.assertIn('uri = "/assets/app.js"', server)
+        self.assertIn('esp_vfs_spiffs_register(&config)', server)
+
+
+    def test_navigation_guide_rows_are_removed_from_lcd_screens(self):
+        root = Path(__file__).parents[1]
+        input_source = root.joinpath("src", "app_input.c").read_text()
+        lcd_source = root.joinpath("src", "lcd_task.c").read_text()
+        for text in ('"Press Enter     "', '"Select Option   "', '"View Stats      "', '"Run Tests       "'):
+            self.assertNotIn(text, input_source)
+        self.assertNotIn('"MENU: CANCEL"', lcd_source)
+        self.assertNotIn('HOLD=GO', lcd_source)
+
+
+    def test_websocket_marks_unsupported_measurements_unavailable(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("src", "server", "websocket", "websocket_server.c").read_text()
+        self.assertIn('cJSON_AddNullToObject(data, "output_current")', source)
+        self.assertIn('"output_current_available", false', source)
+        self.assertIn('cJSON_AddNullToObject(data, "output_frequency")', source)
+        self.assertIn('cJSON_AddNullToObject(data, "solar_voltage")', source)
+        self.assertIn('cJSON_AddNullToObject(data, "load_percentage")', source)
+        self.assertIn('"battery_soc_estimated", true', source)
+
+
+    def test_dashboard_displays_persistent_diagnostic_snapshot(self):
+        root = Path(__file__).parents[1]
+        html = root.joinpath("data", "index.html").read_text()
+        js = root.joinpath("data", "assets", "app.js").read_text()
+        self.assertIn('id="faultDiagnostics"', html)
+        self.assertIn("last_reset_reason", js)
+        self.assertIn("last_fault_flags", js)
+        self.assertIn("last_battery_voltage", js)
+
 if __name__ == "__main__":
     unittest.main()

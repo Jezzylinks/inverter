@@ -367,6 +367,7 @@ static void app_wifi_operation_watch_task(void *parameter)
     bool have_menu_snapshot = false;
     TickType_t last_rssi_poll = 0U;
     TickType_t last_phase_tick = xTaskGetTickCount();
+    uint8_t last_rendered_anim_phase = UINT8_MAX;
     app_wifi_ui_state_t last_ui_state = APP_WIFI_UI_CONNECT;
 
     while (true) {
@@ -536,14 +537,22 @@ static void app_wifi_operation_watch_task(void *parameter)
         if (screen == LCD_SCREEN_MENU && menu_state == MENU_WIFI_CONFIG) {
             const char *connect_label = app_services_wifi_connect_action_label();
             const bool wifi_enabled = app_services_wifi_enabled();
+            const uint8_t anim_phase =
+                __atomic_load_n(&s_wifi_anim_phase, __ATOMIC_RELAXED);
+            /* Do not rely on text diffing the LCD render buffer to drive
+             * animation. Some LCD writers update a shadow/menu snapshot
+             * asynchronously; a phase transition must explicitly request a
+             * redraw while the Wi-Fi menu owns the display. */
             if (!have_menu_snapshot ||
                 strcmp(last_connect_label, connect_label) != 0 ||
                 last_wifi_enabled != wifi_enabled ||
+                (animating && last_rendered_anim_phase != anim_phase) ||
                 app_wifi_menu_snapshot_stale(connect_label)) {
                 strncpy(last_connect_label, connect_label,
                         sizeof(last_connect_label) - 1U);
                 last_connect_label[sizeof(last_connect_label) - 1U] = '\0';
                 last_wifi_enabled = wifi_enabled;
+                last_rendered_anim_phase = anim_phase;
                 have_menu_snapshot = true;
                 show_menu_screen(MENU_WIFI_CONFIG, selection);
             }
