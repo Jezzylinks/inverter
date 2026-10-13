@@ -528,5 +528,18 @@ class FirmwareContracts(unittest.TestCase):
             body = source[start:] if next_handler < 0 else source[start:next_handler]
             self.assertIn("lcd_is_startup_active()", body)
 
+
+    def test_wifi_mode_editor_has_no_navigation_guide_rows(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("src", "app_menu.c").read_text()
+        self.assertNotIn('"UP/DOWN: CHANGE"', source)
+        self.assertNotIn('"ENT=SAVE BACK=CANCEL"', source)
+
+    def test_error_log_detail_preserves_specific_event_and_shows_recovery_advice(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("src", "error_log_scroll.c").read_text()
+        self.assertIn('entry->description[0]', source)
+        self.assertIn('wrap_definition(source_definition((fault_source_t)entry->error_code)', source)
+
 if __name__ == "__main__":
     unittest.main()
