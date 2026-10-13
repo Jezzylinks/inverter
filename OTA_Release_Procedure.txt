@@ -1,0 +1,52 @@
+# ESP32 INVERTER OTA RELEASE PROCEDURE
+# Repository: Jezzylinks/inverter
+# Platform: Windows PowerShell / VS Code
+# Project: Inverter_System_FileSystem
+
+cd "C:\Users\hp\Documents\PlatformIO\Projects\Inverter_System_FileSystem"
+
+git status
+
+git branch --show-current
+
+git pull --ff-only origin master
+
+gh auth status
+
+$VERSION = "1.4.0"
+$TAG = "v$VERSION"
+
+git add .
+
+git commit -m "Prepare OTA firmware release 1.4.0"
+
+git push origin master
+
+pio run
+
+$BIN = ".pio\build\esp32dev\firmware.bin"
+
+if (!(Test-Path $BIN)) { throw "Firmware file not found" }
+
+$SIZE = (Get-Item $BIN).Length
+
+$SHA = (Get-FileHash $BIN -Algorithm SHA256).Hash.ToLower()
+
+New-Item -ItemType Directory -Force "release\$VERSION" | Out-Null
+
+Copy-Item $BIN "release\$VERSION\inverter-$VERSION.bin" -Force
+
+$URL = "https://github.com/Jezzylinks/inverter/releases/download/$TAG/inverter-$VERSION.bin"
+
+"version,url,sha256,size`n$VERSION,$URL,$SHA,$SIZE" | Set-Content "release\$VERSION\inverter.csv" -Encoding ascii
+
+Get-Content "release\$VERSION\inverter.csv"
+
+gh release create $TAG ".\release\$VERSION\inverter-$VERSION.bin" ".\release\$VERSION\inverter.csv" --title "Inverter Firmware $VERSION" --notes "Supervised OTA firmware release $VERSION"
+
+gh release view $TAG
+
+Start-Process "https://github.com/Jezzylinks/inverter/releases/latest"
+
+# OTA MANIFEST URL FOR THE INVERTER
+https://github.com/Jezzylinks/inverter/releases/latest/download/inverter.csv
