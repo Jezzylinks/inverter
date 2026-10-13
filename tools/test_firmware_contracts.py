@@ -552,5 +552,14 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("Battery · estimated SOC", html)
         self.assertIn("socText === '—' ? socText", js)
 
+
+    def test_api_does_not_claim_unmeasured_frequency_temperature_or_load_percent(self):
+        root = Path(__file__).parents[1]
+        api = root.joinpath("src", "server", "json", "json_api_device.c").read_text()
+        inverter = api[api.index("static esp_err_t api_inverter_handler"):api.index("static esp_err_t api_inverter_control_handler")]
+        self.assertIn('"frequency_available", false', inverter)
+        self.assertIn('"temperature_available", false', inverter)
+        self.assertIn('cJSON_AddNullToObject(root, "load_percentage")', inverter)
+
 if __name__ == "__main__":
     unittest.main()
