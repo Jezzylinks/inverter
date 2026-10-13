@@ -672,7 +672,7 @@ class FirmwareContracts(unittest.TestCase):
     def test_view_settings_uses_correct_runtime_types_and_numbers_entries(self):
         root = Path(__file__).parents[1]
         runtime = root.joinpath("src", "app_runtime.c").read_text()
-        start = runtime.index("void lcd_draw_settings_view_screen(uint8_t index)\\n{")
+        start = runtime.index("void lcd_draw_settings_view_screen(uint8_t index)\n{")
         view = runtime[start:runtime.index("/* ── perform_factory_reset()", start)]
         self.assertIn('strcmp(s->key, BATTERY_CAPACITY_KEY) == 0', view)
         self.assertIn('s->is_signed_8', view)
