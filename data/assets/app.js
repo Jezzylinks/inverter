@@ -144,8 +144,10 @@
     els.heroSubtitle.textContent = connected ? `Live control is available at ${status.ip || 'the device address'}.` : 'Use the network controls below to scan or connect.';
     els.signalLabel.textContent = typeof status.rssi === 'number' && status.rssi < 0 ? `${status.rssi} dBm` : '— dBm';
     els.signalBars.className = `signal-bars ${signalClass(status.rssi)}`;
-    if (connected) {
+    if (connected && state.socketConnected) {
       setConnection('good', 'Live connection');
+    } else if (connected) {
+      setConnection('warn', 'Device reachable · live updates reconnecting');
     } else if (stateText === 'connecting' || stateText === 'reconnecting') {
       setConnection('warn', friendly);
     } else if (stateText === 'failed') {
@@ -240,7 +242,9 @@
         active: data.output_enabled
       }
     });
-    markTelemetryFresh();
+    const hasMeasurements = [data.output_voltage, data.battery_voltage, data.battery_soc, data.solar_voltage, data.solar_current]
+      .some((value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)));
+    if (hasMeasurements) markTelemetryFresh();
   }
 
   function renderServiceState(element, active, label = 'Offline') {
