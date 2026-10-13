@@ -953,7 +953,7 @@ menu_state_t display_menu_state(void)
     {
     case MENU_NONE:
         r0 = "Main Screen     ";
-        r1 = "Press Enter     ";
+        r1 = "                ";
         break;
     case MAIN_MENU:
         r0 = "Main Menu       ";
@@ -961,15 +961,15 @@ menu_state_t display_menu_state(void)
         break;
     case MENU_SETTINGS:
         r0 = "Settings        ";
-        r1 = "Select Option   ";
+        r1 = "                ";
         break;
     case MENU_MONITORING:
         r0 = "Monitoring      ";
-        r1 = "View Stats      ";
+        r1 = "                ";
         break;
     case MENU_DIAGNOSTIC:
         r0 = "Diagnostic      ";
-        r1 = "Run Tests       ";
+        r1 = "                ";
         break;
     case MENU_FACTORY_RESET:
         r0 = "Factory Reset?  ";
