@@ -4627,7 +4627,7 @@ void lcd_draw_settings_view_screen(uint8_t index)
                            (int)value, settings_view_unit_for(s->label));
         }
     }
-    else if (s->size == sizeof(uint8_t) || s->size == sizeof(bool))
+    else if (s->size == sizeof(uint8_t) || s->is_bool)
     {
         const uint8_t value = *(const uint8_t *)s->field;
         if (s->is_bool || strcmp(s->key, "inverter_active") == 0)
