@@ -22,7 +22,8 @@
     serviceHttp: $('serviceHttp'), serviceWs: $('serviceWs'), serviceMdns: $('serviceMdns'), serviceNtp: $('serviceNtp'), serviceMqtt: $('serviceMqtt'), servicePulse: $('servicePulse'),
     mqttToggleButton: $('mqttToggleButton'), mqttPanel: $('mqttPanel'), mqttCloseButton: $('mqttCloseButton'), mqttForm: $('mqttForm'), mqttConnectButton: $('mqttConnectButton'),
     mqttEnabled: $('mqttEnabled'), mqttBroker: $('mqttBroker'), mqttClientId: $('mqttClientId'), mqttUsername: $('mqttUsername'), mqttPassword: $('mqttPassword'), mqttPublishTopic: $('mqttPublishTopic'), mqttSubscribeTopic: $('mqttSubscribeTopic'),
-    eventLog: $('eventLog'), clearLogButton: $('clearLogButton'), toastRegion: $('toastRegion'),
+    eventLog: $('eventLog'), faultHistory: $('faultHistory'), faultSummary: $('faultSummary'),
+    clearLogButton: $('clearLogButton'), toastRegion: $('toastRegion'),
     inverterState: $('inverterState'), inverterDetail: $('inverterDetail'), batteryMetric: $('batteryMetric'), batteryDetail: $('batteryDetail'),
     solarMetric: $('solarMetric'), solarDetail: $('solarDetail'), loadMetric: $('loadMetric'), loadDetail: $('loadDetail'),
     otaState: $('otaState'), otaInstalled: $('otaInstalled'), otaAvailable: $('otaAvailable'), otaProgress: $('otaProgress'), otaCheckButton: $('otaCheckButton'), otaStartButton: $('otaStartButton'), otaCancelButton: $('otaCancelButton'),
@@ -221,6 +222,52 @@
     try { renderServices(await request('/api/v1/services')); } catch (error) { if (error.message !== 'Security PIN required') log(error.message, 'error'); }
   }
 
+
+  async function loadFaultHistory() {
+    try {
+      const payload = await request('/api/v1/faults');
+      els.faultHistory.replaceChildren();
+      const events = Array.isArray(payload.events) ? payload.events : [];
+      if (events.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'log-empty';
+        empty.textContent = 'No fault events have been recorded.';
+        els.faultHistory.appendChild(empty);
+      } else {
+        events.forEach((event) => {
+          const row = document.createElement('div');
+          const severity = String(event.severity || 'info').toLowerCase();
+          row.className = \`event-item \${severity === 'critical' || severity === 'fault' ? 'error' : severity === 'warning' || severity === 'derated' ? 'warn' : ''}\`;
+          const time = document.createElement('span');
+          time.className = 'event-time';
+          time.textContent = severity.toUpperCase();
+          const dot = document.createElement('span');
+          dot.className = 'event-dot';
+          const message = document.createElement('span');
+          message.className = 'event-message';
+          const source = event.source ? \`[\${event.source}] \` : '';
+          const value = typeof event.value === 'number' && Number.isFinite(event.value) ? \` (\${event.value.toFixed(2)})\` : '';
+          message.textContent = \`\${source}\${event.message || 'Unspecified fault'}\${value}\`;
+          row.append(time, dot, message);
+          els.faultHistory.appendChild(row);
+        });
+      }
+      const diagnostics = payload.diagnostics || {};
+      els.faultSummary.textContent = payload.diagnostics_available
+        ? \`Boots: \${diagnostics.boot_count} · \${events.length} events\`
+        : \`\${events.length} events\`;
+    } catch (error) {
+      if (error.message !== 'Security PIN required') {
+        els.faultSummary.textContent = 'Unavailable';
+        els.faultHistory.replaceChildren();
+        const message = document.createElement('div');
+        message.className = 'log-empty';
+        message.textContent = error.message;
+        els.faultHistory.appendChild(message);
+      }
+    }
+  }
+
   function sendSocket(command) {
     if (state.socket && state.socket.readyState === WebSocket.OPEN) state.socket.send(JSON.stringify(command));
   }
@@ -365,11 +412,11 @@
     els.pinButton.addEventListener('click', requestPin);
     els.pinCloseButton.addEventListener('click', () => els.pinDialog.close());
     els.passwordCloseButton.addEventListener('click', () => els.passwordDialog.close());
-    els.pinForm.addEventListener('submit', async (event) => { event.preventDefault(); state.pin = els.pinInput.value.trim(); sessionStorage.setItem('inverterPin', state.pin); els.pinDialog.close(); await loadStatus(true); await loadDeviceData(); await loadServices(); await loadOta(); if (state.socket) state.socket.close(); connectSocket(); });
+    els.pinForm.addEventListener('submit', async (event) => { event.preventDefault(); state.pin = els.pinInput.value.trim(); sessionStorage.setItem('inverterPin', state.pin); els.pinDialog.close(); await loadStatus(true); await loadDeviceData(); await loadServices(); await loadOta(); await loadFaultHistory(); if (state.socket) state.socket.close(); connectSocket(); });
     els.passwordForm.addEventListener('submit', (event) => { event.preventDefault(); connectNetwork(state.selectedSsid, els.networkPassword.value); });
     els.scanButton.addEventListener('click', scanNetworks);
     els.disconnectButton.addEventListener('click', disconnect);
-    els.refreshButton.addEventListener('click', async () => { await loadStatus(true); await loadDeviceData(); await loadServices(); await loadOta(); });
+    els.refreshButton.addEventListener('click', async () => { await loadStatus(true); await loadDeviceData(); await loadServices(); await loadOta(); await loadFaultHistory(); });
     els.mqttToggleButton.addEventListener('click', () => { els.mqttPanel.hidden = !els.mqttPanel.hidden; });
     els.mqttCloseButton.addEventListener('click', () => { els.mqttPanel.hidden = true; });
     els.mqttForm.addEventListener('submit', saveMqtt);
@@ -388,8 +435,11 @@
     await loadDeviceData();
     await loadServices();
     await loadOta();
+    await loadFaultHistory();
     connectSocket();
-    state.statusTimer = window.setInterval(() => { loadStatus(); loadDeviceData(); loadServices(); loadOta(); }, 15000);
+    state.statusTimer = window.setInterval(() => {
+      loadStatus(); loadDeviceData(); loadServices(); loadOta(); loadFaultHistory();
+    }, 15000);
   }
 
   start();
