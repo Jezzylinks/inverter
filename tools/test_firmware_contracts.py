@@ -600,5 +600,17 @@ class FirmwareContracts(unittest.TestCase):
         self.assertNotIn("toast('Wi‑Fi disconnected'", source)
         self.assertNotIn("toast('MQTT settings saved'", source)
 
+
+    def test_dashboard_assets_are_registered_and_present(self):
+        root = Path(__file__).parents[1]
+        html = root.joinpath("data", "index.html").read_text()
+        server = root.joinpath("src", "server", "web", "web_dashboard_server.c").read_text()
+        self.assertTrue(root.joinpath("data", "assets", "app.css").is_file())
+        self.assertTrue(root.joinpath("data", "assets", "app.js").is_file())
+        self.assertIn('href="/assets/app.css"', html)
+        self.assertIn('uri = "/assets/app.css"', server)
+        self.assertIn('uri = "/assets/app.js"', server)
+        self.assertIn('esp_vfs_spiffs_register(&config)', server)
+
 if __name__ == "__main__":
     unittest.main()
