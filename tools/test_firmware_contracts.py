@@ -528,5 +528,16 @@ class FirmwareContracts(unittest.TestCase):
             body = source[start:] if next_handler < 0 else source[start:next_handler]
             self.assertIn("lcd_is_startup_active()", body)
 
+
+    def test_dashboard_suppresses_redundant_success_toasts_for_operations(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("data", "assets", "app.js").read_text()
+        ota = source[source.index("async function otaAction"):source.index("function bind()")]
+        self.assertNotIn("toast(result.message", ota)
+        self.assertNotIn("log(result.message", ota)
+        self.assertIn("OTA progress/result is already represented", ota)
+        self.assertNotIn("toast('Wi‑Fi disconnected'", source)
+        self.assertNotIn("toast('MQTT settings saved'", source)
+
 if __name__ == "__main__":
     unittest.main()
