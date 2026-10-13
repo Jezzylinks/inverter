@@ -246,7 +246,7 @@
         events.forEach((event) => {
           const row = document.createElement('div');
           const severity = String(event.severity || 'info').toLowerCase();
-          row.className = \`event-item \${severity === 'critical' || severity === 'fault' ? 'error' : severity === 'warning' || severity === 'derated' ? 'warn' : ''}\`;
+          row.className = `event-item ${severity === 'critical' || severity === 'fault' ? 'error' : severity === 'warning' || severity === 'derated' ? 'warn' : ''}`;
           const time = document.createElement('span');
           time.className = 'event-time';
           time.textContent = severity.toUpperCase();
@@ -254,17 +254,17 @@
           dot.className = 'event-dot';
           const message = document.createElement('span');
           message.className = 'event-message';
-          const source = event.source ? \`[\${event.source}] \` : '';
-          const value = typeof event.value === 'number' && Number.isFinite(event.value) ? \` (\${event.value.toFixed(2)})\` : '';
-          message.textContent = \`\${source}\${event.message || 'Unspecified fault'}\${value}\`;
+          const source = event.source ? `[${event.source}] ` : '';
+          const value = typeof event.value === 'number' && Number.isFinite(event.value) ? ` (${event.value.toFixed(2)})` : '';
+          message.textContent = `${source}${event.message || 'Unspecified fault'}${value}`;
           row.append(time, dot, message);
           els.faultHistory.appendChild(row);
         });
       }
       const diagnostics = payload.diagnostics || {};
       els.faultSummary.textContent = payload.diagnostics_available
-        ? \`Boots: \${diagnostics.boot_count} · \${events.length} events\`
-        : \`\${events.length} events\`;
+        ? `Boots: ${diagnostics.boot_count} · ${events.length} events`
+        : `${events.length} events`;
     } catch (error) {
       if (error.message !== 'Security PIN required') {
         els.faultSummary.textContent = 'Unavailable';
