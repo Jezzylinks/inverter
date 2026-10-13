@@ -707,6 +707,10 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('return "Retry";', menu)
         self.assertIn("app_services_show_ota_status_screen();", input_source)
         self.assertIn('lcd_flash_message("No Update Running", "Current kept", 1200U)', services)
+        self.assertIn("static void app_services_record_ota_error", services)
+        self.assertIn('"Manifest URL unavailable"', services)
+        self.assertIn('app_services_record_ota_error("OTA URL Invalid", true)', services)
+        self.assertIn('app_services_record_ota_error("ERR:NO_MEM", user_initiated)', services)
 
     def test_firmware_update_reopens_active_ota_and_back_returns_to_menu(self):
         root = Path(__file__).parents[1]
