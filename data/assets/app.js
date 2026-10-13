@@ -136,13 +136,23 @@
     const load = payloads.load || {};
     const inverterValid = inverter.telemetry_valid !== false;
     els.inverterState.textContent = inverter.state || 'Unknown';
-    els.inverterDetail.textContent = inverterValid ? `${formatValue(inverter.voltage, ' V')} · ${formatValue(inverter.frequency, ' Hz')}` : 'Telemetry unavailable';
+    els.inverterDetail.textContent = inverterValid
+      ? `${formatValue(inverter.voltage, ' V')} · ${formatValue(inverter.frequency, ' Hz')}${inverter.current_available ? ` · ${formatValue(inverter.current, ' A')}` : ' · Current not measured'}`
+      : 'Telemetry unavailable';
     els.batteryMetric.textContent = formatValue(battery.state_of_charge, '%');
-    els.batteryDetail.textContent = battery.telemetry_valid === false ? 'Telemetry unavailable' : `${formatValue(battery.voltage, ' V')} · ${battery.charging ? 'Charging' : 'Discharging / idle'}`;
-    els.solarMetric.textContent = formatValue(solar.power_kw, ' kW');
-    els.solarDetail.textContent = solar.telemetry_valid === false ? 'Telemetry unavailable' : `${formatValue(solar.voltage, ' V')} · ${formatValue(solar.current, ' A')}`;
-    els.loadMetric.textContent = formatValue(load.power_kw, ' kW');
-    els.loadDetail.textContent = load.telemetry_valid === false ? 'Telemetry unavailable' : `${formatValue(load.percentage, '%')} · ${load.active ? 'Active' : 'Idle'}`;
+    els.batteryDetail.textContent = battery.telemetry_valid === false
+      ? 'Telemetry unavailable'
+      : `${formatValue(battery.voltage, ' V')} · ${battery.charging ? 'Charging' : 'Discharging / idle'}`;
+    els.solarMetric.textContent = solar.power_available === false
+      ? 'Not measured' : formatValue(solar.power_kw, ' kW');
+    els.solarDetail.textContent = solar.available === false
+      ? 'No solar sensors configured'
+      : `${formatValue(solar.voltage, ' V')} · ${formatValue(solar.current, ' A')}`;
+    els.loadMetric.textContent = load.power_available === false
+      ? 'Not measured' : formatValue(load.power_kw, ' kW');
+    els.loadDetail.textContent = load.telemetry_valid === false
+      ? 'Telemetry unavailable'
+      : `${formatValue(load.voltage, ' V')} · ${load.current_available ? formatValue(load.current, ' A') : 'Current not measured'} · ${load.percentage_available ? formatValue(load.percentage, '%') : 'Load % unavailable'}`;
   }
 
   function renderOta(payload) {
