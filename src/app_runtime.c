@@ -4590,19 +4590,14 @@ void lcd_draw_settings_view_screen(uint8_t index)
         (void)snprintf(value_text, sizeof(value_text), "%.2f %s",
                        (double)value, settings_view_unit_for(s->label));
     }
-    else if (s->size == sizeof(float))
+    else if (strcmp(s->key, BATTERY_CAPACITY_KEY) == 0)
     {
+        /* Battery capacity is the one native float in this table that is not
+         * marked is_scaled_float. Do not infer a C type from sizeof alone:
+         * int32 settings have the same size as float. */
         const float value = *(const float *)s->field;
-        if (strcmp(s->key, BATTERY_CAPACITY_KEY) == 0)
-        {
-            (void)snprintf(value_text, sizeof(value_text), "%.0f %s",
-                           (double)value, settings_view_unit_for(s->label));
-        }
-        else
-        {
-            (void)snprintf(value_text, sizeof(value_text), "%.2f %s",
-                           (double)value, settings_view_unit_for(s->label));
-        }
+        (void)snprintf(value_text, sizeof(value_text), "%.0f %s",
+                       (double)value, settings_view_unit_for(s->label));
     }
     else if (strcmp(s->key, BATTERY_TYPE_KEY) == 0)
     {
