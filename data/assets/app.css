@@ -131,7 +131,9 @@ h3 { margin: 0; font-size: 18px; letter-spacing: -.03em; }
 @media (max-width: 620px) {
   .app-shell { padding: 0 14px 22px; }
   .topbar { min-height: 76px; }
-  .topbar .icon-button { display: none; }
+  .topbar .icon-button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 38px; }
+  .topbar-actions { gap: 7px; }
+  .status-badge { padding-inline: 10px; font-size: 11px; }
   .brand-mark { width: 38px; height: 38px; }
   .hero-panel { align-items: flex-start; flex-direction: column; gap: 26px; min-height: 270px; padding: 27px 22px; }
   .hero-signal { align-items: flex-start; flex-direction: row; }
