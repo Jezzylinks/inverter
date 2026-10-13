@@ -1321,7 +1321,7 @@ static void app_services_show_ota_lcd(const app_ota_status_t *status)
      * OTA page. Restore the actionable OTA menu first so the flash returns to
      * Check for Update / Retry / Back instead of the previous screen. */
     if (status->state == APP_OTA_ERROR) {
-        const char *detail = status->error_detail[0] != '\\0'
+        const char *detail = status->error_detail[0] != '\0'
                                  ? status->error_detail
                                  : "Check Wi-Fi and retry";
         sys_state.menu_state = MENU_OTA;
