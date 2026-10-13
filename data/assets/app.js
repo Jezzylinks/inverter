@@ -22,7 +22,7 @@
     serviceHttp: $('serviceHttp'), serviceWs: $('serviceWs'), serviceMdns: $('serviceMdns'), serviceNtp: $('serviceNtp'), serviceMqtt: $('serviceMqtt'), servicePulse: $('servicePulse'),
     mqttToggleButton: $('mqttToggleButton'), mqttPanel: $('mqttPanel'), mqttCloseButton: $('mqttCloseButton'), mqttForm: $('mqttForm'), mqttConnectButton: $('mqttConnectButton'),
     mqttEnabled: $('mqttEnabled'), mqttBroker: $('mqttBroker'), mqttClientId: $('mqttClientId'), mqttUsername: $('mqttUsername'), mqttPassword: $('mqttPassword'), mqttPublishTopic: $('mqttPublishTopic'), mqttSubscribeTopic: $('mqttSubscribeTopic'),
-    eventLog: $('eventLog'), faultHistory: $('faultHistory'), faultSummary: $('faultSummary'),
+    eventLog: $('eventLog'), faultHistory: $('faultHistory'), faultSummary: $('faultSummary'), faultDiagnostics: $('faultDiagnostics'),
     clearLogButton: $('clearLogButton'), toastRegion: $('toastRegion'),
     inverterState: $('inverterState'), inverterDetail: $('inverterDetail'), batteryMetric: $('batteryMetric'), batteryDetail: $('batteryDetail'),
     solarMetric: $('solarMetric'), solarDetail: $('solarDetail'), loadMetric: $('loadMetric'), loadDetail: $('loadDetail'),
@@ -265,6 +265,9 @@
       els.faultSummary.textContent = payload.diagnostics_available
         ? `Boots: ${diagnostics.boot_count} · ${events.length} events`
         : `${events.length} events`;
+      els.faultDiagnostics.textContent = payload.diagnostics_available
+        ? `Last reset: ${diagnostics.last_reset_reason || 'unknown'} · Fault flags: 0x${Number(diagnostics.last_fault_flags || 0).toString(16).toUpperCase()} · Battery: ${formatValue(diagnostics.last_battery_voltage, ' V')}`
+        : 'Persistent diagnostics unavailable';
     } catch (error) {
       if (error.message !== 'Security PIN required') {
         els.faultSummary.textContent = 'Unavailable';
