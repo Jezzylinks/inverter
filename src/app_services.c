@@ -1324,8 +1324,10 @@ static void app_services_show_ota_lcd(const app_ota_status_t *status)
         const char *detail = status->error_detail[0] != '\0'
                                  ? status->error_detail
                                  : "Check Wi-Fi and retry";
+        LCD_LOCK();
         sys_state.menu_state = MENU_OTA;
         sys_state.menu_selection = 0U;
+        LCD_UNLOCK();
         show_menu_screen(MENU_OTA, 0);
         lcd_flash_warning_to("Update Failed", detail, 1800U, LCD_SCREEN_MENU);
         return;
@@ -1387,8 +1389,14 @@ void app_services_show_ota_status_screen(void)
     if (status.state == APP_OTA_CHECKING ||
         status.state == APP_OTA_PREPARING ||
         status.state == APP_OTA_DOWNLOADING ||
-        status.state == APP_OTA_VERIFYING) {
+        status.state == APP_OTA_VERIFYING ||
+        status.state == APP_OTA_ERROR) {
         app_services_show_ota_lcd(&status);
+    } else {
+        /* The operation may have completed between the input-layer snapshot
+         * and this call. In that case, open the menu rather than leaving the
+         * LCD on the previous main-menu screen. */
+        show_menu_screen(MENU_OTA, sys_state.menu_selection);
     }
 }
 
