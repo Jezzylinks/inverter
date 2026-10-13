@@ -549,5 +549,56 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("(animating && last_rendered_anim_phase != anim_phase)", source)
         self.assertIn("show_menu_screen(MENU_WIFI_CONFIG, selection);", source)
 
+
+    def test_api_does_not_report_unmeasured_solar_grid_or_load_as_zero(self):
+        root = Path(__file__).parents[1]
+        api = root.joinpath("src", "server", "json", "json_api_device.c").read_text()
+        solar = api[api.index("static esp_err_t api_solar_handler"):api.index("static esp_err_t api_load_handler")]
+        load = api[api.index("static esp_err_t api_load_handler"):api.index("static esp_err_t api_grid_handler")]
+        grid = api[api.index("static esp_err_t api_grid_handler"):api.index("static const httpd_uri_t s_device_uris")]
+        self.assertIn('cJSON_AddNullToObject(root, "power_kw")', solar)
+        self.assertIn('"No dedicated solar/DC-input sensors are configured"', solar)
+        self.assertIn('cJSON_AddNullToObject(root, "current")', load)
+        self.assertIn('"current_available", false', load)
+        self.assertIn('cJSON_AddNullToObject(root, "voltage")', grid)
+        self.assertIn('"voltage_available", false', grid)
+        self.assertIn('add_float_or_null(root, "temperature", 0.0f, false)', api)
+        self.assertIn('"temperature_available", false', api)
+
+    def test_dashboard_labels_battery_state_of_charge_as_estimated(self):
+        root = Path(__file__).parents[1]
+        html = root.joinpath("data", "index.html").read_text()
+        js = root.joinpath("data", "assets", "app.js").read_text()
+        self.assertIn("Battery · estimated SOC", html)
+        self.assertIn("socText === '—' ? socText", js)
+
+    def test_api_does_not_claim_unmeasured_frequency_temperature_or_load_percent(self):
+        root = Path(__file__).parents[1]
+        api = root.joinpath("src", "server", "json", "json_api_device.c").read_text()
+        inverter = api[api.index("static esp_err_t api_inverter_handler"):api.index("static esp_err_t api_inverter_control_handler")]
+        self.assertIn('"frequency_available", false', inverter)
+        self.assertIn('"temperature_available", false', inverter)
+        self.assertIn('cJSON_AddNullToObject(root, "load_percentage")', inverter)
+
+    def test_fault_history_api_is_pin_protected_and_exposes_persisted_diagnostics(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("src", "server", "json", "json_api_system.c").read_text()
+        self.assertIn('json_api_require_pin(req)', source)
+        self.assertIn('"/api/v1/faults"', source)
+        self.assertIn('fault_log_get_entries(entries, API_FAULT_HISTORY_LIMIT)', source)
+        self.assertIn('system_diagnostics_get_snapshot(&snapshot)', source)
+        self.assertIn('"last_reset_reason"', source)
+        self.assertIn('"last_battery_voltage"', source)
+
+    def test_dashboard_suppresses_redundant_success_toasts_for_operations(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("data", "assets", "app.js").read_text()
+        ota = source[source.index("async function otaAction"):source.index("function bind()")]
+        self.assertNotIn("toast(result.message", ota)
+        self.assertNotIn("log(result.message", ota)
+        self.assertIn("OTA progress/result is already represented", ota)
+        self.assertNotIn("toast('Wi‑Fi disconnected'", source)
+        self.assertNotIn("toast('MQTT settings saved'", source)
+
 if __name__ == "__main__":
     unittest.main()
