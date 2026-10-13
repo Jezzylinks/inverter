@@ -246,11 +246,6 @@ static esp_err_t api_inverter_handler(httpd_req_t *req)
     system_state_t state;
     snapshot_system_state(&state);
     const bool valid = state.adc_data_valid;
-    const float power_kw = valid && state.inverter.output_voltage > 0.0f &&
-                                   state.inverter.output_current > 0.0f
-                               ? state.inverter.output_voltage *
-                                     state.inverter.output_current / 1000.0f
-                               : 0.0f;
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) {
         return ESP_ERR_NO_MEM;
@@ -259,8 +254,12 @@ static esp_err_t api_inverter_handler(httpd_req_t *req)
                             inverter_state_name(state.inverter.inverter_state));
     cJSON_AddNumberToObject(root, "operating_mode", state.inverter.operating_mode);
     add_float_or_null(root, "voltage", state.inverter.output_voltage, valid);
-    add_float_or_null(root, "current", state.inverter.output_current, valid);
-    add_float_or_null(root, "power_kw", power_kw, valid);
+    /* No physical output-current sensor is present in the production board
+     * map. Do not publish the zero-initialized state field as a measurement. */
+    add_float_or_null(root, "current", 0.0f, false);
+    add_float_or_null(root, "power_kw", 0.0f, false);
+    cJSON_AddBoolToObject(root, "current_available", false);
+    cJSON_AddBoolToObject(root, "power_available", false);
     add_float_or_null(root, "frequency", state.inverter.output_frequency, valid);
     add_float_or_null(root, "temperature", state.inverter.temperature, valid);
     cJSON_AddNumberToObject(root, "load_percentage", state.inverter.load_percentage);
@@ -366,8 +365,9 @@ static esp_err_t api_battery_handler(httpd_req_t *req)
         return ESP_ERR_NO_MEM;
     }
     add_float_or_null(root, "voltage", state.inverter.battery.voltage, valid);
-    add_float_or_null(root, "temperature",
-                      state.inverter.battery.battery_temperature, valid);
+    /* There is no configured battery-temperature sensor in this board map. */
+    add_float_or_null(root, "temperature", 0.0f, false);
+    cJSON_AddBoolToObject(root, "temperature_available", false);
     add_float_or_null(root, "state_of_charge",
                       state.inverter.battery.battery_soc, valid);
     cJSON_AddBoolToObject(root, "charging", state.battery_charging);
@@ -378,6 +378,9 @@ static esp_err_t api_battery_handler(httpd_req_t *req)
                             state.battery_charging ? "charging" : "discharging_or_idle");
     cJSON_AddNullToObject(root, "current");
     cJSON_AddNullToObject(root, "power_kw");
+    cJSON_AddBoolToObject(root, "current_available", false);
+    cJSON_AddBoolToObject(root, "power_available", false);
+    cJSON_AddStringToObject(root, "state_of_charge_source", "voltage_estimate");
     return json_api_send(req, root, 200);
 }
 
@@ -389,21 +392,25 @@ static esp_err_t api_solar_handler(httpd_req_t *req)
     }
     system_state_t state;
     snapshot_system_state(&state);
-    const bool valid = state.adc_data_valid;
-    const float power_kw = valid && state.dc_input_voltage > 0.0f &&
-                                   state.dc_input_current > 0.0f
-                               ? state.dc_input_voltage * state.dc_input_current / 1000.0f
-                               : 0.0f;
+    (void)state;
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) {
         return ESP_ERR_NO_MEM;
     }
-    add_float_or_null(root, "voltage", state.dc_input_voltage, valid);
-    add_float_or_null(root, "current", state.dc_input_current, valid);
-    add_float_or_null(root, "power_kw", power_kw, valid);
-    cJSON_AddBoolToObject(root, "active", valid && power_kw > 0.0f);
-    cJSON_AddBoolToObject(root, "telemetry_valid", valid);
+    /* ADC readiness does not imply that solar/DC-input sensors exist. This
+     * hardware profile has no dedicated solar voltage/current inputs. */
+    cJSON_AddBoolToObject(root, "available", false);
+    cJSON_AddNullToObject(root, "voltage");
+    cJSON_AddNullToObject(root, "current");
+    cJSON_AddNullToObject(root, "power_kw");
+    cJSON_AddBoolToObject(root, "voltage_available", false);
+    cJSON_AddBoolToObject(root, "current_available", false);
+    cJSON_AddBoolToObject(root, "power_available", false);
+    cJSON_AddBoolToObject(root, "active", false);
+    cJSON_AddBoolToObject(root, "telemetry_valid", false);
     cJSON_AddNullToObject(root, "energy_kwh");
+    cJSON_AddStringToObject(root, "reason",
+                            "No dedicated solar/DC-input sensors are configured");
     return json_api_send(req, root, 200);
 }
 
@@ -415,23 +422,27 @@ static esp_err_t api_load_handler(httpd_req_t *req)
     }
     system_state_t state;
     snapshot_system_state(&state);
-    const bool valid = state.adc_data_valid;
-    const float power_kw = valid && state.inverter.output_voltage > 0.0f &&
-                                   state.inverter.output_current > 0.0f
-                               ? state.inverter.output_voltage *
-                                     state.inverter.output_current / 1000.0f
-                               : 0.0f;
+    const bool voltage_valid = state.adc_data_valid;
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) {
         return ESP_ERR_NO_MEM;
     }
-    add_float_or_null(root, "voltage", state.inverter.output_voltage, valid);
-    add_float_or_null(root, "current", state.inverter.output_current, valid);
-    add_float_or_null(root, "power_kw", power_kw, valid);
-    cJSON_AddNumberToObject(root, "percentage", state.inverter.load_percentage);
+    add_float_or_null(root, "voltage", state.inverter.output_voltage, voltage_valid);
+    /* Output current/load power/percentage require a current or load sensor.
+     * None is configured in the production hardware map. */
+    cJSON_AddNullToObject(root, "current");
+    cJSON_AddNullToObject(root, "power_kw");
+    cJSON_AddNullToObject(root, "percentage");
+    cJSON_AddBoolToObject(root, "voltage_available", voltage_valid);
+    cJSON_AddBoolToObject(root, "current_available", false);
+    cJSON_AddBoolToObject(root, "power_available", false);
+    cJSON_AddBoolToObject(root, "percentage_available", false);
     cJSON_AddBoolToObject(root, "connected", state.load_connected);
+    cJSON_AddBoolToObject(root, "connected_measured", false);
     cJSON_AddBoolToObject(root, "active", state.output_enabled);
-    cJSON_AddBoolToObject(root, "telemetry_valid", valid);
+    cJSON_AddBoolToObject(root, "telemetry_valid", voltage_valid);
+    cJSON_AddStringToObject(root, "reason",
+                            "Output current and load are not measured by this hardware profile");
     return json_api_send(req, root, 200);
 }
 
@@ -449,8 +460,10 @@ static esp_err_t api_grid_handler(httpd_req_t *req)
     }
     cJSON_AddBoolToObject(root, "available", false);
     cJSON_AddStringToObject(root, "state", "unavailable");
-    add_float_or_null(root, "voltage", state.ac_input_voltage,
-                      state.ac_input_voltage > 0.0f);
+    /* No dedicated grid-voltage input is configured; do not infer support
+     * from a nonzero or stale state field. */
+    cJSON_AddNullToObject(root, "voltage");
+    cJSON_AddBoolToObject(root, "voltage_available", false);
     cJSON_AddNullToObject(root, "current");
     cJSON_AddNullToObject(root, "power_kw");
     cJSON_AddNullToObject(root, "frequency");
