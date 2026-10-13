@@ -1389,14 +1389,24 @@ void app_services_show_ota_status_screen(void)
     if (status.state == APP_OTA_CHECKING ||
         status.state == APP_OTA_PREPARING ||
         status.state == APP_OTA_DOWNLOADING ||
-        status.state == APP_OTA_VERIFYING ||
-        status.state == APP_OTA_ERROR) {
+        status.state == APP_OTA_VERIFYING) {
         app_services_show_ota_lcd(&status);
     } else {
-        /* The operation may have completed between the input-layer snapshot
-         * and this call. In that case, open the menu rather than leaving the
-         * LCD on the previous main-menu screen. */
-        show_menu_screen(MENU_OTA, sys_state.menu_selection);
+        /*
+         * ERROR is a completed/failed operation, not an operation in
+         * progress. Re-entering Firmware Update after an error must open the
+         * actionable OTA menu instead of replaying the OTA Failed screen.
+         * The original failure flash remains owned by the failed operation;
+         * this branch handles subsequent navigation back into OTA.
+         */
+        LCD_LOCK();
+        sys_state.menu_state = MENU_OTA;
+        if (sys_state.menu_selection >= 3U) {
+            sys_state.menu_selection = 0U;
+        }
+        const int selection = sys_state.menu_selection;
+        LCD_UNLOCK();
+        show_menu_screen(MENU_OTA, selection);
     }
 }
 

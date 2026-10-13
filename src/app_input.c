@@ -1327,14 +1327,18 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 (void)app_services_request_update_confirmation();
             }
         }
-        else if (ota_view == LCD_OTA_VIEW_ERROR ||
-                 ota_view == LCD_OTA_VIEW_CURRENT ||
-                 ota_view == LCD_OTA_VIEW_CANCELLED ||
-                 ota_view == LCD_OTA_VIEW_COMPLETE)
+        else
         {
-            /* Status pages are informational. Return to the OTA menu so the
-             * user can explicitly retry, install, or go Back. */
+            /*
+             * ENTER on any informational/progress page returns to the OTA
+             * menu without cancelling a running transfer. AVAILABLE is the
+             * only view where ENTER confirms the install flow above.
+             */
             s_ota_feedback_active = false;
+            sys_state.menu_state = MENU_OTA;
+            if (sys_state.menu_selection >= 3U) {
+                sys_state.menu_selection = 0U;
+            }
             show_menu_screen(MENU_OTA, sys_state.menu_selection);
         }
         return;
@@ -2656,9 +2660,13 @@ void handle_back_button_event(button_event_info_t *event_info,
         sys_state.menu_state == MENU_OTA &&
         sys_lcd.screen == LCD_SCREEN_OTA)
     {
-        /* The physical Back button leaves the progress/status page without
-         * cancelling an OTA transfer. Reopening Firmware Update resumes it. */
+        /* Back leaves the progress/status page without cancelling OTA.
+         * Reopening Firmware Update resumes an active operation. */
         s_ota_feedback_active = false;
+        sys_state.menu_state = MENU_OTA;
+        if (sys_state.menu_selection >= 3U) {
+            sys_state.menu_selection = 0U;
+        }
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
         return;
     }
