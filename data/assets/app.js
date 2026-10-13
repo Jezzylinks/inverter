@@ -10,7 +10,11 @@
     reconnectTimer: null,
     selectedSsid: '',
     status: null,
-    services: null
+    services: null,
+    apiReachable: false,
+    socketConnected: false,
+    lastTelemetryAt: 0,
+    lastApiError: ''
   };
 
   const $ = (id) => document.getElementById(id);
@@ -26,6 +30,8 @@
     clearLogButton: $('clearLogButton'), toastRegion: $('toastRegion'),
     inverterState: $('inverterState'), inverterDetail: $('inverterDetail'), batteryMetric: $('batteryMetric'), batteryDetail: $('batteryDetail'),
     solarMetric: $('solarMetric'), solarDetail: $('solarDetail'), loadMetric: $('loadMetric'), loadDetail: $('loadDetail'),
+    apiHealth: $('apiHealth'), apiHealthDot: $('apiHealthDot'), liveHealth: $('liveHealth'), liveHealthDot: $('liveHealthDot'),
+    telemetryHealth: $('telemetryHealth'), telemetryHealthDot: $('telemetryHealthDot'),
     otaState: $('otaState'), otaInstalled: $('otaInstalled'), otaAvailable: $('otaAvailable'), otaProgress: $('otaProgress'), otaCheckButton: $('otaCheckButton'), otaStartButton: $('otaStartButton'), otaCancelButton: $('otaCancelButton'),
     pinDialog: $('pinDialog'), pinForm: $('pinForm'), pinInput: $('pinInput'), pinError: $('pinError'), pinCloseButton: $('pinCloseButton'),
     passwordDialog: $('passwordDialog'), passwordForm: $('passwordForm'), passwordTitle: $('passwordTitle'), passwordCopy: $('passwordCopy'), selectedSsid: $('selectedSsid'), networkPassword: $('networkPassword'), passwordError: $('passwordError'), passwordCloseButton: $('passwordCloseButton')
@@ -93,6 +99,29 @@
     els.connectionLabel.textContent = label;
   }
 
+  function setHealth(element, dot, label, tone) {
+    if (element) element.textContent = label;
+    if (dot) dot.className = `health-indicator ${tone || 'neutral'}`;
+  }
+
+  function refreshHealthStrip() {
+    setHealth(els.apiHealth, els.apiHealthDot, state.apiReachable ? 'Reachable' : 'Unavailable', state.apiReachable ? 'good' : 'bad');
+    setHealth(els.liveHealth, els.liveHealthDot, state.socketConnected ? 'Streaming' : 'Reconnecting', state.socketConnected ? 'good' : 'warn');
+    if (!state.lastTelemetryAt) {
+      setHealth(els.telemetryHealth, els.telemetryHealthDot, 'No valid measurements yet', 'neutral');
+      return;
+    }
+    const ageSeconds = Math.max(0, Math.floor((Date.now() - state.lastTelemetryAt) / 1000));
+    if (ageSeconds <= 10) setHealth(els.telemetryHealth, els.telemetryHealthDot, 'Fresh · just now', 'good');
+    else if (ageSeconds <= 30) setHealth(els.telemetryHealth, els.telemetryHealthDot, `Aging · ${ageSeconds}s ago`, 'warn');
+    else setHealth(els.telemetryHealth, els.telemetryHealthDot, `Stale · ${ageSeconds}s ago`, 'bad');
+  }
+
+  function markTelemetryFresh() {
+    state.lastTelemetryAt = Date.now();
+    refreshHealthStrip();
+  }
+
   function signalClass(rssi) {
     if (typeof rssi !== 'number' || rssi >= 0) return '';
     if (rssi >= -60) return 'good';
@@ -127,7 +156,10 @@
   }
 
   function formatValue(value, suffix = '') {
-    return value === null || value === undefined || Number.isNaN(Number(value)) ? '—' : `${value}${suffix}`;
+    if (value === null || value === undefined || value === '' || (typeof value === 'number' && !Number.isFinite(value))) return '—';
+    if (typeof value === 'string' && value.trim() === '') return '—';
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${numeric}${suffix}` : '—';
   }
 
   function renderDeviceData(payloads) {
@@ -144,7 +176,7 @@
     els.batteryMetric.textContent = socText === '—' ? socText : `~${socText}`;
     els.batteryDetail.textContent = battery.telemetry_valid === false
       ? 'Telemetry unavailable'
-      : `${formatValue(battery.voltage, ' V')} · ${battery.charging ? 'Charging' : 'Discharging / idle'}`;
+      : `${formatValue(battery.voltage, ' V')} · state of charge is estimated`;
     els.solarMetric.textContent = solar.power_available === true
       ? formatValue(solar.power_kw, ' kW') : 'Not measured';
     els.solarDetail.textContent = solar.available !== true
@@ -155,6 +187,11 @@
     els.loadDetail.textContent = load.telemetry_valid === false
       ? 'Telemetry unavailable'
       : `${formatValue(load.voltage, ' V')} · ${load.current_available === true ? formatValue(load.current, ' A') : 'Current not measured'} · ${load.percentage_available === true ? formatValue(load.percentage, '%') : 'Load % unavailable'}`;
+
+    const hasValidMeasurement = inverter.telemetry_valid !== false &&
+      [inverter.voltage, battery.voltage, battery.state_of_charge, solar.voltage, solar.current, load.voltage]
+        .some((value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)));
+    if (hasValidMeasurement) markTelemetryFresh();
   }
 
   function renderOta(payload) {
@@ -169,12 +206,41 @@
 
   function renderDeviceSocket(message) {
     const data = message.data || {};
+    const has = (value) => value !== null && value !== undefined && value !== '';
+    const solarAvailable = has(data.solar_voltage) && has(data.solar_current);
+    const loadPowerAvailable = has(data.output_voltage) && has(data.output_current);
     renderDeviceData({
-      inverter: { state: data.inverter_state, telemetry_valid: data.telemetry_valid, voltage: data.output_voltage, frequency: data.output_frequency },
-      battery: { state_of_charge: data.battery_soc, telemetry_valid: data.telemetry_valid, voltage: data.battery_voltage, charging: false },
-      solar: { power_kw: data.solar_voltage !== null && data.solar_current !== null ? (data.solar_voltage * data.solar_current) / 1000 : null, telemetry_valid: data.telemetry_valid, voltage: data.solar_voltage, current: data.solar_current },
-      load: { power_kw: data.output_voltage !== null && data.output_current !== null ? (data.output_voltage * data.output_current) / 1000 : null, telemetry_valid: data.telemetry_valid, percentage: data.load_percentage, active: data.output_enabled }
+      inverter: {
+        state: data.inverter_state,
+        telemetry_valid: data.telemetry_valid,
+        voltage: data.output_voltage,
+        frequency: data.output_frequency,
+        frequency_available: has(data.output_frequency),
+        current: data.output_current,
+        current_available: has(data.output_current)
+      },
+      battery: { state_of_charge: data.battery_soc, telemetry_valid: data.telemetry_valid, voltage: data.battery_voltage },
+      solar: {
+        available: solarAvailable,
+        power_available: solarAvailable,
+        power_kw: solarAvailable ? (Number(data.solar_voltage) * Number(data.solar_current)) / 1000 : null,
+        telemetry_valid: data.telemetry_valid,
+        voltage: data.solar_voltage,
+        current: data.solar_current
+      },
+      load: {
+        power_available: loadPowerAvailable,
+        power_kw: loadPowerAvailable ? (Number(data.output_voltage) * Number(data.output_current)) / 1000 : null,
+        telemetry_valid: data.telemetry_valid,
+        voltage: data.output_voltage,
+        current: data.output_current,
+        current_available: has(data.output_current),
+        percentage: data.load_percentage,
+        percentage_available: has(data.load_percentage),
+        active: data.output_enabled
+      }
     });
+    markTelemetryFresh();
   }
 
   function renderServiceState(element, active, label = 'Offline') {
@@ -205,11 +271,16 @@
   async function loadStatus() {
     try {
       const [status, wifi] = await Promise.all([request('/api/v1/status'), request('/api/v1/wifi')]);
+      state.apiReachable = true;
+      state.lastApiError = '';
+      refreshHealthStrip();
       renderStatus({ ...status, ...wifi });
     } catch (error) {
       if (error.message !== 'Security PIN required') {
-        setConnection('bad', 'API unavailable');
-        if (showLog) log(error.message, 'error');
+        state.apiReachable = false;
+        state.lastApiError = error.message;
+        refreshHealthStrip();
+        setConnection('bad', 'Device API unavailable');
       }
     }
   }
@@ -295,6 +366,8 @@
     try { state.socket = new WebSocket(socketUrl()); } catch (error) { scheduleSocketReconnect(); return; }
     state.socket.addEventListener('open', () => {
       state.socketRetry = 0;
+      state.socketConnected = false;
+      refreshHealthStrip();
       setConnection('warn', 'Authenticating live updates');
       sendSocket({ cmd: 'authenticate', pin: state.pin });
     });
@@ -303,6 +376,8 @@
       try { message = JSON.parse(event.data); } catch (_) { return; }
       if (message.type === 'authenticated') {
         if (message.ok) {
+          state.socketConnected = true;
+          refreshHealthStrip();
           sendSocket({ cmd: 'subscribe' });
           sendSocket({ cmd: 'get_status' });
         } else {
@@ -320,10 +395,15 @@
       }
     });
     state.socket.addEventListener('close', () => {
+      state.socketConnected = false;
+      refreshHealthStrip();
       setConnection('warn', 'Live updates reconnecting');
       scheduleSocketReconnect();
     });
-    state.socket.addEventListener('error', () => log('Live update channel error', 'warn'));
+    state.socket.addEventListener('error', () => {
+      state.socketConnected = false;
+      refreshHealthStrip();
+    });
   }
 
   function scheduleSocketReconnect() {
@@ -450,6 +530,8 @@
     state.statusTimer = window.setInterval(() => {
       loadStatus(); loadDeviceData(); loadServices(); loadOta(); loadFaultHistory();
     }, 15000);
+    state.telemetryTimer = window.setInterval(refreshHealthStrip, 2500);
+    refreshHealthStrip();
   }
 
   start();
