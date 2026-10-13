@@ -672,13 +672,13 @@ class FirmwareContracts(unittest.TestCase):
     def test_view_settings_uses_correct_runtime_types_and_numbers_entries(self):
         root = Path(__file__).parents[1]
         runtime = root.joinpath("src", "app_runtime.c").read_text()
-        view = runtime[runtime.index("void lcd_draw_settings_view_screen(uint8_t index)"):
-                       runtime.index("/* ── perform_factory_reset()", runtime.index("void lcd_draw_settings_view_screen(uint8_t index)"))]
+        start = runtime.index("void lcd_draw_settings_view_screen(uint8_t index)\\n{")
+        view = runtime[start:runtime.index("/* ── perform_factory_reset()", start)]
         self.assertIn('strcmp(s->key, BATTERY_CAPACITY_KEY) == 0', view)
         self.assertIn('s->is_signed_8', view)
         self.assertIn('s->is_bool || strcmp(s->key, "inverter_active") == 0', view)
         self.assertIn('"%02u/%02u"', view)
-        self.assertIn('"%02u/%02u %.14s"', view) if '"%02u/%02u %.14s"' in view else self.assertIn('"%.5s %.14s"', view)
+        self.assertIn('"%.5s %.14s"', view)
         self.assertIn('BATTERY_CAPACITY_KEY, &sys_state.battery_profile.capacity_ah, sizeof(float)', runtime)
         units = runtime[runtime.index("static const char *settings_view_unit_for"):
                         runtime.index("void lcd_draw_settings_view_screen")]
