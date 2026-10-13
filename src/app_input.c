@@ -589,7 +589,30 @@ static bool ota_operation_active(app_ota_state_t state)
            state == APP_OTA_DOWNLOADING ||
            state == APP_OTA_VERIFYING;
 }
+/* Return from an OTA status/menu Back action without allowing the flash
+ * expiry path to restore the screen that was visible before the action.
+ * The menu is made current before the existing no-update feedback is queued,
+ * so its auto-captured return target is always the OTA menu. */
+static void return_to_ota_menu_after_back(void)
+{
+    app_ota_status_t status;
 
+    app_services_get_ota_status(&status);
+    s_ota_feedback_active = false;
+    sys_state.menu_state = MENU_OTA;
+    if (sys_state.menu_selection >= 3U) {
+        sys_state.menu_selection = 0U;
+    }
+    show_menu_screen(MENU_OTA, sys_state.menu_selection);
+
+    /* A genuinely active operation stays untouched. For an idle or
+     * terminated operation, retain the established flash message and let it
+     * expire back to the OTA menu. */
+    if (!ota_operation_active(status.state)) {
+        s_ota_feedback_active = true;
+        (void)app_services_request_cancel_update();
+    }
+}
 static void show_ota_entry_screen(void)
 {
     app_ota_status_t status;
@@ -650,35 +673,8 @@ static void handle_ota_menu_action(uint8_t selection)
         break;
     }
     case 2:
-    {
-        app_ota_status_t ota_status;
-        app_services_get_ota_status(&ota_status);
-        if (!ota_operation_active(ota_status.state))
-        {
-            /* "Back" is a real navigation action when nothing is running.
-             * Keep the service's "No Update Running / Current kept" flash for
-             * genuine cancel races; do not make the Back item flash forever. */
-            s_ota_feedback_active = false;
-            menu_state_t previous_menu;
-            int previous_selection;
-            if (pop_menu_history(&previous_menu, &previous_selection) &&
-                previous_menu != MENU_NONE)
-            {
-                sys_state.menu_state = previous_menu;
-                sys_state.menu_selection = previous_selection;
-            }
-            else
-            {
-                sys_state.menu_state = MAIN_MENU;
-                sys_state.menu_selection = 4U;
-            }
-            show_menu_screen(sys_state.menu_state, sys_state.menu_selection);
-            break;
-        }
-        s_ota_feedback_active = true;
-        (void)app_services_request_cancel_update();
+        return_to_ota_menu_after_back();
         break;
-    }
     default:
         break;
     }
@@ -2659,17 +2655,10 @@ void handle_back_button_event(button_event_info_t *event_info,
     if (event_info->event == BUTTON_EVENT_CLICK &&
         sys_lcd.screen == LCD_SCREEN_OTA)
     {
-        /* Back leaves the progress/status page without cancelling OTA.
-         * Reopening Firmware Update resumes an active operation. The screen,
-         * not menu_state, decides: a background OTA completion can raise this
-         * page after the menu state was reset, and Back must still return to
-         * the OTA menu rather than fall through to a parent-menu handler. */
-        s_ota_feedback_active = false;
-        sys_state.menu_state = MENU_OTA;
-        if (sys_state.menu_selection >= 3U) {
-            sys_state.menu_selection = 0U;
-        }
-        show_menu_screen(MENU_OTA, sys_state.menu_selection);
+        /* Back leaves an active transfer untouched. When the operation has
+         * already terminated, retain the existing "No Update Running /
+         * Current kept" flash and return to the OTA menu after it expires. */
+        return_to_ota_menu_after_back();
         return;
     }
 
