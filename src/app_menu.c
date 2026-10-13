@@ -415,10 +415,10 @@ void show_menu_screen(menu_state_t menu_st, int selection)
         snprintf(rows[0], LCD_LINE_SIZE, "%-*s", LCD_COLS, "Wi-Fi Mode");
         snprintf(rows[1], LCD_LINE_SIZE, "%-*s",
                  LCD_COLS, mode_text);
-        snprintf(rows[2], LCD_LINE_SIZE, "%-*s", LCD_COLS,
-                 "UP/DOWN: CHANGE");
-        snprintf(rows[3], LCD_LINE_SIZE, "%-*s", LCD_COLS,
-                 "ENT=SAVE BACK=CANCEL");
+        /* Keep the editor clean: the physical buttons already have stable,
+         * global meanings. Do not consume LCD rows with navigation hints. */
+        snprintf(rows[2], LCD_LINE_SIZE, "%-*s", LCD_COLS, "");
+        snprintf(rows[3], LCD_LINE_SIZE, "%-*s", LCD_COLS, "");
 
         lcd_show_menu_rows(row_ptrs, 4U);
         return;
