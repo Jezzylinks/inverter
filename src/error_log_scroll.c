@@ -173,8 +173,14 @@ void error_log_scroll_update_display(void)
         const error_log_entry_t *entry = &s_entries[s_cursor];
         if (s_detail_mode) {
             format_log_header(row0, entry, s_cursor, s_count, true);
+            /* Preserve the concrete event that triggered the log entry
+             * (for example "Low battery shutdown") instead of replacing it
+             * with a generic source label. Rows 2-3 show the recovery advice. */
+            const char *event_text = entry->description[0] != '\0'
+                                         ? entry->description
+                                         : fault_log_source_name((fault_source_t)entry->error_code);
             snprintf(row1, sizeof(row1), "%-*.*s", LCD_COLS, LCD_COLS,
-                     fault_log_source_name((fault_source_t)entry->error_code));
+                     event_text);
             wrap_definition(source_definition((fault_source_t)entry->error_code),
                             s_detail_page, row2, row3);
         } else {
