@@ -458,11 +458,23 @@ static void app_wifi_operation_watch_task(void *parameter)
                 const bool have_ip =
                     wifi_events_get_status_copy(&current) == ESP_OK &&
                     current.got_ip;
-                if (have_ip && esp_wifi_sta_get_ap_info(&active_ap) == ESP_OK) {
+                const esp_err_t ap_info_err =
+                    esp_wifi_sta_get_ap_info(&active_ap);
+                if (have_ip && ap_info_err == ESP_OK) {
                     connection_really_succeeded =
                         timed_out_ssid[0] != '\0' &&
                         strncmp((const char *)active_ap.ssid, timed_out_ssid,
                                 sizeof(active_ap.ssid)) == 0;
+                } else if (have_ip && ap_info_err != ESP_OK &&
+                           wifi_controller_is_connected()) {
+                    /*
+                     * The station event snapshot confirms a DHCP lease and
+                     * the controller confirms connectivity, but ESP-IDF can
+                     * briefly fail to return the AP record while the driver
+                     * is reconciling events. Do not turn that transient
+                     * metadata failure into a false Connection Timeout.
+                     */
+                    connection_really_succeeded = true;
                 }
             } else if (timed_out_operation == APP_WIFI_OPERATION_DISCONNECT) {
                 wifi_ap_record_t active_ap = {0};
