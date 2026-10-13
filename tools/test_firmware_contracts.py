@@ -528,5 +528,20 @@ class FirmwareContracts(unittest.TestCase):
             body = source[start:] if next_handler < 0 else source[start:next_handler]
             self.assertIn("lcd_is_startup_active()", body)
 
+
+    def test_api_does_not_report_unmeasured_solar_grid_or_load_as_zero(self):
+        root = Path(__file__).parents[1]
+        api = root.joinpath("src", "server", "json", "json_api_device.c").read_text()
+        solar = api[api.index("static esp_err_t api_solar_handler"):api.index("static esp_err_t api_load_handler")]
+        load = api[api.index("static esp_err_t api_load_handler"):api.index("static esp_err_t api_grid_handler")]
+        grid = api[api.index("static esp_err_t api_grid_handler"):api.index("static const httpd_uri_t s_device_uris")]
+        self.assertIn('cJSON_AddNullToObject(root, "power_kw")', solar)
+        self.assertIn('"No dedicated solar/DC-input sensors are configured"', solar)
+        self.assertIn('cJSON_AddNullToObject(root, "current")', load)
+        self.assertIn('"current_available", false', load)
+        self.assertIn('cJSON_AddNullToObject(root, "voltage")', grid)
+        self.assertIn('"voltage_available", false', grid)
+        self.assertIn('cJSON_AddNullToObject(root, "temperature")', api)
+
 if __name__ == "__main__":
     unittest.main()
