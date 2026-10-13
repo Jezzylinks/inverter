@@ -49,6 +49,8 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
     esp_http_client_config_t config = {
         .url = url,
         .timeout_ms = OTA_HTTP_TIMEOUT_MS,
+        .buffer_size = OTA_HTTP_BUFFER_SIZE,
+        .buffer_size_tx = OTA_HTTP_BUFFER_SIZE,
         .keep_alive_enable = true,
         .crt_bundle_attach = esp_crt_bundle_attach,
     };
@@ -60,7 +62,12 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
     esp_ota_handle_t ota_handle = 0;
     bool ota_started = false;
     ota_verify_context_t verify_context = {0};
-    esp_err_t result = esp_http_client_open(client, 0);
+    /* GitHub release assets are served through a redirect to a signed URL;
+     * follow it here, otherwise the 302 is mistaken for a bad image. */
+    int64_t content_length = 0;
+    int status_code = 0;
+    esp_err_t result = ota_http_open_following_redirects(client, &content_length,
+                                                         &status_code);
     if (result != ESP_OK) {
         esp_http_client_cleanup(client);
         return result;
@@ -70,9 +77,10 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
         goto cleanup;
     }
 
-    const int64_t content_length = esp_http_client_fetch_headers(client);
-    if (esp_http_client_get_status_code(client) != 200 ||
-        content_length != (int64_t)expected_size) {
+    if (status_code != 200 || content_length != (int64_t)expected_size) {
+        ESP_LOGE(TAG, "Firmware download rejected: HTTP %d, length %lld, expected %u",
+                 status_code, (long long)content_length,
+                 (unsigned)expected_size);
         result = ESP_ERR_INVALID_SIZE;
         goto cleanup;
     }

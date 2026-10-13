@@ -4385,8 +4385,18 @@ void lcd_draw_diagnostics_screen(uint8_t index)
         snprintf(row1, LCD_LINE_SIZE, "Load:%6.1f%%    ", diag_data.cpu_load);
         break;
 
-    case 3: /* Firmware Version */
-        snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, "C-01 Rev A");
+    case 3: /* Device Info: hardware revision and software version */
+        if (lcd_geometry_is_20x4())
+        {
+            char software_row[LCD_LINE_SIZE];
+            snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, "C-01 Rev A");
+            snprintf(software_row, LCD_LINE_SIZE, "SW: %.*s",
+                     LCD_COLS - 4, FIRMWARE_VERSION);
+            lcd_show_diagnostic_detail_rows(row0, row1, software_row, "");
+            return;
+        }
+        /* 16x2 has one value row: keep the revision and add the version. */
+        snprintf(row1, LCD_LINE_SIZE, "C-01A %.*s", LCD_COLS - 6, FIRMWARE_VERSION);
         break;
 
     case 4: /* Uptime */
