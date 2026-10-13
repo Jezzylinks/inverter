@@ -1354,6 +1354,30 @@ static void app_services_show_ota_lcd(const app_ota_status_t *status)
                         detail, status->state == APP_OTA_CANCELLED);
 }
 
+static void app_services_record_ota_error(const char *detail,
+                                                bool user_initiated)
+{
+    if (s_services_mutex == NULL) {
+        return;
+    }
+
+    app_ota_status_t snapshot;
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_ota_status.state = APP_OTA_ERROR;
+    s_ota_status.progress_percent = 0;
+    s_ota_status.confirmation_pending = false;
+    (void)snprintf(s_ota_status.error_detail,
+                   sizeof(s_ota_status.error_detail), "%s",
+                   (detail != NULL && detail[0] != '\0')
+                       ? detail : "OTA operation failed");
+    snapshot = s_ota_status;
+    xSemaphoreGive(s_services_mutex);
+
+    if (user_initiated) {
+        app_services_show_ota_lcd(&snapshot);
+    }
+}
+
 /* Re-enter the OTA progress/status page when the user opens Firmware Update
  * while a check or firmware transfer is already active. */
 void app_services_show_ota_status_screen(void)
@@ -2840,11 +2864,9 @@ esp_err_t app_services_check_for_update(bool user_initiated)
                  "OTA manifest URL unavailable or invalid (get=%s, https_valid=%d)",
                  esp_err_to_name(url_err),
                  ota_manifest_is_https_url(manifest_url) ? 1 : 0);
-        if (user_initiated) {
-            lcd_flash_warning_to("OTA URL Invalid",
-                                 url_err == ESP_OK ? "Set manifest URL" : "URL too long",
-                                 1500U, LCD_SCREEN_MENU);
-        }
+        app_services_record_ota_error(
+            url_err == ESP_OK ? "OTA URL Invalid" : "Manifest URL unavailable",
+            user_initiated);
         return url_err == ESP_OK ? ESP_ERR_INVALID_ARG : url_err;
     }
 
@@ -2861,6 +2883,7 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     ota_manifest_check_job_t *job = calloc(1, sizeof(*job));
     if (!job) {
         xSemaphoreGive(s_services_mutex);
+        app_services_record_ota_error("ERR:NO_MEM", user_initiated);
         return ESP_ERR_NO_MEM;
     }
     strncpy(job->manifest_url, manifest_url, sizeof(job->manifest_url) - 1U);
@@ -3039,9 +3062,14 @@ esp_err_t app_services_confirm_update(void)
     {
         (void)app_ota_effective_manifest_url(manifest_url, sizeof(manifest_url));
     }
-    if (!confirmed || manifest_url[0] == '\0')
+    if (!confirmed)
     {
         return ESP_ERR_INVALID_STATE;
+    }
+    if (manifest_url[0] == '\0')
+    {
+        app_services_record_ota_error("OTA URL Invalid", true);
+        return ESP_ERR_INVALID_ARG;
     }
     if (!wifi_monitor_is_online())
     {
