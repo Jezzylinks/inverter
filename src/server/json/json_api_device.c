@@ -260,9 +260,14 @@ static esp_err_t api_inverter_handler(httpd_req_t *req)
     add_float_or_null(root, "power_kw", 0.0f, false);
     cJSON_AddBoolToObject(root, "current_available", false);
     cJSON_AddBoolToObject(root, "power_available", false);
-    add_float_or_null(root, "frequency", state.inverter.output_frequency, valid);
-    add_float_or_null(root, "temperature", state.inverter.temperature, valid);
-    cJSON_AddNumberToObject(root, "load_percentage", state.inverter.load_percentage);
+    /* Frequency and temperature are not physically sensed in this board
+     * profile; expose them as unavailable rather than firmware defaults. */
+    add_float_or_null(root, "frequency", 0.0f, false);
+    add_float_or_null(root, "temperature", 0.0f, false);
+    cJSON_AddBoolToObject(root, "frequency_available", false);
+    cJSON_AddBoolToObject(root, "temperature_available", false);
+    cJSON_AddNullToObject(root, "load_percentage");
+    cJSON_AddBoolToObject(root, "load_percentage_available", false);
     cJSON_AddBoolToObject(root, "active", state.inverter.inverter_active);
     cJSON_AddBoolToObject(root, "telemetry_valid", valid);
     add_power_control_status(root, &state);
