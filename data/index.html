@@ -113,6 +113,17 @@
           <div class="network-actions"><button id="otaCheckButton" class="button button-secondary" type="button">Check for update</button><button id="otaStartButton" class="button button-primary" type="button">Start update</button><button id="otaCancelButton" class="button button-secondary" type="button">Cancel</button></div>
         </article>
 
+
+        <article class="panel panel-wide">
+          <div class="panel-heading">
+            <div><p class="eyebrow">DEVICE DIAGNOSTICS</p><h3>Fault history</h3></div>
+            <span id="faultSummary" class="service-state">Waiting for device</span>
+          </div>
+          <div id="faultHistory" class="event-log" aria-live="polite">
+            <div class="log-empty">Device fault history will appear here after authentication.</div>
+          </div>
+        </article>
+
         <article class="panel panel-wide">
           <div class="panel-heading"><div><p class="eyebrow">ACTIVITY</p><h3>Recent events</h3></div><button id="clearLogButton" class="text-button" type="button">Clear</button></div>
           <div id="eventLog" class="event-log" aria-live="polite"><div class="log-empty">No events yet.</div></div>
