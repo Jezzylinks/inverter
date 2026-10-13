@@ -622,5 +622,16 @@ class FirmwareContracts(unittest.TestCase):
         self.assertNotIn('"MENU: CANCEL"', lcd_source)
         self.assertNotIn('HOLD=GO', lcd_source)
 
+
+    def test_websocket_marks_unsupported_measurements_unavailable(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("src", "server", "websocket", "websocket_server.c").read_text()
+        self.assertIn('cJSON_AddNullToObject(data, "output_current")', source)
+        self.assertIn('"output_current_available", false', source)
+        self.assertIn('cJSON_AddNullToObject(data, "output_frequency")', source)
+        self.assertIn('cJSON_AddNullToObject(data, "solar_voltage")', source)
+        self.assertIn('cJSON_AddNullToObject(data, "load_percentage")', source)
+        self.assertIn('"battery_soc_estimated", true', source)
+
 if __name__ == "__main__":
     unittest.main()
