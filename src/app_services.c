@@ -1313,9 +1313,24 @@ static const char *wifi_state_text(wifi_controller_state_t state)
 
 static void app_services_show_ota_lcd(const app_ota_status_t *status)
 {
-    if (!status) {
+    if (status == NULL) {
         return;
     }
+
+    /* A failed check/install is a transient notification, not a dead-end
+     * OTA page. Restore the actionable OTA menu first so the flash returns to
+     * Check for Update / Retry / Back instead of the previous screen. */
+    if (status->state == APP_OTA_ERROR) {
+        const char *detail = status->error_detail[0] != '\\0'
+                                 ? status->error_detail
+                                 : "Check Wi-Fi and retry";
+        sys_state.menu_state = MENU_OTA;
+        sys_state.menu_selection = 0U;
+        show_menu_screen(MENU_OTA, 0);
+        lcd_flash_warning_to("Update Failed", detail, 1800U, LCD_SCREEN_MENU);
+        return;
+    }
+
     lcd_ota_view_state_t view = LCD_OTA_VIEW_ERROR;
     switch (status->state) {
     case APP_OTA_CHECKING: view = LCD_OTA_VIEW_CHECKING; break;
@@ -1326,19 +1341,31 @@ static void app_services_show_ota_lcd(const app_ota_status_t *status)
     case APP_OTA_COMPLETE: view = LCD_OTA_VIEW_COMPLETE; break;
     case APP_OTA_CANCELLED: view = LCD_OTA_VIEW_CANCELLED; break;
     case APP_OTA_IDLE: view = LCD_OTA_VIEW_CURRENT; break;
-    case APP_OTA_ERROR: view = LCD_OTA_VIEW_ERROR; break;
+    case APP_OTA_ERROR:
     case APP_OTA_CONFIRMING:
     default:
         return;
     }
-    const char *detail = status->state == APP_OTA_ERROR ? "Try again" :
-                         status->state == APP_OTA_CANCELLED ? "Current kept" :
+    const char *detail = status->state == APP_OTA_CANCELLED ? "Current kept" :
                          status->state == APP_OTA_IDLE ? "No update" : "";
     lcd_show_ota_status(view, (uint8_t)(status->progress_percent < 0 ? 0 :
                                        status->progress_percent),
                         status->installed_version, status->available_version,
-                        detail, status->state == APP_OTA_ERROR ||
-                                  status->state == APP_OTA_CANCELLED);
+                        detail, status->state == APP_OTA_CANCELLED);
+}
+
+/* Re-enter the OTA progress/status page when the user opens Firmware Update
+ * while a check or firmware transfer is already active. */
+void app_services_show_ota_status_screen(void)
+{
+    app_ota_status_t status;
+    app_services_get_ota_status(&status);
+    if (status.state == APP_OTA_CHECKING ||
+        status.state == APP_OTA_PREPARING ||
+        status.state == APP_OTA_DOWNLOADING ||
+        status.state == APP_OTA_VERIFYING) {
+        app_services_show_ota_lcd(&status);
+    }
 }
 
 static const char *app_ota_state_text(app_ota_state_t state)
@@ -2847,13 +2874,20 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     if (xTaskCreatePinnedToCore(ota_manifest_check_task, "ota_manifest_check",
                     APP_OTA_CHECK_TASK_STACK_SIZE, job,
                     APP_OTA_CHECK_TASK_PRIORITY, &s_ota_manifest_check_task, APP_CORE_SYSTEM) != pdPASS) {
+        app_ota_status_t failed_status;
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_ota_manifest_check_task = NULL;
         s_ota_manifest_check_active = false;
         s_ota_status.state = APP_OTA_ERROR;
+        (void)snprintf(s_ota_status.error_detail,
+                       sizeof(s_ota_status.error_detail), "ERR:NO_MEM");
+        failed_status = s_ota_status;
         xSemaphoreGive(s_services_mutex);
         memset(job, 0, sizeof(*job));
         free(job);
+        if (user_initiated) {
+            app_services_show_ota_lcd(&failed_status);
+        }
         return ESP_ERR_NO_MEM;
     }
     app_ota_status_t snapshot;
