@@ -718,5 +718,19 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("sys_lcd.screen == LCD_SCREEN_OTA", input_source)
         self.assertIn("show_menu_screen(MENU_OTA, sys_state.menu_selection)", input_source)
 
+
+    def test_ota_release_workflow_publishes_binary_and_integrity_manifest(self):
+        root = Path(__file__).parents[1]
+        workflow = root.joinpath(".github", "workflows", "ota-release.yml").read_text()
+        self.assertIn('tags:', workflow)
+        self.assertIn('INVERTER_FIRMWARE_VERSION', workflow)
+        self.assertIn('pio run -e esp32dev', workflow)
+        self.assertIn('max_size=$((0x180000))', workflow)
+        self.assertIn('sha256sum', workflow)
+        self.assertIn('firmware.bin', workflow)
+        self.assertIn('inverter.csv', workflow)
+        self.assertIn('releases/download/${GITHUB_REF_NAME}/firmware.bin', workflow)
+        self.assertIn('gh release create', workflow)
+
 if __name__ == "__main__":
     unittest.main()
