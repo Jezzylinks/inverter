@@ -643,5 +643,30 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("last_fault_flags", js)
         self.assertIn("last_battery_voltage", js)
 
+
+    def test_dashboard_separates_api_live_updates_and_telemetry_freshness(self):
+        root = Path(__file__).parents[1]
+        html = root.joinpath("data", "index.html").read_text()
+        js = root.joinpath("data", "assets", "app.js").read_text()
+        self.assertIn('id="apiHealth"', html)
+        self.assertIn('id="liveHealth"', html)
+        self.assertIn('id="telemetryHealth"', html)
+        self.assertIn("refreshHealthStrip", js)
+        self.assertIn("Stale ·", js)
+        self.assertIn("Device reachable · live updates reconnecting", js)
+        self.assertIn("PIN required", js)
+        css = root.joinpath("data", "assets", "app.css").read_text()
+        self.assertNotIn(".topbar .icon-button { display: none; }", css)
+        self.assertIn(".topbar .icon-button { display: inline-flex", css)
+
+    def test_dashboard_websocket_respects_measurement_availability(self):
+        root = Path(__file__).parents[1]
+        js = root.joinpath("data", "assets", "app.js").read_text()
+        self.assertIn("const solarAvailable = has(data.solar_voltage) && has(data.solar_current)", js)
+        self.assertIn("power_available: solarAvailable", js)
+        self.assertIn("percentage_available: has(data.load_percentage)", js)
+        self.assertIn("Current not measured", js)
+        self.assertNotIn("if (showLog)", js)
+
 if __name__ == "__main__":
     unittest.main()

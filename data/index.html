@@ -60,6 +60,11 @@
         <article class="metric-card accent-cyan"><div class="metric-icon" aria-hidden="true">☼</div><div><p class="metric-label">Solar / PV</p><strong id="solarMetric" aria-live="polite">—</strong><span id="solarDetail" class="metric-detail">Telemetry unavailable</span></div></article>
         <article class="metric-card accent-green"><div class="metric-icon" aria-hidden="true">⌂</div><div><p class="metric-label">Load</p><strong id="loadMetric" aria-live="polite">—</strong><span id="loadDetail" class="metric-detail">Telemetry unavailable</span></div></article>
       </section>
+      <section class="health-strip" aria-label="Dashboard data health">
+        <div class="health-item"><span class="health-indicator" id="apiHealthDot"></span><div><span class="health-label">Device API</span><strong id="apiHealth">Checking…</strong></div></div>
+        <div class="health-item"><span class="health-indicator" id="liveHealthDot"></span><div><span class="health-label">Live updates</span><strong id="liveHealth">Connecting…</strong></div></div>
+        <div class="health-item"><span class="health-indicator" id="telemetryHealthDot"></span><div><span class="health-label">Telemetry freshness</span><strong id="telemetryHealth">Waiting for measurements</strong></div></div>
+      </section>
 
       <section class="content-grid">
         <article class="panel panel-wide">
