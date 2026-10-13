@@ -165,3 +165,22 @@ h3 { margin: 0; font-size: 18px; letter-spacing: -.03em; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+
+/* Device/API/telemetry health is kept separate from Wi-Fi state so a connected
+   phone is not misled when the HTTP API, WebSocket, or measurements are stale. */
+.health-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 0 20px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: rgba(10, 22, 38, .78); }
+.health-item { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.health-indicator { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: var(--subtle); }
+.health-indicator.good { background: var(--green); box-shadow: 0 0 0 4px rgba(91,228,170,.09); }
+.health-indicator.warn { background: var(--amber); box-shadow: 0 0 0 4px rgba(247,201,108,.09); }
+.health-indicator.bad { background: var(--red); box-shadow: 0 0 0 4px rgba(255,116,135,.09); }
+.health-label, .health-item strong { display: block; overflow: hidden; text-overflow: ellipsis; }
+.health-label { margin-bottom: 4px; color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.health-item strong { color: var(--text); font-size: 12px; font-weight: 750; }
+button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+button:disabled { cursor: not-allowed; opacity: .55; transform: none; }
+@media (max-width: 620px) {
+  .health-strip { grid-template-columns: 1fr; gap: 12px; padding: 14px; }
+  .health-item strong { white-space: normal; }
+}
