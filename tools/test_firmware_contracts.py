@@ -541,5 +541,13 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('entry->description[0]', source)
         self.assertIn('wrap_definition(source_definition((fault_source_t)entry->error_code)', source)
 
+
+    def test_wifi_connect_animation_forces_menu_redraw_on_phase_change(self):
+        root = Path(__file__).parents[1]
+        source = root.joinpath("src", "app_services.c").read_text()
+        self.assertIn("last_rendered_anim_phase", source)
+        self.assertIn("(animating && last_rendered_anim_phase != anim_phase)", source)
+        self.assertIn("show_menu_screen(MENU_WIFI_CONFIG, selection);", source)
+
 if __name__ == "__main__":
     unittest.main()
