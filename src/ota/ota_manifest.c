@@ -31,7 +31,7 @@ static void ota_log_current_endpoint(esp_http_client_handle_t client,
         if (host_len > 0U && host_len < sizeof(host))
         {
             memcpy(host, authority, host_len);
-            host[host_len] = '\\0';
+            host[host_len] = '\0';
         }
     }
 
