@@ -633,5 +633,15 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('cJSON_AddNullToObject(data, "load_percentage")', source)
         self.assertIn('"battery_soc_estimated", true', source)
 
+
+    def test_dashboard_displays_persistent_diagnostic_snapshot(self):
+        root = Path(__file__).parents[1]
+        html = root.joinpath("data", "index.html").read_text()
+        js = root.joinpath("data", "assets", "app.js").read_text()
+        self.assertIn('id="faultDiagnostics"', html)
+        self.assertIn("last_reset_reason", js)
+        self.assertIn("last_fault_flags", js)
+        self.assertIn("last_battery_voltage", js)
+
 if __name__ == "__main__":
     unittest.main()
