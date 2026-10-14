@@ -627,6 +627,9 @@ static void handle_ota_menu_action(uint8_t selection)
     }
     case 2:
         s_ota_feedback_active = true;
+        /* Make the OTA menu current so the "No Update Running / Current kept"
+         * flash (kept as is) returns here, not to a stale screen. */
+        show_menu_screen(MENU_OTA, sys_state.menu_selection);
         (void)app_services_request_cancel_update();
         break;
     default:
@@ -1446,6 +1449,13 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 push_menu_history(sys_state.menu_state, sys_state.menu_selection);
                 sys_state.menu_state = next;
                 sys_state.menu_selection = 0;
+                if (next == MENU_OTA && app_services_ota_show_progress_if_active())
+                {
+                    /* Update running: open its progress screen. Back returns
+                     * to the OTA menu (Cancel Update lives there). */
+                    s_ota_feedback_active = true;
+                    break;
+                }
                 show_menu_screen(next, sys_state.menu_selection);
 
                 if (next == MENU_SYSTEM_INFO)
@@ -1711,6 +1721,11 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 push_menu_history(sys_state.menu_state, sys_state.menu_selection);
                 sys_state.menu_state = next;
                 sys_state.menu_selection = 0;
+                if (next == MENU_OTA && app_services_ota_show_progress_if_active())
+                {
+                    s_ota_feedback_active = true;
+                    break;
+                }
                 show_menu_screen(next, 0);
             }
             break;
@@ -2588,14 +2603,34 @@ void handle_back_button_event(button_event_info_t *event_info,
         }
     }
 
+    /* Back from any OTA status/progress screen returns to the OTA menu, even
+     * when the update was started elsewhere (web/auto) and no menu action
+     * armed s_ota_feedback_active. Navigation only; the update continues. */
     if (event_info->event == BUTTON_EVENT_CLICK &&
         sys_state.menu_state == MENU_OTA &&
-        s_ota_feedback_active &&
-        (sys_lcd.screen == LCD_SCREEN_FLASH_MSG ||
+        ((s_ota_feedback_active && sys_lcd.screen == LCD_SCREEN_FLASH_MSG) ||
          sys_lcd.screen == LCD_SCREEN_OTA))
     {
         s_ota_feedback_active = false;
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
+        return;
+    }
+
+    /* Physical Back on the OTA menu behaves like selecting its Back item:
+     * idle -> the existing "No Update Running / Current kept" flash, then the
+     * OTA menu again (not Main Menu); update running -> its progress screen. */
+    if (event_info->event == BUTTON_EVENT_CLICK &&
+        sys_state.menu_state == MENU_OTA &&
+        sys_lcd.screen == LCD_SCREEN_MENU)
+    {
+        if (app_services_ota_show_progress_if_active())
+        {
+            s_ota_feedback_active = true;
+        }
+        else
+        {
+            handle_ota_menu_action(2U);
+        }
         return;
     }
 

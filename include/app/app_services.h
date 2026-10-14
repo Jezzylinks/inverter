@@ -111,6 +111,9 @@ esp_err_t app_services_disconnect_ap_client_at(uint8_t index);
  */
 esp_err_t app_services_set_ota_manifest_url(const char *url);
 esp_err_t app_services_get_ota_manifest_url(char *buffer, size_t buffer_len);
+/* Show the OTA progress screen if a check/install is running. Returns false
+ * (and shows nothing) when idle so the caller can open the OTA menu. */
+bool app_services_ota_show_progress_if_active(void);
 
 /**
  * OTA/network prerequisite prompt.

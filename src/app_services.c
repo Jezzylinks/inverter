@@ -1311,9 +1311,63 @@ static const char *wifi_state_text(wifi_controller_state_t state)
     }
 }
 
+/* True (and the selection) when the OTA menu itself is the visible screen. */
+static bool app_ota_menu_visible(uint8_t *selection)
+{
+    lcd_screen_id_t screen;
+    LCD_LOCK();
+    screen = sys_lcd.screen;
+    LCD_UNLOCK();
+    menu_state_t menu_state;
+    uint8_t sel;
+    if (sys_state_mutex != NULL) {
+        xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
+    }
+    menu_state = sys_state.menu_state;
+    sel = sys_state.menu_selection;
+    if (sys_state_mutex != NULL) {
+        xSemaphoreGive(sys_state_mutex);
+    }
+    if (selection != NULL) {
+        *selection = sel;
+    }
+    return screen == LCD_SCREEN_MENU && menu_state == MENU_OTA;
+}
+
 static void app_services_show_ota_lcd(const app_ota_status_t *status)
 {
     if (!status) {
+        return;
+    }
+
+    /* A failure is a transient message, not a screen. Refresh the OTA menu
+     * first (so it shows Check for Update / Retry / Back and becomes the
+     * flash's return screen), then flash the error. */
+    if (status->state == APP_OTA_ERROR) {
+        char detail[LCD_LINE_SIZE];
+        snprintf(detail, sizeof(detail), "%.20s",
+                 status->error_detail[0] != '\0' ? status->error_detail
+                                                 : "Try again");
+        uint8_t selection = 0U;
+        lcd_screen_id_t screen;
+        LCD_LOCK();
+        screen = sys_lcd.screen;
+        LCD_UNLOCK();
+        const bool ota_menu_context = app_ota_menu_visible(&selection) ||
+            (screen == LCD_SCREEN_OTA && sys_state.menu_state == MENU_OTA);
+        if (ota_menu_context) {
+            show_menu_screen(MENU_OTA, selection);
+        }
+        lcd_flash_message("Update Failed", detail, 2000U);
+        return;
+    }
+
+    /* If the user stepped back to the OTA menu during an install, background
+     * progress ticks must not pull them back to the progress screen. */
+    if ((status->state == APP_OTA_PREPARING ||
+         status->state == APP_OTA_DOWNLOADING ||
+         status->state == APP_OTA_VERIFYING) &&
+        app_ota_menu_visible(NULL)) {
         return;
     }
     lcd_ota_view_state_t view = LCD_OTA_VIEW_ERROR;
@@ -3035,6 +3089,33 @@ esp_err_t app_services_confirm_update(void)
                         snapshot.installed_version, snapshot.available_version,
                         "", false);
     return ESP_OK;
+}
+
+bool app_services_ota_show_progress_if_active(void)
+{
+    /* Navigation only: never starts, restarts or cancels anything. The OTA
+     * service's own lifecycle flag (s_in_progress, set when the job starts
+     * and cleared when it finishes, fails or is cancelled) is authoritative;
+     * the displayed percentage or a previous status is not. */
+    if (s_services_mutex == NULL || !ota_service_in_progress()) {
+        return false;
+    }
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    const app_ota_status_t snapshot = s_ota_status;
+    xSemaphoreGive(s_services_mutex);
+
+    lcd_ota_view_state_t view = LCD_OTA_VIEW_PREPARING;
+    switch (snapshot.state) {
+    case APP_OTA_DOWNLOADING: view = LCD_OTA_VIEW_DOWNLOADING; break;
+    case APP_OTA_VERIFYING: view = LCD_OTA_VIEW_VERIFYING; break;
+    default: break; /* PREPARING (or a transition not yet published) */
+    }
+    lcd_show_ota_status(view,
+                        (uint8_t)(snapshot.progress_percent < 0
+                                      ? 0 : snapshot.progress_percent),
+                        snapshot.installed_version, snapshot.available_version,
+                        "", false);
+    return true;
 }
 
 esp_err_t app_services_request_cancel_update(void)
