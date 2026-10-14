@@ -4525,22 +4525,34 @@ static const char *value_edit_display_label(const value_edit_context_t *config)
  * screen. Generic over the whole table -- adding a new NVS-backed
  * setting to g_settings[] with a label automatically shows up here,
  * nothing else to wire. */
-static const char *settings_view_unit_for(const char *label)
+/* Units are keyed on the canonical NVS key, never on the display label:
+ * label substring matching missed "Battery Cutoff" (no unit) and labelled the
+ * millisecond System Timeout as seconds. */
+static const char *settings_view_unit_for(const nvs_setting_t *s)
 {
-    if (strstr(label, "Volt"))
+    const char *k = s->key;
+    if (strcmp(k, "bat_cutoff_volt") == 0 || strcmp(k, "bat_full_volt") == 0 ||
+        strcmp(k, "bat_rech_volt") == 0 || strcmp(k, "out_volt") == 0 ||
+        strcmp(k, "volt_threshold") == 0 ||
+        strcmp(k, BATTERY_VOLTAGE_SYSTEM_KEY) == 0)
         return "V";
-    if (strstr(label, "Cur"))
+    if (strcmp(k, "bat_charge_cur") == 0 || strcmp(k, "bat_disc_cur") == 0 ||
+        strcmp(k, "current_limit") == 0)
         return "A";
-    if (strstr(label, "Freq"))
+    if (strcmp(k, "out_freq") == 0 || strcmp(k, "frequency_range") == 0)
         return "Hz";
-    if (strstr(label, "Temp"))
+    if (strcmp(k, "temp_alarm") == 0)
         return "C";
-    if (strstr(label, "Timeout") || strstr(label, "Time"))
+    if (strcmp(k, "system_timeout") == 0)
+        return "ms";
+    if (strcmp(k, "backlight_time") == 0)
         return "s";
-    if (strstr(label, "Capacity"))
+    if (strcmp(k, BATTERY_CAPACITY_KEY) == 0)
         return "Ah";
-    if (strstr(label, "Brightness"))
+    if (strcmp(k, "brightness") == 0)
         return "%";
+    if (strcmp(k, "utc_offset") == 0)
+        return "h";
     return "";
 }
 
@@ -4554,48 +4566,55 @@ void lcd_draw_settings_view_screen(uint8_t index)
 
     const nvs_setting_t *s = &g_settings[index];
     char row0[LCD_LINE_SIZE], row1[LCD_LINE_SIZE];
+    const char *unit = settings_view_unit_for(s);
 
-    char counter[8];
-    snprintf(counter, sizeof(counter), "%u/%u", (unsigned)(index + 1), (unsigned)NVS_SETTINGS_COUNT);
-    const char *display_label = settings_display_label(s);
-    if (lcd_geometry_is_20x4())
-    {
-        snprintf(row0, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, display_label);
-    }
-    else
-    {
-        snprintf(row0, LCD_LINE_SIZE, "%-11.11s%5.5s", display_label, counter);
-    }
+    /* Numbered options: "07. Battery Cutoff" (item n of NVS_SETTINGS_COUNT). */
+    char numbered[LCD_LINE_SIZE];
+    snprintf(numbered, sizeof(numbered), "%02u. %s", (unsigned)(index + 1U),
+             settings_display_label(s));
+    snprintf(row0, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, numbered);
 
+    /* Show the live value held in the firmware, interpreted with the same
+     * type the setting is stored/used with. */
     if (s->is_scaled_float)
     {
-        float val = *(float *)s->field;
-        snprintf(row1, LCD_LINE_SIZE, "%.2f%-3s        ", val, settings_view_unit_for(s->label));
+        snprintf(row1, LCD_LINE_SIZE, "%.2f%s", *(const float *)s->field, unit);
+    }
+    else if (strcmp(s->key, BATTERY_CAPACITY_KEY) == 0)
+    {
+        /* capacity_ah is a float; it was previously read as int32 bits. */
+        snprintf(row1, LCD_LINE_SIZE, "%.0f%s", (double)*(const float *)s->field, unit);
+    }
+    else if (s->is_signed_8)
+    {
+        snprintf(row1, LCD_LINE_SIZE, "%+d%s", (int)*(const int8_t *)s->field, unit);
     }
     else if (s->size == sizeof(uint8_t))
     {
-        uint8_t val = *(uint8_t *)s->field;
-
+        const uint8_t val = *(const uint8_t *)s->field;
         if (strcmp(s->key, BATTERY_TYPE_KEY) == 0 && val < BATTERY_TYPE_COUNT)
         {
-            snprintf(row1, LCD_LINE_SIZE, "%-*.*s", LCD_COLS, LCD_COLS, battery_type_names[val]);
+            snprintf(row1, LCD_LINE_SIZE, "%s", battery_type_names[val]);
         }
-        else if (val == 0 || val == 1)
+        else if (s->is_bool)
         {
-            snprintf(row1, LCD_LINE_SIZE, "%u (%-3s)        ", val, val ? "ON" : "OFF");
+            snprintf(row1, LCD_LINE_SIZE, "%s", val ? "ON" : "OFF");
         }
         else
         {
-            snprintf(row1, LCD_LINE_SIZE, "%u        ", val);
+            snprintf(row1, LCD_LINE_SIZE, "%u%s", (unsigned)val, unit);
         }
     }
     else
     {
-        int32_t val = *(int32_t *)s->field;
-        snprintf(row1, LCD_LINE_SIZE, "%ld%-3s           ", (long)val, settings_view_unit_for(s->label));
+        snprintf(row1, LCD_LINE_SIZE, "%ld%s", (long)*(const int32_t *)s->field, unit);
     }
 
-    lcd_show_settings_view_detail(row0, row1);
+    {
+        char padded[LCD_LINE_SIZE];
+        snprintf(padded, sizeof(padded), "%-*.*s", LCD_COLS, LCD_COLS, row1);
+        lcd_show_settings_view_detail(row0, padded);
+    }
 }
 
 /* ── perform_factory_reset() ────────────────────────────────────────────── */
