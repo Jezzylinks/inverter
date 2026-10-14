@@ -1402,9 +1402,49 @@ static const char *wifi_state_text(wifi_controller_state_t state)
     }
 }
 
-static void app_services_show_ota_lcd(const app_ota_status_t *status)
+/* Authoritative "an OTA operation is really running": the OTA service's own
+ * lifecycle flag, or an active manifest check. The published status/progress
+ * value alone can be stale after a failure, cancellation or completion. */
+bool app_services_ota_lifecycle_active(void)
+{
+    if (ota_service_in_progress()) {
+        return true;
+    }
+    if (s_services_mutex == NULL) {
+        return false;
+    }
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    const bool check_active = s_ota_manifest_check_active;
+    xSemaphoreGive(s_services_mutex);
+    return check_active;
+}
+
+/* True when the OTA menu itself is what the user is looking at. */
+static bool app_ota_menu_is_visible(void)
+{
+    lcd_screen_id_t screen;
+    LCD_LOCK();
+    screen = sys_lcd.screen;
+    const menu_state_t menu_state = sys_state.menu_state;
+    LCD_UNLOCK();
+    return screen == LCD_SCREEN_MENU && menu_state == MENU_OTA;
+}
+
+/* respect_menu: background updates must not pull the user from the OTA menu
+ * back to the progress screen after they pressed Back. Explicit entry through
+ * Firmware Update passes false and always shows the progress screen. */
+static void app_services_show_ota_lcd_impl(const app_ota_status_t *status,
+                                           bool respect_menu)
 {
     if (status == NULL) {
+        return;
+    }
+
+    if (respect_menu &&
+        (status->state == APP_OTA_PREPARING ||
+         status->state == APP_OTA_DOWNLOADING ||
+         status->state == APP_OTA_VERIFYING) &&
+        app_ota_menu_is_visible()) {
         return;
     }
 
@@ -1447,6 +1487,11 @@ static void app_services_show_ota_lcd(const app_ota_status_t *status)
                         detail, status->state == APP_OTA_CANCELLED);
 }
 
+static void app_services_show_ota_lcd(const app_ota_status_t *status)
+{
+    app_services_show_ota_lcd_impl(status, true);
+}
+
 static void app_services_record_ota_error(const char *detail,
                                                 bool user_initiated)
 {
@@ -1477,11 +1522,12 @@ void app_services_show_ota_status_screen(void)
 {
     app_ota_status_t status;
     app_services_get_ota_status(&status);
-    if (status.state == APP_OTA_CHECKING ||
-        status.state == APP_OTA_PREPARING ||
-        status.state == APP_OTA_DOWNLOADING ||
-        status.state == APP_OTA_VERIFYING) {
-        app_services_show_ota_lcd(&status);
+    if ((status.state == APP_OTA_CHECKING ||
+         status.state == APP_OTA_PREPARING ||
+         status.state == APP_OTA_DOWNLOADING ||
+         status.state == APP_OTA_VERIFYING) &&
+        app_services_ota_lifecycle_active()) {
+        app_services_show_ota_lcd_impl(&status, false);
     } else {
         /*
          * ERROR is a completed/failed operation, not an operation in

@@ -584,10 +584,13 @@ static void handle_wifi_settings_action(uint8_t selection)
 
 static bool ota_operation_active(app_ota_state_t state)
 {
-    return state == APP_OTA_CHECKING ||
-           state == APP_OTA_PREPARING ||
-           state == APP_OTA_DOWNLOADING ||
-           state == APP_OTA_VERIFYING;
+    /* The published state alone can be stale; also require the OTA service
+     * lifecycle (or an active check) to confirm the operation is running. */
+    return (state == APP_OTA_CHECKING ||
+            state == APP_OTA_PREPARING ||
+            state == APP_OTA_DOWNLOADING ||
+            state == APP_OTA_VERIFYING) &&
+           app_services_ota_lifecycle_active();
 }
 /* Return from an OTA status/menu Back action without allowing the flash
  * expiry path to restore the screen that was visible before the action.
@@ -2659,6 +2662,26 @@ void handle_back_button_event(button_event_info_t *event_info,
          * already terminated, retain the existing "No Update Running /
          * Current kept" flash and return to the OTA menu after it expires. */
         return_to_ota_menu_after_back();
+        return;
+    }
+
+    /* Physical Back on the OTA menu follows the same path as selecting its
+     * Back item: idle -> the existing flash, then the OTA menu (never Main
+     * Menu); a genuinely running update -> its progress screen. */
+    if (event_info->event == BUTTON_EVENT_CLICK &&
+        sys_state.menu_state == MENU_OTA &&
+        sys_lcd.screen == LCD_SCREEN_MENU)
+    {
+        app_ota_status_t ota_status;
+        app_services_get_ota_status(&ota_status);
+        if (ota_operation_active(ota_status.state))
+        {
+            show_ota_entry_screen();
+        }
+        else
+        {
+            return_to_ota_menu_after_back();
+        }
         return;
     }
 
