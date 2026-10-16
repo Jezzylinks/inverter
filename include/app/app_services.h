@@ -72,6 +72,11 @@ esp_err_t app_services_wifi_connect_network_with_rssi(const char *ssid,
                                                       const char *password,
                                                       int8_t rssi);
 esp_err_t app_services_wifi_connect_saved(void);
+/** Silent, non-blocking connect to the saved (established) network. Runs only
+ * when Wi-Fi auto-reconnect is enabled; never shows an LCD message, flash, or
+ * result screen and never starts a user-visible Wi-Fi operation. Intended to
+ * be called once after boot has fully completed. */
+esp_err_t app_services_wifi_background_connect_saved(void);
 esp_err_t app_services_wifi_reconnect(void);
 esp_err_t app_services_wifi_disconnect(void);
 esp_err_t app_services_wifi_start_provisioning(void);

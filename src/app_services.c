@@ -74,6 +74,10 @@
 #define APP_WIFI_SCAN_INTERVAL_MS 2500U
 #define APP_WIFI_SCAN_TASK_STACK_SIZE 6144U
 #define APP_WIFI_SCAN_TASK_PRIORITY 5U
+/* One-shot post-boot saved-network connect. Runs below the normal Wi-Fi
+ * workers so it can never delay a user-driven operation. */
+#define APP_WIFI_BACKGROUND_CONNECT_STACK_SIZE 4096U
+#define APP_WIFI_BACKGROUND_CONNECT_PRIORITY 3U
 
 extern system_state_t sys_state;
 extern SemaphoreHandle_t sys_state_mutex;
@@ -96,6 +100,7 @@ static QueueHandle_t s_wifi_toggle_queue;
  * execute_wifi_toggle() returns.  Only one toggle can be live at any time. */
 static volatile uint32_t s_wifi_toggle_admitted = 0U;
 static TaskHandle_t s_wifi_scan_task;
+static volatile TaskHandle_t s_wifi_background_connect_task;
 static bool s_wifi_forget_pending;
 static bool s_wifi_disconnect_pending;
 static bool s_ota_check_cancel_requested;
@@ -2509,6 +2514,101 @@ esp_err_t app_services_wifi_connect_network_with_rssi(const char *ssid,
 esp_err_t app_services_wifi_connect_saved(void)
 {
     return app_services_wifi_reconnect();
+}
+
+/* Decides whether a silent post-boot connect to the saved network is allowed.
+ * Evaluated both when the request is made and again inside the worker, since
+ * the user may act in between. Never touches the LCD. */
+static bool app_wifi_background_connect_allowed(void)
+{
+    if (!sys_state.wifi.auto_reconnect) {
+        /* Auto-reconnect is the gate for this feature: when it is off the
+         * station only connects on an explicit user request. */
+        return false;
+    }
+    if (!sys_state.wifi.enabled || wifi_manager_get_mode() == WIFI_MODE_AP) {
+        return false;
+    }
+    if (wifi_controller_manual_disconnect_active()) {
+        return false;
+    }
+    if (app_services_wifi_operation_in_progress() ||
+        app_services_wifi_scan_is_active()) {
+        return false;
+    }
+
+    switch (wifi_controller_get_state()) {
+    case WIFI_CONTROLLER_STARTING:
+    case WIFI_CONTROLLER_CONNECTING:
+    case WIFI_CONTROLLER_CONNECTED:
+    case WIFI_CONTROLLER_PROVISIONING:
+        return false;
+    case WIFI_CONTROLLER_IDLE:
+    case WIFI_CONTROLLER_AP_ACTIVE:
+    case WIFI_CONTROLLER_ERROR:
+    default:
+        break;
+    }
+
+    wifi_status_t status = {0};
+    if (wifi_events_get_status_copy(&status) == ESP_OK && status.got_ip) {
+        return false;
+    }
+
+    wifi_manager_config_t config = {0};
+    return wifi_manager_get_config(&config) == ESP_OK && config.ssid[0] != '\0';
+}
+
+static void app_wifi_background_connect_task(void *parameter)
+{
+    (void)parameter;
+
+    if (app_wifi_background_connect_allowed()) {
+        /* Same controller path as the menu's saved-network connect, but with
+         * no app_wifi_begin_operation(), flash message, or result screen:
+         * app_wifi_status_callback() ignores status updates while no
+         * operation is registered, so the user is never notified. */
+        const esp_err_t err = wifi_controller_reconnect();
+        if (err == ESP_OK || err == ESP_ERR_WIFI_CONN) {
+            ESP_LOGI(APP_SERVICES_TAG, "Background saved-network connect started");
+        } else {
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Background saved-network connect failed: %s",
+                     esp_err_to_name(err));
+        }
+    } else {
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "Background saved-network connect skipped; state changed");
+    }
+
+    s_wifi_background_connect_task = NULL;
+    vTaskDelete(NULL);
+}
+
+esp_err_t app_services_wifi_background_connect_saved(void)
+{
+    if (!app_wifi_background_connect_allowed()) {
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "Background saved-network connect not needed");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_wifi_background_connect_task != NULL) {
+        return ESP_OK; /* already queued; idempotent */
+    }
+
+    TaskHandle_t handle = NULL;
+    if (xTaskCreatePinnedToCore(app_wifi_background_connect_task,
+                                "wifi_bg_conn",
+                                APP_WIFI_BACKGROUND_CONNECT_STACK_SIZE,
+                                NULL,
+                                APP_WIFI_BACKGROUND_CONNECT_PRIORITY,
+                                &handle, APP_CORE_SYSTEM) != pdPASS) {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Could not create background Wi-Fi connect task");
+        return ESP_ERR_NO_MEM;
+    }
+    s_wifi_background_connect_task = handle;
+    return ESP_OK;
 }
 
 esp_err_t app_services_wifi_reconnect(void)

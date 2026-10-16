@@ -68,6 +68,10 @@ extern "C"
      * requests remain available when this preference is disabled. */
     void wifi_controller_set_auto_connect(bool enabled);
 
+    /** True when the user explicitly disconnected the station and has not
+     * requested a connection since. Automatic connects must honour this. */
+    bool wifi_controller_manual_disconnect_active(void);
+
     /**
      * @brief Stop Wi-Fi system
      */
