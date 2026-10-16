@@ -313,6 +313,11 @@ void wifi_controller_set_auto_connect(bool enabled)
     wifi_controller_unlock();
 }
 
+bool wifi_controller_manual_disconnect_active(void)
+{
+    return s_manual_disconnect;
+}
+
 esp_err_t wifi_controller_stop(void)
 {
     if (!s_initialized)
