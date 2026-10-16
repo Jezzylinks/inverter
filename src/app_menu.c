@@ -225,7 +225,7 @@ static const char *ota_menu_label(int index)
                        status.state == APP_OTA_DOWNLOADING ||
                        status.state == APP_OTA_VERIFYING
                    ? "Cancel Update"
-                   : "Back";
+                   : "Exit";
     default:
         return ota_items[index].label;
     }
