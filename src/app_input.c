@@ -600,6 +600,8 @@ static void return_to_ota_menu_after_back(void)
 {
     app_ota_status_t status;
 
+    /* Back dismisses a previous failure so the next check starts fresh. */
+    app_services_ota_clear_error();
     app_services_get_ota_status(&status);
     s_ota_feedback_active = false;
     sys_state.menu_state = MENU_OTA;
@@ -639,6 +641,8 @@ static void show_ota_entry_screen(void)
  * (which made Back appear to loop). A running update is left untouched. */
 static void leave_ota_menu_to_parent(void)
 {
+    /* Back dismisses a previous failure so the next check starts fresh. */
+    app_services_ota_clear_error();
     app_ota_status_t status;
     app_services_get_ota_status(&status);
     const bool active = ota_operation_active(status.state);

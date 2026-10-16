@@ -3335,6 +3335,24 @@ void app_services_cancel_cancel_update(void)
     xSemaphoreGive(s_services_mutex);
 }
 
+/* Forget a previous OTA failure so the next check starts clean: the error
+ * state (which turns the menu item into "Retry") and its detail are dropped.
+ * Only an ERROR state is touched; a running check/install, an available
+ * update or a completed update is left exactly as it is. */
+void app_services_ota_clear_error(void)
+{
+    if (s_services_mutex == NULL) {
+        return;
+    }
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    if (s_ota_status.state == APP_OTA_ERROR) {
+        s_ota_status.state = APP_OTA_IDLE;
+        s_ota_status.error_detail[0] = '\0';
+        s_ota_status.progress_percent = 0;
+    }
+    xSemaphoreGive(s_services_mutex);
+}
+
 bool app_services_ota_cancel_confirmation_pending(void)
 {
     if (s_services_mutex == NULL) {
