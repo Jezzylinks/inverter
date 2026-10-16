@@ -686,6 +686,16 @@ static void format_ota_progress_bar(char *row, size_t row_len, uint8_t pct)
     }
 }
 
+/* "PLEASE WAIT" with 1..3 trailing dots that cycle on their own. draw_ota()
+ * runs every LCD cycle, so deriving the phase from the clock animates the
+ * dots without any button input or extra task. */
+static const char *ota_wait_label(void)
+{
+    static const char *const labels[3] = {"PLEASE WAIT.", "PLEASE WAIT..",
+                                          "PLEASE WAIT..."};
+    return labels[(_lcd_get_time_ms() / 400U) % 3U];
+}
+
 static void draw_ota(const lcd_ota_data_t *d)
 {
     const uint8_t pct = d->progress_pct > 100U ? 100U : d->progress_pct;
@@ -697,9 +707,9 @@ static void draw_ota(const lcd_ota_data_t *d)
         switch (d->state)
         {
         case LCD_OTA_VIEW_CHECKING:
-            snprintf(rows[0], LCD_LINE_SIZE, "FIRMWARE UPDATE");
-            snprintf(rows[1], LCD_LINE_SIZE, "CHECKING UPDATE");
-            snprintf(rows[2], LCD_LINE_SIZE, "PLEASE WAIT...");
+            snprintf(rows[0], LCD_LINE_SIZE, "CHECKING UPDATE");
+            snprintf(rows[1], LCD_LINE_SIZE, "%s", ota_wait_label());
+            rows[2][0] = '\0';
             rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_PREPARING:
@@ -771,7 +781,7 @@ static void draw_ota(const lcd_ota_data_t *d)
     {
     case LCD_OTA_VIEW_CHECKING:
         snprintf(row0, LCD_LINE_SIZE, "CHECKING UPDATE");
-        snprintf(row1, LCD_LINE_SIZE, "PLEASE WAIT");
+        snprintf(row1, LCD_LINE_SIZE, "%s", ota_wait_label());
         break;
     case LCD_OTA_VIEW_PREPARING:
         snprintf(row0, LCD_LINE_SIZE, "CONNECTING...");
