@@ -634,44 +634,6 @@ static void show_ota_entry_screen(void)
     }
 }
 
-/* Leave the OTA menu for its parent (Main Menu) using the normal menu
- * history. When no OTA operation is running, keep the existing
- * "No Update Running / Current kept" flash: the parent menu is made current
- * first, so the flash expires back onto it rather than onto the OTA menu
- * (which made Back appear to loop). A running update is left untouched. */
-static void leave_ota_menu_to_parent(void)
-{
-    /* Back dismisses a previous failure so the next check starts fresh. */
-    app_services_ota_clear_error();
-    app_ota_status_t status;
-    app_services_get_ota_status(&status);
-    const bool active = ota_operation_active(status.state);
-
-    menu_state_t prev;
-    int prev_sel;
-    if (!pop_menu_history(&prev, &prev_sel))
-    {
-        prev = MAIN_MENU;
-        prev_sel = 4;
-    }
-    s_ota_feedback_active = false;
-    sys_state.menu_state = prev;
-    sys_state.menu_selection = prev_sel;
-    sys_state.last_activity_time = esp_timer_get_time() / 1000;
-    if (prev == MENU_NONE)
-    {
-        go_to_main_screen();
-    }
-    else
-    {
-        show_menu_screen(prev, prev_sel);
-    }
-    if (!active)
-    {
-        (void)app_services_request_cancel_update();
-    }
-}
-
 static void handle_ota_menu_action(uint8_t selection)
 {
     switch (selection)
@@ -727,7 +689,10 @@ static void handle_ota_menu_action(uint8_t selection)
         }
         else
         {
-            leave_ota_menu_to_parent();
+            /* Back stays in the OTA menu: clear any previous failure and show
+             * the existing "No Update Running / Current kept" flash, which
+             * expires back onto the OTA menu. */
+            return_to_ota_menu_after_back();
         }
         break;
     }
@@ -2740,13 +2705,13 @@ void handle_back_button_event(button_event_info_t *event_info,
         return;
     }
 
-    /* Physical Back on the OTA menu leaves it for the parent menu, exactly
-     * like its Back item (flash first when idle). */
+    /* Physical Back on the OTA menu behaves exactly like its Back item: it
+     * stays in the OTA menu (never Main Menu). */
     if (event_info->event == BUTTON_EVENT_CLICK &&
         sys_state.menu_state == MENU_OTA &&
         sys_lcd.screen == LCD_SCREEN_MENU)
     {
-        leave_ota_menu_to_parent();
+        return_to_ota_menu_after_back();
         return;
     }
 
