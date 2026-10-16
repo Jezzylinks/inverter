@@ -632,6 +632,42 @@ static void show_ota_entry_screen(void)
     }
 }
 
+/* Leave the OTA menu for its parent (Main Menu) using the normal menu
+ * history. When no OTA operation is running, keep the existing
+ * "No Update Running / Current kept" flash: the parent menu is made current
+ * first, so the flash expires back onto it rather than onto the OTA menu
+ * (which made Back appear to loop). A running update is left untouched. */
+static void leave_ota_menu_to_parent(void)
+{
+    app_ota_status_t status;
+    app_services_get_ota_status(&status);
+    const bool active = ota_operation_active(status.state);
+
+    menu_state_t prev;
+    int prev_sel;
+    if (!pop_menu_history(&prev, &prev_sel))
+    {
+        prev = MAIN_MENU;
+        prev_sel = 4;
+    }
+    s_ota_feedback_active = false;
+    sys_state.menu_state = prev;
+    sys_state.menu_selection = prev_sel;
+    sys_state.last_activity_time = esp_timer_get_time() / 1000;
+    if (prev == MENU_NONE)
+    {
+        go_to_main_screen();
+    }
+    else
+    {
+        show_menu_screen(prev, prev_sel);
+    }
+    if (!active)
+    {
+        (void)app_services_request_cancel_update();
+    }
+}
+
 static void handle_ota_menu_action(uint8_t selection)
 {
     switch (selection)
@@ -676,8 +712,21 @@ static void handle_ota_menu_action(uint8_t selection)
         break;
     }
     case 2:
-        return_to_ota_menu_after_back();
+    {
+        app_ota_status_t ota_status;
+        app_services_get_ota_status(&ota_status);
+        if (ota_operation_active(ota_status.state))
+        {
+            /* Item reads "Cancel Update" while running: ask to confirm. */
+            s_ota_feedback_active = true;
+            (void)app_services_request_cancel_update();
+        }
+        else
+        {
+            leave_ota_menu_to_parent();
+        }
         break;
+    }
     default:
         break;
     }
@@ -734,6 +783,28 @@ void handle_power_button_event(button_event_info_t *event_info,
         (void)app_services_cancel_update();
         show_menu_screen(MENU_OTA, sys_state.menu_selection);
         return;
+    }
+
+    /* Power while an OTA check/update is running cancels it entirely, but only
+     * after confirmation: ENTER confirms (existing handler), Back or Power
+     * dismisses the prompt and the update continues. */
+    if (event_info->event == BUTTON_EVENT_CLICK &&
+        app_services_ota_cancel_confirmation_pending())
+    {
+        app_services_cancel_cancel_update();
+        show_menu_screen(MENU_OTA, sys_state.menu_selection);
+        return;
+    }
+    if (event_info->event == BUTTON_EVENT_CLICK &&
+        (sys_state.menu_state == MENU_OTA || sys_lcd.screen == LCD_SCREEN_OTA))
+    {
+        app_ota_status_t ota_status;
+        app_services_get_ota_status(&ota_status);
+        if (ota_operation_active(ota_status.state))
+        {
+            (void)app_services_request_cancel_update();
+            return;
+        }
     }
 
     if (sys_state.menu_state == MENU_FACTORY_RESET &&
@@ -2665,23 +2736,13 @@ void handle_back_button_event(button_event_info_t *event_info,
         return;
     }
 
-    /* Physical Back on the OTA menu follows the same path as selecting its
-     * Back item: idle -> the existing flash, then the OTA menu (never Main
-     * Menu); a genuinely running update -> its progress screen. */
+    /* Physical Back on the OTA menu leaves it for the parent menu, exactly
+     * like its Back item (flash first when idle). */
     if (event_info->event == BUTTON_EVENT_CLICK &&
         sys_state.menu_state == MENU_OTA &&
         sys_lcd.screen == LCD_SCREEN_MENU)
     {
-        app_ota_status_t ota_status;
-        app_services_get_ota_status(&ota_status);
-        if (ota_operation_active(ota_status.state))
-        {
-            show_ota_entry_screen();
-        }
-        else
-        {
-            return_to_ota_menu_after_back();
-        }
+        leave_ota_menu_to_parent();
         return;
     }
 
