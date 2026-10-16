@@ -147,6 +147,8 @@ void app_services_get_ota_status(app_ota_status_t *status);
 void app_services_show_ota_status_screen(void);
 /* True only while the OTA service (or a manifest check) is genuinely running. */
 bool app_services_ota_lifecycle_active(void);
+/* Drop a previous OTA error (state ERROR -> IDLE) so the next check is fresh. */
+void app_services_ota_clear_error(void);
 
 #ifdef __cplusplus
 }
