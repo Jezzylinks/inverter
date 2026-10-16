@@ -73,7 +73,8 @@ static const menu_item_t settings_items[] = {
     {"Set Minute", MENU_SETTINGS},
     {"Battery Cutoff", MENU_SETTINGS},
     {"Battery Capacity", MENU_SETTINGS},
-    {"Wi-Fi Auto Rec", MENU_SETTINGS}};
+    {"Wi-Fi Auto Rec", MENU_SETTINGS},
+    {"Wi-Fi Auto On", MENU_SETTINGS}};
 #else
 /* Preserve the established 16×2 menu labels exactly. */
 static const menu_item_t settings_items[] = {
@@ -96,7 +97,8 @@ static const menu_item_t settings_items[] = {
     {"Set Minute", MENU_SETTINGS},
     {"Bat Cutoff", MENU_SETTINGS},
     {"Bat Capacity", MENU_SETTINGS},
-    {"WiFi Auto Rec", MENU_SETTINGS}};
+    {"WiFi Auto Rec", MENU_SETTINGS},
+    {"WiFi Auto On", MENU_SETTINGS}};
 #endif
 
 // MONITORING MENU (8 items)

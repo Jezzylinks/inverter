@@ -2516,17 +2516,25 @@ esp_err_t app_services_wifi_connect_saved(void)
     return app_services_wifi_reconnect();
 }
 
+/* True when the "Wi-Fi Auto On" preference asks for the radio to be switched
+ * ON after boot and it is currently OFF. Never touches the LCD. */
+static bool app_wifi_background_enable_needed(void)
+{
+    return sys_state.wifi.auto_enable && !sys_state.wifi.enabled;
+}
+
 /* Decides whether a silent post-boot connect to the saved network is allowed.
- * Evaluated both when the request is made and again inside the worker, since
- * the user may act in between. Never touches the LCD. */
+ * Evaluated when the request is made and again inside the worker, since the
+ * user may act in between. Never touches the LCD. */
 static bool app_wifi_background_connect_allowed(void)
 {
     if (!sys_state.wifi.auto_reconnect) {
-        /* Auto-reconnect is the gate for this feature: when it is off the
+        /* Auto-reconnect is the gate for connecting: when it is off the
          * station only connects on an explicit user request. */
         return false;
     }
     if (!sys_state.wifi.enabled || wifi_manager_get_mode() == WIFI_MODE_AP) {
+        /* Wi-Fi must already be enabled; a connect cannot work otherwise. */
         return false;
     }
     if (wifi_controller_manual_disconnect_active()) {
@@ -2559,9 +2567,53 @@ static bool app_wifi_background_connect_allowed(void)
     return wifi_manager_get_config(&config) == ESP_OK && config.ssid[0] != '\0';
 }
 
-static void app_wifi_background_connect_task(void *parameter)
+/* Silently switch Wi-Fi ON, mirroring app_services_execute_wifi_toggle(true)
+ * (controller start, runtime state, NVS commit) but without registering a
+ * Wi-Fi operation or showing any flash/warning. The toggle admission flag is
+ * held for the whole sequence because esp_wifi_start/stop are not re-entrant
+ * and must never overlap a user-driven toggle. */
+static void app_wifi_background_enable(void)
+{
+    uint32_t expected = 0U;
+    if (!__atomic_compare_exchange_n(&s_wifi_toggle_admitted, &expected, 1U,
+                                     false, __ATOMIC_SEQ_CST,
+                                     __ATOMIC_SEQ_CST)) {
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "Background Wi-Fi enable skipped; a toggle is in progress");
+        return;
+    }
+
+    if (app_wifi_background_enable_needed() &&
+        wifi_controller_init() == ESP_OK) {
+        wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
+        network_services_allow_start();
+        const esp_err_t err = wifi_controller_start();
+        if (err == ESP_OK) {
+            sys_state.wifi.enabled = true;
+            sys_state.inverter.wifi_enabled = true;
+            lcd_update_wifi_enabled(true);
+            const esp_err_t nvs_err = persist_u8(APP_WIFI_ENABLED_KEY, 1U);
+            ESP_LOGI(APP_SERVICES_TAG,
+                     "Background Wi-Fi enabled (nvs=%s)",
+                     esp_err_to_name(nvs_err));
+        } else {
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Background Wi-Fi enable failed: %s",
+                     esp_err_to_name(err));
+        }
+    }
+
+    __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
+}
+
+static void app_wifi_background_start_task(void *parameter)
 {
     (void)parameter;
+
+    /* Order matters: Wi-Fi has to be enabled before it can connect. */
+    if (app_wifi_background_enable_needed()) {
+        app_wifi_background_enable();
+    }
 
     if (app_wifi_background_connect_allowed()) {
         /* Same controller path as the menu's saved-network connect, but with
@@ -2578,18 +2630,18 @@ static void app_wifi_background_connect_task(void *parameter)
         }
     } else {
         ESP_LOGI(APP_SERVICES_TAG,
-                 "Background saved-network connect skipped; state changed");
+                 "Background saved-network connect not needed or not allowed");
     }
 
     s_wifi_background_connect_task = NULL;
     vTaskDelete(NULL);
 }
 
-esp_err_t app_services_wifi_background_connect_saved(void)
+esp_err_t app_services_wifi_background_start(void)
 {
-    if (!app_wifi_background_connect_allowed()) {
-        ESP_LOGI(APP_SERVICES_TAG,
-                 "Background saved-network connect not needed");
+    if (!app_wifi_background_enable_needed() &&
+        !app_wifi_background_connect_allowed()) {
+        ESP_LOGI(APP_SERVICES_TAG, "Background Wi-Fi start not needed");
         return ESP_ERR_INVALID_STATE;
     }
     if (s_wifi_background_connect_task != NULL) {
@@ -2597,14 +2649,14 @@ esp_err_t app_services_wifi_background_connect_saved(void)
     }
 
     TaskHandle_t handle = NULL;
-    if (xTaskCreatePinnedToCore(app_wifi_background_connect_task,
-                                "wifi_bg_conn",
+    if (xTaskCreatePinnedToCore(app_wifi_background_start_task,
+                                "wifi_bg_start",
                                 APP_WIFI_BACKGROUND_CONNECT_STACK_SIZE,
                                 NULL,
                                 APP_WIFI_BACKGROUND_CONNECT_PRIORITY,
                                 &handle, APP_CORE_SYSTEM) != pdPASS) {
         ESP_LOGW(APP_SERVICES_TAG,
-                 "Could not create background Wi-Fi connect task");
+                 "Could not create background Wi-Fi start task");
         return ESP_ERR_NO_MEM;
     }
     s_wifi_background_connect_task = handle;

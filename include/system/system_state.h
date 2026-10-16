@@ -384,6 +384,7 @@ extern "C"
     {
         bool enabled;
         bool auto_reconnect;
+        bool auto_enable; /* turn Wi-Fi ON automatically after boot */
         char ssid[32];
         char password[64];
     } wifi_state_t;

@@ -474,10 +474,10 @@ void app_main(void)
     if (startup_healthy)
     {
         lcd_boot_complete();
-        /* Boot is fully complete: quietly bring the saved network up in the
-         * background. This is a no-op unless Wi-Fi auto-reconnect is enabled
-         * and a saved station exists, and it never notifies the user. */
-        (void)app_services_wifi_background_connect_saved();
+        /* Boot is fully complete: quietly bring Wi-Fi up in the background.
+         * Wi-Fi is enabled first when "Wi-Fi Auto On" is set, then the saved
+         * network is connected when "Wi-Fi Auto Rec" is set. Never notifies. */
+        (void)app_services_wifi_background_start();
     }
     if (ota_service_rollback_notification_pending())
     {

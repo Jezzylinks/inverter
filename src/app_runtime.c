@@ -1059,6 +1059,7 @@ typedef enum
     VALUE_TYPE_SET_TIME_HOUR,
     VALUE_TYPE_SET_TIME_MINUTE,
     VALUE_TYPE_WIFI_AUTO_REC,
+    VALUE_TYPE_WIFI_AUTO_ON,
     VALUE_TYPE_COUNT
 } value_edit_param_t;
 
@@ -1213,6 +1214,7 @@ static void apply_temperature_limit(float v);
 static void apply_battery_cutoff(float v);
 static void apply_wifi(float v);
 static void apply_wifi_auto_rec(float v);
+static void apply_wifi_auto_on(float v);
 static void apply_bluetooth(float v);
 static void apply_auto_shutdown(float v);
 static void apply_scroll_enable(float v);
@@ -1450,6 +1452,15 @@ static value_edit_context_t value_edit[] = {
         .is_critical = false,
         .live_update = false,
         .apply = apply_wifi_auto_rec,
+    },
+    [VALUE_TYPE_WIFI_AUTO_ON] = {
+        .edit_type = VALUE_EDIT_BOOL,
+        .current_value = 0.0f,
+        .unit = "",
+        .label = "Wi-Fi Auto On",
+        .is_critical = false,
+        .live_update = false,
+        .apply = apply_wifi_auto_on,
     },
     [VALUE_TYPE_TIMEOUT] = {
         .edit_type = VALUE_EDIT_NUMERIC,
@@ -1849,6 +1860,7 @@ static nvs_setting_t g_settings[] = {
     {"security_en", &sys_state.security.enabled, sizeof(uint8_t), 1, false, "Security Enable", false, true},
     {"bluetooth_en", &sys_state.bluetooth.enabled, sizeof(bool), 0, false, "Bluetooth", false, true},
     {"wifi_auto_rec", &sys_state.wifi.auto_reconnect, sizeof(bool), 1, false, "Wi-Fi Auto Rec", false, true},
+    {"wifi_auto_on", &sys_state.wifi.auto_enable, sizeof(bool), 0, false, "Wi-Fi Auto On", false, true},
 };
 
 #define NVS_SETTINGS_COUNT (sizeof(g_settings) / sizeof(g_settings[0]))
@@ -1914,6 +1926,8 @@ static size_t settings_index_for_editor(const value_edit_context_t *ctx)
         return settings_index_for_key("bluetooth_en");
     if (ctx == &value_edit[VALUE_TYPE_WIFI_AUTO_REC])
         return settings_index_for_key("wifi_auto_rec");
+    if (ctx == &value_edit[VALUE_TYPE_WIFI_AUTO_ON])
+        return settings_index_for_key("wifi_auto_on");
 
     /* Wi-Fi is intentionally excluded. Its ON/OFF transition is asynchronous
      * and app_services owns the radio operation and APP_WIFI_ENABLED_KEY
@@ -3506,6 +3520,7 @@ void reload_default_settings(void)
 
     sys_state.wifi.enabled = false;
     sys_state.wifi.auto_reconnect = true;
+    sys_state.wifi.auto_enable = false;
     sys_state.wifi.ssid[0] = '\0';
     sys_state.wifi.password[0] = '\0';
 
@@ -4095,6 +4110,12 @@ static void apply_wifi(float v)
 static void apply_wifi_auto_rec(float v)
 {
     sys_state.wifi.auto_reconnect = (v != 0.0f);
+}
+/* Preference only: takes effect on the next boot. The radio itself is still
+ * switched by app_services, which owns the Wi-Fi ON/OFF transition. */
+static void apply_wifi_auto_on(float v)
+{
+    sys_state.wifi.auto_enable = (v != 0.0f);
 }
 static void apply_bluetooth(float v) { sys_state.bluetooth.enabled = (bool)v; } /* adjust to your actual field */
 static void apply_auto_shutdown(float v) { sys_state.display.auto_shutdown_enabled = (uint8_t)v; }
@@ -7373,6 +7394,12 @@ void edit_wifi_auto_rec(void)
 {
     begin_setting_edit(VALUE_TYPE_WIFI_AUTO_REC,
                        sys_state.wifi.auto_reconnect ? 1.0f : 0.0f);
+}
+
+void edit_wifi_auto_on(void)
+{
+    begin_setting_edit(VALUE_TYPE_WIFI_AUTO_ON,
+                       sys_state.wifi.auto_enable ? 1.0f : 0.0f);
 }
 
 void edit_quiet_hours_enable(void)
