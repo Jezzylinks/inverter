@@ -618,6 +618,26 @@ static void return_to_ota_menu_after_back(void)
         (void)app_services_request_cancel_update();
     }
 }
+/* Power on an OTA stage (menu, status, prompts) with no update running:
+ * go to the Main Menu (its Firmware Update item), via the normal history. */
+static void exit_ota_to_main_menu(void)
+{
+    app_services_ota_clear_error();
+    s_ota_feedback_active = false;
+
+    menu_state_t prev = MAIN_MENU;
+    int prev_sel = 4;
+    if (!pop_menu_history(&prev, &prev_sel) || prev == MENU_NONE)
+    {
+        prev = MAIN_MENU;
+        prev_sel = 4;
+    }
+    sys_state.menu_state = prev;
+    sys_state.menu_selection = prev_sel;
+    sys_state.last_activity_time = esp_timer_get_time() / 1000;
+    show_menu_screen(prev, prev_sel);
+}
+
 static void show_ota_entry_screen(void)
 {
     app_ota_status_t status;
@@ -743,14 +763,14 @@ void handle_power_button_event(button_event_info_t *event_info,
         app_services_wifi_prerequisite_pending())
     {
         app_services_cancel_wifi_prerequisite();
-        show_menu_screen(MENU_OTA, sys_state.menu_selection);
+        exit_ota_to_main_menu();
         return;
     }
 
     if (event_info->event == BUTTON_EVENT_CLICK && ota_confirmation_is_pending())
     {
         (void)app_services_cancel_update();
-        show_menu_screen(MENU_OTA, sys_state.menu_selection);
+        exit_ota_to_main_menu();
         return;
     }
 
@@ -772,6 +792,13 @@ void handle_power_button_event(button_event_info_t *event_info,
         if (ota_operation_active(ota_status.state))
         {
             (void)app_services_request_cancel_update();
+            return;
+        }
+        /* No update running: Power on any OTA stage goes to the Main Menu.
+         * (The OTA PIN stage keeps its existing behaviour.) */
+        if (atomic_load(&sys_lcd.security.action) != SECURITY_ACTION_OTA_AUTH)
+        {
+            exit_ota_to_main_menu();
             return;
         }
     }
@@ -2872,6 +2899,22 @@ void handle_back_button_event(button_event_info_t *event_info,
             sys_state.in_info_screen = false;
             sys_state.last_activity_time = esp_timer_get_time() / 1000;
             go_to_main_screen();
+            return;
+        }
+
+        /* OTA stages never fall through to the history/Main Menu on Back:
+         * stay in the OTA menu (a pending Wi-Fi prompt is dismissed). */
+        if (sys_state.menu_state == MENU_OTA)
+        {
+            if (app_services_wifi_prerequisite_pending())
+            {
+                app_services_cancel_wifi_prerequisite();
+                show_menu_screen(MENU_OTA, sys_state.menu_selection);
+            }
+            else
+            {
+                return_to_ota_menu_after_back();
+            }
             return;
         }
 
