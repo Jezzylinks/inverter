@@ -638,6 +638,23 @@ static void exit_ota_to_main_menu(void)
     show_menu_screen(prev, prev_sel);
 }
 
+/* The OTA menu's Exit item and the physical Back button leave the OTA menu
+ * for the Main Menu. With no update running the existing "No Update Running /
+ * Current kept" flash is kept; it expires onto the Main Menu. A running update
+ * is never cancelled by leaving the menu. */
+static void exit_ota_menu_via_back(void)
+{
+    app_ota_status_t status;
+    app_services_get_ota_status(&status);
+    const bool active = ota_operation_active(status.state);
+
+    exit_ota_to_main_menu();
+    if (!active)
+    {
+        (void)app_services_request_cancel_update();
+    }
+}
+
 static void show_ota_entry_screen(void)
 {
     app_ota_status_t status;
@@ -709,10 +726,9 @@ static void handle_ota_menu_action(uint8_t selection)
         }
         else
         {
-            /* Back stays in the OTA menu: clear any previous failure and show
-             * the existing "No Update Running / Current kept" flash, which
-             * expires back onto the OTA menu. */
-            return_to_ota_menu_after_back();
+            /* Exit: leave for the Main Menu (previous failure cleared, flash
+             * kept). */
+            exit_ota_menu_via_back();
         }
         break;
     }
@@ -2732,13 +2748,12 @@ void handle_back_button_event(button_event_info_t *event_info,
         return;
     }
 
-    /* Physical Back on the OTA menu behaves exactly like its Back item: it
-     * stays in the OTA menu (never Main Menu). */
+    /* Physical Back on the OTA menu behaves exactly like its Exit item. */
     if (event_info->event == BUTTON_EVENT_CLICK &&
         sys_state.menu_state == MENU_OTA &&
         sys_lcd.screen == LCD_SCREEN_MENU)
     {
-        return_to_ota_menu_after_back();
+        exit_ota_menu_via_back();
         return;
     }
 
@@ -2902,8 +2917,8 @@ void handle_back_button_event(button_event_info_t *event_info,
             return;
         }
 
-        /* OTA stages never fall through to the history/Main Menu on Back:
-         * stay in the OTA menu (a pending Wi-Fi prompt is dismissed). */
+        /* OTA stages not covered above: a pending Wi-Fi prompt is dismissed
+         * back to the OTA menu; otherwise Back exits like the Exit item. */
         if (sys_state.menu_state == MENU_OTA)
         {
             if (app_services_wifi_prerequisite_pending())
@@ -2913,7 +2928,7 @@ void handle_back_button_event(button_event_info_t *event_info,
             }
             else
             {
-                return_to_ota_menu_after_back();
+                exit_ota_menu_via_back();
             }
             return;
         }
