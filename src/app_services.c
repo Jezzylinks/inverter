@@ -1380,9 +1380,21 @@ static void load_persisted_config(void)
         s_manifest_url[0] = '\0';
     }
 
-    sys_state.wifi.enabled = wifi_enabled != 0U;
-    sys_state.inverter.wifi_enabled = sys_state.wifi.enabled;
-    lcd_update_wifi_enabled(sys_state.wifi.enabled);
+    /*
+     * wifi_enabled records the last manual/runtime toggle; it is not the
+     * boot policy. The radio is physically OFF after reset, so do not claim
+     * it is enabled (or start it) just because the previous session left
+     * this key set. app_wifi_background_start_task applies the existing
+     * Auto Wi-Fi On policy after normal startup is complete.
+     */
+    sys_state.wifi.enabled = false;
+    sys_state.inverter.wifi_enabled = false;
+    lcd_update_wifi_enabled(false);
+    ESP_LOGI(APP_SERVICES_TAG,
+             "Boot Wi-Fi state: OFF (saved runtime state=%u, auto-enable=%u, auto-reconnect=%u)",
+             (unsigned)wifi_enabled,
+             sys_state.wifi.auto_enable ? 1U : 0U,
+             sys_state.wifi.auto_reconnect ? 1U : 0U);
     s_ota_status.auto_check_enabled = auto_check != 0U;
 }
 
@@ -1787,14 +1799,11 @@ esp_err_t app_services_init(void)
                 err = network_err;
             }
         }
-        if (sys_state.wifi.enabled)
-        {
-            err = wifi_controller_start();
-            if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
-            {
-                ESP_LOGW(APP_SERVICES_TAG, "Could not restore Wi-Fi state: %s", esp_err_to_name(err));
-            }
-        }
+        /*
+         * Do not start the radio from the persisted wifi_enabled runtime key.
+         * Auto Wi-Fi policy is applied once, after startup readiness, through
+         * app_services_set_wifi_enabled() and the normal toggle worker.
+         */
     }
 
     const esp_err_t ota_err = ota_service_init();
@@ -2567,52 +2576,69 @@ static bool app_wifi_background_connect_allowed(void)
     return wifi_manager_get_config(&config) == ESP_OK && config.ssid[0] != '\0';
 }
 
-/* Silently switch Wi-Fi ON, mirroring app_services_execute_wifi_toggle(true)
- * (controller start, runtime state, NVS commit) but without registering a
- * Wi-Fi operation or showing any flash/warning. The toggle admission flag is
- * held for the whole sequence because esp_wifi_start/stop are not re-entrant
- * and must never overlap a user-driven toggle. */
-static void app_wifi_background_enable(void)
+/*
+ * Use the same queued ON path as the physical Wi-Fi menu. This keeps driver
+ * serialization, controller initialization, runtime state, NVS persistence,
+ * and error handling owned by the existing toggle worker instead of
+ * maintaining a second background-only radio-start implementation.
+ */
+static esp_err_t app_wifi_background_enable(void)
 {
-    uint32_t expected = 0U;
-    if (!__atomic_compare_exchange_n(&s_wifi_toggle_admitted, &expected, 1U,
-                                     false, __ATOMIC_SEQ_CST,
-                                     __ATOMIC_SEQ_CST)) {
-        ESP_LOGI(APP_SERVICES_TAG,
-                 "Background Wi-Fi enable skipped; a toggle is in progress");
-        return;
+    if (!app_wifi_background_enable_needed()) {
+        return ESP_OK;
     }
 
-    if (app_wifi_background_enable_needed() &&
-        wifi_controller_init() == ESP_OK) {
-        wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
-        network_services_allow_start();
-        const esp_err_t err = wifi_controller_start();
-        if (err == ESP_OK) {
-            sys_state.wifi.enabled = true;
-            sys_state.inverter.wifi_enabled = true;
-            lcd_update_wifi_enabled(true);
-            const esp_err_t nvs_err = persist_u8(APP_WIFI_ENABLED_KEY, 1U);
-            ESP_LOGI(APP_SERVICES_TAG,
-                     "Background Wi-Fi enabled (nvs=%s)",
-                     esp_err_to_name(nvs_err));
-        } else {
-            ESP_LOGW(APP_SERVICES_TAG,
-                     "Background Wi-Fi enable failed: %s",
-                     esp_err_to_name(err));
-        }
-    }
-
-    __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
+    ESP_LOGI(APP_SERVICES_TAG,
+             "Auto Wi-Fi On enabled; requesting ON through existing toggle worker");
+    return app_services_set_wifi_enabled(true);
 }
 
 static void app_wifi_background_start_task(void *parameter)
 {
     (void)parameter;
 
-    /* Order matters: Wi-Fi has to be enabled before it can connect. */
+    /* Order matters: Wi-Fi has to be enabled before it can connect. The
+     * public ON path queues work and returns immediately, so wait here (only
+     * in this low-priority background task) for that existing worker to finish.
+     * Never make app_main or the inverter safety/startup path wait for Wi-Fi. */
     if (app_wifi_background_enable_needed()) {
-        app_wifi_background_enable();
+        const esp_err_t enable_err = app_wifi_background_enable();
+        if (enable_err != ESP_OK) {
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Auto Wi-Fi On request was not accepted: %s",
+                     esp_err_to_name(enable_err));
+            goto background_start_done;
+        }
+
+        const TickType_t enable_wait_started = xTaskGetTickCount();
+        while (__atomic_load_n(&s_wifi_toggle_admitted, __ATOMIC_SEQ_CST) != 0U &&
+               (xTaskGetTickCount() - enable_wait_started) <
+                   pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
+            vTaskDelay(pdMS_TO_TICKS(100U));
+            (void)task_watchdog_health_feed();
+        }
+        if (__atomic_load_n(&s_wifi_toggle_admitted, __ATOMIC_SEQ_CST) != 0U) {
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Auto Wi-Fi On timed out waiting for the existing toggle worker");
+            goto background_start_done;
+        }
+
+        /* wifi_controller_start() may return before its state machine leaves
+         * STARTING. Do not issue a saved-network reconnect against a driver
+         * that is still starting. A CONNECTING state is already an active
+         * connection attempt and should be left alone. */
+        const TickType_t controller_wait_started = xTaskGetTickCount();
+        while (wifi_controller_get_state() == WIFI_CONTROLLER_STARTING &&
+               (xTaskGetTickCount() - controller_wait_started) <
+                   pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
+            vTaskDelay(pdMS_TO_TICKS(100U));
+            (void)task_watchdog_health_feed();
+        }
+        if (wifi_controller_get_state() == WIFI_CONTROLLER_STARTING) {
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Auto Wi-Fi On: controller did not leave STARTING before timeout");
+            goto background_start_done;
+        }
     }
 
     if (app_wifi_background_connect_allowed()) {
@@ -2633,6 +2659,7 @@ static void app_wifi_background_start_task(void *parameter)
                  "Background saved-network connect not needed or not allowed");
     }
 
+background_start_done:
     s_wifi_background_connect_task = NULL;
     vTaskDelete(NULL);
 }
