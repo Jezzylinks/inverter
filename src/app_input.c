@@ -347,6 +347,7 @@ extern void edit_battery_cutoff_voltage(void);
 extern void edit_battery_capacity(void);
 extern void edit_battery_voltage_system(void);
 extern void edit_wifi_auto_rec(void);
+extern void edit_wifi_auto_on(void);
 extern void edit_sound_enable(void);
 extern void edit_quiet_hours_enable(void);
 extern void edit_quiet_hours_start(void);
@@ -1661,6 +1662,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 break;
             case 19:
                 edit_wifi_auto_rec();
+                break;
+            case 20:
+                edit_wifi_auto_on();
                 break;
             }
             break;
