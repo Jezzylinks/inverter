@@ -7,10 +7,64 @@
 #include <time.h>
 
 #include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "utility/quiet_hours.h"
 
 static const char *TAG = "OTA_TLS_DIAG";
+
+/* 2024-01-01 UTC: anything earlier means the RTC was never set by SNTP. */
+#define OTA_MIN_VALID_EPOCH 1704067200
+#define OTA_TIME_SYNC_WAIT_MS 15000U
+#define OTA_TIME_SYNC_POLL_MS 500U
+/* A TLS handshake needs roughly 40 KB of heap and, within it, one block big
+ * enough for the 16 KB record buffer when dynamic buffers are off. */
+#define OTA_TLS_MIN_LARGEST_BLOCK 20000U
+
+/*
+ * Certificate validity is checked against the system clock, so a handshake
+ * made before SNTP has set it fails as "certificate not yet valid" and
+ * surfaces as ESP_ERR_HTTP_CONNECT. Give SNTP a bounded chance to finish.
+ * Never blocks forever: on timeout the attempt proceeds so the real TLS error
+ * is still logged.
+ */
+static void ota_wait_for_valid_time(void)
+{
+    if (time(NULL) >= OTA_MIN_VALID_EPOCH)
+    {
+        return;
+    }
+    ESP_LOGW(TAG, "System clock not set; waiting up to %u ms for SNTP before TLS",
+             (unsigned)OTA_TIME_SYNC_WAIT_MS);
+    quiet_hours_request_sync();
+    for (uint32_t waited = 0U; waited < OTA_TIME_SYNC_WAIT_MS;
+         waited += OTA_TIME_SYNC_POLL_MS)
+    {
+        vTaskDelay(pdMS_TO_TICKS(OTA_TIME_SYNC_POLL_MS));
+        if (time(NULL) >= OTA_MIN_VALID_EPOCH)
+        {
+            ESP_LOGI(TAG, "SNTP time available after %u ms", (unsigned)waited);
+            return;
+        }
+    }
+    ESP_LOGE(TAG, "SNTP did not set the clock; TLS certificate dates cannot be verified");
+}
+
+static void ota_log_heap_before_tls(void)
+{
+    const size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    ESP_LOGI(TAG, "Heap before TLS: free=%u largest_block=%u",
+             (unsigned)free_heap, (unsigned)largest);
+    if (largest < OTA_TLS_MIN_LARGEST_BLOCK)
+    {
+        ESP_LOGW(TAG, "Largest free block is below %u bytes; TLS allocation may fail",
+                 (unsigned)OTA_TLS_MIN_LARGEST_BLOCK);
+    }
+}
 
 /*
  * Log only the scheme and host: redirected GitHub asset URLs can contain
@@ -19,11 +73,14 @@ static const char *TAG = "OTA_TLS_DIAG";
 static void ota_log_current_endpoint(esp_http_client_handle_t client,
                                      unsigned hop)
 {
-    char url[2048] = {0};
+    /* Signed redirect URLs are long; keep the buffer off the task stack. */
+    enum { OTA_LOG_URL_CAPACITY = 2048 };
+    char *url = calloc(1U, OTA_LOG_URL_CAPACITY);
     char host[256] = "unknown";
     char utc[32] = "unavailable";
 
-    if (esp_http_client_get_url(client, url, sizeof(url)) == ESP_OK)
+    if (url != NULL &&
+        esp_http_client_get_url(client, url, OTA_LOG_URL_CAPACITY) == ESP_OK)
     {
         const char *scheme_end = strstr(url, "://");
         const char *authority = scheme_end ? scheme_end + 3 : url;
@@ -34,9 +91,10 @@ static void ota_log_current_endpoint(esp_http_client_handle_t client,
             host[host_len] = '\0';
         }
     }
+    free(url);
 
     const time_t now = time(NULL);
-    if (now >= 1704067200) /* 2024-01-01 UTC: reject obvious unset RTC time */
+    if (now >= OTA_MIN_VALID_EPOCH) /* reject obvious unset RTC time */
     {
         struct tm utc_tm;
         if (gmtime_r(&now, &utc_tm) != NULL)
@@ -331,14 +389,17 @@ esp_err_t ota_http_open_following_redirects(esp_http_client_handle_t client,
     {
         return ESP_ERR_INVALID_ARG;
     }
+    ota_wait_for_valid_time();
     for (unsigned hop = 0U; hop <= OTA_HTTP_MAX_REDIRECTS; ++hop)
     {
         ota_log_current_endpoint(client, hop);
+        ota_log_heap_before_tls();
         esp_err_t err = esp_http_client_open(client, 0);
         if (err != ESP_OK)
         {
             ESP_LOGE(TAG, "HTTPS connect/TLS handshake failed at hop=%u: %s (0x%x)",
                      hop, esp_err_to_name(err), (unsigned)err);
+            ota_log_heap_before_tls();
             ESP_LOGE(TAG, "TLS verification remains enabled; inspect preceding esp-tls/mbedTLS logs for certificate failure details");
             return err;
         }
