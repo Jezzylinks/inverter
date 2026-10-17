@@ -492,6 +492,7 @@ extern "C"
         float battery_cutoff; // Battery cutoff voltage (V)
         bool precharge_complete;
         bool sound_enabled; // Global buzzer mute -- gated in update_buzzer()
+        uint8_t buzzer_volume; // Persisted buzzer loudness, 0-100 percent
         bool quiet_hours_enabled;
         uint8_t quiet_hours_start;  // 0-23, local hour
         uint8_t quiet_hours_end;    // 0-23, local hour (can be < start -- wraps overnight)

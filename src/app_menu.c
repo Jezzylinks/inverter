@@ -51,7 +51,7 @@ static const menu_item_t main_menu_items[] = {
     {"Security", MENU_SECURITY},
     {"View Settings", MENU_SYSTEM_INFO}};
 
-// SETTINGS MENU (21 items)
+// SETTINGS MENU (22 items)
 /*
  * Each entry pairs the label shown on the LCD with the editor it opens, so
  * the on-screen order and the action can never drift apart. The table is
@@ -78,6 +78,7 @@ extern void edit_scroll_speed(void);
 extern void edit_battery_type(void);
 extern void edit_battery_voltage_system(void);
 extern void edit_sound_enable(void);
+extern void edit_sound_volume(void);
 extern void edit_quiet_hours_enable(void);
 extern void edit_quiet_hours_start(void);
 extern void edit_quiet_hours_end(void);
@@ -102,6 +103,7 @@ static settings_entry_t settings_entries[] = {
     {"Battery Type", edit_battery_type},
     {"Voltage System", edit_battery_voltage_system},
     {"Sound", edit_sound_enable},
+    {"Sound Volume", edit_sound_volume},
     {"Quiet Hours", edit_quiet_hours_enable},
     {"Quiet Start", edit_quiet_hours_start},
     {"Quiet End", edit_quiet_hours_end},
@@ -127,6 +129,7 @@ static settings_entry_t settings_entries[] = {
     {"Battery Type", edit_battery_type},
     {"Voltage System", edit_battery_voltage_system},
     {"Sound", edit_sound_enable},
+    {"Sound Volume", edit_sound_volume},
     {"Quiet Hours", edit_quiet_hours_enable},
     {"Quiet Start", edit_quiet_hours_start},
     {"Quiet End", edit_quiet_hours_end},
