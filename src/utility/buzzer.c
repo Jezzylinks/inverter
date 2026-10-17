@@ -147,6 +147,18 @@ void buzzer_beep(uint32_t frequency, uint8_t duty_percent, uint32_t duration_ms)
     if (duty_percent > 100)
         duty_percent = 100;
 
+    /* Scale existing event patterns by the persisted user volume, keeping
+     * their relative loudness and timing unchanged. */
+    uint8_t setting_volume = sys_state.buzzer_volume;
+    if (setting_volume > 100U)
+        setting_volume = 100U;
+    duty_percent = (uint8_t)(((uint16_t)duty_percent * setting_volume) / 100U);
+    if (duty_percent == 0U)
+    {
+        vTaskDelay(pdMS_TO_TICKS(duration_ms));
+        return;
+    }
+
     uint32_t max_duty = (1 << BUZZER_LEDC_RES) - 1;
     uint32_t duty = (max_duty * duty_percent) / 100;
 
@@ -191,6 +203,16 @@ void update_buzzer(uint16_t freq_hz, uint8_t volume_percent)
 
     if (volume_percent > 100)
         volume_percent = 100;
+
+    uint8_t setting_volume = sys_state.buzzer_volume;
+    if (setting_volume > 100U)
+        setting_volume = 100U;
+    volume_percent = (uint8_t)(((uint16_t)volume_percent * setting_volume) / 100U);
+    if (volume_percent == 0U)
+    {
+        buzzer_stop();
+        return;
+    }
 
     uint32_t max_duty = (1 << BUZZER_LEDC_RES) - 1;
     uint32_t duty = (max_duty * volume_percent) / 100;
