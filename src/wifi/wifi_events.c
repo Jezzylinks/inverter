@@ -31,6 +31,9 @@ static uint32_t s_reconnect_generation;
 static bool s_initialized;
 static bool s_ap_active;
 static bool s_auto_reconnect = true;
+/* Kept for the policy API. The background search no longer stops at this
+ * limit; the foreground Connect operation still uses it (via
+ * wifi_manager_get_retry_limit()) to decide a request has failed. */
 static uint8_t s_retry_limit = WIFI_MAXIMUM_RETRY;
 
 static void events_lock(void)
@@ -92,17 +95,14 @@ static void wifi_publish_state(wifi_connection_state_t state)
     }
 }
 
+/* Search interval for a saved network that is out of reach. Constant (not
+ * exponential): the goal is to notice quickly when the host comes back, so
+ * the delay never grows beyond WIFI_RECONNECT_STEADY_DELAY_MS. */
 static uint32_t wifi_reconnect_backoff_ms(uint8_t retry_count)
 {
-    uint32_t delay_ms = WIFI_RECONNECT_DELAY_MS;
-    const uint8_t shifts = retry_count > 4U ? 4U : retry_count;
-    for (uint8_t i = 0U; i < shifts; ++i) {
-        if (delay_ms >= 60000U / 2U) {
-            return 60000U;
-        }
-        delay_ms *= 2U;
-    }
-    return delay_ms;
+    return retry_count <= WIFI_RECONNECT_QUICK_ATTEMPTS
+               ? (uint32_t)WIFI_RECONNECT_DELAY_MS
+               : (uint32_t)WIFI_RECONNECT_STEADY_DELAY_MS;
 }
 
 static void wifi_reconnect_task(void *arg)
@@ -114,7 +114,7 @@ static void wifi_reconnect_task(void *arg)
     retry_count = s_status.retry_count;
     events_unlock();
     const uint32_t backoff_ms = wifi_reconnect_backoff_ms(retry_count);
-    ESP_LOGI(WIFI_EVENTS_TAG, "Reconnect backoff: %lums (retry %u)",
+    ESP_LOGD(WIFI_EVENTS_TAG, "Next network search in %lums (attempt %u)",
              (unsigned long)backoff_ms, (unsigned)retry_count);
 
     while (waited_ms < backoff_ms) {
@@ -139,10 +139,15 @@ static void wifi_reconnect_task(void *arg)
     }
 
     events_lock();
+    /* No retry cap: keep searching for the saved network for as long as
+     * auto-reconnect stays enabled. In APSTA the published state is
+     * AP_ACTIVE while the AP serves clients, so accept that too as long as
+     * the station itself is not connected. */
     const bool should_connect = s_initialized && s_auto_reconnect &&
                                 generation == s_reconnect_generation &&
-                                s_status.state == WIFI_STATE_DISCONNECTED &&
-                                s_status.retry_count < s_retry_limit;
+                                !s_status.connected &&
+                                (s_status.state == WIFI_STATE_DISCONNECTED ||
+                                 s_status.state == WIFI_STATE_AP_ACTIVE);
     if (s_reconnect_task == xTaskGetCurrentTaskHandle()) {
         s_reconnect_task = NULL;
     }
@@ -161,7 +166,6 @@ static void wifi_schedule_reconnect(void)
 {
     events_lock();
     const bool should_schedule = s_initialized && s_auto_reconnect &&
-                                 s_status.retry_count < s_retry_limit &&
                                  s_reconnect_task == NULL;
     if (should_schedule) {
         const BaseType_t result = xTaskCreatePinnedToCore(wifi_reconnect_task, "wifi_reconnect",
@@ -301,7 +305,13 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
                 ++s_status.retry_count;
             }
             retry_count = s_status.retry_count;
-            retry = s_auto_reconnect && retry_count < s_retry_limit;
+            /* retry_count keeps counting (saturating) so the foreground
+             * Connect operation can still call a request failed once it
+             * reaches the retry limit, but the background search never
+             * stops while auto-reconnect is enabled. While searching the
+             * state stays DISCONNECTED (not FAILED): an unavailable saved
+             * network is a normal, silent condition. */
+            retry = s_auto_reconnect;
             events_unlock();
             if (s_ap_active) {
                 wifi_publish_state(WIFI_STATE_AP_ACTIVE);
@@ -310,8 +320,16 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
             }
             if (event_data != NULL) {
                 const wifi_event_sta_disconnected_t *disc = event_data;
-                ESP_LOGW(WIFI_EVENTS_TAG, "STA disconnect reason=%d retry=%u/%u",
-                         disc->reason, (unsigned)retry_count, (unsigned)s_retry_limit);
+                /* Warn once per outage; repeats of the same search are debug
+                 * only so a long outage does not flood the log. */
+                if (retry_count <= 1U) {
+                    ESP_LOGW(WIFI_EVENTS_TAG,
+                             "STA disconnect reason=%d; searching for saved network",
+                             disc->reason);
+                } else {
+                    ESP_LOGD(WIFI_EVENTS_TAG, "STA disconnect reason=%d attempt=%u",
+                             disc->reason, (unsigned)retry_count);
+                }
             }
             if (retry) {
                 wifi_schedule_reconnect();

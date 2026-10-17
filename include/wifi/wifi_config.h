@@ -22,6 +22,12 @@ extern "C"
 #define WIFI_MAXIMUM_RETRY 10
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 #define WIFI_RECONNECT_DELAY_MS 5000
+/* While a saved network is out of reach the station keeps searching for it
+ * indefinitely. The first few attempts are quick so a brief outage recovers
+ * fast; after that each search (a full channel scan) runs this often so the
+ * radio is not scanning continuously. */
+#define WIFI_RECONNECT_QUICK_ATTEMPTS 3U
+#define WIFI_RECONNECT_STEADY_DELAY_MS 10000
 #define WIFI_MONITOR_PERIOD_MS 5000
 #define WIFI_SCAN_PERIOD_MS 30000
 
