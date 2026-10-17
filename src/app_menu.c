@@ -51,55 +51,147 @@ static const menu_item_t main_menu_items[] = {
     {"Security", MENU_SECURITY},
     {"View Settings", MENU_SYSTEM_INFO}};
 
-// SETTINGS MENU (5 items)
+// SETTINGS MENU (21 items)
+/*
+ * Each entry pairs the label shown on the LCD with the editor it opens, so
+ * the on-screen order and the action can never drift apart. The table is
+ * listed in source order only for readability: settings_menu_sort() sorts it
+ * A-Z (case-insensitive, by the label actually displayed) once at startup,
+ * before any task runs, and the menu then reads it in that order.
+ */
+typedef void (*app_settings_edit_fn_t)(void);
+
+typedef struct
+{
+    const char *label;
+    app_settings_edit_fn_t edit;
+} settings_entry_t;
+
+extern void edit_voltage_threshold(void);
+extern void edit_current_limit(void);
+extern void edit_frequency_range(void);
+extern void edit_temperature_alarm(void);
+extern void edit_system_timeout(void);
+extern void edit_auto_shutdown(void);
+extern void edit_scroll_enable(void);
+extern void edit_scroll_speed(void);
+extern void edit_battery_type(void);
+extern void edit_battery_voltage_system(void);
+extern void edit_sound_enable(void);
+extern void edit_quiet_hours_enable(void);
+extern void edit_quiet_hours_start(void);
+extern void edit_quiet_hours_end(void);
+extern void edit_utc_offset(void);
+extern void edit_set_time_hour(void);
+extern void edit_set_time_minute(void);
+extern void edit_battery_cutoff_voltage(void);
+extern void edit_battery_capacity(void);
+extern void edit_wifi_auto_rec(void);
+extern void edit_wifi_auto_on(void);
+
 #if LCD_GEOMETRY_20X4
-static const menu_item_t settings_items[] = {
-    {"Voltage Threshold", MENU_SETTINGS},
-    {"Current Limit", MENU_SETTINGS},
-    {"Frequency Range", MENU_SETTINGS},
-    {"Temperature Alarm", MENU_SETTINGS},
-    {"System Timeout", MENU_SETTINGS},
-    {"Auto Shutdown", MENU_SETTINGS},
-    {"Scroll Enable", MENU_SETTINGS},
-    {"Scroll Speed", MENU_SETTINGS},
-    {"Battery Type", MENU_SETTINGS},
-    {"Voltage System", MENU_SETTINGS},
-    {"Sound", MENU_SETTINGS},
-    {"Quiet Hours", MENU_SETTINGS},
-    {"Quiet Start", MENU_SETTINGS},
-    {"Quiet End", MENU_SETTINGS},
-    {"UTC Offset", MENU_SETTINGS},
-    {"Set Hour", MENU_SETTINGS},
-    {"Set Minute", MENU_SETTINGS},
-    {"Battery Cutoff", MENU_SETTINGS},
-    {"Battery Capacity", MENU_SETTINGS},
-    {"Wi-Fi Auto Rec", MENU_SETTINGS},
-    {"Wi-Fi Auto On", MENU_SETTINGS}};
+static settings_entry_t settings_entries[] = {
+    {"Voltage Threshold", edit_voltage_threshold},
+    {"Current Limit", edit_current_limit},
+    {"Frequency Range", edit_frequency_range},
+    {"Temperature Alarm", edit_temperature_alarm},
+    {"System Timeout", edit_system_timeout},
+    {"Auto Shutdown", edit_auto_shutdown},
+    {"Scroll Enable", edit_scroll_enable},
+    {"Scroll Speed", edit_scroll_speed},
+    {"Battery Type", edit_battery_type},
+    {"Voltage System", edit_battery_voltage_system},
+    {"Sound", edit_sound_enable},
+    {"Quiet Hours", edit_quiet_hours_enable},
+    {"Quiet Start", edit_quiet_hours_start},
+    {"Quiet End", edit_quiet_hours_end},
+    {"UTC Offset", edit_utc_offset},
+    {"Set Hour", edit_set_time_hour},
+    {"Set Minute", edit_set_time_minute},
+    {"Battery Cutoff", edit_battery_cutoff_voltage},
+    {"Battery Capacity", edit_battery_capacity},
+    {"Wi-Fi Auto Rec", edit_wifi_auto_rec},
+    {"Wi-Fi Auto On", edit_wifi_auto_on},
+};
 #else
 /* Preserve the established 16×2 menu labels exactly. */
-static const menu_item_t settings_items[] = {
-    {"Voltage Thresh", MENU_SETTINGS},
-    {"Current Limit", MENU_SETTINGS},
-    {"Freq Range", MENU_SETTINGS},
-    {"Temp Alarm", MENU_SETTINGS},
-    {"Sys Timeout", MENU_SETTINGS},
-    {"Auto Shutdown", MENU_SETTINGS},
-    {"Scroll Enable", MENU_SETTINGS},
-    {"Scroll Speed", MENU_SETTINGS},
-    {"Battery Type", MENU_SETTINGS},
-    {"Voltage System", MENU_SETTINGS},
-    {"Sound", MENU_SETTINGS},
-    {"Quiet Hours", MENU_SETTINGS},
-    {"Quiet Start", MENU_SETTINGS},
-    {"Quiet End", MENU_SETTINGS},
-    {"UTC Offset", MENU_SETTINGS},
-    {"Set Hour", MENU_SETTINGS},
-    {"Set Minute", MENU_SETTINGS},
-    {"Bat Cutoff", MENU_SETTINGS},
-    {"Bat Capacity", MENU_SETTINGS},
-    {"WiFi Auto Rec", MENU_SETTINGS},
-    {"WiFi Auto On", MENU_SETTINGS}};
+static settings_entry_t settings_entries[] = {
+    {"Voltage Thresh", edit_voltage_threshold},
+    {"Current Limit", edit_current_limit},
+    {"Freq Range", edit_frequency_range},
+    {"Temp Alarm", edit_temperature_alarm},
+    {"Sys Timeout", edit_system_timeout},
+    {"Auto Shutdown", edit_auto_shutdown},
+    {"Scroll Enable", edit_scroll_enable},
+    {"Scroll Speed", edit_scroll_speed},
+    {"Battery Type", edit_battery_type},
+    {"Voltage System", edit_battery_voltage_system},
+    {"Sound", edit_sound_enable},
+    {"Quiet Hours", edit_quiet_hours_enable},
+    {"Quiet Start", edit_quiet_hours_start},
+    {"Quiet End", edit_quiet_hours_end},
+    {"UTC Offset", edit_utc_offset},
+    {"Set Hour", edit_set_time_hour},
+    {"Set Minute", edit_set_time_minute},
+    {"Bat Cutoff", edit_battery_cutoff_voltage},
+    {"Bat Capacity", edit_battery_capacity},
+    {"WiFi Auto Rec", edit_wifi_auto_rec},
+    {"WiFi Auto On", edit_wifi_auto_on},
+};
 #endif
+
+#define SETTINGS_ENTRY_COUNT (sizeof(settings_entries) / sizeof(settings_entries[0]))
+
+/* Built from settings_entries[] by settings_menu_sort(); same order. */
+static menu_item_t settings_items[SETTINGS_ENTRY_COUNT];
+
+static int menu_label_compare(const char *a, const char *b)
+{
+    for (;; ++a, ++b)
+    {
+        int ca = (unsigned char)*a;
+        int cb = (unsigned char)*b;
+        if (ca >= 'A' && ca <= 'Z')
+            ca += 'a' - 'A';
+        if (cb >= 'A' && cb <= 'Z')
+            cb += 'a' - 'A';
+        if (ca != cb)
+            return ca - cb;
+        if (ca == 0)
+            return 0;
+    }
+}
+
+/* Runs before app_main(), so no task can observe the table half-sorted. */
+static void settings_menu_sort(void) __attribute__((constructor));
+static void settings_menu_sort(void)
+{
+    /* Stable insertion sort: 21 entries, runs once. */
+    for (size_t i = 1U; i < SETTINGS_ENTRY_COUNT; ++i)
+    {
+        const settings_entry_t key = settings_entries[i];
+        size_t j = i;
+        while (j > 0U &&
+               menu_label_compare(settings_entries[j - 1U].label, key.label) > 0)
+        {
+            settings_entries[j] = settings_entries[j - 1U];
+            --j;
+        }
+        settings_entries[j] = key;
+    }
+    for (size_t i = 0U; i < SETTINGS_ENTRY_COUNT; ++i)
+    {
+        settings_items[i].label = settings_entries[i].label;
+        settings_items[i].state = MENU_SETTINGS;
+    }
+}
+
+void app_menu_settings_edit(int selection)
+{
+    if (selection < 0 || (size_t)selection >= SETTINGS_ENTRY_COUNT)
+        return;
+    settings_entries[selection].edit();
+}
 
 // MONITORING MENU (8 items)
 static const menu_item_t monitoring_items[] = {

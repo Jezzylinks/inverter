@@ -22,6 +22,8 @@ void push_menu_history(menu_state_t state, uint8_t selection);
 bool pop_menu_history(menu_state_t *state, int *selection);
 void clear_menu_history(void);
 size_t app_settings_count(void);
+/* Open the editor for the selected row of the (A-Z sorted) Settings menu. */
+void app_menu_settings_edit(int selection);
 
 typedef enum {
     APP_WIFI_MENU_TOGGLE = 0,
