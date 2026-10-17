@@ -51,7 +51,7 @@ static const menu_item_t main_menu_items[] = {
     {"Security", MENU_SECURITY},
     {"View Settings", MENU_SYSTEM_INFO}};
 
-// SETTINGS MENU (21 items)
+// SETTINGS MENU (22 items)
 /*
  * Each entry pairs the label shown on the LCD with the editor it opens, so
  * the on-screen order and the action can never drift apart. The table is
