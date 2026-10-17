@@ -23,6 +23,8 @@ static const char *TAG = "OTA_TLS_DIAG";
 /* A TLS handshake needs roughly 40 KB of heap and, within it, one block big
  * enough for the 16 KB record buffer when dynamic buffers are off. */
 #define OTA_TLS_MIN_LARGEST_BLOCK 20000U
+/* Room for the redirect URL copies plus a new TLS session. */
+#define OTA_REDIRECT_MIN_LARGEST_BLOCK 6000U
 
 /*
  * Certificate validity is checked against the system clock, so a handshake
@@ -407,6 +409,18 @@ esp_err_t ota_http_open_following_redirects(esp_http_client_handle_t client,
         const int status = esp_http_client_get_status_code(client);
         if (is_redirect_status(status))
         {
+            /* esp_http_client_set_redirection() copies the (long, signed)
+             * Location URL and asserts on allocation failure instead of
+             * returning an error, which reboots the device. Refuse cleanly
+             * when memory is too tight to survive that copy. */
+            ota_log_heap_before_tls();
+            if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <
+                OTA_REDIRECT_MIN_LARGEST_BLOCK)
+            {
+                ESP_LOGE(TAG, "Not enough free heap to follow redirect at hop=%u", hop);
+                esp_http_client_close(client);
+                return ESP_ERR_NO_MEM;
+            }
             err = esp_http_client_set_redirection(client);
             esp_http_client_close(client);
             if (err != ESP_OK)
