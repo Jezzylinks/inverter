@@ -1641,72 +1641,9 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         }
 
         case MENU_SETTINGS:
-            switch (sys_state.menu_selection)
-            {
-            case 0:
-                edit_voltage_threshold();
-                break;
-            case 1:
-                edit_current_limit();
-                break;
-            case 2:
-                edit_frequency_range();
-                break;
-            case 3:
-                edit_temperature_alarm();
-                break;
-            case 4:
-                edit_system_timeout();
-                break;
-            case 5:
-                edit_auto_shutdown();
-                break;
-            case 6:
-                edit_scroll_enable();
-                break;
-            case 7:
-                edit_scroll_speed();
-                break;
-            case 8:
-                edit_battery_type();
-                break;
-            case 9:
-                edit_battery_voltage_system();
-                break;
-            case 10:
-                edit_sound_enable();
-                break;
-            case 11:
-                edit_quiet_hours_enable();
-                break;
-            case 12:
-                edit_quiet_hours_start();
-                break;
-            case 13:
-                edit_quiet_hours_end();
-                break;
-            case 14:
-                edit_utc_offset();
-                break;
-            case 15:
-                edit_set_time_hour();
-                break;
-            case 16:
-                edit_set_time_minute();
-                break;
-            case 17:
-                edit_battery_cutoff_voltage();
-                break;
-            case 18:
-                edit_battery_capacity();
-                break;
-            case 19:
-                edit_wifi_auto_rec();
-                break;
-            case 20:
-                edit_wifi_auto_on();
-                break;
-            }
+            /* Rows are sorted A-Z; the table that owns the labels also owns
+             * the editor each row opens. */
+            app_menu_settings_edit(sys_state.menu_selection);
             break;
 
         case MENU_MONITORING:

@@ -4598,6 +4598,57 @@ static const char *settings_view_unit_for(const char *label)
     return "";
 }
 
+/* View Settings lists the settings A-Z by the label that is actually shown.
+ * g_settings[] itself must keep its order (NVS save/load, the transaction
+ * checksum and read-back all walk it), so display order is a separate index
+ * permutation: s_settings_view_order[position] = index into g_settings[].
+ * Built on first use (labels differ between the 16x2 and 20x4 geometries);
+ * only the button task draws this screen, so no locking is needed. */
+static uint8_t s_settings_view_order[NVS_SETTINGS_COUNT];
+static bool s_settings_view_order_ready = false;
+
+static int settings_view_label_compare(const char *a, const char *b)
+{
+    for (;; ++a, ++b)
+    {
+        int ca = (unsigned char)*a;
+        int cb = (unsigned char)*b;
+        if (ca >= 'A' && ca <= 'Z')
+            ca += 'a' - 'A';
+        if (cb >= 'A' && cb <= 'Z')
+            cb += 'a' - 'A';
+        if (ca != cb)
+            return ca - cb;
+        if (ca == 0)
+            return 0;
+    }
+}
+
+static void settings_view_order_build(void)
+{
+    for (size_t i = 0U; i < NVS_SETTINGS_COUNT; ++i)
+    {
+        s_settings_view_order[i] = (uint8_t)i;
+    }
+    /* Stable insertion sort on the displayed label. */
+    for (size_t i = 1U; i < NVS_SETTINGS_COUNT; ++i)
+    {
+        const uint8_t key = s_settings_view_order[i];
+        const char *key_label = settings_display_label(&g_settings[key]);
+        size_t j = i;
+        while (j > 0U &&
+               settings_view_label_compare(
+                   settings_display_label(&g_settings[s_settings_view_order[j - 1U]]),
+                   key_label) > 0)
+        {
+            s_settings_view_order[j] = s_settings_view_order[j - 1U];
+            --j;
+        }
+        s_settings_view_order[j] = key;
+    }
+    s_settings_view_order_ready = true;
+}
+
 void lcd_draw_settings_view_screen(uint8_t index)
 {
     if (index >= (uint8_t)NVS_SETTINGS_COUNT)
@@ -4606,7 +4657,14 @@ void lcd_draw_settings_view_screen(uint8_t index)
         return;
     }
 
-    const nvs_setting_t *s = &g_settings[index];
+    if (!s_settings_view_order_ready)
+    {
+        settings_view_order_build();
+    }
+
+    /* index is the position in the A-Z list; the counter shows that
+     * position, while the data comes from the matching g_settings[] entry. */
+    const nvs_setting_t *s = &g_settings[s_settings_view_order[index]];
     char row0[LCD_LINE_SIZE] = {0};
     char row1[LCD_LINE_SIZE] = {0};
     char value_text[LCD_LINE_SIZE] = {0};
