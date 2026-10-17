@@ -363,17 +363,48 @@ static bool ota_confirmation_is_pending(void)
     return status.confirmation_pending;
 }
 
-/* Consume the first button event when waking from a display-only state. */
+/*
+ * A press that wakes the display from standby (or a transient fault screen)
+ * belongs entirely to the wake action. One physical press produces several
+ * events (PRESS, CLICK/DOUBLE_CLICK, LONG_PRESS, REPEAT, RELEASE), and on the
+ * multi-click buttons the CLICK only arrives after RELEASE. Consuming just the
+ * first event would let the rest of the press turn the home page or trigger an
+ * action once the screen is already back on the home page. So the button is
+ * latched and every remaining event of that press is swallowed. A PRESS that
+ * carries click_count > 0 continues the same multi-click chain (a quick second
+ * tap), so it is swallowed too; only a PRESS that starts a fresh chain ends the
+ * latch and is handled normally.
+ */
+static bool s_wake_gesture_swallow[BTN_COUNT];
+
+/* Consume the whole button press that wakes a display-only state. */
 static bool consume_display_wakeup_event(const button_event_info_t *event_info)
 {
-    if (event_info == NULL)
+    if (event_info == NULL || event_info->button_id >= BTN_COUNT)
     {
         return false;
     }
 
+    const button_id_t button_id = event_info->button_id;
+
+    if (s_wake_gesture_swallow[button_id])
+    {
+        if (event_info->event != BUTTON_EVENT_PRESS ||
+            event_info->click_count > 0U)
+        {
+            sys_state.last_activity_time = event_info->timestamp_us / 1000;
+            sys_state.flags.last_user_activity = xTaskGetTickCount();
+            return true;
+        }
+        /* A press that starts a fresh chain: the waking gesture is over. */
+        s_wake_gesture_swallow[button_id] = false;
+    }
+
+    bool wake_from_standby = false;
     bool wake = false;
     LCD_LOCK();
-    wake = (sys_lcd.screen == LCD_SCREEN_STANDBY) ||
+    wake_from_standby = (sys_lcd.screen == LCD_SCREEN_STANDBY);
+    wake = wake_from_standby ||
            (sys_lcd.screen == LCD_SCREEN_FAULT && sys_lcd.fault.transient);
     LCD_UNLOCK();
 
@@ -382,8 +413,17 @@ static bool consume_display_wakeup_event(const button_event_info_t *event_info)
         return false;
     }
 
+    s_wake_gesture_swallow[button_id] = true;
     sys_state.last_activity_time = event_info->timestamp_us / 1000;
     sys_state.flags.last_user_activity = xTaskGetTickCount();
+
+    /* Waking from standby always lands on the first home page, whichever page
+     * was showing before the display went idle. Reset before switching screens
+     * so no frame of the old page is drawn. */
+    if (wake_from_standby)
+    {
+        lcd_main_reset_page();
+    }
     go_to_main_screen();
     return true;
 }

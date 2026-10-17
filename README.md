@@ -220,7 +220,7 @@ Then run `pio run` and upload the generated firmware. The firmware uses four row
 
 ### Screens and custom characters
 
-The compile-time selection controls boot, main telemetry, standby, menu, detail, confirmation, value-edit, shutdown, fault, loading, diagnostics, Wi-Fi scanning, Wi-Fi connection, event, security, and factory-reset screens. The 20×4 build exposes the full stable dashboard; the 16×2 build retains compact Enter-driven dashboard pages. Home and standby screens do not auto-rotate: the center/Enter button advances pages, while Up/Down remains reserved for menu navigation and value editing. Coded protection and system failures use `SYSTEM ERROR` on row one and `Error code: 0x...` on row two of a 20×4 LCD.
+The compile-time selection controls boot, main telemetry, standby, menu, detail, confirmation, value-edit, shutdown, fault, loading, diagnostics, Wi-Fi scanning, Wi-Fi connection, event, security, and factory-reset screens. The 20×4 build exposes the full stable dashboard; the 16×2 build retains compact Enter-driven dashboard pages. Home screens do not auto-rotate: the center/Enter button advances pages, while Up/Down remains reserved for menu navigation and value editing. On the standby screen every button is wake-only: the press that wakes the display is consumed in full (it never turns a page or triggers an action) and the home screen returns on its first page. Coded protection and system failures use `SYSTEM ERROR` on row one and `Error code: 0x...` on row two of a 20×4 LCD.
 
 The 20×4 home dashboard is arranged as follows. The bottom row reports the live ADC-derived battery pack voltage, so the selected 24 V or 48 V scaling is visible on the home screen rather than only on the battery sub-page:
 

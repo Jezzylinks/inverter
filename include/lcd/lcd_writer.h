@@ -83,6 +83,7 @@ void lcd_update_main_data(float bat_v, float out_v, float out_a,
 
 void lcd_show_main(void); /* switch to main screen          */
 void lcd_main_next_page(void);
+void lcd_main_reset_page(void); /* point the home screen at its first page */
 void lcd_update_wifi_status(bool connected, int8_t rssi);
 void lcd_update_wifi_enabled(bool enabled);
 void lcd_update_main_power(float pv_kw, float grid_kw, float load_kw,

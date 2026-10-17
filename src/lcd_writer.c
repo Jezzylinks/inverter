@@ -149,6 +149,14 @@ void lcd_main_next_page(void)
     LCD_UNLOCK();
 }
 
+void lcd_main_reset_page(void)
+{
+    LCD_LOCK();
+    sys_lcd.main.sub_page = MAIN_SUB_OUTPUT;
+    sys_lcd.main.sub_page_last_change_ms = _lcd_get_time_ms();
+    LCD_UNLOCK();
+}
+
 void lcd_update_wifi_status(bool connected, int8_t rssi)
 {
     LCD_LOCK();
