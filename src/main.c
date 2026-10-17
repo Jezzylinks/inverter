@@ -474,11 +474,23 @@ void app_main(void)
     if (startup_healthy)
     {
         lcd_boot_complete();
-        /* Boot is fully complete: quietly bring Wi-Fi up in the background.
-         * Wi-Fi is enabled first when "Wi-Fi Auto On" is set, then the saved
-         * network is connected when "Wi-Fi Auto Rec" is set. Never notifies. */
-        (void)app_services_wifi_background_start();
     }
+    /* Quietly bring Wi-Fi up in the background. Wi-Fi is enabled first when
+     * "Wi-Fi Auto On" is set, then the saved network is connected when
+     * "Wi-Fi Auto Rec" is set. Never notifies.
+     *
+     * Deliberately NOT gated on startup_healthy (owner decision): a failed
+     * startup check (for example an ADC channel that cannot be read) must not
+     * keep Wi-Fi off. This only affects Wi-Fi. The fault stays latched,
+     * system_ready stays false and inverter output stays inhibited exactly as
+     * before; nothing in the check or protection path is bypassed. */
+    if (!startup_healthy)
+    {
+        ESP_LOGW(APP_TAG,
+                 "Startup fault latched; Wi-Fi auto-start still allowed "
+                 "(inverter output remains inhibited)");
+    }
+    (void)app_services_wifi_background_start();
     if (ota_service_rollback_notification_pending())
     {
         lcd_flash_info_to("Firmware Update", "Previous restored", 3500U,
