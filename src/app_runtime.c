@@ -1052,6 +1052,7 @@ typedef enum
     VALUE_TYPE_BATTERY_CAPACITY,
     VALUE_TYPE_BATTERY_VOLTAGE_SYSTEM,
     VALUE_TYPE_SOUND_ENABLE,
+    VALUE_TYPE_SOUND_VOLUME,
     VALUE_TYPE_QUIET_HOURS_ENABLE,
     VALUE_TYPE_QUIET_HOURS_START,
     VALUE_TYPE_QUIET_HOURS_END,
@@ -1225,6 +1226,7 @@ static void apply_battery_capacity(float v);
 static void apply_battery_voltage_system(float v);
 static void apply_battery_capacity(float v);
 static void apply_sound_enable(float v);
+static void apply_sound_volume(float v);
 static void apply_quiet_hours_enable(float v);
 static void apply_quiet_hours_start(float v);
 static void apply_quiet_hours_end(float v);
@@ -1262,6 +1264,7 @@ void edit_battery_type(void);
 void edit_battery_cutoff_voltage(void);
 void edit_battery_voltage_system(void);
 void edit_sound_enable(void);
+void edit_sound_volume(void);
 void edit_quiet_hours_enable(void);
 void edit_quiet_hours_start(void);
 void edit_quiet_hours_end(void);
@@ -1567,6 +1570,23 @@ static value_edit_context_t value_edit[] = {
         .apply = apply_sound_enable,
     },
 
+    [VALUE_TYPE_SOUND_VOLUME] = {
+        .edit_type = VALUE_EDIT_NUMERIC,
+        .min_value = 0.0f,
+        .max_value = 100.0f,
+        .increment_small = 10.0f,
+        .increment_large = 10.0f,
+        .increment_precision = 10.0f,
+        .step_size = 10.0f,
+        .decimal_places = 0,
+        .unit = "%",
+        .label = "Sound Volume",
+        .is_critical = false,
+        .live_update = true,
+        .current_value = 50.0f,
+        .apply = apply_sound_volume,
+    },
+
     [VALUE_TYPE_QUIET_HOURS_ENABLE] = {
         .edit_type = VALUE_EDIT_BOOL,
         .current_value = 0.0f,
@@ -1842,6 +1862,7 @@ static nvs_setting_t g_settings[] = {
     {"auto_shutdown", &sys_state.display.auto_shutdown_enabled, sizeof(uint8_t), 0, false, "Auto Shutdown", false, true},
     {"scroll_en", &sys_state.display.scroll_enabled, sizeof(uint8_t), 0, false, "Scroll Enable", false, true},
     {"sound_en", &sys_state.sound_enabled, sizeof(uint8_t), 1, false, "Sound", false, true},
+    {"sound_vol", &sys_state.buzzer_volume, sizeof(uint8_t), 50, false, "Sound Volume", false, false},
     {"quiet_en", &sys_state.quiet_hours_enabled, sizeof(uint8_t), 0, false, "Quiet Hours", false, true},
     {"quiet_start", &sys_state.quiet_hours_start, sizeof(uint8_t), 22, false, "Quiet Start", false, false},
     {"quiet_end", &sys_state.quiet_hours_end, sizeof(uint8_t), 6, false, "Quiet End", false, false},
@@ -1910,6 +1931,8 @@ static size_t settings_index_for_editor(const value_edit_context_t *ctx)
         return settings_index_for_key(BATTERY_VOLTAGE_SYSTEM_KEY);
     if (ctx == &value_edit[VALUE_TYPE_SOUND_ENABLE])
         return settings_index_for_key("sound_en");
+    if (ctx == &value_edit[VALUE_TYPE_SOUND_VOLUME])
+        return settings_index_for_key("sound_vol");
     if (ctx == &value_edit[VALUE_TYPE_QUIET_HOURS_ENABLE])
         return settings_index_for_key("quiet_en");
     if (ctx == &value_edit[VALUE_TYPE_QUIET_HOURS_START])
@@ -4132,6 +4155,15 @@ static void apply_sound_enable(float v)
     }
 }
 
+static void apply_sound_volume(float v)
+{
+    if (v < 0.0f)
+        v = 0.0f;
+    if (v > 100.0f)
+        v = 100.0f;
+    sys_state.buzzer_volume = (uint8_t)lroundf(v);
+}
+
 static void apply_quiet_hours_enable(float v)
 {
     sys_state.quiet_hours_enabled = (v != 0.0f);
@@ -4593,7 +4625,7 @@ static const char *settings_view_unit_for(const char *label)
         return "s";
     if (strstr(label, "Capacity"))
         return "Ah";
-    if (strstr(label, "Brightness"))
+    if (strstr(label, "Brightness") || strstr(label, "Volume"))
         return "%";
     return "";
 }
@@ -7448,6 +7480,13 @@ void edit_sound_enable(void)
 {
     begin_setting_edit(VALUE_TYPE_SOUND_ENABLE,
                        sys_state.sound_enabled ? 1.0f : 0.0f);
+}
+
+void edit_sound_volume(void)
+{
+    begin_setting_edit(VALUE_TYPE_SOUND_VOLUME,
+                       (float)sys_state.buzzer_volume);
+    lcd_show_value_edit_screen();
 }
 
 void edit_wifi_auto_rec(void)
