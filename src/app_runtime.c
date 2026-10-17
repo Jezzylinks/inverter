@@ -4111,8 +4111,10 @@ static void apply_wifi_auto_rec(float v)
 {
     sys_state.wifi.auto_reconnect = (v != 0.0f);
 }
-/* Preference only: takes effect on the next boot. The radio itself is still
- * switched by app_services, which owns the Wi-Fi ON/OFF transition. */
+/* Preference only: takes effect on the next boot, as the master switch of the
+ * boot policy (Wi-Fi comes up only if this is ON and the user last left Wi-Fi
+ * ON). The radio itself is still switched by app_services, which owns the
+ * Wi-Fi ON/OFF transition and the saved user choice. */
 static void apply_wifi_auto_on(float v)
 {
     sys_state.wifi.auto_enable = (v != 0.0f);

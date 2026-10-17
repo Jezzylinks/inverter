@@ -136,6 +136,16 @@ typedef struct {
     bool silent; /* boot-time Auto Wi-Fi On: no LCD flashes or error popups */
 } wifi_toggle_request_t;
 
+/*
+ * The user's last manual Wi-Fi choice, mirrored in NVS key "wifi_enabled":
+ * ON only when the user switched Wi-Fi on, OFF otherwise (also the default
+ * when nothing was ever saved). Only manual toggles change it; the automatic
+ * boot activation never does. It does not start Wi-Fi by itself: the
+ * "Wi-Fi Auto On" setting is the master and this choice only takes effect
+ * at boot while that setting is ON (see app_wifi_boot_enable_wanted()).
+ */
+static bool s_wifi_user_choice_on = false;
+
 static bool s_wifi_mode_edit_active = false;
 static wifi_mode_t s_wifi_mode_edit_value = WIFI_COMPILED_OPERATION_MODE;
 
@@ -955,14 +965,22 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
         lcd_update_wifi_enabled(enabled);
         ESP_LOGI(APP_SERVICES_TAG, "Committing Wi-Fi runtime state: %s",
                  enabled ? "ON" : "OFF");
-        nvs_err = persist_u8(APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
-        if (nvs_err != ESP_OK) {
-            ESP_LOGE(APP_SERVICES_TAG,
-                     "Wi-Fi NVS persistence failed (%s); runtime state remains actual",
-                     esp_err_to_name(nvs_err));
-        } else {
-            ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi NVS persistence: OK (%s=%u)",
-                     APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
+        if (!silent) {
+            /* A manual toggle is the user's choice: remember it (ON when the
+             * user turned Wi-Fi on, OFF otherwise). The silent boot
+             * activation is derived from that choice, so it must not rewrite
+             * it. */
+            s_wifi_user_choice_on = enabled;
+            nvs_err = persist_u8(APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
+            if (nvs_err != ESP_OK) {
+                ESP_LOGE(APP_SERVICES_TAG,
+                         "Wi-Fi NVS persistence failed (%s); runtime state remains actual",
+                         esp_err_to_name(nvs_err));
+            } else {
+                ESP_LOGI(APP_SERVICES_TAG,
+                         "Wi-Fi user choice saved: %s=%u",
+                         APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
+            }
         }
     }
 
@@ -1390,17 +1408,20 @@ static void load_persisted_config(void)
     }
 
     /*
-     * wifi_enabled records the last manual/runtime toggle; it is not the
-     * boot policy. The radio is physically OFF after reset, so do not claim
-     * it is enabled (or start it) just because the previous session left
-     * this key set. app_wifi_background_start_task applies the existing
-     * Auto Wi-Fi On policy after normal startup is complete.
+     * wifi_enabled is the user's last manual Wi-Fi choice. It is loaded as
+     * that choice only; it is not the boot policy by itself. The radio is
+     * physically OFF after reset, so do not claim it is enabled (or start
+     * it) just because the previous session left this key set.
+     * app_wifi_background_start_task applies the policy after normal startup
+     * is complete: Wi-Fi comes up only when "Wi-Fi Auto On" is ON and the
+     * saved choice is ON.
      */
+    s_wifi_user_choice_on = (wifi_enabled != 0U);
     sys_state.wifi.enabled = false;
     sys_state.inverter.wifi_enabled = false;
     lcd_update_wifi_enabled(false);
     ESP_LOGI(APP_SERVICES_TAG,
-             "Boot Wi-Fi state: OFF (saved runtime state=%u, auto-enable=%u, auto-reconnect=%u)",
+             "Boot Wi-Fi state: OFF (user choice=%u, auto-on=%u, auto-reconnect=%u)",
              (unsigned)wifi_enabled,
              sys_state.wifi.auto_enable ? 1U : 0U,
              sys_state.wifi.auto_reconnect ? 1U : 0U);
@@ -2546,11 +2567,21 @@ esp_err_t app_services_wifi_connect_saved(void)
     return app_services_wifi_reconnect();
 }
 
-/* True when the "Wi-Fi Auto On" preference asks for the radio to be switched
- * ON after boot and it is currently OFF. Never touches the LCD. */
+/* Boot policy. "Wi-Fi Auto On" is the master: when it is OFF, Wi-Fi stays OFF
+ * after every boot until the user switches it on. When it is ON, Wi-Fi comes
+ * back only if the user left it ON (saved choice); if the user left it OFF, or
+ * never switched it on, it stays OFF until the user turns it on. */
+static bool app_wifi_boot_enable_wanted(void)
+{
+    return sys_state.wifi.auto_enable && s_wifi_user_choice_on;
+}
+
+/* True when the boot policy asks for the radio to be switched ON and it is
+ * currently OFF. Re-evaluated inside the worker, so a manual OFF made while
+ * the boot start is pending cancels it. Never touches the LCD. */
 static bool app_wifi_background_enable_needed(void)
 {
-    return sys_state.wifi.auto_enable && !sys_state.wifi.enabled;
+    return app_wifi_boot_enable_wanted() && !sys_state.wifi.enabled;
 }
 
 /* Decides whether a silent post-boot connect to the saved network is allowed.
@@ -2716,8 +2747,9 @@ static void app_wifi_background_start_task(void *parameter)
 esp_err_t app_services_wifi_background_start(void)
 {
     ESP_LOGI(APP_SERVICES_TAG,
-             "Automatic Wi-Fi start: auto-on=%u auto-reconnect=%u wifi-enabled=%u controller=%s",
+             "Automatic Wi-Fi start: auto-on=%u user-choice=%u auto-reconnect=%u wifi-enabled=%u controller=%s",
              sys_state.wifi.auto_enable ? 1U : 0U,
+             s_wifi_user_choice_on ? 1U : 0U,
              sys_state.wifi.auto_reconnect ? 1U : 0U,
              sys_state.wifi.enabled ? 1U : 0U,
              wifi_state_text(wifi_controller_get_state()));

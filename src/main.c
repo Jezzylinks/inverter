@@ -475,9 +475,10 @@ void app_main(void)
     {
         lcd_boot_complete();
     }
-    /* Quietly bring Wi-Fi up in the background. Wi-Fi is enabled first when
-     * "Wi-Fi Auto On" is set, then the saved network is connected when
-     * "Wi-Fi Auto Rec" is set. Never notifies.
+    /* Quietly bring Wi-Fi up in the background. Wi-Fi is enabled first only
+     * when "Wi-Fi Auto On" (the master switch) is set and the user last left
+     * Wi-Fi ON, then the saved network is connected when "Wi-Fi Auto Rec" is
+     * set. Never notifies.
      *
      * Deliberately NOT gated on startup_healthy (owner decision): a failed
      * startup check (for example an ADC channel that cannot be read) must not
