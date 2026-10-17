@@ -1822,6 +1822,7 @@ esp_err_t init_hardware(void)
 
 #define NVS_FLOAT_SCALE 100.0f
 #define NVS_SETTINGS_TXN_VERSION 4U
+#define NVS_SETTINGS_PREVIOUS_TXN_VERSION 3U
 #define NVS_SETTINGS_TXN_VALID_KEY "set_txn_ok"
 #define NVS_SETTINGS_TXN_GEN_KEY "set_txn_gen"
 #define NVS_SETTINGS_TXN_CRC_KEY "set_txn_crc"
@@ -2724,6 +2725,15 @@ bool load_settings()
         ESP_LOGW(NVS_LOADING_TAG,
                  "Settings transaction schema %u -> %u; preserving compatible values",
                  (unsigned)txn_marker, (unsigned)NVS_SETTINGS_TXN_VERSION);
+        /* Version 3 is the immediately preceding schema. Its existing fields
+         * retain their representation; only sound_vol is new and defaults to
+         * 50 when absent. Treat those values as trusted so derived runtime
+         * copies (including current/temperature limits and battery cutoff)
+         * are restored before the migration is persisted. */
+        if (txn_marker == NVS_SETTINGS_PREVIOUS_TXN_VERSION)
+        {
+            txn_trusted = true;
+        }
         load_error = true;
     }
     else if (txn_present &&
