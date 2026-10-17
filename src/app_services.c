@@ -954,13 +954,33 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
          * this user setting. */
         sys_state.wifi.enabled = enabled;
         sys_state.inverter.wifi_enabled = enabled;
-        /* A completed ON/OFF transition records the user's latest choice.
-         * Boot auto-start reads this saved intent, not the reset live state. */
-        s_wifi_user_enabled_preference = enabled;
         lcd_update_wifi_enabled(enabled);
         ESP_LOGI(APP_SERVICES_TAG, "Committing Wi-Fi runtime state: %s",
                  enabled ? "ON" : "OFF");
         nvs_err = persist_u8(APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
+        if (nvs_err == ESP_OK) {
+            /* Read the key back through the same path the boot loader uses.
+             * "commit OK" alone does not prove the boot loader will see it. */
+            uint8_t readback = 0xFFU;
+            nvs_handle_t rb_handle;
+            esp_err_t rb_err = storage_nvs_open(APP_SERVICES_NVS_NAMESPACE,
+                                                NVS_READONLY, &rb_handle);
+            if (rb_err == ESP_OK) {
+                rb_err = nvs_get_u8(rb_handle, APP_WIFI_ENABLED_KEY, &readback);
+                storage_nvs_close(rb_handle);
+            }
+            if (rb_err != ESP_OK || readback != (enabled ? 1U : 0U)) {
+                ESP_LOGE(APP_SERVICES_TAG,
+                         "Wi-Fi NVS read-back MISMATCH: wrote=%u read=%u err=%s",
+                         enabled ? 1U : 0U, (unsigned)readback,
+                         esp_err_to_name(rb_err));
+                nvs_err = (rb_err != ESP_OK) ? rb_err : ESP_ERR_INVALID_STATE;
+            } else {
+                /* The user's latest choice is recorded only once it is
+                 * verifiably stored; boot auto-start reads this intent. */
+                s_wifi_user_enabled_preference = enabled;
+            }
+        }
         if (nvs_err != ESP_OK) {
             ESP_LOGE(APP_SERVICES_TAG,
                      "Wi-Fi NVS persistence failed (%s); runtime state remains actual",
@@ -1368,7 +1388,11 @@ static void load_persisted_config(void)
     esp_err_t err = storage_nvs_open(APP_SERVICES_NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err == ESP_OK)
     {
-        (void)nvs_get_u8(handle, APP_WIFI_ENABLED_KEY, &wifi_enabled);
+        const esp_err_t wifi_get_err =
+            nvs_get_u8(handle, APP_WIFI_ENABLED_KEY, &wifi_enabled);
+        ESP_LOGI(APP_SERVICES_TAG, "Boot read %s/%s: err=%s value=%u",
+                 APP_SERVICES_NVS_NAMESPACE, APP_WIFI_ENABLED_KEY,
+                 esp_err_to_name(wifi_get_err), (unsigned)wifi_enabled);
         (void)nvs_get_u8(handle, APP_OTA_AUTOCHECK_KEY, &auto_check);
         size_t length = sizeof(s_manifest_url);
         err = nvs_get_str(handle, APP_OTA_MANIFEST_KEY, s_manifest_url, &length);
@@ -2688,6 +2712,12 @@ static void app_wifi_background_start_task(void *parameter)
 
 esp_err_t app_services_wifi_background_start(void)
 {
+    ESP_LOGI(APP_SERVICES_TAG,
+             "Boot Wi-Fi decision: auto_enable=%u user_choice=%u live_enabled=%u auto_reconnect=%u",
+             sys_state.wifi.auto_enable ? 1U : 0U,
+             s_wifi_user_enabled_preference ? 1U : 0U,
+             sys_state.wifi.enabled ? 1U : 0U,
+             sys_state.wifi.auto_reconnect ? 1U : 0U);
     if (!app_wifi_background_enable_needed() &&
         !app_wifi_background_connect_allowed()) {
         ESP_LOGI(APP_SERVICES_TAG, "Background Wi-Fi start not needed");
