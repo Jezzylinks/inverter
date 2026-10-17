@@ -970,8 +970,29 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
              * user turned Wi-Fi on, OFF otherwise). The silent boot
              * activation is derived from that choice, so it must not rewrite
              * it. */
-            s_wifi_user_choice_on = enabled;
             nvs_err = persist_u8(APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
+            if (nvs_err == ESP_OK) {
+                /* Read the key back through the same path the boot loader
+                 * uses: "commit OK" alone does not prove boot will see it. */
+                uint8_t readback = 0xFFU;
+                nvs_handle_t rb_handle;
+                esp_err_t rb_err = storage_nvs_open(APP_SERVICES_NVS_NAMESPACE,
+                                                    NVS_READONLY, &rb_handle);
+                if (rb_err == ESP_OK) {
+                    rb_err = nvs_get_u8(rb_handle, APP_WIFI_ENABLED_KEY, &readback);
+                    storage_nvs_close(rb_handle);
+                }
+                if (rb_err != ESP_OK || readback != (enabled ? 1U : 0U)) {
+                    ESP_LOGE(APP_SERVICES_TAG,
+                             "Wi-Fi NVS read-back MISMATCH: wrote=%u read=%u err=%s",
+                             enabled ? 1U : 0U, (unsigned)readback,
+                             esp_err_to_name(rb_err));
+                    nvs_err = (rb_err != ESP_OK) ? rb_err : ESP_ERR_INVALID_STATE;
+                } else {
+                    /* Record the choice only once it is verifiably stored. */
+                    s_wifi_user_choice_on = enabled;
+                }
+            }
             if (nvs_err != ESP_OK) {
                 ESP_LOGE(APP_SERVICES_TAG,
                          "Wi-Fi NVS persistence failed (%s); runtime state remains actual",
@@ -1380,15 +1401,49 @@ static esp_err_t persist_manifest_url(const char *url)
     return err;
 }
 
-static void load_persisted_config(void)
+/*
+ * Load the user's saved Wi-Fi choice (NVS key "wifi_enabled") into
+ * s_wifi_user_choice_on. This is deliberately separate from
+ * load_persisted_config(): that function only runs from app_services_init(),
+ * which app_main skips when startup is unhealthy, while the automatic Wi-Fi
+ * start is NOT gated on startup health. Without this, an unhealthy boot would
+ * evaluate the boot policy against the static default (OFF) even though NVS
+ * holds ON. Missing key/namespace means the user never switched Wi-Fi on: OFF.
+ * Idempotent and safe to call more than once.
+ */
+static void load_wifi_user_choice(void)
 {
     uint8_t wifi_enabled = 0U;
+    nvs_handle_t handle;
+    const esp_err_t err = storage_nvs_open(APP_SERVICES_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err == ESP_OK)
+    {
+        const esp_err_t get_err = nvs_get_u8(handle, APP_WIFI_ENABLED_KEY, &wifi_enabled);
+        storage_nvs_close(handle);
+        if (get_err != ESP_OK)
+        {
+            wifi_enabled = 0U;
+            ESP_LOGI(APP_SERVICES_TAG, "No saved Wi-Fi choice (%s): OFF",
+                     esp_err_to_name(get_err));
+        }
+    }
+    else
+    {
+        ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi choice not readable (%s): OFF",
+                 esp_err_to_name(err));
+    }
+    s_wifi_user_choice_on = (wifi_enabled != 0U);
+    ESP_LOGI(APP_SERVICES_TAG, "Saved Wi-Fi user choice loaded: %s=%u",
+             APP_WIFI_ENABLED_KEY, (unsigned)wifi_enabled);
+}
+
+static void load_persisted_config(void)
+{
     uint8_t auto_check = 1U;
     nvs_handle_t handle;
     esp_err_t err = storage_nvs_open(APP_SERVICES_NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err == ESP_OK)
     {
-        (void)nvs_get_u8(handle, APP_WIFI_ENABLED_KEY, &wifi_enabled);
         (void)nvs_get_u8(handle, APP_OTA_AUTOCHECK_KEY, &auto_check);
         size_t length = sizeof(s_manifest_url);
         err = nvs_get_str(handle, APP_OTA_MANIFEST_KEY, s_manifest_url, &length);
@@ -1416,13 +1471,13 @@ static void load_persisted_config(void)
      * is complete: Wi-Fi comes up only when "Wi-Fi Auto On" is ON and the
      * saved choice is ON.
      */
-    s_wifi_user_choice_on = (wifi_enabled != 0U);
+    load_wifi_user_choice();
     sys_state.wifi.enabled = false;
     sys_state.inverter.wifi_enabled = false;
     lcd_update_wifi_enabled(false);
     ESP_LOGI(APP_SERVICES_TAG,
              "Boot Wi-Fi state: OFF (user choice=%u, auto-on=%u, auto-reconnect=%u)",
-             (unsigned)wifi_enabled,
+             s_wifi_user_choice_on ? 1U : 0U,
              sys_state.wifi.auto_enable ? 1U : 0U,
              sys_state.wifi.auto_reconnect ? 1U : 0U);
     s_ota_status.auto_check_enabled = auto_check != 0U;
@@ -1937,6 +1992,9 @@ esp_err_t app_services_wifi_toggle_init(void)
             return ESP_ERR_NO_MEM;
         }
     }
+
+    /* Runs on every boot, healthy or not, before the automatic Wi-Fi start. */
+    load_wifi_user_choice();
 
     if (s_wifi_toggle_queue == NULL) {
         s_wifi_toggle_queue = xQueueCreate(APP_WIFI_TOGGLE_QUEUE_LENGTH,
