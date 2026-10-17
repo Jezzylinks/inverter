@@ -1821,7 +1821,7 @@ esp_err_t init_hardware(void)
 }
 
 #define NVS_FLOAT_SCALE 100.0f
-#define NVS_SETTINGS_TXN_VERSION 3U
+#define NVS_SETTINGS_TXN_VERSION 4U
 #define NVS_SETTINGS_TXN_VALID_KEY "set_txn_ok"
 #define NVS_SETTINGS_TXN_GEN_KEY "set_txn_gen"
 #define NVS_SETTINGS_TXN_CRC_KEY "set_txn_crc"
