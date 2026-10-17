@@ -305,6 +305,12 @@ esp_err_t wifi_manager_init(void)
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 
+    /* The Wi-Fi driver prints "Haven't to connect to a suitable AP now!"
+     * (log tag "wifi", printed by the closed-source driver library) on every
+     * search while the saved network is out of reach. With the station now
+     * searching continuously that is expected, so only errors from the
+     * driver tag are shown. */
+    esp_log_level_set("wifi", ESP_LOG_ERROR);
     err = esp_wifi_init(&cfg);
     if (err != ESP_OK)
     {
