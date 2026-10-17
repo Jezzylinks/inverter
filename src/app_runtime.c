@@ -6298,6 +6298,14 @@ static bool validate_and_clamp_settings(void)
 {
     bool corrected = false;
 
+    if (sys_state.buzzer_volume > 100U)
+    {
+        ESP_LOGW(TAG_SYS, "Invalid buzzer volume %u loaded; clamping to 100%%",
+                 (unsigned)sys_state.buzzer_volume);
+        sys_state.buzzer_volume = 100U;
+        corrected = true;
+    }
+
     if (sys_state.battery_profile.nominal_voltage != VOLTAGE_SYSTEM_12V &&
         sys_state.battery_profile.nominal_voltage != VOLTAGE_SYSTEM_24V &&
         sys_state.battery_profile.nominal_voltage != VOLTAGE_SYSTEM_48V)
@@ -7486,7 +7494,6 @@ void edit_sound_volume(void)
 {
     begin_setting_edit(VALUE_TYPE_SOUND_VOLUME,
                        (float)sys_state.buzzer_volume);
-    lcd_show_value_edit_screen();
 }
 
 void edit_wifi_auto_rec(void)
