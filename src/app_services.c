@@ -76,7 +76,7 @@
 #define APP_WIFI_SCAN_TASK_PRIORITY 5U
 /* One-shot post-boot saved-network connect. Runs below the normal Wi-Fi
  * workers so it can never delay a user-driven operation. */
-#define APP_WIFI_BACKGROUND_CONNECT_STACK_SIZE 4096U
+#define APP_WIFI_BACKGROUND_CONNECT_STACK_SIZE 6144U
 #define APP_WIFI_BACKGROUND_CONNECT_PRIORITY 3U
 
 extern system_state_t sys_state;
@@ -133,6 +133,7 @@ typedef struct {
     bool mode_change;
     wifi_mode_t mode;
     uint64_t requested_ms;
+    bool silent; /* boot-time Auto Wi-Fi On: no LCD flashes or error popups */
 } wifi_toggle_request_t;
 
 static bool s_wifi_mode_edit_active = false;
@@ -913,7 +914,8 @@ static void app_wifi_schedule_menu_refresh(uint32_t delay_ms)
 }
 
 static esp_err_t app_services_execute_wifi_toggle(bool enabled,
-                                                    bool previous_enabled)
+                                                    bool previous_enabled,
+                                                    bool silent)
 {
     const uint64_t started_ms = (uint64_t)(esp_timer_get_time() / 1000LL);
 
@@ -982,7 +984,13 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
                  enabled ? "ON" : "OFF", esp_err_to_name(controller_err));
         app_wifi_end_operation();
         app_wifi_sync_menu_if_visible();
-        if (enabled && controller_err == ESP_ERR_NOT_FOUND) {
+        if (silent) {
+            /* Automatic boot activation: no saved SSID or a failed start is
+             * logged, never shown. Manual ON/OFF still reports to the user. */
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Auto Wi-Fi On did not complete (%s); staying OFF silently",
+                     esp_err_to_name(controller_err));
+        } else if (enabled && controller_err == ESP_ERR_NOT_FOUND) {
             lcd_flash_message("Wi-Fi Not Config", "Use menuconfig", 1800U);
         } else {
             lcd_flash_message(enabled ? "Wi-Fi Start Failed" : "Wi-Fi Stop Failed",
@@ -1042,7 +1050,8 @@ static void app_wifi_toggle_task(void *parameter)
         ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle worker started: %s",
                  request.enabled ? "ON" : "OFF");
         (void)app_services_execute_wifi_toggle(request.enabled,
-                                                request.previous_enabled);
+                                                request.previous_enabled,
+                                                request.silent);
         ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle worker completed: %s",
                  request.enabled ? "ON" : "OFF");
         __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
@@ -1945,7 +1954,7 @@ esp_err_t app_services_wifi_toggle_init(void)
     return controller_err;
 }
 
-esp_err_t app_services_set_wifi_enabled(bool enabled)
+static esp_err_t app_wifi_request_enabled(bool enabled, bool silent)
 {
     /* The Wi-Fi ON/OFF control path must not depend on the broader
      * app_services startup having completed.  In particular, main.c
@@ -2014,7 +2023,9 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
                                      __ATOMIC_SEQ_CST,
                                      __ATOMIC_SEQ_CST)) {
         ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi toggle rejected: operation already pending");
-        lcd_flash_message("Wi-Fi Busy", "Please wait", 900U);
+        if (!silent) {
+            lcd_flash_message("Wi-Fi Busy", "Please wait", 900U);
+        }
         return ESP_ERR_TIMEOUT;
     }
     ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle admitted");
@@ -2031,6 +2042,7 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
         .mode_change = false,
         .mode = WIFI_MODE_NULL,
         .requested_ms = (uint64_t)(esp_timer_get_time() / 1000ULL),
+        .silent = silent,
     };
 
     app_wifi_begin_operation(enabled ? APP_WIFI_OPERATION_ENABLE
@@ -2042,17 +2054,26 @@ esp_err_t app_services_set_wifi_enabled(bool enabled)
          * prevents concurrent senders), but handle defensively. */
         app_wifi_end_operation();
         __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
-        lcd_flash_message("Wi-Fi Busy", "Please wait", 900U);
+        if (!silent) {
+            lcd_flash_message("Wi-Fi Busy", "Please wait", 900U);
+        }
         ESP_LOGE(APP_SERVICES_TAG, "Wi-Fi toggle queue send failed (full?)");
         return ESP_ERR_TIMEOUT;
     }
 
     /* Immediate progress feedback to the LCD. */
-    lcd_flash_message(enabled ? "Wi-Fi STARTING" : "Wi-Fi STOPPING",
-                      "Please wait", 900U);
-    ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi %s request queued",
-             enabled ? "ON" : "OFF");
+    if (!silent) {
+        lcd_flash_message(enabled ? "Wi-Fi STARTING" : "Wi-Fi STOPPING",
+                          "Please wait", 900U);
+    }
+    ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi %s request queued%s",
+             enabled ? "ON" : "OFF", silent ? " (silent, automatic)" : "");
     return ESP_OK;
+}
+
+esp_err_t app_services_set_wifi_enabled(bool enabled)
+{
+    return app_wifi_request_enabled(enabled, false);
 }
 
 bool app_services_wifi_enabled(void)
@@ -2589,8 +2610,22 @@ static esp_err_t app_wifi_background_enable(void)
     }
 
     ESP_LOGI(APP_SERVICES_TAG,
-             "Auto Wi-Fi On enabled; requesting ON through existing toggle worker");
-    return app_services_set_wifi_enabled(true);
+             "Auto Wi-Fi On=1 (auto-reconnect=%u): requesting ON through existing toggle path",
+             sys_state.wifi.auto_reconnect ? 1U : 0U);
+    /* Same queued ON path as the menu; only the LCD popups are suppressed. A
+     * busy admission (manual toggle in flight) is retried, not dropped. */
+    const TickType_t retry_started = xTaskGetTickCount();
+    esp_err_t err = app_wifi_request_enabled(true, true);
+    while (err == ESP_ERR_TIMEOUT && app_wifi_background_enable_needed() &&
+           (xTaskGetTickCount() - retry_started) <
+               pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "Auto Wi-Fi On deferred: toggle path busy, retrying");
+        vTaskDelay(pdMS_TO_TICKS(500U));
+        (void)task_watchdog_health_feed();
+        err = app_wifi_request_enabled(true, true);
+    }
+    return err;
 }
 
 static void app_wifi_background_start_task(void *parameter)
@@ -2670,12 +2705,22 @@ static void app_wifi_background_start_task(void *parameter)
                  "Background saved-network connect not needed or not allowed");
     }
 
+    ESP_LOGI(APP_SERVICES_TAG,
+             "wifi_bg_start done (stack high-water: %u words, controller=%s)",
+             (unsigned)uxTaskGetStackHighWaterMark(NULL),
+             wifi_state_text(wifi_controller_get_state()));
     s_wifi_background_connect_task = NULL;
     vTaskDelete(NULL);
 }
 
 esp_err_t app_services_wifi_background_start(void)
 {
+    ESP_LOGI(APP_SERVICES_TAG,
+             "Automatic Wi-Fi start: auto-on=%u auto-reconnect=%u wifi-enabled=%u controller=%s",
+             sys_state.wifi.auto_enable ? 1U : 0U,
+             sys_state.wifi.auto_reconnect ? 1U : 0U,
+             sys_state.wifi.enabled ? 1U : 0U,
+             wifi_state_text(wifi_controller_get_state()));
     if (!app_wifi_background_enable_needed() &&
         !app_wifi_background_connect_allowed()) {
         ESP_LOGI(APP_SERVICES_TAG, "Background Wi-Fi start not needed");
