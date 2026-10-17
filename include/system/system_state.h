@@ -384,7 +384,9 @@ extern "C"
     {
         bool enabled;
         bool auto_reconnect;
-        bool auto_enable; /* turn Wi-Fi ON automatically after boot */
+        bool auto_enable; /* master boot switch: Wi-Fi may come up after boot
+                           * only when this is ON and the user last left Wi-Fi
+                           * ON; otherwise it stays OFF until turned on */
         char ssid[32];
         char password[64];
     } wifi_state_t;

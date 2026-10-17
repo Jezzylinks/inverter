@@ -73,10 +73,12 @@ esp_err_t app_services_wifi_connect_network_with_rssi(const char *ssid,
                                                       int8_t rssi);
 esp_err_t app_services_wifi_connect_saved(void);
 /** Silent post-boot Wi-Fi start, meant to be called once after boot has fully
- * completed. In order: (1) if the "Wi-Fi Auto On" setting is on and Wi-Fi is
- * OFF, switch Wi-Fi ON; (2) if the "Wi-Fi Auto Rec" setting is on and Wi-Fi is
- * enabled, connect to the saved (established) network. Runs in a background
- * task and never shows an LCD message, flash, or result screen. */
+ * completed. In order: (1) if the "Wi-Fi Auto On" setting is on, the user's
+ * saved Wi-Fi choice is ON (the user last switched Wi-Fi on) and Wi-Fi is OFF,
+ * switch Wi-Fi ON; with "Wi-Fi Auto On" off, or a saved choice of OFF, Wi-Fi
+ * stays OFF until the user turns it on; (2) if the "Wi-Fi Auto Rec" setting is
+ * on and Wi-Fi is enabled, connect to the saved (established) network. Runs in
+ * a background task and never shows an LCD message, flash, or result screen. */
 esp_err_t app_services_wifi_background_start(void);
 esp_err_t app_services_wifi_reconnect(void);
 esp_err_t app_services_wifi_disconnect(void);
