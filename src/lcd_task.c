@@ -696,6 +696,16 @@ static const char *ota_wait_label(void)
     return labels[(_lcd_get_time_ms() / 400U) % 3U];
 }
 
+/* Animated "Preparing Update." / ".." / "..." (three progressive dots),
+ * driven by the LCD clock like ota_wait_label() so it needs no button input. */
+static const char *ota_preparing_label(void)
+{
+    static const char *const labels[3] = {"Preparing Update.",
+                                          "Preparing Update..",
+                                          "Preparing Update..."};
+    return labels[(_lcd_get_time_ms() / 400U) % 3U];
+}
+
 static void draw_ota(const lcd_ota_data_t *d)
 {
     const uint8_t pct = d->progress_pct > 100U ? 100U : d->progress_pct;
@@ -713,9 +723,9 @@ static void draw_ota(const lcd_ota_data_t *d)
             rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_PREPARING:
-            snprintf(rows[0], LCD_LINE_SIZE, "FIRMWARE UPDATE");
-            snprintf(rows[1], LCD_LINE_SIZE, "CONNECTING SERVER");
-            snprintf(rows[2], LCD_LINE_SIZE, "PREPARING UPDATE");
+            snprintf(rows[0], LCD_LINE_SIZE, "CONNECTING SERVER");
+            snprintf(rows[1], LCD_LINE_SIZE, "%s", ota_preparing_label());
+            rows[2][0] = '\0';
             rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_DOWNLOADING:

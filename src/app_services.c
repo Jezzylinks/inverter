@@ -1566,6 +1566,23 @@ static void app_services_show_ota_lcd_impl(const app_ota_status_t *status,
         return;
     }
 
+    /* Up to date is a short notification, not a dead-end page: flash the
+     * message, then the running version, and return to the OTA menu. */
+    if (status->state == APP_OTA_IDLE) {
+        char version_line[LCD_LINE_SIZE];
+        snprintf(version_line, sizeof(version_line), "VERSION %s",
+                 status->installed_version);
+        LCD_LOCK();
+        sys_state.menu_state = MENU_OTA;
+        sys_state.menu_selection = 0U;
+        LCD_UNLOCK();
+        show_menu_screen(MENU_OTA, 0);
+        lcd_flash_info_to("SOFTWARE IS", "UP TO DATE", 2000U, LCD_SCREEN_MENU);
+        lcd_flash_info_to("SOFTWARE VERSION", version_line, 2500U,
+                          LCD_SCREEN_MENU);
+        return;
+    }
+
     lcd_ota_view_state_t view = LCD_OTA_VIEW_ERROR;
     switch (status->state) {
     case APP_OTA_CHECKING: view = LCD_OTA_VIEW_CHECKING; break;
