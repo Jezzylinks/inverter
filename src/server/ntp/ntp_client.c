@@ -38,15 +38,19 @@ esp_err_t ntp_client_init(const char *server)
         return ESP_OK;
     }
 
-    if (server == NULL)
-    {
-        server = NTP_DEFAULT_SERVER;
-    }
-
-    ESP_LOGI(TAG, "Initializing SNTP with server: %s", server);
-
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, server);
+    if (server != NULL)
+    {
+        ESP_LOGI(TAG, "Initializing SNTP with server: %s", server);
+        esp_sntp_setservername(0, server);
+    }
+    else
+    {
+        ESP_LOGI(TAG, "Initializing SNTP with servers: %s, then %s",
+                 NTP_DEFAULT_SERVER, NTP_FALLBACK_SERVER);
+        esp_sntp_setservername(0, NTP_DEFAULT_SERVER);
+        esp_sntp_setservername(1, NTP_FALLBACK_SERVER);
+    }
     esp_sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
     esp_sntp_set_sync_interval(NTP_SYNC_INTERVAL_MS);
     esp_sntp_set_time_sync_notification_cb(ntp_sync_cb);
