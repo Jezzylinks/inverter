@@ -18,13 +18,13 @@ extern "C"
 #include "esp_sntp.h"
 #include "stdbool.h"
 
-#define NTP_DEFAULT_SERVER "pool.ntp.org"
+#define NTP_DEFAULT_SERVER "0.north-america.pool.ntp.org"
 #define NTP_SYNC_INTERVAL_MS 3600000  /* 1 hour */
 #define NTP_MIN_VALID_TIME 1700000000 /* Dec 2023 */
 
     /**
      * @brief Initialize NTP client
-     * @param server NTP server hostname. NULL uses default (pool.ntp.org).
+     * @param server NTP server hostname. NULL uses default (0.north-america.pool.ntp.org).
      * @return ESP_OK on success
      */
     esp_err_t ntp_client_init(const char *server);
