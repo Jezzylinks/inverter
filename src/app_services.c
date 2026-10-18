@@ -17,6 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "lcd/lcd_config.h"
 #include "lcd/lcd_writer.h"
 #include "lcd/lcd_flash_queue.h"
 #include "nvs.h"
@@ -1563,6 +1564,24 @@ static void app_services_show_ota_lcd_impl(const app_ota_status_t *status,
         LCD_UNLOCK();
         show_menu_screen(MENU_OTA, 0);
         lcd_flash_warning_to("Update Failed", detail, 1800U, LCD_SCREEN_MENU);
+        return;
+    }
+
+    /* "Up to date" is a result, not a page to sit on: flash it with the
+     * running version, then return to the OTA menu. Explicit entry into
+     * Firmware Update (respect_menu == false) keeps the normal status page. */
+    if (respect_menu && status->state == APP_OTA_IDLE) {
+        char version_line[24];
+        (void)snprintf(version_line, sizeof(version_line), "VERSION %.12s",
+                       status->installed_version);
+        LCD_LOCK();
+        sys_state.menu_state = MENU_OTA;
+        sys_state.menu_selection = 0U;
+        LCD_UNLOCK();
+        show_menu_screen(MENU_OTA, 0);
+        lcd_flash_info_to(lcd_geometry_is_20x4() ? "SOFTWARE UP TO DATE"
+                                                 : "UP TO DATE",
+                          version_line, 2500U, LCD_SCREEN_MENU);
         return;
     }
 
