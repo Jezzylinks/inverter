@@ -70,6 +70,14 @@ static uint8_t s_addr;
 static lcd_state_t lcd;
 static bool s_initialized = false;
 
+/* Set when an I2C write to the backpack fails. The HD44780 is driven in 4-bit
+ * mode, so a byte is two separate I2C transactions: if one is lost the
+ * controller's nibble alignment is off and every later byte is decoded as
+ * garbage. Until lcd_resync() clears this flag all writes are refused, so no
+ * further misaligned data reaches the display. */
+static volatile bool s_io_error = false;
+static volatile uint32_t s_io_error_count = 0;
+
 /* ── Forward declarations ────────────────────────────────────────────── */
 static esp_err_t i2c_write_raw(uint8_t byte);
 static esp_err_t pulse_enable(uint8_t byte);
@@ -87,10 +95,34 @@ static uint8_t scan_find_address(void);
  */
 static esp_err_t i2c_write_raw(uint8_t byte)
 {
+    if (s_io_error)
+        return ESP_ERR_INVALID_STATE; /* wait for lcd_resync() */
+
     byte |= lcd.backlight ? BIT_BACKLIGHT : 0x00;
-    return i2c_master_write_to_device(
+    const esp_err_t err = i2c_master_write_to_device(
         I2C_PORT, s_addr, &byte, 1,
         pdMS_TO_TICKS(I2C_TIMEOUT_MS));
+    if (err != ESP_OK)
+    {
+        s_io_error = true;
+        s_io_error_count++;
+    }
+    return err;
+}
+
+/**
+ * Wait for an HD44780 execution time.
+ *
+ * CONFIG_FREERTOS_HZ is 100 here, so pdMS_TO_TICKS() of anything under 10 ms
+ * is zero ticks and vTaskDelay() would not wait at all. Short waits are
+ * therefore busy-waited; only long ones are handed to the scheduler.
+ */
+static void lcd_wait_ms(uint32_t ms)
+{
+    if (ms >= 10U)
+        vTaskDelay(pdMS_TO_TICKS(ms));
+    else
+        esp_rom_delay_us(ms * 1000U);
 }
 
 /**
@@ -258,9 +290,92 @@ esp_err_t lcd_i2c_init(uint8_t sdaPin, uint8_t sclPin)
  *    6. Configure: function set, display off, clear, entry mode, display on
  * ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * HD44780 "initialisation by instruction" for the 4-bit interface
+ * (datasheet Figure 24), shared by lcd_init() and lcd_resync().
+ *
+ * The three 0x30 nibbles force the controller into a known 8-bit state from
+ * ANY nibble alignment, then 0x20 selects 4-bit mode again. That is what makes
+ * it usable to recover a display that lost a nibble.
+ *
+ * @param clear_display  true  : function set, display off, clear, entry mode,
+ *                               display on (cold start, as before).
+ *                       false : function set, entry mode, home, display on.
+ *                               DDRAM is kept, so nothing flickers; "home"
+ *                               undoes any display shift that garbage
+ *                               commands may have caused.
+ */
+static esp_err_t hd44780_bring_up(bool clear_display)
+{
+    esp_err_t err;
+
+    /* 0x30 in 4-bit physical terms: bits 7-4 = 0x3 → function set, 8-bit. */
+    err = send_nibble(0x30, 0); /* reset #1 */
+    if (err != ESP_OK)
+        return err;
+    lcd_wait_ms(5); /* ≥ 4.1 ms */
+
+    err = send_nibble(0x30, 0); /* reset #2 */
+    if (err != ESP_OK)
+        return err;
+    esp_rom_delay_us(200); /* ≥ 100 µs */
+
+    err = send_nibble(0x30, 0); /* reset #3 */
+    if (err != ESP_OK)
+        return err;
+    esp_rom_delay_us(200);
+
+    err = send_nibble(0x20, 0); /* 0010 → 4-bit mode select */
+    if (err != ESP_OK)
+        return err;
+    esp_rom_delay_us(200);
+
+    /* Function set: 4-bit bus, 2 display lines, 5×8 font */
+    err = send_byte(LCD_CMD_FUNCTION_SET, 0);
+    if (err != ESP_OK)
+        return err;
+    esp_rom_delay_us(T_EN_SETTLE_US);
+
+    if (clear_display)
+    {
+        err = send_byte(LCD_CMD_DISPLAY_OFF, 0);
+        if (err != ESP_OK)
+            return err;
+        esp_rom_delay_us(T_EN_SETTLE_US);
+
+        err = send_byte(LCD_CMD_CLEAR, 0);
+        if (err != ESP_OK)
+            return err;
+        lcd_wait_ms(T_SLOW_CMD_MS);
+    }
+
+    /* Entry mode: cursor moves right, display does not shift */
+    err = send_byte(LCD_CMD_ENTRY_MODE, 0);
+    if (err != ESP_OK)
+        return err;
+    esp_rom_delay_us(T_EN_SETTLE_US);
+
+    if (!clear_display)
+    {
+        err = send_byte(LCD_CMD_HOME, 0);
+        if (err != ESP_OK)
+            return err;
+        lcd_wait_ms(T_SLOW_CMD_MS);
+    }
+
+    /* Display on: display on, cursor off, blink off */
+    err = send_byte(LCD_CMD_DISPLAY_ON, 0);
+    if (err != ESP_OK)
+        return err;
+    esp_rom_delay_us(T_EN_SETTLE_US);
+
+    return ESP_OK;
+}
+
 esp_err_t lcd_init(uint8_t addr, uint8_t sdaPin, uint8_t sclPin)
 {
     s_initialized = false;
+    s_io_error = false;
     lcd.backlight = 1;
 
     esp_err_t err = lcd_i2c_init(sdaPin, sclPin);
@@ -295,69 +410,10 @@ esp_err_t lcd_init(uint8_t addr, uint8_t sdaPin, uint8_t sclPin)
     /* ── Step 1: Power-on stabilisation ────────────────────────────── */
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    /* ── Steps 2-4: 8-bit reset sequence ───────────────────────────── *
-     *  The display is in an unknown state; these three identical nibble
-     *  writes guarantee it re-enters a known 8-bit mode on the third one.
-     *  We use send_nibble() rather than pulse_enable() directly so the
-     *  backlight bit is merged correctly.
-     *
-     *  0x30 in 4-bit physical terms:
-     *    Bits 7-4 = 0x3 → DB7-DB4 = 0,0,1,1   → function set 8-bit
-     */
-    err = send_nibble(0x30, 0); /* reset #1 */
+    /* ── Steps 2-6: initialise by instruction ──────────────────────── */
+    err = hd44780_bring_up(true);
     if (err != ESP_OK)
         goto init_fail;
-    vTaskDelay(pdMS_TO_TICKS(5)); /* ≥ 4.1 ms */
-
-    err = send_nibble(0x30, 0); /* reset #2 */
-    if (err != ESP_OK)
-        goto init_fail;
-    esp_rom_delay_us(200); /* ≥ 100 µs */
-
-    err = send_nibble(0x30, 0); /* reset #3 */
-    if (err != ESP_OK)
-        goto init_fail;
-    esp_rom_delay_us(200);
-
-    /* ── Step 5: Switch to 4-bit interface ─────────────────────────── */
-    err = send_nibble(0x20, 0); /* 0010 → 4-bit mode select       */
-    if (err != ESP_OK)
-        goto init_fail;
-    esp_rom_delay_us(200);
-
-    /* ── Step 6: Configuration commands ────────────────────────────── *
-     *  Every send_byte() call issues two nibbles; full 4-bit transfers.
-     */
-
-    /* Function set: 4-bit bus, 2 display lines, 5×8 font */
-    err = send_byte(LCD_CMD_FUNCTION_SET, 0);
-    if (err != ESP_OK)
-        goto init_fail;
-    esp_rom_delay_us(T_EN_SETTLE_US);
-
-    /* Display off (required step in the datasheet flow) */
-    err = send_byte(LCD_CMD_DISPLAY_OFF, 0);
-    if (err != ESP_OK)
-        goto init_fail;
-    esp_rom_delay_us(T_EN_SETTLE_US);
-
-    /* Display clear — slow command, needs full wait */
-    err = send_byte(LCD_CMD_CLEAR, 0);
-    if (err != ESP_OK)
-        goto init_fail;
-    vTaskDelay(pdMS_TO_TICKS(T_SLOW_CMD_MS));
-
-    /* Entry mode: cursor moves right, display does not shift */
-    err = send_byte(LCD_CMD_ENTRY_MODE, 0);
-    if (err != ESP_OK)
-        goto init_fail;
-    esp_rom_delay_us(T_EN_SETTLE_US);
-
-    /* Display on: display on, cursor off, blink off */
-    err = send_byte(LCD_CMD_DISPLAY_ON, 0);
-    if (err != ESP_OK)
-        goto init_fail;
-    esp_rom_delay_us(T_EN_SETTLE_US);
 
     s_initialized = true;
     ESP_LOGI(TAG, "LCD ready at 0x%02X", s_addr);
@@ -369,6 +425,43 @@ init_fail:
 }
 
 bool lcd_is_initialized(void) { return s_initialized; }
+
+/* ══════════════════════════════════════════════════════════════════════
+ *  RESYNCHRONISATION
+ * ══════════════════════════════════════════════════════════════════════ */
+
+bool lcd_io_error_pending(void) { return s_io_error; }
+
+uint32_t lcd_io_error_count(void) { return s_io_error_count; }
+
+esp_err_t lcd_resync(void)
+{
+    if (s_addr == 0U)
+        return ESP_ERR_INVALID_STATE; /* lcd_init() has never found the LCD */
+
+    const uint32_t errors_before = s_io_error_count;
+    s_io_error = false;
+
+    /* Same clean baseline as lcd_init(): EN low, data low. */
+    esp_err_t err = i2c_write_raw(0x00);
+    if (err == ESP_OK)
+    {
+        lcd_wait_ms(1);
+        /* Keep DDRAM: the caller redraws, and nothing visibly clears. */
+        err = hd44780_bring_up(false);
+    }
+
+    if (err != ESP_OK)
+    {
+        /* i2c_write_raw() has already re-armed s_io_error. */
+        ESP_LOGW(TAG, "LCD resync failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "LCD resynchronised after %lu failed I2C write(s)",
+             (unsigned long)errors_before);
+    return ESP_OK;
+}
 
 /* ══════════════════════════════════════════════════════════════════════
  *  PROBE (non-destructive ACK check)
@@ -399,13 +492,13 @@ void lcd_print_char(char c)
 void lcd_clear(void)
 {
     lcd_send_command(LCD_CMD_CLEAR);
-    vTaskDelay(pdMS_TO_TICKS(T_SLOW_CMD_MS));
+    lcd_wait_ms(T_SLOW_CMD_MS);
 }
 
 void lcd_home(void)
 {
     lcd_send_command(LCD_CMD_HOME);
-    vTaskDelay(pdMS_TO_TICKS(T_SLOW_CMD_MS));
+    lcd_wait_ms(T_SLOW_CMD_MS);
 }
 
 void lcd_set_cursor(uint8_t row, uint8_t col)
