@@ -32,6 +32,13 @@ esp_err_t network_services_stop(void);
  * wifi_controller_start(). */
 void network_services_allow_start(void);
 bool network_services_is_running(void);
+/* Free the HTTP/WebSocket/dashboard/mDNS/NTP/MQTT memory for the duration of
+ * a firmware download (a TLS download needs a contiguous 16 KB buffer that the
+ * running services otherwise fragment away).  Wi-Fi itself stays up.
+ * network_services_resume_after_ota() restarts them through the normal sync
+ * path; it does nothing unless a matching suspend happened. */
+esp_err_t network_services_suspend_for_ota(void);
+void network_services_resume_after_ota(void);
 void network_services_get_status(network_services_status_t *status);
 
 esp_err_t network_services_get_mqtt_config(network_mqtt_config_t *config);

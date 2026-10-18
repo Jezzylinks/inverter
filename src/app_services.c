@@ -1764,6 +1764,10 @@ static void ota_status_callback(ota_status_t status, int percent)
     }
     app_ota_status_t snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
+    if (status == OTA_STATUS_FAILED || status == OTA_STATUS_CANCELLED) {
+        /* No reboot follows: bring the suspended local services back. */
+        network_services_resume_after_ota();
+    }
     websocket_broadcast_ota_status(app_ota_state_text(snapshot.state),
                                    snapshot.progress_percent,
                                    snapshot.available_version,
@@ -3614,9 +3618,16 @@ esp_err_t app_services_confirm_update(void)
      * moment (Wi-Fi up, menus used, about to open a TLS session). Use it to
      * trim stack sizes; see diagnostics/stack_report.h. */
     stack_report_log("before OTA install");
+    /* The TLS download needs ~17 KB of contiguous heap. With the local
+     * HTTP/WebSocket/mDNS/NTP services running only ~40 KB is free and
+     * fragmented, and the download aborts with "alloc(16749) failed".
+     * Suspend them for the transfer; they are resumed on failure/cancel
+     * (a successful update reboots into the new image). */
+    (void)network_services_suspend_for_ota();
     const esp_err_t err = ota_service_start_from_csv(manifest_url);
     if (err != ESP_OK)
     {
+        network_services_resume_after_ota();
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_ota_status.state = APP_OTA_ERROR;
         snprintf(s_ota_status.error_detail, sizeof(s_ota_status.error_detail),
