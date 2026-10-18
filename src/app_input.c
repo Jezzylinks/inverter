@@ -2835,7 +2835,6 @@ void handle_back_button_event(button_event_info_t *event_info,
     {
     case BUTTON_EVENT_CLICK:
         /* P1 cancel factory reset */
-        ESP_LOGI("BACK BUT", "rEACHED HERE FOR BACK");
         if (sys_state.menu_state == MENU_FACTORY_RESET)
         {
             ESP_LOGI("FACTORY_RESET", "We are at factory reset screen");
