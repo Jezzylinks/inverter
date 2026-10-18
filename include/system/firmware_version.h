@@ -2,6 +2,6 @@
 #define FIRMWARE_VERSION_H
 
 /* Keep this value aligned with the current released application version. */
-#define INVERTER_FIRMWARE_VERSION "v1.5.4"
+#define INVERTER_FIRMWARE_VERSION "v1.5.5"
 
 #endif /* FIRMWARE_VERSION_H */
