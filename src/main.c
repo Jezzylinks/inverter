@@ -445,11 +445,34 @@ void app_main(void)
     else
     {
         ESP_LOGW(APP_TAG,
-                 "POST failed or startup unhealthy — background services suppressed");
+                 "POST failed or startup unhealthy — cloud reporting suppressed");
+        /* Owner decision: firmware update must work whether startup passed or
+         * failed (a hardware/POST fault is exactly when a fixed image may be
+         * needed). Bring up the same Wi-Fi/network/OTA services as a healthy
+         * start. This does NOT change protection: system_ready stays false and
+         * inverter output stays inhibited below. Cloud telemetry stays off
+         * because its readings are not trustworthy after a failed check. */
+        if (app_services_init() != ESP_OK)
+        {
+            ESP_LOGW(APP_TAG, "Network/update services unavailable after startup fault");
+        }
     }
 
     sys_state.system_ready = startup_healthy;
-    const esp_err_t rollback_err = ota_service_validate_running_app(startup_healthy);
+
+    /* Owner decision: a new OTA image is kept once it has reached runtime,
+     * independent of the POST result. POST/ADC/fan failures describe the
+     * hardware state, not whether this firmware is broken, so they must not
+     * roll a freshly installed image back. A firmware that crashes, hangs or
+     * resets before this point is still rolled back automatically by the
+     * bootloader (the image stays PENDING_VERIFY until this call). */
+    if (!startup_healthy && post_completed)
+    {
+        ESP_LOGW(APP_TAG,
+                 "Startup fault latched, but firmware reached runtime; "
+                 "keeping this image (output stays inhibited)");
+    }
+    const esp_err_t rollback_err = ota_service_validate_running_app(post_completed);
     if (rollback_err != ESP_OK && rollback_err != ESP_ERR_INVALID_STATE &&
         rollback_err != ESP_ERR_NOT_SUPPORTED)
     {
