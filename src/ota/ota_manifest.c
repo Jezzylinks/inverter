@@ -36,16 +36,20 @@ static const char *TAG = "OTA_TLS_DIAG";
  */
 static void ota_log_ntp_diagnostics(void)
 {
-    struct addrinfo hints = {0};
-    struct addrinfo *result = NULL;
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_DGRAM;
-    const int rc = getaddrinfo(NTP_DEFAULT_SERVER, "123", &hints, &result);
-    ESP_LOGW(TAG, "NTP diag: DNS lookup of %s %s (rc=%d)", NTP_DEFAULT_SERVER,
-             (rc == 0 && result != NULL) ? "ok" : "FAILED", rc);
-    if (result != NULL)
+    const char *const hosts[] = {NTP_DEFAULT_SERVER, NTP_FALLBACK_SERVER};
+    for (size_t i = 0U; i < sizeof(hosts) / sizeof(hosts[0]); ++i)
     {
-        freeaddrinfo(result);
+        struct addrinfo hints = {0};
+        struct addrinfo *result = NULL;
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_DGRAM;
+        const int rc = getaddrinfo(hosts[i], "123", &hints, &result);
+        ESP_LOGW(TAG, "NTP diag: DNS lookup of %s %s (rc=%d)", hosts[i],
+                 (rc == 0 && result != NULL) ? "ok" : "FAILED", rc);
+        if (result != NULL)
+        {
+            freeaddrinfo(result);
+        }
     }
     ESP_LOGW(TAG, "NTP diag: sntp_enabled=%d sync_status=%d (0=reset 1=completed 2=in-progress)",
              (int)esp_sntp_enabled(), (int)sntp_get_sync_status());
