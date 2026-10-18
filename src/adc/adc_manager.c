@@ -421,12 +421,6 @@ static bool process_adc_reading(const adc_channel_config_t *config,
     {
         sys_state.error.error_flags &= ~config->error_flag;
     }
-    if (!telemetry_valid)
-    {
-        ESP_LOGW(ADC_MANAGER_DRIVER_TAG,
-                 "%s sample outside safe range: %.2fV [%.2f, %.2f]",
-                 config->name, actual_voltage, telemetry_min, telemetry_max);
-    }
     return telemetry_valid;
 }
 
