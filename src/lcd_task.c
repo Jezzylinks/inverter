@@ -82,6 +82,8 @@ void lcd_show_memory_usage_diagnostic(void)
 #define LCD_BLINK_INTERVAL_MS 500
 #define LCD_FLASH_QUEUE_DEPTH 4
 #define SYSTEM_STARTUP_DISPLAY_DURATION_MS 1500U
+#define LCD_RECOVER_RETRY_MS 1000U /* min gap between failed-write resyncs */
+#define LCD_FORCE_REDRAW_MS 10000U /* periodic full row rewrite, no clear  */
 
 static uint8_t loading_progress(uint32_t elapsed, uint32_t duration);
 
@@ -2147,6 +2149,8 @@ void lcd_task(void *arg)
     static lcd_screen_id_t last_screen = LCD_SCREEN_COUNT;
     static uint32_t standby_page_last_change_ms = 0U;
     static uint32_t last_diagnostic_refresh_ms = 0U;
+    uint32_t last_lcd_recover_ms = 0U;
+    uint32_t last_lcd_refresh_ms = 0U;
     bool need_clear = true;
 
     sys_lcd.main.sub_page = MAIN_SUB_OUTPUT;
@@ -2175,6 +2179,44 @@ void lcd_task(void *arg)
     {
         /* ====== STEP 1: LCD health ====== */
         lcd_watchdog_feed();
+
+        /* ====== STEP 1b: LCD I2C RECOVERY ======
+         * A failed I2C write (e.g. a timeout while flash/TLS work starves the
+         * I2C interrupt) leaves the HD44780's 4-bit nibble alignment shifted;
+         * from then on every byte is decoded as garbage and the row cache would
+         * keep it on screen. The driver refuses further writes once a write has
+         * failed, so resynchronise the controller here, between draw passes,
+         * and repaint from scratch. Retry no more than once per interval while
+         * the bus is still unreachable. */
+        if (lcd_is_initialized() && lcd_io_error_pending())
+        {
+            const uint32_t recover_now_ms = _lcd_get_time_ms();
+            if (recover_now_ms - last_lcd_recover_ms >= LCD_RECOVER_RETRY_MS)
+            {
+                last_lcd_recover_ms = recover_now_ms;
+                ESP_LOGW(TAG, "LCD write failed (%lu total); resynchronising",
+                         (unsigned long)lcd_io_error_count());
+                if (lcd_resync() == ESP_OK)
+                {
+                    lcd_init_cgram();
+                    reset_row_cache();
+                    need_clear = true;
+                    last_lcd_refresh_ms = recover_now_ms;
+                }
+            }
+        }
+        else if (lcd_is_initialized())
+        {
+            /* Cheap self-heal for a character corrupted without an I2C error:
+             * periodically forget what is on screen so every row is rewritten.
+             * Nothing is cleared, so there is no flicker. */
+            const uint32_t refresh_now_ms = _lcd_get_time_ms();
+            if (refresh_now_ms - last_lcd_refresh_ms >= LCD_FORCE_REDRAW_MS)
+            {
+                last_lcd_refresh_ms = refresh_now_ms;
+                reset_row_cache();
+            }
+        }
 
         /* ====== STEP 2: SNAPSHOT STATE ====== */
         menu_state_t menu_state_snapshot;

@@ -63,6 +63,30 @@ extern "C"
     bool lcd_is_initialized(void);
 
     /**
+     * @brief True when an I2C write to the LCD has failed since the last
+     * successful lcd_resync()/lcd_init().
+     *
+     * The display is driven in 4-bit mode, so a lost write leaves the
+     * controller's nibble alignment shifted and everything after it shows as
+     * garbage. While this is true the driver refuses further writes.
+     */
+    bool lcd_io_error_pending(void);
+
+    /** @brief Lifetime count of failed I2C writes to the LCD. */
+    uint32_t lcd_io_error_count(void);
+
+    /**
+     * @brief Re-synchronise the HD44780 after a failed write.
+     *
+     * Re-runs the 4-bit initialisation-by-instruction sequence without
+     * clearing the display, and re-arms the driver on success. The caller must
+     * then redraw (and reload CGRAM glyphs). Call only from the task that owns
+     * the LCD.
+     * @return ESP_OK on success; an I2C error if the LCD is still unreachable.
+     */
+    esp_err_t lcd_resync(void);
+
+    /**
      * @brief Probe the LCD's I2C address for an ACK, without writing any
      * command/data bytes -- safe to call at any time, won't disturb
      * whatever is currently on the display.
