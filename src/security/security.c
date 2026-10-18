@@ -8,7 +8,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "mbedtls/sha256.h"
+#include "mbedtls/md.h"
 #include "nvs.h"
 #include "system/system_state.h"
 
@@ -68,19 +68,27 @@ static esp_err_t compute_hash(const uint8_t pin[SECURITY_PIN_LEN],
         return ESP_ERR_INVALID_ARG;
     }
 
-    mbedtls_sha256_context ctx;
-    mbedtls_sha256_init(&ctx);
-    int result = mbedtls_sha256_starts(&ctx, 0);
+    /* mbedtls_md API: the library allocates the real SHA-256 context, so the
+     * ESP32 hardware-SHA context (larger than the stock struct) can never
+     * overrun a stack/heap object sized by this file. Digest is unchanged:
+     * SHA-256(salt || pin). */
+    mbedtls_md_context_t ctx;
+    mbedtls_md_init(&ctx);
+    const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    int result = (info != NULL) ? mbedtls_md_setup(&ctx, info, 0) : -1;
     if (result == 0) {
-        result = mbedtls_sha256_update(&ctx, salt, SALT_LEN);
+        result = mbedtls_md_starts(&ctx);
     }
     if (result == 0) {
-        result = mbedtls_sha256_update(&ctx, pin, SECURITY_PIN_LEN);
+        result = mbedtls_md_update(&ctx, salt, SALT_LEN);
     }
     if (result == 0) {
-        result = mbedtls_sha256_finish(&ctx, out_hash);
+        result = mbedtls_md_update(&ctx, pin, SECURITY_PIN_LEN);
     }
-    mbedtls_sha256_free(&ctx);
+    if (result == 0) {
+        result = mbedtls_md_finish(&ctx, out_hash);
+    }
+    mbedtls_md_free(&ctx);
     return (result == 0) ? ESP_OK : ESP_FAIL;
 }
 
