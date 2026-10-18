@@ -1570,7 +1570,7 @@ static void app_services_show_ota_lcd_impl(const app_ota_status_t *status,
      * message, then the running version, and return to the OTA menu. */
     if (status->state == APP_OTA_IDLE) {
         char version_line[LCD_LINE_SIZE];
-        snprintf(version_line, sizeof(version_line), "VERSION %s",
+        snprintf(version_line, sizeof(version_line), "VERSION %.12s",
                  status->installed_version);
         LCD_LOCK();
         sys_state.menu_state = MENU_OTA;
