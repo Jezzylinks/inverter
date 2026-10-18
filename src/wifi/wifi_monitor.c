@@ -185,7 +185,6 @@ static bool wifi_monitor_internet_test(void)
         }
 
         if (wifi_monitor_tcp_connect_test(targets[i], 443U)) {
-            ESP_LOGI(TAG, "Internet TCP test: %s:443 reachable", targets[i]);
             return true;
         }
     }
