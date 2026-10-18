@@ -19,7 +19,7 @@ static const char *TAG = "OTA_SERVICE";
 /* TEMPORARY DIAGNOSTIC: walk the whole heap at key points of the download and
  * log the first step after which it is corrupted. Set to 0 (or delete the
  * OTA_HEAP_CHECK lines) once the corruption source is found. */
-#define OTA_HEAP_DIAG 1
+#define OTA_HEAP_DIAG 0
 #if OTA_HEAP_DIAG
 #define OTA_HEAP_CHECK(label)                                                  \
     do {                                                                       \
