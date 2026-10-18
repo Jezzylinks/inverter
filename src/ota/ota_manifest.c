@@ -18,7 +18,7 @@ static const char *TAG = "OTA_TLS_DIAG";
 
 /* 2024-01-01 UTC: anything earlier means the RTC was never set by SNTP. */
 #define OTA_MIN_VALID_EPOCH 1704067200
-#define OTA_TIME_SYNC_WAIT_MS 15000U
+#define OTA_TIME_SYNC_WAIT_MS 5000U
 #define OTA_TIME_SYNC_POLL_MS 500U
 /* A TLS handshake needs roughly 40 KB of heap and, within it, one block big
  * enough for the 16 KB record buffer when dynamic buffers are off. */
@@ -35,7 +35,11 @@ static const char *TAG = "OTA_TLS_DIAG";
  */
 static void ota_wait_for_valid_time(void)
 {
-    if (time(NULL) >= OTA_MIN_VALID_EPOCH)
+    /* The certificate bundle validated GitHub's chain on a device whose clock
+     * was never set, so a missing clock is not fatal. Wait at most once per
+     * boot so every check/install does not add another delay. */
+    static bool s_wait_already_timed_out;
+    if (time(NULL) >= OTA_MIN_VALID_EPOCH || s_wait_already_timed_out)
     {
         return;
     }
@@ -52,6 +56,7 @@ static void ota_wait_for_valid_time(void)
             return;
         }
     }
+    s_wait_already_timed_out = true;
     ESP_LOGE(TAG, "SNTP did not set the clock; TLS certificate dates cannot be verified");
 }
 

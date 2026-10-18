@@ -85,10 +85,19 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
         goto cleanup;
     }
 
-    result = esp_ota_begin(update_partition, expected_size, &ota_handle);
+    ESP_LOGI(TAG, "Download accepted (%u bytes); preparing partition %s",
+             (unsigned)expected_size, update_partition->label);
+    /* OTA_WITH_SEQUENTIAL_WRITES erases each sector just before it is written
+     * instead of erasing the whole image up front. The up-front erase of a
+     * ~1 MB image is one long flash operation (cache disabled, both cores
+     * stalled) and was followed by a watchdog reset on this device. */
+    result = esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES,
+                           &ota_handle);
     if (result != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(result));
         goto cleanup;
     }
+    ESP_LOGI(TAG, "OTA partition ready; downloading");
     ota_started = true;
     if (cancel_cb && cancel_cb(context)) {
         result = ESP_ERR_INVALID_STATE;
