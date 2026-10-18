@@ -10,6 +10,7 @@
 #include "esp_log.h"
 #include "esp_random.h"
 
+#include "mbedtls/md.h"
 #include "mbedtls/sha256.h"
 
 #include "nvs.h"
@@ -427,67 +428,16 @@ esp_err_t wifi_security_sha256(
         return ESP_ERR_INVALID_ARG;
     }
 
-    mbedtls_sha256_context ctx;
-
-    mbedtls_sha256_init(&ctx);
-
-#if MBEDTLS_VERSION_MAJOR >= 3
-
-    if (mbedtls_sha256_starts(&ctx, 0) != 0)
+    /* One-shot mbedtls_md: the library owns the SHA-256 context, avoiding the
+     * stock-vs-ESP32-hardware mbedtls_sha256_context size mismatch. Output is
+     * the same standard SHA-256 digest as before. */
+    const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (info == NULL)
     {
-        mbedtls_sha256_free(&ctx);
         return ESP_FAIL;
     }
 
-#else
-
-    if (mbedtls_sha256_starts_ret(&ctx, 0) != 0)
-    {
-        mbedtls_sha256_free(&ctx);
-        return ESP_FAIL;
-    }
-
-#endif
-
-#if MBEDTLS_VERSION_MAJOR >= 3
-
-    if (mbedtls_sha256_update(&ctx, input, length) != 0)
-    {
-        mbedtls_sha256_free(&ctx);
-        return ESP_FAIL;
-    }
-
-#else
-
-    if (mbedtls_sha256_update_ret(&ctx, input, length) != 0)
-    {
-        mbedtls_sha256_free(&ctx);
-        return ESP_FAIL;
-    }
-
-#endif
-
-#if MBEDTLS_VERSION_MAJOR >= 3
-
-    if (mbedtls_sha256_finish(&ctx, hash) != 0)
-    {
-        mbedtls_sha256_free(&ctx);
-        return ESP_FAIL;
-    }
-
-#else
-
-    if (mbedtls_sha256_finish_ret(&ctx, hash) != 0)
-    {
-        mbedtls_sha256_free(&ctx);
-        return ESP_FAIL;
-    }
-
-#endif
-
-    mbedtls_sha256_free(&ctx);
-
-    return ESP_OK;
+    return (mbedtls_md(info, input, length, hash) == 0) ? ESP_OK : ESP_FAIL;
 }
 
 /*----------------------------------------------------------
