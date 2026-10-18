@@ -10,8 +10,11 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_sntp.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "lwip/netdb.h"
+#include "server/ntp/ntp_client.h"
 #include "utility/quiet_hours.h"
 
 static const char *TAG = "OTA_TLS_DIAG";
@@ -25,6 +28,28 @@ static const char *TAG = "OTA_TLS_DIAG";
 #define OTA_TLS_MIN_LARGEST_BLOCK 20000U
 /* Room for the redirect URL copies plus a new TLS session. */
 #define OTA_REDIRECT_MIN_LARGEST_BLOCK 6000U
+
+/*
+ * Runs once, only when the clock never got set. Separates the usual causes:
+ * DNS cannot resolve the NTP server (lookup FAILED), versus DNS fine but no
+ * reply (UDP port 123 blocked by the network, sync status still RESET).
+ */
+static void ota_log_ntp_diagnostics(void)
+{
+    struct addrinfo hints = {0};
+    struct addrinfo *result = NULL;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    const int rc = getaddrinfo(NTP_DEFAULT_SERVER, "123", &hints, &result);
+    ESP_LOGW(TAG, "NTP diag: DNS lookup of %s %s (rc=%d)", NTP_DEFAULT_SERVER,
+             (rc == 0 && result != NULL) ? "ok" : "FAILED", rc);
+    if (result != NULL)
+    {
+        freeaddrinfo(result);
+    }
+    ESP_LOGW(TAG, "NTP diag: sntp_enabled=%d sync_status=%d (0=reset 1=completed 2=in-progress)",
+             (int)esp_sntp_enabled(), (int)sntp_get_sync_status());
+}
 
 /*
  * Certificate validity is checked against the system clock, so a handshake
@@ -58,6 +83,7 @@ static void ota_wait_for_valid_time(void)
     }
     s_wait_already_timed_out = true;
     ESP_LOGE(TAG, "SNTP did not set the clock; TLS certificate dates cannot be verified");
+    ota_log_ntp_diagnostics();
 }
 
 static void ota_log_heap_before_tls(void)

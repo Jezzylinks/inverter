@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include "esp_sntp.h"
 #include "esp_log.h"
+#include "server/ntp/ntp_client.h"
 #include "system/system_state.h"
 
 extern system_state_t sys_state;
@@ -22,16 +23,13 @@ static void time_sync_notification_cb(struct timeval *tv)
 
 void quiet_hours_sntp_init(void)
 {
-    /* Classic esp_sntp API (stable across ESP-IDF 4.x/5.x) rather than
-     * the newer esp_netif_sntp wrapper, which needs a more recent IDF
-     * than this project may be pinned to. POLL mode re-syncs
-     * periodically on its own once network access exists -- no need to
-     * manually kick it beyond the one nudge in quiet_hours_request_sync(). */
-    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    ESP_LOGI("QUIET", "REACHED HERE");
-    esp_sntp_setservername(0, "pool.ntp.org");
-    sntp_set_time_sync_notification_cb(time_sync_notification_cb);
-    esp_sntp_init();
+    /* SNTP is already configured and started by ntp_client_init(), which the
+     * caller runs first. Initialising it a second time here re-set the
+     * operating mode and server on a running client and replaced the NTP
+     * client's own sync callback. Just subscribe to its sync notification;
+     * POLL mode re-syncs periodically on its own, and
+     * quiet_hours_request_sync() gives it a nudge. */
+    (void)ntp_client_register_callback(time_sync_notification_cb);
 }
 
 void quiet_hours_request_sync(void)
