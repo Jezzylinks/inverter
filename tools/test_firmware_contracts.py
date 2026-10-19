@@ -503,7 +503,7 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("void display_timeout_tick(void);", runtime_header)
         self.assertIn("display_timeout_tick();", main)
         self.assertNotIn('xTaskCreatePinnedToCore(display_timeout_task, "Display Timeout"', runtime)
-        self.assertNotIn("void display_timeout_task(void *arg)\\n{", runtime)
+        self.assertNotIn("void display_timeout_task(void *arg)", runtime)
 
     def test_startup_to_normal_transition_occurs_only_after_startup_release(self):
         root = Path(__file__).parents[1]
