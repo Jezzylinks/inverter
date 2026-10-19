@@ -1,6 +1,7 @@
 #include "ota/ota_download.h"
 
 #include <ctype.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -9,12 +10,35 @@
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "ota/ota_manifest.h"
 #include "ota/ota_verify.h"
 
 static const char *TAG = "OTA_SERVICE";
+
+/* Capture both general byte-addressable heap and internal RAM. HTTPS/TLS
+ * allocations can require internal memory even when total free heap looks
+ * healthy, so report the largest blocks as well as total free space. */
+static void ota_log_heap_snapshot(const char *stage)
+{
+    const uint32_t free_8bit = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const uint32_t largest_8bit =
+        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    const uint32_t free_internal =
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const uint32_t largest_internal =
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const uint32_t minimum_ever = (uint32_t)esp_get_minimum_free_heap_size();
+
+    ESP_LOGI(TAG,
+             "MEM[%s] 8bit_free=%u 8bit_largest=%u internal_free=%u "
+             "internal_largest=%u min_ever_free=%u",
+             stage ? stage : "unknown", (unsigned)free_8bit,
+             (unsigned)largest_8bit, (unsigned)free_internal,
+             (unsigned)largest_internal, (unsigned)minimum_ever);
+}
 
 /* A dropped connection mid-download is resumed with an HTTP Range request
  * instead of failing the whole update. The SHA-256 and the OTA write offset are
@@ -78,6 +102,11 @@ static esp_err_t ota_wait_for_heap(ota_download_cancel_cb_t cancel_cb,
         vTaskDelay(pdMS_TO_TICKS(OTA_RESUME_HEAP_POLL_MS));
         waited_ms += OTA_RESUME_HEAP_POLL_MS;
     }
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <
+        OTA_RESUME_MIN_LARGEST_BLOCK) {
+        ota_log_heap_snapshot("resume heap recovery timeout");
+        return ESP_ERR_NO_MEM;
+    }
     return ESP_OK;
 }
 
@@ -102,9 +131,7 @@ static esp_err_t ota_download_resume(esp_http_client_handle_t client,
     if (err != ESP_OK) {
         return err;
     }
-    ESP_LOGI(TAG, "Heap before resume: free=%u largest_block=%u",
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    ota_log_heap_snapshot("before HTTPS resume");
 
     err = esp_http_client_set_url(client, url);
     if (err != ESP_OK) {
@@ -171,8 +198,10 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
         .keep_alive_enable = true,
         .crt_bundle_attach = esp_crt_bundle_attach,
     };
+    ota_log_heap_snapshot("before HTTP/TLS client init");
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (!client) {
+        ota_log_heap_snapshot("HTTP/TLS client init failed");
         return ESP_ERR_NO_MEM;
     }
 
@@ -183,12 +212,16 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
      * follow it here, otherwise the 302 is mistaken for a bad image. */
     int64_t content_length = 0;
     int status_code = 0;
+    ota_log_heap_snapshot("before HTTPS open");
     esp_err_t result = ota_http_open_following_redirects(client, &content_length,
                                                          &status_code);
     if (result != ESP_OK) {
+        ESP_LOGE(TAG, "HTTPS open failed: %s", esp_err_to_name(result));
+        ota_log_heap_snapshot("HTTPS open failed");
         esp_http_client_cleanup(client);
         return result;
     }
+    ota_log_heap_snapshot("after HTTPS open");
     if (cancel_cb && cancel_cb(context)) {
         result = ESP_ERR_INVALID_STATE;
         goto cleanup;
@@ -301,6 +334,7 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
                      (unsigned)received, (unsigned)expected_size, read_len,
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
                      (unsigned)largest);
+            ota_log_heap_snapshot("download read interrupted");
             if (largest < OTA_RESUME_MIN_LARGEST_BLOCK) {
                 low_heap_failure = true;
             }
