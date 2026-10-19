@@ -48,6 +48,7 @@ void inverter_emergency_shutdown(void);
 void log_all_error_flags(uint32_t flags);
 void update_lcd_activity_state(void);
 void handle_menu_timeout(void);
+void display_timeout_tick(void);
 
 #ifdef __cplusplus
 }
