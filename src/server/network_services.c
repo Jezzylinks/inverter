@@ -26,7 +26,12 @@
 #define NETWORK_HTTP_PORT 80U
 #define NETWORK_HTTP_STACK_SIZE 8192U
 #define NETWORK_SYNC_TASK_STACK_SIZE 8192U
-#define NETWORK_HTTP_MAX_URI_HANDLERS 64U
+/* JSON API (64 handlers incl. OPTIONS) + dashboard (3) + WebSocket (1) = 68.
+ * Each spare slot costs one pointer, so keep generous headroom: when this was
+ * 64 the last handlers failed with ESP_ERR_HTTPD_HANDLERS_FULL, the WebSocket
+ * registration failed, start was torn down and retried on every Wi-Fi status
+ * change, leaking heap until allocations failed. */
+#define NETWORK_HTTP_MAX_URI_HANDLERS 96U
 static esp_err_t network_services_start_station_services(void);
 static esp_err_t network_services_stop_station_services(void);
 
