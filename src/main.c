@@ -533,6 +533,7 @@ void app_main(void)
     {
         update_lcd_activity_state();
         handle_menu_timeout();
+        display_timeout_tick();
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 

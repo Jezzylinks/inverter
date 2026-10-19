@@ -1300,7 +1300,6 @@ void update_led_status();
 void perform_factory_reset();
 void show_system_info();
 void update_activity();
-void display_timeout_task(void *arg);
 esp_err_t lcd_power_init();
 void LCD_power(bool enable);
 void lcd_set_brightness(uint8_t brightness);
@@ -1801,21 +1800,8 @@ esp_err_t init_hardware(void)
     esp_sleep_enable_timer_wakeup(3600ULL * 1000000ULL);
 #endif
 
-#if CONFIG_USE_DISPLAY_TIMEOUT_TASK
-    // ==========================================================
-    // Create Display Timeout Task
-    // ==========================================================
-    ESP_LOGI("STARTUP", "display timeout task creation");
-    if (xTaskCreatePinnedToCore(display_timeout_task, "Display Timeout", 2048,
-                                NULL, 5, NULL, APP_CORE_SYSTEM) != pdPASS)
-    {
-        ESP_LOGE(APP_TAG, "Display timeout task creation failed");
-        if (init_err == ESP_OK)
-        {
-            init_err = ESP_ERR_NO_MEM;
-        }
-    }
-#endif
+/* Display timeout/standby work is serviced by app_main's existing loop.
+ * Avoid allocating a separate 2 KiB task stack for this periodic check. */
     ESP_LOGI("STARTUP", "init_hardware(): COMPLETE");
     return init_err;
 }
@@ -6864,37 +6850,29 @@ static bool ui_standby_allowed(void)
 }
 
 // ================== UI TIMEOUT / STANDBY TASK ==================
-void display_timeout_task(void *arg)
+/* Called by the existing app_main loop instead of creating a dedicated
+ * 2 KiB Display Timeout task. Menu timeout handling already runs in app_main;
+ * this tick retains the original one-second cadence for display standby. */
+void display_timeout_tick(void)
 {
-    if (!task_watchdog_register("display_timeout_task"))
+    static int64_t last_check_ms = 0;
+    const int64_t now_ms = esp_timer_get_time() / 1000;
+
+    if (last_check_ms != 0 && (now_ms - last_check_ms) < 1000)
     {
-        vTaskDelete(NULL);
         return;
     }
+    last_check_ms = now_ms;
 
-    while (1)
+    /* Display-only standby saver; never changes inverter electrical state. */
+    if (ui_standby_allowed() &&
+        now_ms - sys_state.last_activity_time >= UI_STANDBY_TIMEOUT_MS)
     {
-        task_watchdog_feed();
-
-        /* Menus, editors, detail pages and other non-home UI return home
-         * after five minutes, except while a service operation is active. */
-        handle_menu_timeout();
-
-        /* After 10 minutes with no user action on the home UI, enter the
-         * display-only standby saver.  This deliberately does NOT change the
-         * inverter's electrical operating state. */
-        const int64_t now_ms = esp_timer_get_time() / 1000;
-        if (ui_standby_allowed() &&
-            now_ms - sys_state.last_activity_time >= UI_STANDBY_TIMEOUT_MS)
-        {
-            const uint8_t soc = (uint8_t)fmaxf(0.0f,
-                                               fminf(100.0f, battery_estimator_get_soc(&bat_estimate)));
-            const bool ac_connected = sys_state.inverter.connected;
-            lcd_show_standby(sys_state.inverter.battery.voltage,
-                             soc, ac_connected);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        const uint8_t soc = (uint8_t)fmaxf(0.0f,
+                                           fminf(100.0f, battery_estimator_get_soc(&bat_estimate)));
+        const bool ac_connected = sys_state.inverter.connected;
+        lcd_show_standby(sys_state.inverter.battery.voltage,
+                         soc, ac_connected);
     }
 }
 
