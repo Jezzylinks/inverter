@@ -43,6 +43,7 @@ static bool s_dashboard_running;
 static bool s_station_ready;
 static bool s_internet_ready;
 static bool s_station_services_running;
+static bool s_suspended_for_ota;
 static bool s_sync_scheduled;
 /* Detect status updates that arrive while the sync worker is already running. */
 static uint32_t s_status_generation;
@@ -539,6 +540,46 @@ esp_err_t network_services_stop(void)
     cleanup_http_services();
     ESP_LOGI(NETWORK_SERVICES_TAG, "Local network services stopped");
     return ESP_OK;
+}
+
+esp_err_t network_services_suspend_for_ota(void)
+{
+    if (!s_initialized) {
+        return ESP_OK;
+    }
+    ESP_LOGI(NETWORK_SERVICES_TAG,
+             "Suspending local network services for firmware download");
+    const esp_err_t err = network_services_stop();
+    s_suspended_for_ota = true;
+    return err;
+}
+
+void network_services_resume_after_ota(void)
+{
+    if (!s_initialized || !s_suspended_for_ota) {
+        return;
+    }
+    s_suspended_for_ota = false;
+    s_teardown_pending = false;
+    ESP_LOGI(NETWORK_SERVICES_TAG,
+             "Resuming local network services after firmware download");
+    bool schedule = false;
+    services_lock();
+    ++s_status_generation;
+    if (!s_sync_scheduled) {
+        s_sync_scheduled = true;
+        schedule = true;
+    }
+    services_unlock();
+    if (schedule && xTaskCreatePinnedToCore(network_services_sync_task,
+                                            "net_services_sync",
+                                            NETWORK_SYNC_TASK_STACK_SIZE, NULL, 4U,
+                                            NULL, APP_CORE_SYSTEM) != pdPASS) {
+        services_lock();
+        s_sync_scheduled = false;
+        services_unlock();
+        ESP_LOGW(NETWORK_SERVICES_TAG, "Unable to schedule network-service resume");
+    }
 }
 
 bool network_services_is_running(void)
