@@ -53,8 +53,14 @@ static void ota_log_heap_snapshot(const char *stage)
 #define OTA_RESUME_BACKOFF_MS 1500U
 #define OTA_RESUME_HEAP_WAIT_MS 4000U
 #define OTA_RESUME_HEAP_POLL_MS 250U
-/* Same threshold the TLS diagnostics already warn about. */
-#define OTA_RESUME_MIN_LARGEST_BLOCK 20000U
+/* Comfortable level: wait (bounded) for the largest free block to reach this,
+ * but do not refuse just because it is not reached. Same value the TLS
+ * diagnostics warn about. */
+#define OTA_RESUME_TARGET_LARGEST_BLOCK 20000U
+/* Hard floor: one full TLS record needs a contiguous 16749-byte block, so below
+ * this the connection cannot work and a resume is refused instead of tried
+ * (margin covers allocator overhead and small concurrent allocations). */
+#define OTA_RESUME_MIN_LARGEST_BLOCK 17500U
 
 /* TEMPORARY DIAGNOSTIC: walk the whole heap at key points of the download and
  * log the first step after which it is corrupted. Set to 0 (or delete the
@@ -94,7 +100,7 @@ static esp_err_t ota_wait_for_heap(ota_download_cancel_cb_t cancel_cb,
 {
     uint32_t waited_ms = 0U;
     while (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <
-               OTA_RESUME_MIN_LARGEST_BLOCK &&
+               OTA_RESUME_TARGET_LARGEST_BLOCK &&
            waited_ms < OTA_RESUME_HEAP_WAIT_MS) {
         if (cancel_cb && cancel_cb(context)) {
             return ESP_ERR_INVALID_STATE;
@@ -102,6 +108,8 @@ static esp_err_t ota_wait_for_heap(ota_download_cancel_cb_t cancel_cb,
         vTaskDelay(pdMS_TO_TICKS(OTA_RESUME_HEAP_POLL_MS));
         waited_ms += OTA_RESUME_HEAP_POLL_MS;
     }
+    /* Only refuse when the block is clearly too small; between the floor and
+     * the target the resume is still attempted. */
     if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <
         OTA_RESUME_MIN_LARGEST_BLOCK) {
         ota_log_heap_snapshot("resume heap recovery timeout");
