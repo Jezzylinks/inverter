@@ -1,6 +1,7 @@
 #include "storage/nvs_manager.h"
 #include "app/app_services.h"
 #include "app/app_menu.h"
+#include "diagnostics/stack_report.h"
 #include "system/task_watchdog.h"
 #include "system/core_affinity.h"
 
@@ -3609,6 +3610,10 @@ esp_err_t app_services_confirm_update(void)
         ESP_LOGW(APP_SERVICES_TAG,
                  "Internet probe is not yet positive; attempting HTTPS install");
     }
+    /* Measured stack headroom of every live task, taken at the busiest
+     * moment (Wi-Fi up, menus used, about to open a TLS session). Use it to
+     * trim stack sizes; see diagnostics/stack_report.h. */
+    stack_report_log("before OTA install");
     const esp_err_t err = ota_service_start_from_csv(manifest_url);
     if (err != ESP_OK)
     {
