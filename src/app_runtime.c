@@ -1300,7 +1300,6 @@ void update_led_status();
 void perform_factory_reset();
 void show_system_info();
 void update_activity();
-void display_timeout_task(void *arg);
 esp_err_t lcd_power_init();
 void LCD_power(bool enable);
 void lcd_set_brightness(uint8_t brightness);
