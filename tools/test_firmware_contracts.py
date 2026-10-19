@@ -463,7 +463,6 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("esp_err_t init_err = ESP_OK;", hardware)
         self.assertIn("return init_err;", hardware)
         self.assertIn("init_err = buzzer_err;", hardware)
-        self.assertIn("init_err = ESP_ERR_NO_MEM;", hardware)
 
         menu_start = runtime.index("esp_err_t init_menu_system()", runtime.index("// =============== INITIALIZE MENU SYSTEM"))
         menu_end = runtime.index("esp_err_t restore_from_deep_sleep()", menu_start)
@@ -491,6 +490,20 @@ class FirmwareContracts(unittest.TestCase):
         restore_body = runtime[restore_start:runtime.index(
             "void enter_deep_sleep", restore_start)]
         self.assertIn("return ESP_OK;", restore_body)
+
+    def test_display_timeout_is_serviced_by_main_loop_without_extra_task(self):
+        root = Path(__file__).parents[1]
+        main = root.joinpath("src", "main.c").read_text()
+        runtime = root.joinpath("src", "app_runtime.c").read_text()
+        runtime_header = root.joinpath("include", "app", "app_runtime.h").read_text()
+
+        # Display timeout checks now reuse app_main's existing loop instead of
+        # allocating a separate 2 KiB FreeRTOS task stack.
+        self.assertIn("void display_timeout_tick(void)", runtime)
+        self.assertIn("void display_timeout_tick(void);", runtime_header)
+        self.assertIn("display_timeout_tick();", main)
+        self.assertNotIn('xTaskCreatePinnedToCore(display_timeout_task, "Display Timeout"', runtime)
+        self.assertNotIn("void display_timeout_task(void *arg)", runtime)
 
     def test_startup_to_normal_transition_occurs_only_after_startup_release(self):
         root = Path(__file__).parents[1]
