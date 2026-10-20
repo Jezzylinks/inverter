@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdint.h>
 
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -21,6 +22,8 @@
 #include "wifi/wifi_controller.h"
 #include "wifi/wifi_manager.h"
 #include "wifi/wifi_dns_server.h"
+
+static void log_ota_heap(const char *stage);
 
 #define NETWORK_SERVICES_TAG "NET_SERVICES"
 #define NETWORK_HTTP_PORT 80U
@@ -514,6 +517,7 @@ static esp_err_t network_services_start_locked(void)
     ESP_LOGI(NETWORK_SERVICES_TAG, "Local network services started for %s mode",
              wifi_manager_get_mode() == WIFI_MODE_STA ? "STA" :
              wifi_manager_get_mode() == WIFI_MODE_AP ? "AP" : "APSTA");
+    log_ota_heap("after start");
     return ESP_OK;
 }
 
@@ -606,6 +610,19 @@ esp_err_t network_services_stop(void)
     return err;
 }
 
+/* Heap trace around the OTA suspend/resume cycle. Free heap after a stop was
+ * ~12 KB lower on the second cycle than the first, so compare these lines
+ * between cycles: if the "after stop" numbers do not return to the same level,
+ * a service leaks across stop/start. */
+static void log_ota_heap(const char *stage)
+{
+    ESP_LOGI(NETWORK_SERVICES_TAG,
+             "HEAP[%s] free=%u largest=%u min_ever=%u", stage,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+}
+
 esp_err_t network_services_suspend_for_ota(void)
 {
     if (!s_initialized) {
@@ -613,8 +630,10 @@ esp_err_t network_services_suspend_for_ota(void)
     }
     ESP_LOGI(NETWORK_SERVICES_TAG,
              "Suspending local network services for firmware download");
+    log_ota_heap("before stop");
     const esp_err_t err = network_services_stop();
     s_suspended_for_ota = true;
+    log_ota_heap("after stop");
     return err;
 }
 
@@ -627,6 +646,7 @@ void network_services_resume_after_ota(void)
     s_teardown_pending = false;
     ESP_LOGI(NETWORK_SERVICES_TAG,
              "Resuming local network services after firmware download");
+    log_ota_heap("before resume");
     bool schedule = false;
     services_lock();
     ++s_status_generation;
