@@ -330,8 +330,10 @@ class FirmwareContracts(unittest.TestCase):
 
     def test_post_result_propagates_completion_on_pass_and_failure(self):
         text = Path(__file__).parents[1].joinpath("src", "main.c").read_text()
+        # Match the helper body itself; unrelated helper functions may now
+        # appear between it and app_main().
         result_writer = re.search(
-            r"static void post_show_result_and_notify\(.*?\n}\nvoid app_main",
+            r"static void post_show_result_and_notify\(.*?\n}",
             text,
             re.DOTALL,
         )
