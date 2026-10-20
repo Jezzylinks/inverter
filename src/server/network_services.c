@@ -28,11 +28,15 @@ static void log_ota_heap(const char *stage);
 
 #define NETWORK_SERVICES_TAG "NET_SERVICES"
 #define NETWORK_HTTP_PORT 80U
-#define NETWORK_HTTP_STACK_SIZE 8192U
+/* The observed HTTP task stack high-water mark was about 900 bytes used
+ * out of 8192. Start with 4096 bytes, but validate dashboard/API/WebSocket
+ * peak-load paths on hardware before treating this as production-safe. */
+#define NETWORK_HTTP_STACK_SIZE 4096U
+/* Keep 4096 bytes of contiguous allocation headroom beyond the HTTP stack. */
 #define NETWORK_HTTP_MIN_LARGEST_BLOCK (NETWORK_HTTP_STACK_SIZE + 4096U)
 #define NETWORK_HTTP_MIN_FREE_HEAP 16384U
 #define NETWORK_SYNC_TASK_STACK_SIZE 8192U
-#define NETWORK_SYNC_RETRY_DELAY_MS 1000U
+#define NETWORK_SYNC_RETRY_DELAY_MS 5000U
 /* JSON API (64 handlers incl. OPTIONS) + dashboard (3) + WebSocket (1) = 68.
  * Each spare slot costs one pointer, so keep generous headroom: when this was
  * 64 the last handlers failed with ESP_ERR_HTTPD_HANDLERS_FULL, the WebSocket
