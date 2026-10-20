@@ -63,10 +63,12 @@ static void ota_log_heap_snapshot(const char *stage)
  * but do not refuse just because it is not reached. Same value the TLS
  * diagnostics warn about. */
 #define OTA_RESUME_TARGET_LARGEST_BLOCK 20000U
-/* Hard floor: one full TLS record needs a contiguous 16749-byte block, so below
- * this the connection cannot work and a resume is refused instead of tried
- * (margin covers allocator overhead and small concurrent allocations). */
-#define OTA_RESUME_MIN_LARGEST_BLOCK 17500U
+/* This is a retry heuristic, not a claimed exact TLS allocation size. The
+ * previous 17.5 KB floor was tied to the old 16 KB incoming-record buffer and
+ * incorrectly refused retries after the incoming buffer was reduced to 4 KB.
+ * Let the configured record buffer plus a modest allowance determine the
+ * minimum block; the TLS handshake remains the final authority on allocation. */
+#define OTA_RESUME_MIN_LARGEST_BLOCK (CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN + 4096U)
 
 /* TEMPORARY DIAGNOSTIC: walk the whole heap at key points of the download and
  * log the first step after which it is corrupted. Set to 0 (or delete the
