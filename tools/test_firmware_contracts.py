@@ -536,6 +536,16 @@ class FirmwareContracts(unittest.TestCase):
         self.assertLess(spawn.index("s_sync_retry_pending = false;"),
                         spawn.index("xTaskCreatePinnedToCore"))
         self.assertIn("network_services_mark_sync_retry();", services)
+        self.assertIn("if (s_suspended_for_ota || s_teardown_pending)", services)
+        self.assertIn("const bool portal_ready = ap_ready && local_running_now", services)
+        self.assertIn("s_sync_retry_pending && !s_sync_scheduled", services)
+        manifest = root.joinpath("src", "ota", "ota_manifest.c").read_text()
+        self.assertIn("HEAP_STAGE[%s]", manifest)
+        self.assertIn("before manifest buffer allocation", manifest)
+        self.assertIn("after manifest HTTP client init", manifest)
+        app_services = root.joinpath("src", "app_services.c").read_text()
+        self.assertIn("OTA_CHECK_HEAP[before manifest service]", app_services)
+        self.assertIn("OTA_CHECK_HEAP[after manifest service]", app_services)
 
     def test_startup_to_normal_transition_occurs_only_after_startup_release(self):
         root = Path(__file__).parents[1]
