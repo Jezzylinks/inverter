@@ -524,6 +524,14 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('"STOP_AFTER", "httpd"', services)
         self.assertIn('"START_BEFORE", "sntp"', services)
         self.assertIn('"START_BEFORE", "mqtt"', services)
+        self.assertIn("retaining handle for retry", services)
+        self.assertIn("Stale HTTP server still owns port", services)
+        spawn_start = services.index("static bool network_services_spawn_sync_task(void)")
+        spawn_end = services.index("static void mqtt_status_callback", spawn_start)
+        spawn = services[spawn_start:spawn_end]
+        self.assertLess(spawn.index("s_sync_retry_pending = false;"),
+                        spawn.index("xTaskCreatePinnedToCore"))
+        self.assertIn("network_services_mark_sync_retry();", services)
 
     def test_startup_to_normal_transition_occurs_only_after_startup_release(self):
         root = Path(__file__).parents[1]
