@@ -49,6 +49,7 @@ static cloud_reporting_config_t s_config;
 static cloud_reporting_status_t s_status;
 static SemaphoreHandle_t s_mutex;
 static int64_t s_next_publish_us;
+static bool s_ota_paused;
 
 static void safe_copy(char *dst, size_t dst_len, const char *src)
 {
@@ -286,12 +287,20 @@ esp_err_t cloud_reporting_get_status(cloud_reporting_status_t *out)
     return ESP_OK;
 }
 
+void cloud_reporting_set_ota_paused(bool paused)
+{
+    if (s_mutex == NULL) return;
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(250)) != pdTRUE) return;
+    s_ota_paused = paused;
+    xSemaphoreGive(s_mutex);
+}
+
 void cloud_reporting_publish(const system_state_t *state, float solar_power_kw, float load_power_kw, int rssi)
 {
     if (state == NULL || s_mutex == NULL) return;
     const int64_t now = esp_timer_get_time();
     if (xSemaphoreTake(s_mutex, 0) != pdTRUE) return;
-    if (!s_config.enabled || !s_status.configured || s_status.publish_in_progress || now < s_next_publish_us) {
+    if (s_ota_paused || !s_config.enabled || !s_status.configured || s_status.publish_in_progress || now < s_next_publish_us) {
         xSemaphoreGive(s_mutex);
         return;
     }
