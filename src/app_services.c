@@ -12,6 +12,7 @@
 #include <ctype.h>
 #include <strings.h>
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_timer.h"
@@ -3298,9 +3299,23 @@ static void ota_manifest_check_task(void *parameter)
 
     ota_manifest_entry_t entry = {0};
     bool update_available = false;
+    /* The manifest fetch is a full TLS session (about 17 KB contiguous for one
+     * record plus roughly 10 KB for the handshake / RSA bignums). With the
+     * HTTP/WebSocket/dashboard/mDNS services up, only ~15 KB was free and the
+     * handshake failed with "alloc failed" (mbedTLS -0x0010). Free that memory
+     * for the few seconds the check takes, but only when the heap is actually
+     * too tight so roomier builds are not interrupted. */
+    const bool suspended_for_check =
+        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 40000U;
+    if (suspended_for_check) {
+        (void)network_services_suspend_for_ota();
+    }
     const esp_err_t err = ota_service_check_csv_manifest(job->manifest_url,
                                                          &entry,
                                                          &update_available);
+    if (suspended_for_check) {
+        network_services_resume_after_ota();
+    }
     bool cancelled = false;
     app_ota_status_t snapshot;
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
