@@ -6,9 +6,11 @@
 
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 
 #include "server/json/json_api_server.h"
 #include "server/mdns/mdns_service.h"
@@ -28,13 +30,11 @@ static void log_ota_heap(const char *stage);
 #define NETWORK_SERVICES_TAG "NET_SERVICES"
 #define NETWORK_HTTP_PORT 80U
 #define NETWORK_HTTP_STACK_SIZE 8192U
+#define NETWORK_HTTP_MIN_LARGEST_BLOCK (NETWORK_HTTP_STACK_SIZE + 4096U)
+#define NETWORK_HTTP_MIN_FREE_HEAP 16384U
 #define NETWORK_SYNC_TASK_STACK_SIZE 8192U
-/* JSON API (64 handlers incl. OPTIONS) + dashboard (3) + WebSocket (1) = 68.
- * Each spare slot costs one pointer, so keep generous headroom: when this was
- * 64 the last handlers failed with ESP_ERR_HTTPD_HANDLERS_FULL, the WebSocket
- * registration failed, start was torn down and retried on every Wi-Fi status
- * change, leaking heap until allocations failed. */
-#define NETWORK_HTTP_MAX_URI_HANDLERS 96U
+#define NETWORK_SYNC_RETRY_DELAY_MS 1000U
+#define NETWORK_HTTP_MAX_URI_HANDLERS 64U
 static esp_err_t network_services_start_station_services(void);
 static esp_err_t network_services_stop_station_services(void);
 
@@ -58,6 +58,8 @@ static bool s_internet_ready;
 static bool s_station_services_running;
 static bool s_suspended_for_ota;
 static bool s_sync_scheduled;
+static bool s_sync_retry_pending;
+static TickType_t s_sync_retry_after_tick;
 /* Detect status updates that arrive while the sync worker is already running. */
 static uint32_t s_status_generation;
 /* Set atomically by network_services_begin_teardown() before any Wi-Fi
@@ -67,6 +69,10 @@ static uint32_t s_status_generation;
  *   assert failed: tcpip_callback ... (Invalid mbox)
  * Cleared only by network_services_init() on re-initialisation. */
 static volatile bool s_teardown_pending;
+
+static void network_services_sync_task(void *arg);
+static void network_services_mark_sync_retry(void);
+static bool network_services_spawn_sync_task(void);
 
 static void services_lock(void)
 {
@@ -82,6 +88,57 @@ static void services_unlock(void)
     }
 }
 
+static void network_services_log_heap(const char *phase, const char *service)
+{
+    const size_t free_bytes = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const size_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    const size_t minimum_free = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+    ESP_LOGI(NETWORK_SERVICES_TAG,
+             "HEAP[%s:%s] free=%u largest=%u min_ever=%u",
+             phase, service, (unsigned)free_bytes,
+             (unsigned)largest_block, (unsigned)minimum_free);
+}
+
+static void network_services_mark_sync_retry(void)
+{
+    services_lock();
+    if (!s_teardown_pending) {
+        s_sync_retry_pending = true;
+        s_sync_retry_after_tick = xTaskGetTickCount() +
+                                  pdMS_TO_TICKS(NETWORK_SYNC_RETRY_DELAY_MS);
+    }
+    services_unlock();
+}
+
+static bool network_services_spawn_sync_task(void)
+{
+    /* Clear stale retry state before the new task can preempt this caller.
+     * The worker may immediately fail its heap gate and set a fresh retry;
+     * never clear that new request after xTaskCreatePinnedToCore returns. */
+    services_lock();
+    s_sync_retry_pending = false;
+    services_unlock();
+
+    if (xTaskCreatePinnedToCore(network_services_sync_task,
+                                "net_services_sync",
+                                NETWORK_SYNC_TASK_STACK_SIZE, NULL, 4U,
+                                NULL, APP_CORE_SYSTEM) == pdPASS) {
+        return true;
+    }
+
+    services_lock();
+    s_sync_scheduled = false;
+    if (!s_teardown_pending) {
+        s_sync_retry_pending = true;
+        s_sync_retry_after_tick = xTaskGetTickCount() +
+                                  pdMS_TO_TICKS(NETWORK_SYNC_RETRY_DELAY_MS);
+    }
+    services_unlock();
+    network_services_log_heap("TASK_CREATE_FAILED", "net_services_sync");
+    ESP_LOGW(NETWORK_SERVICES_TAG,
+             "Unable to schedule network-service sync; retry will be attempted");
+    return false;
+}
 
 static void mqtt_status_callback(mqtt_status_t status)
 {
@@ -105,6 +162,7 @@ static void network_services_sync_task(void *arg)
     if (s_teardown_pending) {
         services_lock();
         s_sync_scheduled = false;
+        s_sync_retry_pending = false;
         services_unlock();
         vTaskDelete(NULL);
         return;
@@ -125,7 +183,13 @@ static void network_services_sync_task(void *arg)
     const bool local_ready = station_ready || ap_ready;
 
     if (local_ready && !local_running) {
-        (void)network_services_start();
+        const esp_err_t start_err = network_services_start();
+        if (start_err != ESP_OK && start_err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(NETWORK_SERVICES_TAG,
+                     "Local service start deferred (%s); scheduling retry",
+                     esp_err_to_name(start_err));
+            network_services_mark_sync_retry();
+        }
     } else if (!local_ready && local_running) {
         (void)network_services_stop();
     }
@@ -138,14 +202,24 @@ static void network_services_sync_task(void *arg)
     const bool captive_dns_running = s_captive_dns_running;
     services_unlock();
     if (ap_ready && !captive_dns_running) {
-        if (wifi_dns_server_start() == ESP_OK) {
+        network_services_log_heap("START_BEFORE", "captive_dns");
+        const esp_err_t dns_err = wifi_dns_server_start();
+        network_services_log_heap("START_AFTER", "captive_dns");
+        if (dns_err == ESP_OK) {
             services_lock();
             s_captive_dns_running = true;
             services_unlock();
             ESP_LOGI(NETWORK_SERVICES_TAG, "Captive portal DNS started for AP");
+        } else {
+            ESP_LOGW(NETWORK_SERVICES_TAG,
+                     "Captive portal DNS start failed: %s; scheduling retry",
+                     esp_err_to_name(dns_err));
+            network_services_mark_sync_retry();
         }
     } else if (!ap_ready && captive_dns_running) {
+        network_services_log_heap("STOP_BEFORE", "captive_dns");
         (void)wifi_dns_server_stop();
+        network_services_log_heap("STOP_AFTER", "captive_dns");
         services_lock();
         s_captive_dns_running = false;
         services_unlock();
@@ -174,15 +248,8 @@ static void network_services_sync_task(void *arg)
     }
     services_unlock();
 
-    if (rerun && xTaskCreatePinnedToCore(network_services_sync_task,
-                                         "net_services_sync",
-                                         NETWORK_SYNC_TASK_STACK_SIZE,
-                                         NULL, 4U, NULL, APP_CORE_SYSTEM) != pdPASS) {
-        services_lock();
-        s_sync_scheduled = false;
-        services_unlock();
-        ESP_LOGW(NETWORK_SERVICES_TAG,
-                 "Unable to schedule follow-up network-service sync");
+    if (rerun) {
+        (void)network_services_spawn_sync_task();
     }
     vTaskDelete(NULL);
 }
@@ -221,13 +288,29 @@ static void network_wifi_status_callback(const wifi_status_t *status)
         schedule = true;
     }
     services_unlock();
-    if (schedule && xTaskCreatePinnedToCore(network_services_sync_task,
-                                "net_services_sync", NETWORK_SYNC_TASK_STACK_SIZE, NULL, 4U,
-                                NULL, APP_CORE_SYSTEM) != pdPASS) {
-        services_lock();
-        s_sync_scheduled = false;
-        services_unlock();
-        ESP_LOGW(NETWORK_SERVICES_TAG, "Unable to schedule network-service sync");
+    if (schedule) {
+        (void)network_services_spawn_sync_task();
+    }
+}
+
+/* Called by the existing long-lived Wi-Fi operation watcher. If heap pressure
+ * prevented the one-shot sync task from being created, retry without allocating
+ * a dedicated recovery task or relying on another Wi-Fi event to arrive. */
+void network_services_retry_pending(void)
+{
+    bool retry = false;
+    services_lock();
+    if (s_initialized && !s_teardown_pending && s_sync_retry_pending &&
+        !s_sync_scheduled &&
+        (int32_t)(xTaskGetTickCount() - s_sync_retry_after_tick) >= 0) {
+        s_sync_scheduled = true;
+        s_sync_retry_pending = false;
+        retry = true;
+    }
+    services_unlock();
+
+    if (retry) {
+        (void)network_services_spawn_sync_task();
     }
 }
 
@@ -242,16 +325,33 @@ static void mqtt_message_callback(const mqtt_message_t *message)
 
 static void cleanup_http_services(void)
 {
+    network_services_log_heap("STOP_BEFORE", "dashboard");
     (void)web_dashboard_server_unregister(s_http_server);
     s_dashboard_running = false;
     (void)web_dashboard_server_deinit();
+    network_services_log_heap("STOP_AFTER", "dashboard");
+
+    network_services_log_heap("STOP_BEFORE", "websocket");
     (void)websocket_server_unregister(s_http_server);
     s_websocket_running = false;
-    (void)json_api_server_stop();
     (void)websocket_server_deinit();
+    network_services_log_heap("STOP_AFTER", "websocket");
+
+    network_services_log_heap("STOP_BEFORE", "json_api");
+    (void)json_api_server_stop();
+    network_services_log_heap("STOP_AFTER", "json_api");
+
     if (s_http_server != NULL) {
-        (void)httpd_stop(s_http_server);
-        s_http_server = NULL;
+        network_services_log_heap("STOP_BEFORE", "httpd");
+        const esp_err_t stop_err = httpd_stop(s_http_server);
+        if (stop_err == ESP_OK) {
+            s_http_server = NULL;
+        } else {
+            ESP_LOGW(NETWORK_SERVICES_TAG,
+                     "HTTP server stop failed (%s); retaining handle for retry",
+                     esp_err_to_name(stop_err));
+        }
+        network_services_log_heap("STOP_AFTER", "httpd");
     }
 }
 
@@ -304,7 +404,9 @@ static esp_err_t network_services_start_station_services(void)
     services_unlock();
 
     esp_err_t first_err = ESP_OK;
+    network_services_log_heap("START_BEFORE", "sntp");
     const esp_err_t ntp_err = ntp_client_init(NULL);
+    network_services_log_heap("START_AFTER", "sntp");
     if (ntp_err == ESP_OK) {
         services_lock();
         s_ntp_running = true;
@@ -317,7 +419,9 @@ static esp_err_t network_services_start_station_services(void)
         first_err = ntp_err;
     }
 
+    network_services_log_heap("START_BEFORE", "mqtt");
     const esp_err_t mqtt_err = start_mqtt_if_enabled();
+    network_services_log_heap("START_AFTER", "mqtt");
     if (mqtt_err != ESP_OK && first_err == ESP_OK) {
         first_err = mqtt_err;
     }
@@ -334,6 +438,7 @@ static esp_err_t network_services_stop_station_services(void)
         return ESP_OK;
     }
 
+    network_services_log_heap("STOP_BEFORE", "station_services");
     services_lock();
     const bool running = s_station_services_running;
     const bool ntp_running = s_ntp_running;
@@ -346,14 +451,19 @@ static esp_err_t network_services_stop_station_services(void)
     }
 
     esp_err_t first_err = ESP_OK;
+    network_services_log_heap("STOP_BEFORE", "mqtt");
     (void)mqtt_client_disconnect();
     (void)mqtt_client_deinit();
+    network_services_log_heap("STOP_AFTER", "mqtt");
     if (ntp_running) {
+        network_services_log_heap("STOP_BEFORE", "sntp");
         const esp_err_t err = ntp_client_deinit();
+        network_services_log_heap("STOP_AFTER", "sntp");
         if (err != ESP_OK) {
             first_err = err;
         }
     }
+    network_services_log_heap("STOP_AFTER", "station_services");
     return first_err;
 }
 
@@ -386,6 +496,8 @@ esp_err_t network_services_init(void)
     s_internet_ready = false;
     s_station_services_running = false;
     s_sync_scheduled = false;
+    s_sync_retry_pending = false;
+    s_sync_retry_after_tick = 0U;
     s_status_generation = 0U;
     s_teardown_pending = false;
     const esp_err_t dns_init_err = wifi_dns_server_init();
@@ -445,6 +557,36 @@ static esp_err_t network_services_start_locked(void)
     }
     services_unlock();
 
+    /* A prior partial startup/stop may have left a valid server handle even
+     * though s_running is false. Retry stopping it before binding port 80
+     * again; otherwise a failed stop can make every later httpd_start fail. */
+    if (s_http_server != NULL) {
+        network_services_log_heap("RECOVER_BEFORE", "httpd");
+        const esp_err_t stale_stop_err = httpd_stop(s_http_server);
+        network_services_log_heap("RECOVER_AFTER", "httpd");
+        if (stale_stop_err != ESP_OK) {
+            ESP_LOGW(NETWORK_SERVICES_TAG,
+                     "Stale HTTP server still owns port %u (%s); retrying later",
+                     (unsigned)NETWORK_HTTP_PORT,
+                     esp_err_to_name(stale_stop_err));
+            return stale_stop_err;
+        }
+        s_http_server = NULL;
+    }
+
+    const size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const size_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    network_services_log_heap("START_BEFORE", "httpd");
+    if (free_heap < NETWORK_HTTP_MIN_FREE_HEAP ||
+        largest_block < NETWORK_HTTP_MIN_LARGEST_BLOCK) {
+        ESP_LOGW(NETWORK_SERVICES_TAG,
+                 "HTTP server start deferred: free=%u largest=%u; need free>=%u largest>=%u",
+                 (unsigned)free_heap, (unsigned)largest_block,
+                 (unsigned)NETWORK_HTTP_MIN_FREE_HEAP,
+                 (unsigned)NETWORK_HTTP_MIN_LARGEST_BLOCK);
+        return ESP_ERR_NO_MEM;
+    }
+
     httpd_config_t http_config = HTTPD_DEFAULT_CONFIG();
     http_config.server_port = NETWORK_HTTP_PORT;
     http_config.max_uri_handlers = NETWORK_HTTP_MAX_URI_HANDLERS;
@@ -452,26 +594,16 @@ static esp_err_t network_services_start_locked(void)
     http_config.lru_purge_enable = true;
 
     httpd_handle_t server = NULL;
-    esp_err_t err = ESP_FAIL;
-    /* The listening socket of a just-stopped server can take a moment to be
-     * released by lwIP (listen() errno 112). Retry briefly before giving up. */
-    for (unsigned attempt = 0U; attempt < 4U; ++attempt) {
-        err = httpd_start(&server, &http_config);
-        if (err == ESP_OK) {
-            break;
-        }
-        ESP_LOGW(NETWORK_SERVICES_TAG, "httpd_start attempt %u failed: %s",
-                 attempt + 1U, esp_err_to_name(err));
-        vTaskDelay(pdMS_TO_TICKS(250));
-        if (s_teardown_pending) {
-            return ESP_ERR_INVALID_STATE;
-        }
-    }
+    esp_err_t err = httpd_start(&server, &http_config);
+    network_services_log_heap("START_AFTER", "httpd");
     if (err != ESP_OK) {
+        ESP_LOGW(NETWORK_SERVICES_TAG, "HTTP server start failed: %s",
+                 esp_err_to_name(err));
         return err;
     }
     s_http_server = server;
 
+    network_services_log_heap("START_BEFORE", "dashboard");
     err = web_dashboard_server_init();
     if (err == ESP_OK) {
         err = web_dashboard_server_register(server);
@@ -481,26 +613,33 @@ static esp_err_t network_services_start_locked(void)
             (void)web_dashboard_server_deinit();
         }
     }
+    network_services_log_heap("START_AFTER", "dashboard");
     if (err != ESP_OK) {
         ESP_LOGW(NETWORK_SERVICES_TAG, "Dashboard unavailable: %s", esp_err_to_name(err));
     }
 
+    network_services_log_heap("START_BEFORE", "json_api");
     err = json_api_server_start(server);
+    network_services_log_heap("START_AFTER", "json_api");
     if (err != ESP_OK) {
         cleanup_http_services();
         return err;
     }
+    network_services_log_heap("START_BEFORE", "websocket");
     err = websocket_server_init();
     if (err == ESP_OK) {
         err = websocket_server_register(server);
     }
+    network_services_log_heap("START_AFTER", "websocket");
     if (err != ESP_OK) {
         cleanup_http_services();
         return err;
     }
     s_websocket_running = true;
 
+    network_services_log_heap("START_BEFORE", "mdns");
     err = mdns_service_init(WIFI_HOSTNAME);
+    network_services_log_heap("START_AFTER", "mdns");
     if (err == ESP_OK) {
         s_mdns_running = true;
     } else {
@@ -560,6 +699,7 @@ static esp_err_t network_services_stop_locked(void)
      * → httpd_start() → tcpip_callback() after esp_wifi_stop() has already
      * destroyed the lwIP TCP/IP mailbox, causing the 'Invalid mbox' assert. */
     s_teardown_pending = true;
+    network_services_log_heap("STOP_BEFORE", "local_services");
     services_lock();
     const bool was_running = s_running;
     const bool mdns_running = s_mdns_running;
@@ -582,10 +722,13 @@ static esp_err_t network_services_stop_locked(void)
         return ESP_OK;
     }
 
+    network_services_log_heap("STOP_BEFORE", "mdns");
     if (mdns_running) {
         (void)mdns_service_deinit();
     }
+    network_services_log_heap("STOP_AFTER", "mdns");
     cleanup_http_services();
+    network_services_log_heap("STOP_AFTER", "local_services");
     ESP_LOGI(NETWORK_SERVICES_TAG, "Local network services stopped");
     return ESP_OK;
 }

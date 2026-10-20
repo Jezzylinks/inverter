@@ -31,6 +31,8 @@ esp_err_t network_services_stop(void);
  * after a previous disable cycle.  Call on the Wi-Fi enable path before
  * wifi_controller_start(). */
 void network_services_allow_start(void);
+/* Retry deferred service synchronization from an already-running task. */
+void network_services_retry_pending(void);
 bool network_services_is_running(void);
 /* Free the HTTP/WebSocket/dashboard/mDNS/NTP/MQTT memory for the duration of
  * a firmware download (a TLS download needs a contiguous 16 KB buffer that the
