@@ -509,7 +509,7 @@ class FirmwareContracts(unittest.TestCase):
         root = Path(__file__).parents[1]
         services = root.joinpath("src", "server", "network_services.c").read_text()
         header = root.joinpath("include", "server", "network_services.h").read_text()
-        app_services = root.joinpath("src", "app_services.c").read_text()
+        main = root.joinpath("src", "main.c").read_text()
 
         self.assertIn("NETWORK_HTTP_MIN_LARGEST_BLOCK", services)
         self.assertIn("NETWORK_HTTP_MIN_FREE_HEAP", services)
@@ -517,7 +517,7 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn("largest_block < NETWORK_HTTP_MIN_LARGEST_BLOCK", services)
         self.assertIn("void network_services_retry_pending(void)", services)
         self.assertIn("void network_services_retry_pending(void);", header)
-        self.assertIn("network_services_retry_pending();", app_services)
+        self.assertIn("network_services_retry_pending();", main)
         self.assertIn("s_sync_retry_pending = true;", services)
         self.assertIn("HEAP[%s:%s] free=%u largest=%u min_ever=%u", services)
         self.assertIn('"START_BEFORE", "httpd"', services)
