@@ -511,6 +511,10 @@ class FirmwareContracts(unittest.TestCase):
         header = root.joinpath("include", "server", "network_services.h").read_text()
         main = root.joinpath("src", "main.c").read_text()
 
+        self.assertIn("#define NETWORK_HTTP_STACK_SIZE 4096U", services)
+        self.assertIn("#define NETWORK_HTTP_MIN_LARGEST_BLOCK (NETWORK_HTTP_STACK_SIZE + 4096U)", services)
+        self.assertIn("#define NETWORK_SYNC_RETRY_DELAY_MS 5000U", services)
+        self.assertIn("stack high-water mark was about 900 bytes used", services)
         self.assertIn("NETWORK_HTTP_MIN_LARGEST_BLOCK", services)
         self.assertIn("NETWORK_HTTP_MIN_FREE_HEAP", services)
         self.assertIn("if (free_heap < NETWORK_HTTP_MIN_FREE_HEAP", services)
