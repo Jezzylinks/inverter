@@ -14,7 +14,11 @@ extern "C" {
 #define OTA_HTTP_TIMEOUT_MS 10000
 /* GitHub release URLs redirect to a signed asset URL several hundred bytes
  * long. The default 512-byte HTTP buffers cannot carry that request line. */
-#define OTA_HTTP_RX_BUFFER_SIZE 1024
+/* Keep the HTTP parser/receive staging buffer small; TLS has its own
+ * separately configured record buffers. */
+#define OTA_HTTP_RX_BUFFER_SIZE 2048
+/* GitHub's release redirect can include a long signed Location URL. Keep TX
+ * at 2048 rather than 1024 so the redirected request is not truncated. */
 #define OTA_HTTP_TX_BUFFER_SIZE 2048
 /* Backward-compatible alias for any existing callers. */
 #define OTA_HTTP_BUFFER_SIZE OTA_HTTP_TX_BUFFER_SIZE
