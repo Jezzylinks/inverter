@@ -19,6 +19,20 @@
 
 static const char *TAG = "OTA_TLS_DIAG";
 
+/* Heap snapshots around OTA manifest allocations identify the point where
+ * free heap and the largest contiguous block are consumed. Internal heap is
+ * reported separately because mbedTLS needs suitable internal allocations. */
+static void ota_log_heap_stage(const char *stage)
+{
+    ESP_LOGI(TAG,
+             "HEAP_STAGE[%s] free=%u largest=%u internal_free=%u internal_largest=%u",
+             stage,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+}
+
 /* 2024-01-01 UTC: anything earlier means the RTC was never set by SNTP. */
 #define OTA_MIN_VALID_EPOCH 1704067200
 #define OTA_TIME_SYNC_WAIT_MS 5000U
@@ -554,7 +568,10 @@ esp_err_t ota_manifest_fetch_text(const char *url, char *buffer, size_t capacity
         .buffer_size_tx = OTA_HTTP_BUFFER_SIZE,
         .crt_bundle_attach = esp_crt_bundle_attach,
     };
+    ota_log_heap_stage("before manifest HTTP client init");
     esp_http_client_handle_t client = esp_http_client_init(&config);
+    ota_log_heap_stage(client ? "after manifest HTTP client init" :
+                                "manifest HTTP client init failed");
     if (!client)
     {
         return ESP_ERR_NO_MEM;
@@ -606,7 +623,9 @@ esp_err_t ota_manifest_fetch_text(const char *url, char *buffer, size_t capacity
         }
         esp_http_client_close(client);
     }
+    ota_log_heap_stage("before manifest HTTP client cleanup");
     esp_http_client_cleanup(client);
+    ota_log_heap_stage("after manifest HTTP client cleanup");
     return err;
 }
 
@@ -621,7 +640,10 @@ esp_err_t ota_manifest_fetch_and_parse(
         return ESP_ERR_INVALID_ARG;
     }
 
+    ota_log_heap_stage("before manifest buffer allocation");
     char *manifest = calloc(1U, OTA_MAX_MANIFEST_BYTES + 1U);
+    ota_log_heap_stage(manifest ? "after manifest buffer allocation" :
+                                  "manifest buffer allocation failed");
     if (manifest == NULL)
     {
         return ESP_ERR_NO_MEM;
@@ -651,6 +673,7 @@ esp_err_t ota_manifest_fetch_and_parse(
         }
     }
 
+    ota_log_heap_stage("before manifest buffer free");
     free(manifest);
-    return err;
-}
+    ota_log_heap_stage("after manifest buffer free");
+    return err;}
