@@ -290,7 +290,7 @@ void app_main(void)
 
     // Create the LCD task before running POST so that the status screen can be drawn. The LCD task must be created before POST so that the status screen can be drawn.
     const BaseType_t lcd_task_status =
-        xTaskCreatePinnedToCore(lcd_task, "lcd_task", 8192, NULL, 4, &lcd_task_handle, APP_CORE_SYSTEM);
+        xTaskCreatePinnedToCore(lcd_task, "lcd_task", 7168, NULL, 4, &lcd_task_handle, APP_CORE_SYSTEM);
     if (lcd_task_status != pdPASS)
     {
         ESP_LOGE(APP_TAG, "Failed to create LCD task");
@@ -310,17 +310,17 @@ void app_main(void)
     startup_show_stage(LCD_STARTUP_STAGE_LOADING, false, false,
                        lcd_init_result == ESP_OK, false, false);
 
-    xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, APP_CORE_SYSTEM);
+    xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 3584, NULL, 10, NULL, APP_CORE_SYSTEM);
     const BaseType_t buzzer_task_status =
-        xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, APP_CORE_SYSTEM);
+        xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 4096, NULL, 7, NULL, APP_CORE_SYSTEM);
     if (buzzer_task_status != pdPASS)
     {
         ESP_LOGE(APP_TAG, "FATAL: failed to create buzzer event task");
     }
     xTaskCreatePinnedToCore(led_event_task, "led_evt", 2048, NULL, 7, NULL, APP_CORE_SYSTEM);
-    xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 4096, NULL, 5, NULL, APP_CORE_SYSTEM);
+    xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 3072, NULL, 5, NULL, APP_CORE_SYSTEM);
     xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, APP_CORE_SYSTEM);
-    xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 4096, NULL, 9, NULL, APP_CORE_SYSTEM);
+    xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 3072, NULL, 9, NULL, APP_CORE_SYSTEM);
 
     /* Start all consumers before enabling physical inputs so no press can race
      * task creation. */

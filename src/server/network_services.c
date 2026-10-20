@@ -36,6 +36,11 @@ static esp_err_t network_services_start_station_services(void);
 static esp_err_t network_services_stop_station_services(void);
 
 static SemaphoreHandle_t s_mutex;
+/* Serialises network_services_start() / network_services_stop() end to end.
+ * Without it two sync tasks could both pass the "not running" check and call
+ * httpd_start() at once; the loser failed with listen() errno 112 (address in
+ * use) and the services ended up half started. */
+static SemaphoreHandle_t s_lifecycle_mutex;
 static httpd_handle_t s_http_server;
 static network_mqtt_config_t s_mqtt_config;
 static bool s_initialized;
@@ -355,6 +360,9 @@ esp_err_t network_services_init(void)
         return ESP_OK;
     }
     s_mutex = xSemaphoreCreateMutex();
+    if (s_lifecycle_mutex == NULL) {
+        s_lifecycle_mutex = xSemaphoreCreateMutex();
+    }
     if (s_mutex == NULL) {
         return ESP_ERR_NO_MEM;
     }
@@ -413,7 +421,7 @@ esp_err_t network_services_deinit(void)
     return ESP_OK;
 }
 
-esp_err_t network_services_start(void)
+static esp_err_t network_services_start_locked(void)
 {
     if (!s_initialized) {
         return ESP_ERR_INVALID_STATE;
@@ -441,7 +449,21 @@ esp_err_t network_services_start(void)
     http_config.lru_purge_enable = true;
 
     httpd_handle_t server = NULL;
-    esp_err_t err = httpd_start(&server, &http_config);
+    esp_err_t err = ESP_FAIL;
+    /* The listening socket of a just-stopped server can take a moment to be
+     * released by lwIP (listen() errno 112). Retry briefly before giving up. */
+    for (unsigned attempt = 0U; attempt < 4U; ++attempt) {
+        err = httpd_start(&server, &http_config);
+        if (err == ESP_OK) {
+            break;
+        }
+        ESP_LOGW(NETWORK_SERVICES_TAG, "httpd_start attempt %u failed: %s",
+                 attempt + 1U, esp_err_to_name(err));
+        vTaskDelay(pdMS_TO_TICKS(250));
+        if (s_teardown_pending) {
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
     if (err != ESP_OK) {
         return err;
     }
@@ -495,6 +517,23 @@ esp_err_t network_services_start(void)
     return ESP_OK;
 }
 
+esp_err_t network_services_start(void)
+{
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_lifecycle_mutex != NULL &&
+        xSemaphoreTake(s_lifecycle_mutex, pdMS_TO_TICKS(20000)) != pdTRUE) {
+        ESP_LOGW(NETWORK_SERVICES_TAG, "network_services_start(): lifecycle busy");
+        return ESP_ERR_TIMEOUT;
+    }
+    const esp_err_t err = network_services_start_locked();
+    if (s_lifecycle_mutex != NULL) {
+        xSemaphoreGive(s_lifecycle_mutex);
+    }
+    return err;
+}
+
 void network_services_allow_start(void)
 {
     /* Clear the teardown flag so network_services_start() can run again
@@ -505,7 +544,7 @@ void network_services_allow_start(void)
     s_teardown_pending = false;
 }
 
-esp_err_t network_services_stop(void)
+static esp_err_t network_services_stop_locked(void)
 {
     if (!s_initialized) {
         return ESP_OK;
@@ -545,6 +584,26 @@ esp_err_t network_services_stop(void)
     cleanup_http_services();
     ESP_LOGI(NETWORK_SERVICES_TAG, "Local network services stopped");
     return ESP_OK;
+}
+
+esp_err_t network_services_stop(void)
+{
+    if (!s_initialized) {
+        return ESP_OK;
+    }
+    /* Raise the teardown flag before waiting, so a start that is queued behind
+     * us (or runs right after) refuses instead of racing the teardown. */
+    s_teardown_pending = true;
+    if (s_lifecycle_mutex != NULL &&
+        xSemaphoreTake(s_lifecycle_mutex, pdMS_TO_TICKS(20000)) != pdTRUE) {
+        ESP_LOGW(NETWORK_SERVICES_TAG, "network_services_stop(): lifecycle busy");
+        return ESP_ERR_TIMEOUT;
+    }
+    const esp_err_t err = network_services_stop_locked();
+    if (s_lifecycle_mutex != NULL) {
+        xSemaphoreGive(s_lifecycle_mutex);
+    }
+    return err;
 }
 
 esp_err_t network_services_suspend_for_ota(void)
