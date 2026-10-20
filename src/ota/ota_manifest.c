@@ -442,6 +442,19 @@ esp_err_t ota_http_open_following_redirects(esp_http_client_handle_t client,
         }
         const int64_t length = esp_http_client_fetch_headers(client);
         const int status = esp_http_client_get_status_code(client);
+        const int client_errno = esp_http_client_get_errno(client);
+        if (length < 0 || status == 0)
+        {
+            ESP_LOGE(TAG,
+                     "HTTP response-header read failed: hop=%u length=%lld status=%d client_errno=%d",
+                     hop, (long long)length, status, client_errno);
+        }
+        else
+        {
+            ESP_LOGI(TAG,
+                     "HTTP response headers received: hop=%u status=%d content_length=%lld",
+                     hop, status, (long long)length);
+        }
         if (is_redirect_status(status))
         {
             /* esp_http_client_set_redirection() copies the (long, signed)
