@@ -516,6 +516,7 @@ esp_err_t network_services_init(void)
     s_station_ready = false;
     s_internet_ready = false;
     s_station_services_running = false;
+    s_suspended_for_ota = false;
     s_sync_scheduled = false;
     s_sync_retry_pending = false;
     s_sync_retry_after_tick = 0U;
@@ -566,6 +567,11 @@ static esp_err_t network_services_start_locked(void)
      * At this point esp_wifi_stop() may already be running or may have already
      * destroyed the lwIP TCP/IP mailbox; calling httpd_start() or any other
      * network API would invoke tcpip_callback() on an invalid mbox and assert. */
+    if (s_suspended_for_ota) {
+        ESP_LOGI(NETWORK_SERVICES_TAG,
+                 "network_services_start() suppressed: OTA owns network-service heap");
+        return ESP_ERR_INVALID_STATE;
+    }
     if (s_teardown_pending) {
         ESP_LOGW(NETWORK_SERVICES_TAG,
                  "network_services_start() suppressed: teardown in progress");
