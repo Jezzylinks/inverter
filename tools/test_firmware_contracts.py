@@ -526,6 +526,7 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('"START_BEFORE", "mqtt"', services)
         self.assertIn("retaining handle for retry", services)
         self.assertIn("Stale HTTP server still owns port", services)
+        self.assertIn("if (!was_running && s_http_server == NULL && !mdns_running)", services)
         self.assertIn("Network-service resume deferred; retry pending", services)
 
         spawn_start = services.index("static bool network_services_spawn_sync_task(void)")
