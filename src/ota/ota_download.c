@@ -99,7 +99,7 @@ static esp_err_t ota_wait_for_heap(ota_download_cancel_cb_t cancel_cb,
                                    void *context)
 {
     uint32_t waited_ms = 0U;
-    while (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <
+    while (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
                OTA_RESUME_TARGET_LARGEST_BLOCK &&
            waited_ms < OTA_RESUME_HEAP_WAIT_MS) {
         if (cancel_cb && cancel_cb(context)) {
@@ -110,7 +110,7 @@ static esp_err_t ota_wait_for_heap(ota_download_cancel_cb_t cancel_cb,
     }
     /* Only refuse when the block is clearly too small; between the floor and
      * the target the resume is still attempted. */
-    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
         OTA_RESUME_MIN_LARGEST_BLOCK) {
         ota_log_heap_snapshot("resume heap recovery timeout");
         return ESP_ERR_NO_MEM;
@@ -201,8 +201,8 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
     esp_http_client_config_t config = {
         .url = url,
         .timeout_ms = OTA_HTTP_TIMEOUT_MS,
-        .buffer_size = OTA_HTTP_BUFFER_SIZE,
-        .buffer_size_tx = OTA_HTTP_BUFFER_SIZE,
+        .buffer_size = OTA_HTTP_RX_BUFFER_SIZE,
+        .buffer_size_tx = OTA_HTTP_TX_BUFFER_SIZE,
         .keep_alive_enable = true,
         .crt_bundle_attach = esp_crt_bundle_attach,
     };
@@ -313,7 +313,7 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
                 ESP_LOGW(TAG, "Resume attempt %u failed: %s", resumes,
                          esp_err_to_name(resume_err));
                 if (resume_err == ESP_ERR_NO_MEM ||
-                    heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <
+                    heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
                         OTA_RESUME_MIN_LARGEST_BLOCK) {
                     low_heap_failure = true;
                 }
@@ -343,7 +343,8 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
                      (unsigned)largest);
             ota_log_heap_snapshot("download read interrupted");
-            if (largest < OTA_RESUME_MIN_LARGEST_BLOCK) {
+            if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
+                OTA_RESUME_MIN_LARGEST_BLOCK) {
                 low_heap_failure = true;
             }
             esp_http_client_close(client);
