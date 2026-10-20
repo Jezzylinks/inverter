@@ -720,7 +720,12 @@ esp_err_t adc_manager_start(void)
     }
 
     const BaseType_t presentation_result = xTaskCreatePinnedToCore(
-        adc_presentation_task, "adc_ui", 4096, NULL, 3, NULL,
+        /* 8192: every second this task builds the WebSocket device-status JSON
+         * (a full system_state_t snapshot on the stack + cJSON + snprintf)
+         * and calls cloud_reporting_publish(). 4096 overflowed as soon as the
+         * WebSocket server started successfully. Trim later using the
+         * STACK_REPORT "adc_ui never_used" figure. */
+        adc_presentation_task, "adc_ui", 8192, NULL, 3, NULL,
         APP_CORE_SYSTEM);
     if (presentation_result != pdPASS)
     {
