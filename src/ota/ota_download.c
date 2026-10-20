@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 #include "ota/ota_manifest.h"
 #include "ota/ota_verify.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "OTA_SERVICE";
 
