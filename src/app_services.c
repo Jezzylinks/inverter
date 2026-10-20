@@ -3307,12 +3307,37 @@ static void ota_manifest_check_task(void *parameter)
      * too tight so roomier builds are not interrupted. */
     const bool suspended_for_check =
         heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 40000U;
+    esp_err_t err = ESP_OK;
+    bool may_attempt_manifest = true;
     if (suspended_for_check) {
-        (void)network_services_suspend_for_ota();
+        const esp_err_t suspend_err = network_services_suspend_for_ota();
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "OTA_CHECK_HEAP[service suspension returned %s] free=%u largest=%u",
+                 esp_err_to_name(suspend_err),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+        if (suspend_err != ESP_OK) {
+            /* Do not start TLS if service teardown did not complete. The TLS
+             * heap gate stays strict; a partial suspension is not sufficient. */
+            may_attempt_manifest = false;
+            err = suspend_err;
+        }
     }
-    const esp_err_t err = ota_service_check_csv_manifest(job->manifest_url,
-                                                         &entry,
-                                                         &update_available);
+    if (may_attempt_manifest) {
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "OTA_CHECK_HEAP[before manifest service] free=%u largest=%u min_ever=%u",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+        err = ota_service_check_csv_manifest(job->manifest_url,
+                                             &entry,
+                                             &update_available);
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "OTA_CHECK_HEAP[after manifest service] free=%u largest=%u min_ever=%u",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+    }
     if (suspended_for_check) {
         network_services_resume_after_ota();
     }
