@@ -695,6 +695,7 @@ static esp_err_t network_services_stop_locked(void)
     s_running = false;
     s_mdns_running = false;
     s_websocket_running = false;
+    s_sync_retry_pending = false;
     services_unlock();
 
     (void)network_services_stop_station_services();
