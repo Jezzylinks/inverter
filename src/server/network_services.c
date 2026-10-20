@@ -103,13 +103,17 @@ static void network_services_mark_sync_retry(void)
 
 static bool network_services_spawn_sync_task(void)
 {
+    /* Clear stale retry state before the new task can preempt this caller.
+     * The worker may immediately fail its heap gate and set a fresh retry;
+     * never clear that new request after xTaskCreatePinnedToCore returns. */
+    services_lock();
+    s_sync_retry_pending = false;
+    services_unlock();
+
     if (xTaskCreatePinnedToCore(network_services_sync_task,
                                 "net_services_sync",
                                 NETWORK_SYNC_TASK_STACK_SIZE, NULL, 4U,
                                 NULL, APP_CORE_SYSTEM) == pdPASS) {
-        services_lock();
-        s_sync_retry_pending = false;
-        services_unlock();
         return true;
     }
 
