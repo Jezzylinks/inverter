@@ -449,7 +449,7 @@ esp_err_t ota_http_open_following_redirects(esp_http_client_handle_t client,
              * returning an error, which reboots the device. Refuse cleanly
              * when memory is too tight to survive that copy. */
             ota_log_heap_before_tls();
-            if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <
+            if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
                 OTA_REDIRECT_MIN_LARGEST_BLOCK)
             {
                 ESP_LOGE(TAG, "Not enough free heap to follow redirect at hop=%u", hop);
@@ -499,8 +499,8 @@ esp_err_t ota_manifest_fetch_text(const char *url, char *buffer, size_t capacity
     esp_http_client_config_t config = {
         .url = url,
         .timeout_ms = OTA_HTTP_TIMEOUT_MS,
-        .buffer_size = OTA_HTTP_BUFFER_SIZE,
-        .buffer_size_tx = OTA_HTTP_BUFFER_SIZE,
+        .buffer_size = OTA_HTTP_RX_BUFFER_SIZE,
+        .buffer_size_tx = OTA_HTTP_TX_BUFFER_SIZE,
         .crt_bundle_attach = esp_crt_bundle_attach,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
