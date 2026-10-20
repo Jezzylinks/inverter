@@ -114,10 +114,21 @@ static void download_verifying_callback(void *context)
     notify_status(OTA_STATUS_VERIFYING, 100);
 }
 
+/* uxTaskGetStackHighWaterMark reports the minimum-ever unused stack in words.
+ * Log both units so low headroom can be compared with the configured task size. */
+static void ota_log_task_stack_headroom(const char *stage)
+{
+    const UBaseType_t words = uxTaskGetStackHighWaterMark(NULL);
+    const size_t bytes = (size_t)words * sizeof(StackType_t);
+    ESP_LOGI(TAG, "OTA task stack headroom [%s]: %u words (%u bytes)",
+             stage ? stage : "unknown", (unsigned)words, (unsigned)bytes);
+}
+
 static void ota_task(void *parameter)
 {
     ota_job_t *job = (ota_job_t *)parameter;
     if (!job) {
+        ota_log_task_stack_headroom("invalid job");
         set_job_finished();
         vTaskDelete(NULL);
         return;
@@ -189,6 +200,7 @@ static void ota_task(void *parameter)
         if (reconnect_mqtt_after_failure) {
             (void)network_services_mqtt_connect();
         }
+        ota_log_task_stack_headroom("failed/cancelled");
         secure_zero(job, sizeof(*job));
         free(job);
         set_job_finished();
@@ -196,6 +208,7 @@ static void ota_task(void *parameter)
         return;
     }
 
+    ota_log_task_stack_headroom("success");
     ESP_LOGI(TAG, "OTA verified successfully; manifest version %s",
              job->expected_version[0] ? job->expected_version : "unknown");
     notify_status(OTA_STATUS_SUCCESS, 100);
