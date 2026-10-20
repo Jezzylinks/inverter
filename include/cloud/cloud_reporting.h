@@ -38,6 +38,8 @@ esp_err_t cloud_reporting_init(void);
 esp_err_t cloud_reporting_get_config(cloud_reporting_config_t *out);
 esp_err_t cloud_reporting_set_config(const cloud_reporting_config_t *config);
 esp_err_t cloud_reporting_get_status(cloud_reporting_status_t *out);
+/* Suppress new telemetry transactions while OTA owns the TLS heap. */
+void cloud_reporting_set_ota_paused(bool paused);
 
 /* Schedules a bounded HTTPS transaction; it never blocks the ADC loop. */
 void cloud_reporting_publish(const system_state_t *state, float solar_power_kw,
