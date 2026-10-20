@@ -127,22 +127,37 @@ static esp_err_t ota_wait_for_heap(ota_download_cancel_cb_t cancel_cb,
     return ESP_OK;
 }
 
-/* Re-open the download at byte `received`. Returns ESP_OK with the client
- * positioned at that byte, ESP_ERR_INVALID_STATE if cancelled,
- * ESP_ERR_NOT_SUPPORTED if the server will not honour a Range request (retrying
- * cannot help), or the open/transport error otherwise. The original URL is used
- * rather than the signed redirect target, which may have expired. */
-static esp_err_t ota_download_resume(esp_http_client_handle_t client,
+/* Always destroy a failed HTTP/TLS session before creating another one.
+ * Keeping a half-closed client alive across retries can retain TLS buffers and
+ * sockets, worsening heap pressure and fragmentation. */
+static void ota_http_client_destroy(esp_http_client_handle_t *client)
+{
+    if (client != NULL && *client != NULL) {
+        (void)esp_http_client_close(*client);
+        (void)esp_http_client_cleanup(*client);
+        *client = NULL;
+    }
+}
+
+/* Re-open the download at byte `received`. Each attempt gets a fresh HTTP/TLS
+ * client, but reuses the same bounded config and keeps certificate validation
+ * enabled. The original URL is used because signed redirect URLs may expire. */
+static esp_err_t ota_download_resume(esp_http_client_handle_t *client,
+                                     const esp_http_client_config_t *config,
                                      const char *url, uint32_t received,
                                      uint32_t expected_size, unsigned attempt,
                                      ota_download_cancel_cb_t cancel_cb,
                                      void *context)
 {
+    if (client == NULL || config == NULL || url == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
     ESP_LOGW(TAG, "Resuming download at byte %u of %u (attempt %u/%u)",
              (unsigned)received, (unsigned)expected_size, attempt,
              (unsigned)OTA_DOWNLOAD_MAX_RESUMES);
 
-    esp_http_client_close(client);
+    ota_http_client_destroy(client);
     vTaskDelay(pdMS_TO_TICKS(OTA_RESUME_BACKOFF_MS));
     esp_err_t err = ota_wait_for_heap(cancel_cb, context);
     if (err != ESP_OK) {
@@ -150,27 +165,36 @@ static esp_err_t ota_download_resume(esp_http_client_handle_t client,
     }
     ota_log_heap_snapshot("before HTTPS resume");
 
-    err = esp_http_client_set_url(client, url);
+    *client = esp_http_client_init(config);
+    if (*client == NULL) {
+        ota_log_heap_snapshot("HTTPS resume client init failed");
+        return ESP_ERR_NO_MEM;
+    }
+
+    err = esp_http_client_set_url(*client, url);
     if (err != ESP_OK) {
+        ota_http_client_destroy(client);
         return err;
     }
     if (received == 0U) {
         /* Nothing downloaded yet: a plain request, no Range header. */
-        (void)esp_http_client_delete_header(client, "Range");
+        (void)esp_http_client_delete_header(*client, "Range");
     } else {
         char range[32];
         (void)snprintf(range, sizeof(range), "bytes=%u-", (unsigned)received);
-        err = esp_http_client_set_header(client, "Range", range);
+        err = esp_http_client_set_header(*client, "Range", range);
         if (err != ESP_OK) {
+            ota_http_client_destroy(client);
             return err;
         }
     }
 
     int64_t content_length = 0;
     int status_code = 0;
-    err = ota_http_open_following_redirects(client, &content_length,
+    err = ota_http_open_following_redirects(*client, &content_length,
                                             &status_code);
     if (err != ESP_OK) {
+        ota_http_client_destroy(client);
         return err;
     }
 
@@ -181,7 +205,7 @@ static esp_err_t ota_download_resume(esp_http_client_handle_t client,
                       "and %u bytes",
                  status_code, (long long)content_length, expected_status,
                  (unsigned)(expected_size - received));
-        esp_http_client_close(client);
+        ota_http_client_destroy(client);
         return status_code == 200 ? ESP_ERR_NOT_SUPPORTED
                                   : ESP_ERR_INVALID_RESPONSE;
     }
@@ -235,7 +259,7 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
     if (result != ESP_OK) {
         ESP_LOGE(TAG, "HTTPS open failed: %s", esp_err_to_name(result));
         ota_log_heap_snapshot("HTTPS open failed");
-        esp_http_client_cleanup(client);
+        ota_http_client_destroy(&client);
         return result;
     }
     ota_log_heap_snapshot("after HTTPS open");
@@ -311,8 +335,8 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
             }
             resumes++;
             const esp_err_t resume_err = ota_download_resume(
-                client, url, received, expected_size, resumes, cancel_cb,
-                context);
+                &client, &config, url, received, expected_size, resumes,
+                cancel_cb, context);
             if (resume_err == ESP_ERR_INVALID_STATE ||
                 resume_err == ESP_ERR_NOT_SUPPORTED) {
                 result = resume_err; /* cancelled / cannot resume at all */
@@ -425,8 +449,7 @@ cleanup:
     if (ota_started) {
         esp_ota_abort(ota_handle);
     }
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
+    ota_http_client_destroy(&client);
     if (result != ESP_OK) {
         ESP_LOGD(TAG, "OTA download transaction ended: %s", esp_err_to_name(result));
     }
