@@ -444,11 +444,6 @@ static void app_wifi_operation_watch_task(void *parameter)
         (void)ulTaskNotifyTake(pdTRUE,
             pdMS_TO_TICKS(app_wifi_ui_animation_active() ? 100U : 250U));
 
-        /* Keep retrying deferred HTTP/DNS/service recovery from this existing
-         * long-lived worker. The retry API is rate-limited and allocates no
-         * recovery task unless the heap can create the normal sync worker. */
-        network_services_retry_pending();
-
         /* Poll the live station/DHCP handshake while an operation is active.
          * Do not depend exclusively on an event callback to finish the
          * Connecting/Disconnecting state. Generation checks arbitrate with a
