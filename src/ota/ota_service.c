@@ -12,6 +12,8 @@
 #include "freertos/task.h"
 #include "ota/ota_download.h"
 #include "ota/ota_manifest.h"
+#include "cloud/cloud_reporting.h"
+#include "server/network_services.h"
 static const char *TAG = "OTA_SERVICE";
 
 static void secure_zero(void *ptr, size_t len)
@@ -122,6 +124,26 @@ static void ota_task(void *parameter)
     }
 
     notify_status(OTA_STATUS_STARTED, 0);
+    /* Keep the TLS heap available to the OTA manifest and image sessions. */
+    cloud_reporting_set_ota_paused(true);
+    network_services_status_t network_status = {0};
+    network_services_get_status(&network_status);
+    const bool reconnect_mqtt_after_failure = network_status.mqtt_connected;
+    if (reconnect_mqtt_after_failure) {
+        (void)network_services_mqtt_disconnect();
+    }
+    /* Allow any already-running report to finish before opening OTA TLS. */
+    for (unsigned wait_ms = 0U; wait_ms < 13000U; wait_ms += 250U) {
+        cloud_reporting_status_t cloud_status = {0};
+        if (cloud_reporting_get_status(&cloud_status) != ESP_OK ||
+            !cloud_status.publish_in_progress) {
+            break;
+        }
+        if (cancel_requested()) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(250U));
+    }
     esp_err_t result = ESP_OK;
     if (job->from_manifest) {
         ota_manifest_entry_t entry = {0};
@@ -162,6 +184,10 @@ static void ota_task(void *parameter)
             notify_status(OTA_STATUS_CANCELLED, 0);
         } else {
             notify_status(OTA_STATUS_FAILED, 0);
+        }
+        cloud_reporting_set_ota_paused(false);
+        if (reconnect_mqtt_after_failure) {
+            (void)network_services_mqtt_connect();
         }
         secure_zero(job, sizeof(*job));
         free(job);
