@@ -14,12 +14,15 @@ extern "C" {
 #define OTA_HTTP_TIMEOUT_MS 10000
 /* GitHub release URLs redirect to a signed asset URL several hundred bytes
  * long. The default 512-byte HTTP buffers cannot carry that request line. */
-#define OTA_HTTP_BUFFER_SIZE 2048
+#define OTA_HTTP_RX_BUFFER_SIZE 1024
+#define OTA_HTTP_TX_BUFFER_SIZE 2048
+/* Backward-compatible alias for any existing callers. */
+#define OTA_HTTP_BUFFER_SIZE OTA_HTTP_TX_BUFFER_SIZE
 #define OTA_HTTP_MAX_REDIRECTS 5U
 #define OTA_MAX_URL_LENGTH 256U
 #define OTA_MAX_VERSION_LENGTH 32U
 #define OTA_MAX_SHA256_LENGTH 65U
-#define OTA_MAX_MANIFEST_BYTES 4096U
+#define OTA_MAX_MANIFEST_BYTES 2048U
 
 typedef struct {
     char version[OTA_MAX_VERSION_LENGTH];
