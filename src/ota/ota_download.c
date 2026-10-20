@@ -31,13 +31,19 @@ static void ota_log_heap_snapshot(const char *stage)
     const uint32_t largest_internal =
         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     const uint32_t minimum_ever = (uint32_t)esp_get_minimum_free_heap_size();
+    /* Record stack headroom while the OTA task is in each phase. The value is
+     * in FreeRTOS stack words; convert to bytes for ESP32's 4-byte StackType_t. */
+    const UBaseType_t stack_hwm_words = uxTaskGetStackHighWaterMark(NULL);
+    const uint32_t stack_hwm_bytes =
+        (uint32_t)stack_hwm_words * (uint32_t)sizeof(StackType_t);
 
     ESP_LOGI(TAG,
              "MEM[%s] 8bit_free=%u 8bit_largest=%u internal_free=%u "
-             "internal_largest=%u min_ever_free=%u",
+             "internal_largest=%u min_ever_free=%u ota_stack_hwm=%uB",
              stage ? stage : "unknown", (unsigned)free_8bit,
              (unsigned)largest_8bit, (unsigned)free_internal,
-             (unsigned)largest_internal, (unsigned)minimum_ever);
+             (unsigned)largest_internal, (unsigned)minimum_ever,
+             (unsigned)stack_hwm_bytes);
 }
 
 /* A dropped connection mid-download is resumed with an HTTP Range request
