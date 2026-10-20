@@ -334,8 +334,14 @@ static void cleanup_http_services(void)
 
     if (s_http_server != NULL) {
         network_services_log_heap("STOP_BEFORE", "httpd");
-        (void)httpd_stop(s_http_server);
-        s_http_server = NULL;
+        const esp_err_t stop_err = httpd_stop(s_http_server);
+        if (stop_err == ESP_OK) {
+            s_http_server = NULL;
+        } else {
+            ESP_LOGW(NETWORK_SERVICES_TAG,
+                     "HTTP server stop failed (%s); retaining handle for retry",
+                     esp_err_to_name(stop_err));
+        }
         network_services_log_heap("STOP_AFTER", "httpd");
     }
 }
@@ -538,6 +544,23 @@ esp_err_t network_services_start(void)
         return ESP_OK;
     }
     services_unlock();
+
+    /* A prior partial startup/stop may have left a valid server handle even
+     * though s_running is false. Retry stopping it before binding port 80
+     * again; otherwise a failed stop can make every later httpd_start fail. */
+    if (s_http_server != NULL) {
+        network_services_log_heap("RECOVER_BEFORE", "httpd");
+        const esp_err_t stale_stop_err = httpd_stop(s_http_server);
+        network_services_log_heap("RECOVER_AFTER", "httpd");
+        if (stale_stop_err != ESP_OK) {
+            ESP_LOGW(NETWORK_SERVICES_TAG,
+                     "Stale HTTP server still owns port %u (%s); retrying later",
+                     (unsigned)NETWORK_HTTP_PORT,
+                     esp_err_to_name(stale_stop_err));
+            return stale_stop_err;
+        }
+        s_http_server = NULL;
+    }
 
     const size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     const size_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
