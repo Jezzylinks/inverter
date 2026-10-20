@@ -39,6 +39,8 @@ bool network_services_is_running(void);
  * path; it does nothing unless a matching suspend happened. */
 esp_err_t network_services_suspend_for_ota(void);
 void network_services_resume_after_ota(void);
+/* Retry deferred network-service synchronization from the existing main loop. */
+void network_services_retry_pending(void);
 void network_services_get_status(network_services_status_t *status);
 
 esp_err_t network_services_get_mqtt_config(network_mqtt_config_t *config);
