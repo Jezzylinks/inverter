@@ -1,0 +1,52 @@
+A. Edit sdkconfig.defaults and save.
+
+B: Delete the generated sdkconfig.esp32dev in the project root. If you’ve made changes through menuconfig that you want to keep, back it up first or copy those options into sdkconfig.defaults.
+
+There are three ways to do it, from simplest to most manual.
+1. Back up the whole file (safest first step)
+
+cp sdkconfig.esp32dev sdkconfig.esp32dev.backup
+
+On Windows PowerShell, use:
+
+copy sdkconfig.esp32dev sdkconfig.esp32dev.backup 
+
+Now you can delete the original without losing anything.
+2. Save only your changes using menuconfig’s minimal config
+This is the cleanest way to get your changes into sdkconfig.defaults.
+
+Run pio run -e esp32dev -t menuconfig
+
+Press D (Save minimal config) and save to a new file, e.g. sdkconfig.min. Menuconfig writes only the options that differ from the Kconfig defaults, which is a short list.
+Review sdkconfig.min, then merge the lines you want into sdkconfig.defaults:
+
+   cat sdkconfig.min >> sdkconfig.defaults
+
+Open sdkconfig.defaults afterward and remove any duplicate or conflicting lines, since the last occurrence of an option wins.
+3. Find your changes with a diff
+If you only want to see what you changed, regenerate a pristine config and compare:
+Back up the file (step 1), then delete sdkconfig.esp32dev and run pio run -e esp32dev.
+Compare the old and new files:
+
+   diff sdkconfig.esp32dev.bak sdkconfig.esp32dev
+   
+Lines starting with < are values from your old config. Copy the ones you want into sdkconfig.defaults in the form CONFIG_FOO=y.
+Tips
+Ignore lines that differ only because of the ESP-IDF version or auto-derived options. Only carry over options you deliberately set.
+Disabled options appear as # CONFIG_FOO is not set in the generated file. In sdkconfig.defaults you can write that same comment form, or CONFIG_FOO=n.
+Once your changes are in sdkconfig.defaults, commit it to git. Keep sdkconfig.esp32dev out of version control (add it to .gitignore) so a fresh clone builds from the defaults.
+
+3. Clean the build:
+   pio run -e esp32dev -t fullclean
+
+(-t clean also works, but fullclean wipes .pio/build/esp32dev entirely, including the cached CMake config.)
+
+4. Rebuild:
+
+   pio run -e esp32dev
+
+This regenerates sdkconfig.esp32dev from the defaults, plus the files under .pio/build/esp32dev/config/ (sdkconfig.h, sdkconfig.cmake, sdkconfig.json).
+5. Verify the change landed:
+
+   grep CONFIG_YOUR_OPTION sdkconfig.esp32dev
+   grep CONFIG_YOUR_OPTION .pio/build/esp32dev/config/sdkconfig.h
