@@ -58,6 +58,7 @@ static void ota_log_heap_snapshot(const char *stage)
  * reconnecting. */
 #define OTA_DOWNLOAD_MAX_RESUMES 4U
 #define OTA_RESUME_BACKOFF_MS 1500U
+#define OTA_RESUME_MAX_BACKOFF_MS 12000U
 #define OTA_RESUME_HEAP_WAIT_MS 4000U
 #define OTA_RESUME_HEAP_POLL_MS 250U
 /* Comfortable level: wait (bounded) for the largest free block to reach this,
@@ -158,7 +159,15 @@ static esp_err_t ota_download_resume(esp_http_client_handle_t *client,
              (unsigned)OTA_DOWNLOAD_MAX_RESUMES);
 
     ota_http_client_destroy(client);
-    vTaskDelay(pdMS_TO_TICKS(OTA_RESUME_BACKOFF_MS));
+    uint32_t backoff_ms = OTA_RESUME_BACKOFF_MS;
+    for (unsigned step = 1U; step < attempt && backoff_ms < OTA_RESUME_MAX_BACKOFF_MS; ++step) {
+        backoff_ms *= 2U;
+    }
+    if (backoff_ms > OTA_RESUME_MAX_BACKOFF_MS) {
+        backoff_ms = OTA_RESUME_MAX_BACKOFF_MS;
+    }
+    ESP_LOGW(TAG, "Resume backoff: %u ms", (unsigned)backoff_ms);
+    vTaskDelay(pdMS_TO_TICKS(backoff_ms));
     esp_err_t err = ota_wait_for_heap(cancel_cb, context);
     if (err != ESP_OK) {
         return err;
