@@ -52,7 +52,7 @@
 #define APP_OTA_TASK_STACK_SIZE 4096U
 #define APP_OTA_CHECK_TASK_STACK_SIZE 6144U
 #define APP_OTA_CHECK_TASK_PRIORITY 5U
-#define APP_WIFI_OPERATION_WATCH_STACK_SIZE 4096U
+#define APP_WIFI_OPERATION_WATCH_STACK_SIZE 3072U
 #define APP_WIFI_OPERATION_WATCH_PRIORITY 5U
 /* This task's call chain runs the full Wi-Fi driver start/stop path
  * (wifi_controller_start/stop -> wifi_manager -> esp_wifi_*) and, on
@@ -63,13 +63,13 @@
  * stack high-water-mark data (uxTaskGetStackHighWaterMark) in this
  * environment. Sized up defensively; verify on-device and tune down if
  * headroom data supports it. */
-#define APP_WIFI_TOGGLE_TASK_STACK_SIZE 6144U
+#define APP_WIFI_TOGGLE_TASK_STACK_SIZE 5120U
 #define APP_WIFI_TOGGLE_TASK_PRIORITY 5U
 #define APP_WIFI_TOGGLE_QUEUE_LENGTH 1U
 #define APP_WIFI_TOGGLE_WATCHDOG_POLL_MS 500U
 #define APP_WIFI_OPERATION_TIMEOUT_MS 30000U
 #define APP_WIFI_PREREQUISITE_POLL_MS 500U
-#define APP_WIFI_PREREQUISITE_STACK_SIZE 4096U
+#define APP_WIFI_PREREQUISITE_STACK_SIZE 3072U
 #define APP_WIFI_PREREQUISITE_PRIORITY 5U
 #define APP_WIFI_SCAN_DURATION_MS 40000U
 #define APP_WIFI_SCAN_POLL_MS 250U

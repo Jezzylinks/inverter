@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "esp_http_server.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -32,6 +33,13 @@
  * registration failed, start was torn down and retried on every Wi-Fi status
  * change, leaking heap until allocations failed. */
 #define NETWORK_HTTP_MAX_URI_HANDLERS 96U
+
+/* Diagnostic: free/largest heap after each start/stop step, to find which
+ * service does not give its memory back across a stop/start cycle. */
+#define NS_HEAP(label)                                                        \
+    ESP_LOGI(NETWORK_SERVICES_TAG, "NSHEAP %-24s free=%u largest=%u", (label), \
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),              \
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT))
 static esp_err_t network_services_start_station_services(void);
 static esp_err_t network_services_stop_station_services(void);
 
@@ -448,6 +456,7 @@ static esp_err_t network_services_start_locked(void)
     http_config.stack_size = NETWORK_HTTP_STACK_SIZE;
     http_config.lru_purge_enable = true;
 
+    NS_HEAP("start:begin");
     httpd_handle_t server = NULL;
     esp_err_t err = ESP_FAIL;
     /* The listening socket of a just-stopped server can take a moment to be
@@ -468,6 +477,7 @@ static esp_err_t network_services_start_locked(void)
         return err;
     }
     s_http_server = server;
+    NS_HEAP("start:httpd");
 
     err = web_dashboard_server_init();
     if (err == ESP_OK) {
@@ -482,11 +492,13 @@ static esp_err_t network_services_start_locked(void)
         ESP_LOGW(NETWORK_SERVICES_TAG, "Dashboard unavailable: %s", esp_err_to_name(err));
     }
 
+    NS_HEAP("start:dashboard");
     err = json_api_server_start(server);
     if (err != ESP_OK) {
         cleanup_http_services();
         return err;
     }
+    NS_HEAP("start:json_api");
     err = websocket_server_init();
     if (err == ESP_OK) {
         err = websocket_server_register(server);
@@ -496,6 +508,7 @@ static esp_err_t network_services_start_locked(void)
         return err;
     }
     s_websocket_running = true;
+    NS_HEAP("start:websocket");
 
     err = mdns_service_init(WIFI_HOSTNAME);
     if (err == ESP_OK) {
@@ -507,6 +520,7 @@ static esp_err_t network_services_start_locked(void)
     /* Local services are architecture-neutral: they can run on STA, AP, or
      * APSTA once a usable local interface exists. The sync worker manages
      * NTP/MQTT separately after the monitor confirms upstream connectivity. */
+    NS_HEAP("start:mdns");
     services_lock();
     s_running = true;
     services_unlock();
@@ -564,7 +578,9 @@ static esp_err_t network_services_stop_locked(void)
     s_websocket_running = false;
     services_unlock();
 
+    NS_HEAP("stop:begin");
     (void)network_services_stop_station_services();
+    NS_HEAP("stop:station(ntp/mqtt)");
 
     services_lock();
     const bool captive_dns_running = s_captive_dns_running;
@@ -573,6 +589,7 @@ static esp_err_t network_services_stop_locked(void)
     if (captive_dns_running) {
         (void)wifi_dns_server_stop();
     }
+    NS_HEAP("stop:captive_dns");
 
     if (!was_running) {
         return ESP_OK;
@@ -581,7 +598,9 @@ static esp_err_t network_services_stop_locked(void)
     if (mdns_running) {
         (void)mdns_service_deinit();
     }
+    NS_HEAP("stop:mdns");
     cleanup_http_services();
+    NS_HEAP("stop:http_ws_dashboard");
     ESP_LOGI(NETWORK_SERVICES_TAG, "Local network services stopped");
     return ESP_OK;
 }
