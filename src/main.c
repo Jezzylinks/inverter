@@ -33,6 +33,7 @@
 #include "lcd/lcd_startup_config.h"
 #include "ota/ota_service.h"
 #include "post/post_manager.h"
+#include "server/network_services.h"
 #include "security/change_pin_flow.h"
 #include "security/security.h"
 #include "system/task_watchdog.h"
@@ -560,6 +561,7 @@ void app_main(void)
         update_lcd_activity_state();
         handle_menu_timeout();
         display_timeout_tick();
+        network_services_retry_pending();
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
