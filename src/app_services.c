@@ -13,6 +13,7 @@
 #include <strings.h>
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_wifi.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -3610,9 +3611,23 @@ esp_err_t app_services_confirm_update(void)
         ESP_LOGW(APP_SERVICES_TAG,
                  "Internet probe is not yet positive; attempting HTTPS install");
     }
+    /* TLS needs a sufficiently large contiguous internal-RAM block. Abort
+     * before queueing OTA if the measured safety floor is not available. */
+    const size_t ota_largest_internal =
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    ESP_LOGI(APP_SERVICES_TAG, "Pre-OTA largest internal block: %u bytes",
+             (unsigned)ota_largest_internal);
+    if (ota_largest_internal < 20000U) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_ota_status.state = APP_OTA_AVAILABLE;
+        s_ota_status.progress_percent = 0;
+        xSemaphoreGive(s_services_mutex);
+        lcd_flash_warning_to("Low memory", "Close apps; retry",
+                             2200U, LCD_SCREEN_MENU);
+        return ESP_ERR_NO_MEM;
+    }
     /* Measured stack headroom of every live task, taken at the busiest
-     * moment (Wi-Fi up, menus used, about to open a TLS session). Use it to
-     * trim stack sizes; see diagnostics/stack_report.h. */
+     * moment (Wi-Fi up, menus used, about to open a TLS session). */
     stack_report_log("before OTA install");
     const esp_err_t err = ota_service_start_from_csv(manifest_url);
     if (err != ESP_OK)
