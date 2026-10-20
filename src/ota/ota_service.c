@@ -122,6 +122,10 @@ static void ota_log_task_stack_headroom(const char *stage)
     const size_t bytes = (size_t)words * sizeof(StackType_t);
     ESP_LOGI(TAG, "OTA task stack headroom [%s]: %u words (%u bytes)",
              stage ? stage : "unknown", (unsigned)words, (unsigned)bytes);
+    if (words < 200U) {
+        ESP_LOGW(TAG, "OTA task stack headroom is critically low (<200 words); "
+                      "increase OTA_TASK_STACK_SIZE after confirming this measurement");
+    }
 }
 
 static void ota_task(void *parameter)
