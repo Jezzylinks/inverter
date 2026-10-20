@@ -505,6 +505,35 @@ class FirmwareContracts(unittest.TestCase):
         self.assertNotIn('xTaskCreatePinnedToCore(display_timeout_task, "Display Timeout"', runtime)
         self.assertNotIn("void display_timeout_task(void *arg)", runtime)
 
+    def test_network_services_retry_after_heap_pressure_and_gate_http_start(self):
+        root = Path(__file__).parents[1]
+        services = root.joinpath("src", "server", "network_services.c").read_text()
+        header = root.joinpath("include", "server", "network_services.h").read_text()
+        main = root.joinpath("src", "main.c").read_text()
+
+        self.assertIn("NETWORK_HTTP_MIN_LARGEST_BLOCK", services)
+        self.assertIn("NETWORK_HTTP_MIN_FREE_HEAP", services)
+        self.assertIn("if (free_heap < NETWORK_HTTP_MIN_FREE_HEAP", services)
+        self.assertIn("largest_block < NETWORK_HTTP_MIN_LARGEST_BLOCK", services)
+        self.assertIn("void network_services_retry_pending(void)", services)
+        self.assertIn("void network_services_retry_pending(void);", header)
+        self.assertIn("network_services_retry_pending();", main)
+        self.assertIn("s_sync_retry_pending = true;", services)
+        self.assertIn("HEAP[%s:%s] free=%u largest=%u min_ever=%u", services)
+        self.assertIn('"START_BEFORE", "httpd"', services)
+        self.assertIn('"STOP_AFTER", "httpd"', services)
+        self.assertIn('"START_BEFORE", "sntp"', services)
+        self.assertIn('"START_BEFORE", "mqtt"', services)
+        self.assertIn("retaining handle for retry", services)
+        self.assertIn("Stale HTTP server still owns port", services)
+        self.assertIn("Network-service resume deferred; retry pending", services)
+
+        spawn_start = services.index("static bool network_services_spawn_sync_task(void)")
+        spawn_end = services.index("static void mqtt_status_callback", spawn_start)
+        spawn = services[spawn_start:spawn_end]
+        self.assertLess(spawn.index("s_sync_retry_pending = false;"),
+                        spawn.index("xTaskCreatePinnedToCore"))
+
     def test_startup_to_normal_transition_occurs_only_after_startup_release(self):
         root = Path(__file__).parents[1]
         main = root.joinpath("src", "main.c").read_text()
