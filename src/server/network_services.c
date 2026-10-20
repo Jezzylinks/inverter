@@ -106,7 +106,7 @@ static void network_services_log_heap(const char *phase, const char *service)
 static void network_services_mark_sync_retry(void)
 {
     services_lock();
-    if (!s_teardown_pending) {
+    if (!s_teardown_pending && !s_suspended_for_ota) {
         s_sync_retry_pending = true;
         s_sync_retry_after_tick = xTaskGetTickCount() +
                                   pdMS_TO_TICKS(NETWORK_SYNC_RETRY_DELAY_MS);
@@ -116,10 +116,18 @@ static void network_services_mark_sync_retry(void)
 
 static bool network_services_spawn_sync_task(void)
 {
+    /* OTA suspension owns the heap until the TLS operation completes. Do not
+     * allocate another worker or permit a queued retry during that interval. */
+    services_lock();
+    if (s_suspended_for_ota || s_teardown_pending) {
+        s_sync_scheduled = false;
+        s_sync_retry_pending = false;
+        services_unlock();
+        return false;
+    }
     /* Clear stale retry state before the new task can preempt this caller.
      * The worker may immediately fail its heap gate and set a fresh retry;
      * never clear that new request after xTaskCreatePinnedToCore returns. */
-    services_lock();
     s_sync_retry_pending = false;
     services_unlock();
 
@@ -163,7 +171,10 @@ static void network_services_sync_task(void *arg)
     /* Synchronize local/AP services and station/internet services separately.
      * AP readiness is sufficient for the local HTTP/WebSocket/mDNS layer, but
      * it must never be treated as station/internet readiness for NTP or MQTT. */
-    if (s_teardown_pending) {
+    services_lock();
+    const bool ota_suspended_at_entry = s_suspended_for_ota;
+    services_unlock();
+    if (s_teardown_pending || ota_suspended_at_entry) {
         services_lock();
         s_sync_scheduled = false;
         s_sync_retry_pending = false;
@@ -198,14 +209,18 @@ static void network_services_sync_task(void *arg)
         (void)network_services_stop();
     }
 
-    /* AP/APSTA owns the captive-DNS side of the local portal.  The
-     * normal HTTP/API/dashboard server remains shared with the local service
-     * layer, so we start only the DNS redirector here rather than creating a
-     * second HTTP server on port 80. */
+    /* Captive DNS is useful only while the HTTP portal is available. Starting
+     * DNS without HTTP wastes heap and sends clients to a dead portal. Refresh
+     * s_running because the HTTP start attempt above may have succeeded now. */
     services_lock();
     const bool captive_dns_running = s_captive_dns_running;
+    const bool local_running_now = s_running;
+    const bool ota_suspended_before_optional_services = s_suspended_for_ota;
     services_unlock();
-    if (ap_ready && !captive_dns_running) {
+    const bool portal_ready = ap_ready && local_running_now &&
+                              !ota_suspended_before_optional_services &&
+                              !s_teardown_pending;
+    if (portal_ready && !captive_dns_running) {
         network_services_log_heap("START_BEFORE", "captive_dns");
         const esp_err_t dns_err = wifi_dns_server_start();
         network_services_log_heap("START_AFTER", "captive_dns");
@@ -220,7 +235,7 @@ static void network_services_sync_task(void *arg)
                      esp_err_to_name(dns_err));
             network_services_mark_sync_retry();
         }
-    } else if (!ap_ready && captive_dns_running) {
+    } else if (!portal_ready && captive_dns_running) {
         network_services_log_heap("STOP_BEFORE", "captive_dns");
         (void)wifi_dns_server_stop();
         network_services_log_heap("STOP_AFTER", "captive_dns");
@@ -233,11 +248,13 @@ static void network_services_sync_task(void *arg)
     /* NTP/MQTT are upstream services, not merely station-IP services.
      * Keep them stopped until the monitor confirms outbound connectivity;
      * losing internet must not stop the local AP/web control path above. */
-    if (station_capable && station_ready && internet_ready &&
-        !station_services_running) {
+    if (local_running_now && !ota_suspended_before_optional_services &&
+        !s_teardown_pending && station_capable && station_ready &&
+        internet_ready && !station_services_running) {
         (void)network_services_start_station_services();
-    } else if ((!station_capable || !station_ready || !internet_ready) &&
-               station_services_running) {
+    } else if ((!local_running_now || !station_capable || !station_ready ||
+                !internet_ready || ota_suspended_before_optional_services ||
+                s_teardown_pending) && station_services_running) {
         (void)network_services_stop_station_services();
     }
 
@@ -304,8 +321,8 @@ void network_services_retry_pending(void)
 {
     bool retry = false;
     services_lock();
-    if (s_initialized && !s_teardown_pending && s_sync_retry_pending &&
-        !s_sync_scheduled &&
+    if (s_initialized && !s_teardown_pending && !s_suspended_for_ota &&
+        s_sync_retry_pending && !s_sync_scheduled &&
         (int32_t)(xTaskGetTickCount() - s_sync_retry_after_tick) >= 0) {
         s_sync_scheduled = true;
         s_sync_retry_pending = false;
@@ -390,12 +407,12 @@ static esp_err_t start_mqtt_if_enabled(void)
 
 static esp_err_t network_services_start_station_services(void)
 {
-    if (!s_initialized || s_teardown_pending) {
+    if (!s_initialized || s_teardown_pending || s_suspended_for_ota) {
         return ESP_ERR_INVALID_STATE;
     }
 
     services_lock();
-    if (!s_internet_ready) {
+    if (!s_internet_ready || s_suspended_for_ota || s_teardown_pending) {
         services_unlock();
         ESP_LOGI(NETWORK_SERVICES_TAG,
                  "Station services deferred: internet is not available");
@@ -499,6 +516,7 @@ esp_err_t network_services_init(void)
     s_station_ready = false;
     s_internet_ready = false;
     s_station_services_running = false;
+    s_suspended_for_ota = false;
     s_sync_scheduled = false;
     s_sync_retry_pending = false;
     s_sync_retry_after_tick = 0U;
@@ -549,6 +567,11 @@ static esp_err_t network_services_start_locked(void)
      * At this point esp_wifi_stop() may already be running or may have already
      * destroyed the lwIP TCP/IP mailbox; calling httpd_start() or any other
      * network API would invoke tcpip_callback() on an invalid mbox and assert. */
+    if (s_suspended_for_ota) {
+        ESP_LOGI(NETWORK_SERVICES_TAG,
+                 "network_services_start() suppressed: OTA owns network-service heap");
+        return ESP_ERR_INVALID_STATE;
+    }
     if (s_teardown_pending) {
         ESP_LOGW(NETWORK_SERVICES_TAG,
                  "network_services_start() suppressed: teardown in progress");
@@ -775,21 +798,40 @@ esp_err_t network_services_suspend_for_ota(void)
     if (!s_initialized) {
         return ESP_OK;
     }
+    /* Publish suspension before waiting on the lifecycle mutex. A Wi-Fi event
+     * or delayed retry must not start allocating services during teardown. */
+    services_lock();
+    s_suspended_for_ota = true;
+    s_sync_retry_pending = false;
+    services_unlock();
     ESP_LOGI(NETWORK_SERVICES_TAG,
              "Suspending local network services for firmware download");
     log_ota_heap("before stop");
     const esp_err_t err = network_services_stop();
-    s_suspended_for_ota = true;
     log_ota_heap("after stop");
+    if (err != ESP_OK) {
+        ESP_LOGW(NETWORK_SERVICES_TAG,
+                 "Network service suspension reported %s; OTA must not start TLS",
+                 esp_err_to_name(err));
+    }
     return err;
 }
 
 void network_services_resume_after_ota(void)
 {
-    if (!s_initialized || !s_suspended_for_ota) {
+    if (!s_initialized) {
         return;
     }
-    s_suspended_for_ota = false;
+    services_lock();
+    const bool was_suspended = s_suspended_for_ota;
+    if (was_suspended) {
+        s_suspended_for_ota = false;
+        s_sync_retry_pending = false;
+    }
+    services_unlock();
+    if (!was_suspended) {
+        return;
+    }
     s_teardown_pending = false;
     ESP_LOGI(NETWORK_SERVICES_TAG,
              "Resuming local network services after firmware download");
