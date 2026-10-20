@@ -708,7 +708,7 @@ static esp_err_t network_services_stop_locked(void)
         (void)wifi_dns_server_stop();
     }
 
-    if (!was_running) {
+    if (!was_running && s_http_server == NULL && !mdns_running) {
         log_service_heap("STOP_AFTER", "local_services");
         return ESP_OK;
     }
