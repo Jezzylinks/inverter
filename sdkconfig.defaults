@@ -2308,3 +2308,28 @@ CONFIG_INVERTER_WIFI_AUTH_MODE_WPA_WPA2_PSK=y
 # CONFIG_INVERTER_WIFI_AUTH_MODE_WPA2_PSK is not set
 # CONFIG_INVERTER_WIFI_AUTH_MODE_WPA3_PSK is not set
 # CONFIG_INVERTER_WIFI_RUNTIME_PROVISIONING is not set
+C O N F I G _ B O O T L O A D E R _ A P P _ R O L L B A C K _ E N A B L E = y  
+ C O N F I G _ E S P T O O L P Y _ F L A S H S I Z E _ 4 M B = y  
+ C O N F I G _ P A R T I T I O N _ T A B L E _ C U S T O M = y  
+ C O N F I G _ B T _ E N A B L E D = y  
+ C O N F I G _ B T _ N I M B L E _ E N A B L E D = y  
+ C O N F I G _ B T _ N I M B L E _ M A X _ C O N N E C T I O N S = 1  
+ #   C O N F I G _ B T _ N I M B L E _ R O L E _ B R O A D C A S T E R   i s   n o t   s e t  
+ #   C O N F I G _ B T _ N I M B L E _ R O L E _ O B S E R V E R   i s   n o t   s e t  
+ C O N F I G _ A D C _ C O N T I N U O U S _ I S R _ I R A M _ S A F E = y  
+ C O N F I G _ G P I O _ C T R L _ F U N C _ I N _ I R A M = y  
+ C O N F I G _ G P T I M E R _ C T R L _ F U N C _ I N _ I R A M = y  
+ C O N F I G _ H T T P D _ W S _ S U P P O R T = y  
+ C O N F I G _ E S P _ M A I N _ T A S K _ S T A C K _ S I Z E = 8 1 9 2  
+ C O N F I G _ E S P _ W I F I _ S T A T I C _ R X _ B U F F E R _ N U M = 8  
+ C O N F I G _ E S P _ W I F I _ D Y N A M I C _ R X _ B U F F E R _ N U M = 1 6  
+ C O N F I G _ E S P _ W I F I _ D Y N A M I C _ T X _ B U F F E R _ N U M = 1 6  
+ C O N F I G _ E S P _ W I F I _ M G M T _ S B U F _ N U M = 1 6  
+ #   C O N F I G _ E S P _ W I F I _ G M A C _ S U P P O R T   i s   n o t   s e t  
+ C O N F I G _ F R E E R T O S _ T I M E R _ T A S K _ S T A C K _ D E P T H = 4 0 9 6  
+ C O N F I G _ L W I P _ S N T P _ M A X _ S E R V E R S = 2  
+ C O N F I G _ M B E D T L S _ D Y N A M I C _ B U F F E R = y  
+ C O N F I G _ M B E D T L S _ D Y N A M I C _ F R E E _ C O N F I G _ D A T A = y  
+ C O N F I G _ M B E D T L S _ E C P _ R E S T A R T A B L E = y  
+ C O N F I G _ O P E N T H R E A D _ R X _ O N _ W H E N _ I D L E = y  
+ 
