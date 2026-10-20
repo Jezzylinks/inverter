@@ -3,7 +3,12 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
+#if CONFIG_BT_ENABLED
+#include "esp_bt.h"
+#endif
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -114,8 +119,29 @@ static void post_show_result_and_notify(const post_result_t result)
         ESP_LOGE("POST", "LCD failed POST -- cannot display fault screen. Failed: %s", summary);
     }
 }
+/* Nothing in the running firmware starts Bluetooth (ble_provision_start() has
+ * no callers and the "Bluetooth" setting only stores a flag), yet the BLE
+ * controller is compiled in, so ESP-IDF keeps its static RAM reserved out of
+ * the heap. A TLS firmware download needs a contiguous ~17 KB block and the
+ * heap was too small/fragmented without that memory. Return it at boot, before
+ * Wi-Fi starts. This is permanent until reboot; set to 0 if BLE provisioning
+ * is ever wired up. */
+#define INVERTER_RELEASE_BT_MEMORY 1
+
 void app_main(void)
 {
+#if INVERTER_RELEASE_BT_MEMORY && CONFIG_BT_ENABLED
+    {
+        const size_t heap_before = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+        const esp_err_t bt_err = esp_bt_mem_release(ESP_BT_MODE_BTDM);
+        ESP_LOGI(APP_TAG,
+                 "Bluetooth memory release: %s; free heap %u -> %u bytes "
+                 "(largest block %u)",
+                 esp_err_to_name(bt_err), (unsigned)heap_before,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    }
+#endif
     bool lcd_event_ready = true;
     bool post_completed = false;
     post_result_t startup_post = {0};
@@ -265,7 +291,7 @@ void app_main(void)
 
     // Create the LCD task before running POST so that the status screen can be drawn. The LCD task must be created before POST so that the status screen can be drawn.
     const BaseType_t lcd_task_status =
-        xTaskCreatePinnedToCore(lcd_task, "lcd_task", 8192, NULL, 4, &lcd_task_handle, APP_CORE_SYSTEM);
+        xTaskCreatePinnedToCore(lcd_task, "lcd_task", 7168, NULL, 4, &lcd_task_handle, APP_CORE_SYSTEM);
     if (lcd_task_status != pdPASS)
     {
         ESP_LOGE(APP_TAG, "Failed to create LCD task");
@@ -285,17 +311,17 @@ void app_main(void)
     startup_show_stage(LCD_STARTUP_STAGE_LOADING, false, false,
                        lcd_init_result == ESP_OK, false, false);
 
-    xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 4096, NULL, 10, NULL, APP_CORE_SYSTEM);
+    xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 3584, NULL, 10, NULL, APP_CORE_SYSTEM);
     const BaseType_t buzzer_task_status =
-        xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 2048, NULL, 7, NULL, APP_CORE_SYSTEM);
+        xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 4096, NULL, 7, NULL, APP_CORE_SYSTEM);
     if (buzzer_task_status != pdPASS)
     {
         ESP_LOGE(APP_TAG, "FATAL: failed to create buzzer event task");
     }
     xTaskCreatePinnedToCore(led_event_task, "led_evt", 2048, NULL, 7, NULL, APP_CORE_SYSTEM);
-    xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 4096, NULL, 5, NULL, APP_CORE_SYSTEM);
+    xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 3072, NULL, 5, NULL, APP_CORE_SYSTEM);
     xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, APP_CORE_SYSTEM);
-    xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 4096, NULL, 9, NULL, APP_CORE_SYSTEM);
+    xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 3072, NULL, 9, NULL, APP_CORE_SYSTEM);
 
     /* Start all consumers before enabling physical inputs so no press can race
      * task creation. */

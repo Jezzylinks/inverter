@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdint.h>
 
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -24,6 +25,8 @@
 #include "wifi/wifi_manager.h"
 #include "wifi/wifi_dns_server.h"
 
+static void log_ota_heap(const char *stage);
+
 #define NETWORK_SERVICES_TAG "NET_SERVICES"
 #define NETWORK_HTTP_PORT 80U
 #define NETWORK_HTTP_STACK_SIZE 8192U
@@ -36,6 +39,11 @@ static esp_err_t network_services_start_station_services(void);
 static esp_err_t network_services_stop_station_services(void);
 
 static SemaphoreHandle_t s_mutex;
+/* Serialises network_services_start() / network_services_stop() end to end.
+ * Without it two sync tasks could both pass the "not running" check and call
+ * httpd_start() at once; the loser failed with listen() errno 112 (address in
+ * use) and the services ended up half started. */
+static SemaphoreHandle_t s_lifecycle_mutex;
 static httpd_handle_t s_http_server;
 static network_mqtt_config_t s_mqtt_config;
 static bool s_initialized;
@@ -48,6 +56,7 @@ static bool s_dashboard_running;
 static bool s_station_ready;
 static bool s_internet_ready;
 static bool s_station_services_running;
+static bool s_suspended_for_ota;
 static bool s_sync_scheduled;
 static bool s_sync_retry_pending;
 static TickType_t s_sync_retry_after_tick;
@@ -464,6 +473,9 @@ esp_err_t network_services_init(void)
         return ESP_OK;
     }
     s_mutex = xSemaphoreCreateMutex();
+    if (s_lifecycle_mutex == NULL) {
+        s_lifecycle_mutex = xSemaphoreCreateMutex();
+    }
     if (s_mutex == NULL) {
         return ESP_ERR_NO_MEM;
     }
@@ -524,7 +536,7 @@ esp_err_t network_services_deinit(void)
     return ESP_OK;
 }
 
-esp_err_t network_services_start(void)
+static esp_err_t network_services_start_locked(void)
 {
     if (!s_initialized) {
         return ESP_ERR_INVALID_STATE;
@@ -644,7 +656,25 @@ esp_err_t network_services_start(void)
     ESP_LOGI(NETWORK_SERVICES_TAG, "Local network services started for %s mode",
              wifi_manager_get_mode() == WIFI_MODE_STA ? "STA" :
              wifi_manager_get_mode() == WIFI_MODE_AP ? "AP" : "APSTA");
+    log_ota_heap("after start");
     return ESP_OK;
+}
+
+esp_err_t network_services_start(void)
+{
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_lifecycle_mutex != NULL &&
+        xSemaphoreTake(s_lifecycle_mutex, pdMS_TO_TICKS(20000)) != pdTRUE) {
+        ESP_LOGW(NETWORK_SERVICES_TAG, "network_services_start(): lifecycle busy");
+        return ESP_ERR_TIMEOUT;
+    }
+    const esp_err_t err = network_services_start_locked();
+    if (s_lifecycle_mutex != NULL) {
+        xSemaphoreGive(s_lifecycle_mutex);
+    }
+    return err;
 }
 
 void network_services_allow_start(void)
@@ -657,7 +687,7 @@ void network_services_allow_start(void)
     s_teardown_pending = false;
 }
 
-esp_err_t network_services_stop(void)
+static esp_err_t network_services_stop_locked(void)
 {
     if (!s_initialized) {
         return ESP_OK;
@@ -701,6 +731,82 @@ esp_err_t network_services_stop(void)
     network_services_log_heap("STOP_AFTER", "local_services");
     ESP_LOGI(NETWORK_SERVICES_TAG, "Local network services stopped");
     return ESP_OK;
+}
+
+esp_err_t network_services_stop(void)
+{
+    if (!s_initialized) {
+        return ESP_OK;
+    }
+    /* Raise the teardown flag before waiting, so a start that is queued behind
+     * us (or runs right after) refuses instead of racing the teardown. */
+    s_teardown_pending = true;
+    if (s_lifecycle_mutex != NULL &&
+        xSemaphoreTake(s_lifecycle_mutex, pdMS_TO_TICKS(20000)) != pdTRUE) {
+        ESP_LOGW(NETWORK_SERVICES_TAG, "network_services_stop(): lifecycle busy");
+        return ESP_ERR_TIMEOUT;
+    }
+    const esp_err_t err = network_services_stop_locked();
+    if (s_lifecycle_mutex != NULL) {
+        xSemaphoreGive(s_lifecycle_mutex);
+    }
+    return err;
+}
+
+/* Heap trace around the OTA suspend/resume cycle. Free heap after a stop was
+ * ~12 KB lower on the second cycle than the first, so compare these lines
+ * between cycles: if the "after stop" numbers do not return to the same level,
+ * a service leaks across stop/start. */
+static void log_ota_heap(const char *stage)
+{
+    ESP_LOGI(NETWORK_SERVICES_TAG,
+             "HEAP[%s] free=%u largest=%u min_ever=%u", stage,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT));
+}
+
+esp_err_t network_services_suspend_for_ota(void)
+{
+    if (!s_initialized) {
+        return ESP_OK;
+    }
+    ESP_LOGI(NETWORK_SERVICES_TAG,
+             "Suspending local network services for firmware download");
+    log_ota_heap("before stop");
+    const esp_err_t err = network_services_stop();
+    s_suspended_for_ota = true;
+    log_ota_heap("after stop");
+    return err;
+}
+
+void network_services_resume_after_ota(void)
+{
+    if (!s_initialized || !s_suspended_for_ota) {
+        return;
+    }
+    s_suspended_for_ota = false;
+    s_teardown_pending = false;
+    ESP_LOGI(NETWORK_SERVICES_TAG,
+             "Resuming local network services after firmware download");
+    log_ota_heap("before resume");
+    bool schedule = false;
+    services_lock();
+    ++s_status_generation;
+    if (!s_sync_scheduled) {
+        s_sync_scheduled = true;
+        schedule = true;
+    }
+    services_unlock();
+    if (schedule && xTaskCreatePinnedToCore(network_services_sync_task,
+                                            "net_services_sync",
+                                            NETWORK_SYNC_TASK_STACK_SIZE, NULL, 4U,
+                                            NULL, APP_CORE_SYSTEM) != pdPASS) {
+        services_lock();
+        s_sync_scheduled = false;
+        services_unlock();
+        ESP_LOGW(NETWORK_SERVICES_TAG, "Unable to schedule network-service resume");
+    }
 }
 
 bool network_services_is_running(void)

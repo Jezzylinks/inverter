@@ -28,6 +28,17 @@ static const char *TAG = "OTA_TLS_DIAG";
 #define OTA_TLS_MIN_LARGEST_BLOCK 20000U
 /* Room for the redirect URL copies plus a new TLS session. */
 #define OTA_REDIRECT_MIN_LARGEST_BLOCK 6000U
+/* Total free heap needed to finish a handshake whose certificate chain is
+ * verified against the bundle. Measured on the device: a handshake started
+ * with ~37 KB free succeeded, one started with ~25.7 KB failed mid-verify with
+ * "alloc failed" -> ESP_ERR_HTTP_CONNECT. Override with a build flag to tune. */
+#ifndef OTA_TLS_MIN_FREE_HEAP
+#define OTA_TLS_MIN_FREE_HEAP 34000U
+#endif
+/* Give freed memory (task teardown, delayed frees) a moment to come back
+ * before giving up. */
+#define OTA_TLS_HEAP_WAIT_MS 4000U
+#define OTA_TLS_HEAP_POLL_MS 250U
 
 /*
  * Runs once, only when the clock never got set. Separates the usual causes:
@@ -88,6 +99,41 @@ static void ota_wait_for_valid_time(void)
     s_wait_already_timed_out = true;
     ESP_LOGE(TAG, "SNTP did not set the clock; TLS certificate dates cannot be verified");
     ota_log_ntp_diagnostics();
+}
+
+static bool ota_tls_heap_ok(void)
+{
+    return heap_caps_get_free_size(MALLOC_CAP_8BIT) >= OTA_TLS_MIN_FREE_HEAP &&
+           heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) >=
+               OTA_TLS_MIN_LARGEST_BLOCK;
+}
+
+/*
+ * Refuse to start a handshake that cannot finish. Running out of memory inside
+ * mbedTLS surfaces as a certificate error and ESP_ERR_HTTP_CONNECT, which sends
+ * the debugging in the wrong direction; ESP_ERR_NO_MEM says what happened.
+ */
+static esp_err_t ota_wait_for_tls_heap(unsigned hop)
+{
+    uint32_t waited_ms = 0U;
+    while (!ota_tls_heap_ok() && waited_ms < OTA_TLS_HEAP_WAIT_MS)
+    {
+        vTaskDelay(pdMS_TO_TICKS(OTA_TLS_HEAP_POLL_MS));
+        waited_ms += OTA_TLS_HEAP_POLL_MS;
+    }
+    if (!ota_tls_heap_ok())
+    {
+        ESP_LOGE(TAG,
+                 "Not enough heap for a TLS handshake at hop=%u: free=%u (need %u) "
+                 "largest_block=%u (need %u)",
+                 hop,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+                 (unsigned)OTA_TLS_MIN_FREE_HEAP,
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                 (unsigned)OTA_TLS_MIN_LARGEST_BLOCK);
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
 }
 
 static void ota_log_heap_before_tls(void)
@@ -431,7 +477,12 @@ esp_err_t ota_http_open_following_redirects(esp_http_client_handle_t client,
     {
         ota_log_current_endpoint(client, hop);
         ota_log_heap_before_tls();
-        esp_err_t err = esp_http_client_open(client, 0);
+        esp_err_t err = ota_wait_for_tls_heap(hop);
+        if (err != ESP_OK)
+        {
+            return err;
+        }
+        err = esp_http_client_open(client, 0);
         if (err != ESP_OK)
         {
             ESP_LOGE(TAG, "HTTPS connect/TLS handshake failed at hop=%u: %s (0x%x)",
