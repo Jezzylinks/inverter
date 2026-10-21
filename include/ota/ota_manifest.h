@@ -12,7 +12,7 @@ extern "C"
 #include <stddef.h>
 #include <stdint.h>
 
-#define OTA_HTTP_TIMEOUT_MS 15000
+#define OTA_HTTP_TIMEOUT_MS 30000
 /* GitHub release URLs redirect to a signed asset URL several hundred bytes
  * long. The default 512-byte HTTP buffers cannot carry that request line. */
 /* Keep the HTTP parser/receive staging buffer small; TLS has its own
