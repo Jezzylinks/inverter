@@ -77,26 +77,36 @@ static void ota_log_heap_snapshot(const char *stage)
  * OTA_HEAP_CHECK lines) once the corruption source is found. */
 #define OTA_HEAP_DIAG 0
 #if OTA_HEAP_DIAG
-#define OTA_HEAP_CHECK(label)                                                  \
-    do {                                                                       \
-        const bool heap_ok = heap_caps_check_integrity_all(true);              \
-        if (heap_ok) {                                                         \
-            ESP_LOGI(TAG, "HEAPCHK ok      : %s", (label));                    \
-        } else {                                                               \
-            ESP_LOGE(TAG, "HEAPCHK CORRUPT : %s", (label));                    \
-        }                                                                      \
+#define OTA_HEAP_CHECK(label)                                     \
+    do                                                            \
+    {                                                             \
+        const bool heap_ok = heap_caps_check_integrity_all(true); \
+        if (heap_ok)                                              \
+        {                                                         \
+            ESP_LOGI(TAG, "HEAPCHK ok      : %s", (label));       \
+        }                                                         \
+        else                                                      \
+        {                                                         \
+            ESP_LOGE(TAG, "HEAPCHK CORRUPT : %s", (label));       \
+        }                                                         \
     } while (0)
 #else
-#define OTA_HEAP_CHECK(label) do { } while (0)
+#define OTA_HEAP_CHECK(label) \
+    do                        \
+    {                         \
+    } while (0)
 #endif
 
 static bool is_sha256(const char *text)
 {
-    if (!text || !*text || strlen(text) != 64U) {
+    if (!text || !*text || strlen(text) != 64U)
+    {
         return false;
     }
-    for (size_t i = 0U; i < 64U; ++i) {
-        if (!isxdigit((unsigned char)text[i])) {
+    for (size_t i = 0U; i < 64U; ++i)
+    {
+        if (!isxdigit((unsigned char)text[i]))
+        {
             return false;
         }
     }
@@ -111,8 +121,10 @@ static esp_err_t ota_wait_for_heap(ota_download_cancel_cb_t cancel_cb,
     uint32_t waited_ms = 0U;
     while (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
                OTA_RESUME_TARGET_LARGEST_BLOCK &&
-           waited_ms < OTA_RESUME_HEAP_WAIT_MS) {
-        if (cancel_cb && cancel_cb(context)) {
+           waited_ms < OTA_RESUME_HEAP_WAIT_MS)
+    {
+        if (cancel_cb && cancel_cb(context))
+        {
             return ESP_ERR_INVALID_STATE;
         }
         vTaskDelay(pdMS_TO_TICKS(OTA_RESUME_HEAP_POLL_MS));
@@ -121,7 +133,8 @@ static esp_err_t ota_wait_for_heap(ota_download_cancel_cb_t cancel_cb,
     /* Only refuse when the block is clearly too small; between the floor and
      * the target the resume is still attempted. */
     if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
-        OTA_RESUME_MIN_LARGEST_BLOCK) {
+        OTA_RESUME_MIN_LARGEST_BLOCK)
+    {
         ota_log_heap_snapshot("resume heap recovery timeout");
         return ESP_ERR_NO_MEM;
     }
@@ -133,7 +146,8 @@ static esp_err_t ota_wait_for_heap(ota_download_cancel_cb_t cancel_cb,
  * sockets, worsening heap pressure and fragmentation. */
 static void ota_http_client_destroy(esp_http_client_handle_t *client)
 {
-    if (client != NULL && *client != NULL) {
+    if (client != NULL && *client != NULL)
+    {
         (void)esp_http_client_close(*client);
         (void)esp_http_client_cleanup(*client);
         *client = NULL;
@@ -150,7 +164,8 @@ static esp_err_t ota_download_resume(esp_http_client_handle_t *client,
                                      ota_download_cancel_cb_t cancel_cb,
                                      void *context)
 {
-    if (client == NULL || config == NULL || url == NULL) {
+    if (client == NULL || config == NULL || url == NULL)
+    {
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -160,39 +175,48 @@ static esp_err_t ota_download_resume(esp_http_client_handle_t *client,
 
     ota_http_client_destroy(client);
     uint32_t backoff_ms = OTA_RESUME_BACKOFF_MS;
-    for (unsigned step = 1U; step < attempt && backoff_ms < OTA_RESUME_MAX_BACKOFF_MS; ++step) {
+    for (unsigned step = 1U; step < attempt && backoff_ms < OTA_RESUME_MAX_BACKOFF_MS; ++step)
+    {
         backoff_ms *= 2U;
     }
-    if (backoff_ms > OTA_RESUME_MAX_BACKOFF_MS) {
+    if (backoff_ms > OTA_RESUME_MAX_BACKOFF_MS)
+    {
         backoff_ms = OTA_RESUME_MAX_BACKOFF_MS;
     }
     ESP_LOGW(TAG, "Resume backoff: %u ms", (unsigned)backoff_ms);
     vTaskDelay(pdMS_TO_TICKS(backoff_ms));
     esp_err_t err = ota_wait_for_heap(cancel_cb, context);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         return err;
     }
     ota_log_heap_snapshot("before HTTPS resume");
 
     *client = esp_http_client_init(config);
-    if (*client == NULL) {
+    if (*client == NULL)
+    {
         ota_log_heap_snapshot("HTTPS resume client init failed");
         return ESP_ERR_NO_MEM;
     }
 
     err = esp_http_client_set_url(*client, url);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ota_http_client_destroy(client);
         return err;
     }
-    if (received == 0U) {
+    if (received == 0U)
+    {
         /* Nothing downloaded yet: a plain request, no Range header. */
         (void)esp_http_client_delete_header(*client, "Range");
-    } else {
-        char range[32];
+    }
+    else
+    {
+        char range[64]; /* "bytes=4294967295-" is 15 bytes, plus null terminator */
         (void)snprintf(range, sizeof(range), "bytes=%u-", (unsigned)received);
         err = esp_http_client_set_header(*client, "Range", range);
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             ota_http_client_destroy(client);
             return err;
         }
@@ -202,14 +226,16 @@ static esp_err_t ota_download_resume(esp_http_client_handle_t *client,
     int status_code = 0;
     err = ota_http_open_following_redirects(*client, &content_length,
                                             &status_code);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ota_http_client_destroy(client);
         return err;
     }
 
     const int expected_status = received == 0U ? 200 : 206;
     if (status_code != expected_status ||
-        content_length != (int64_t)(expected_size - received)) {
+        content_length != (int64_t)(expected_size - received))
+    {
         ESP_LOGE(TAG, "Resume rejected: HTTP %d, length %lld, expected HTTP %d "
                       "and %u bytes",
                  status_code, (long long)content_length, expected_status,
@@ -229,14 +255,16 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
                                 void *context)
 {
     if (!ota_manifest_is_https_url(url) || expected_size == 0U ||
-        !is_sha256(expected_sha256)) {
+        !is_sha256(expected_sha256))
+    {
         return ESP_ERR_INVALID_ARG;
     }
 
     OTA_HEAP_CHECK("1 entry ota_download_firmware");
     const esp_partition_t *update_partition =
         esp_ota_get_next_update_partition(NULL);
-    if (!update_partition || expected_size > update_partition->size) {
+    if (!update_partition || expected_size > update_partition->size)
+    {
         return ESP_ERR_INVALID_SIZE;
     }
 
@@ -247,10 +275,12 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
         .buffer_size_tx = OTA_HTTP_TX_BUFFER_SIZE,
         .keep_alive_enable = true,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .user_agent = "ESP32_Inverter_Firmware",
     };
     ota_log_heap_snapshot("before HTTP/TLS client init");
     esp_http_client_handle_t client = esp_http_client_init(&config);
-    if (!client) {
+    if (!client)
+    {
         ota_log_heap_snapshot("HTTP/TLS client init failed");
         return ESP_ERR_NO_MEM;
     }
@@ -265,19 +295,22 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
     ota_log_heap_snapshot("before HTTPS open");
     esp_err_t result = ota_http_open_following_redirects(client, &content_length,
                                                          &status_code);
-    if (result != ESP_OK) {
+    if (result != ESP_OK)
+    {
         ESP_LOGE(TAG, "HTTPS open failed: %s", esp_err_to_name(result));
         ota_log_heap_snapshot("HTTPS open failed");
         ota_http_client_destroy(&client);
         return result;
     }
     ota_log_heap_snapshot("after HTTPS open");
-    if (cancel_cb && cancel_cb(context)) {
+    if (cancel_cb && cancel_cb(context))
+    {
         result = ESP_ERR_INVALID_STATE;
         goto cleanup;
     }
 
-    if (status_code != 200 || content_length != (int64_t)expected_size) {
+    if (status_code != 200 || content_length != (int64_t)expected_size)
+    {
         ESP_LOGE(TAG, "Firmware download rejected: HTTP %d, length %lld, expected %u",
                  status_code, (long long)content_length,
                  (unsigned)expected_size);
@@ -294,20 +327,23 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
      * stalled) and was followed by a watchdog reset on this device. */
     result = esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES,
                            &ota_handle);
-    if (result != ESP_OK) {
+    if (result != ESP_OK)
+    {
         ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(result));
         goto cleanup;
     }
     OTA_HEAP_CHECK("3 after esp_ota_begin");
     ESP_LOGI(TAG, "OTA partition ready; downloading");
     ota_started = true;
-    if (cancel_cb && cancel_cb(context)) {
+    if (cancel_cb && cancel_cb(context))
+    {
         result = ESP_ERR_INVALID_STATE;
         goto cleanup;
     }
 
     result = ota_verify_begin(&verify_context);
-    if (result != ESP_OK) {
+    if (result != ESP_OK)
+    {
         goto cleanup;
     }
     OTA_HEAP_CHECK("4 after ota_verify_begin");
@@ -318,24 +354,30 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
     bool stream_open = true;
     bool low_heap_failure = false;
     int last_percent = 0;
-    if (progress_cb) {
+    if (progress_cb)
+    {
         progress_cb(0, context);
     }
     OTA_HEAP_CHECK("5 after first progress_cb(0)");
     /* This task is not subscribed to the ESP task watchdog, so it does not feed
      * it (feeding from an unsubscribed task only logged "TWDT feed rejected"). */
-    while (received < expected_size) {
-        if (cancel_cb && cancel_cb(context)) {
+    while (received < expected_size)
+    {
+        if (cancel_cb && cancel_cb(context))
+        {
             result = ESP_ERR_INVALID_STATE;
             goto cleanup;
         }
 
-        if (!stream_open) {
+        if (!stream_open)
+        {
             /* `result` still holds the failure that closed the stream. */
-            if (resumes >= OTA_DOWNLOAD_MAX_RESUMES) {
+            if (resumes >= OTA_DOWNLOAD_MAX_RESUMES)
+            {
                 ESP_LOGE(TAG, "Download failed after %u resume attempts",
                          resumes);
-                if (low_heap_failure) {
+                if (low_heap_failure)
+                {
                     /* Report the real cause: not enough contiguous heap for
                      * TLS, rather than a generic transport failure. */
                     result = ESP_ERR_NO_MEM;
@@ -347,16 +389,19 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
                 &client, &config, url, received, expected_size, resumes,
                 cancel_cb, context);
             if (resume_err == ESP_ERR_INVALID_STATE ||
-                resume_err == ESP_ERR_NOT_SUPPORTED) {
+                resume_err == ESP_ERR_NOT_SUPPORTED)
+            {
                 result = resume_err; /* cancelled / cannot resume at all */
                 goto cleanup;
             }
-            if (resume_err != ESP_OK) {
+            if (resume_err != ESP_OK)
+            {
                 ESP_LOGW(TAG, "Resume attempt %u failed: %s", resumes,
                          esp_err_to_name(resume_err));
                 if (resume_err == ESP_ERR_NO_MEM ||
                     heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
-                        OTA_RESUME_MIN_LARGEST_BLOCK) {
+                        OTA_RESUME_MIN_LARGEST_BLOCK)
+                {
                     low_heap_failure = true;
                 }
                 result = resume_err;
@@ -367,7 +412,8 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
 
 #if OTA_HEAP_DIAG
         const bool diag_early = received < (8U * 1024U);
-        if (diag_early) {
+        if (diag_early)
+        {
             OTA_HEAP_CHECK("6 before esp_http_client_read");
         }
 #endif
@@ -376,7 +422,8 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
             (int)((expected_size - received) > sizeof(buffer)
                       ? sizeof(buffer)
                       : (expected_size - received)));
-        if (read_len <= 0) {
+        if (read_len <= 0)
+        {
             const size_t largest =
                 heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
             ESP_LOGW(TAG, "Download interrupted at %u/%u bytes (read=%d); "
@@ -386,7 +433,8 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
                      (unsigned)largest);
             ota_log_heap_snapshot("download read interrupted");
             if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
-                OTA_RESUME_MIN_LARGEST_BLOCK) {
+                OTA_RESUME_MIN_LARGEST_BLOCK)
+            {
                 low_heap_failure = true;
             }
             esp_http_client_close(client);
@@ -395,20 +443,24 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
             continue;
         }
 #if OTA_HEAP_DIAG
-        if (diag_early) {
+        if (diag_early)
+        {
             OTA_HEAP_CHECK("7 after esp_http_client_read");
         }
 #endif
         result = esp_ota_write(ota_handle, buffer, (size_t)read_len);
-        if (result != ESP_OK) {
+        if (result != ESP_OK)
+        {
             goto cleanup;
         }
         result = ota_verify_update(&verify_context, buffer, (size_t)read_len);
-        if (result != ESP_OK) {
+        if (result != ESP_OK)
+        {
             goto cleanup;
         }
 #if OTA_HEAP_DIAG
-        if (diag_early) {
+        if (diag_early)
+        {
             OTA_HEAP_CHECK("8 after esp_ota_write + sha update");
         }
 #endif
@@ -418,48 +470,57 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
          * and LCD update: needless allocation churn right when TLS needs a
          * large contiguous block. */
         const int percent = (int)(((uint64_t)received * 100U) / expected_size);
-        if (progress_cb && percent != last_percent) {
+        if (progress_cb && percent != last_percent)
+        {
             last_percent = percent;
             progress_cb(percent, context);
         }
 #if OTA_HEAP_DIAG
-        if (diag_early) {
+        if (diag_early)
+        {
             OTA_HEAP_CHECK("9 after progress_cb");
         }
 #endif
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    if (verifying_cb) {
+    if (verifying_cb)
+    {
         verifying_cb(context);
     }
-    if (cancel_cb && cancel_cb(context)) {
+    if (cancel_cb && cancel_cb(context))
+    {
         result = ESP_ERR_INVALID_STATE;
         goto cleanup;
     }
 
     result = ota_verify_finish(&verify_context, expected_sha256);
-    if (result != ESP_OK) {
+    if (result != ESP_OK)
+    {
         goto cleanup;
     }
 
-    if (cancel_cb && cancel_cb(context)) {
+    if (cancel_cb && cancel_cb(context))
+    {
         result = ESP_ERR_INVALID_STATE;
         goto cleanup;
     }
     result = esp_ota_end(ota_handle);
     ota_started = false;
-    if (result == ESP_OK) {
+    if (result == ESP_OK)
+    {
         result = esp_ota_set_boot_partition(update_partition);
     }
 
 cleanup:
     ota_verify_abort(&verify_context);
-    if (ota_started) {
+    if (ota_started)
+    {
         esp_ota_abort(ota_handle);
     }
     ota_http_client_destroy(&client);
-    if (result != ESP_OK) {
+    if (result != ESP_OK)
+    {
         ESP_LOGD(TAG, "OTA download transaction ended: %s", esp_err_to_name(result));
     }
     return result;
