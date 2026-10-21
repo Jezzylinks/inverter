@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 #include "ota/ota_manifest.h"
 #include "ota/ota_verify.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "OTA_SERVICE";
 
@@ -31,13 +32,19 @@ static void ota_log_heap_snapshot(const char *stage)
     const uint32_t largest_internal =
         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     const uint32_t minimum_ever = (uint32_t)esp_get_minimum_free_heap_size();
+    /* Record stack headroom while the OTA task is in each phase. The value is
+     * in FreeRTOS stack words; convert to bytes for ESP32's 4-byte StackType_t. */
+    const UBaseType_t stack_hwm_words = uxTaskGetStackHighWaterMark(NULL);
+    const uint32_t stack_hwm_bytes =
+        (uint32_t)stack_hwm_words * (uint32_t)sizeof(StackType_t);
 
     ESP_LOGI(TAG,
              "MEM[%s] 8bit_free=%u 8bit_largest=%u internal_free=%u "
-             "internal_largest=%u min_ever_free=%u",
+             "internal_largest=%u min_ever_free=%u ota_stack_hwm=%uB",
              stage ? stage : "unknown", (unsigned)free_8bit,
              (unsigned)largest_8bit, (unsigned)free_internal,
-             (unsigned)largest_internal, (unsigned)minimum_ever);
+             (unsigned)largest_internal, (unsigned)minimum_ever,
+             (unsigned)stack_hwm_bytes);
 }
 
 /* A dropped connection mid-download is resumed with an HTTP Range request
@@ -51,16 +58,19 @@ static void ota_log_heap_snapshot(const char *stage)
  * reconnecting. */
 #define OTA_DOWNLOAD_MAX_RESUMES 4U
 #define OTA_RESUME_BACKOFF_MS 1500U
+#define OTA_RESUME_MAX_BACKOFF_MS 12000U
 #define OTA_RESUME_HEAP_WAIT_MS 4000U
 #define OTA_RESUME_HEAP_POLL_MS 250U
 /* Comfortable level: wait (bounded) for the largest free block to reach this,
  * but do not refuse just because it is not reached. Same value the TLS
  * diagnostics warn about. */
 #define OTA_RESUME_TARGET_LARGEST_BLOCK 20000U
-/* Hard floor: one full TLS record needs a contiguous 16749-byte block, so below
- * this the connection cannot work and a resume is refused instead of tried
- * (margin covers allocator overhead and small concurrent allocations). */
-#define OTA_RESUME_MIN_LARGEST_BLOCK 17500U
+/* This is a retry heuristic, not a claimed exact TLS allocation size. The
+ * previous 17.5 KB floor was tied to the old 16 KB incoming-record buffer and
+ * incorrectly refused retries after the incoming buffer was reduced to 4 KB.
+ * Let the configured record buffer plus a modest allowance determine the
+ * minimum block; the TLS handshake remains the final authority on allocation. */
+#define OTA_RESUME_MIN_LARGEST_BLOCK (CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN + 4096U)
 
 /* TEMPORARY DIAGNOSTIC: walk the whole heap at key points of the download and
  * log the first step after which it is corrupted. Set to 0 (or delete the
@@ -99,7 +109,7 @@ static esp_err_t ota_wait_for_heap(ota_download_cancel_cb_t cancel_cb,
                                    void *context)
 {
     uint32_t waited_ms = 0U;
-    while (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <
+    while (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
                OTA_RESUME_TARGET_LARGEST_BLOCK &&
            waited_ms < OTA_RESUME_HEAP_WAIT_MS) {
         if (cancel_cb && cancel_cb(context)) {
@@ -110,7 +120,7 @@ static esp_err_t ota_wait_for_heap(ota_download_cancel_cb_t cancel_cb,
     }
     /* Only refuse when the block is clearly too small; between the floor and
      * the target the resume is still attempted. */
-    if (heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
         OTA_RESUME_MIN_LARGEST_BLOCK) {
         ota_log_heap_snapshot("resume heap recovery timeout");
         return ESP_ERR_NO_MEM;
@@ -118,50 +128,82 @@ static esp_err_t ota_wait_for_heap(ota_download_cancel_cb_t cancel_cb,
     return ESP_OK;
 }
 
-/* Re-open the download at byte `received`. Returns ESP_OK with the client
- * positioned at that byte, ESP_ERR_INVALID_STATE if cancelled,
- * ESP_ERR_NOT_SUPPORTED if the server will not honour a Range request (retrying
- * cannot help), or the open/transport error otherwise. The original URL is used
- * rather than the signed redirect target, which may have expired. */
-static esp_err_t ota_download_resume(esp_http_client_handle_t client,
+/* Always destroy a failed HTTP/TLS session before creating another one.
+ * Keeping a half-closed client alive across retries can retain TLS buffers and
+ * sockets, worsening heap pressure and fragmentation. */
+static void ota_http_client_destroy(esp_http_client_handle_t *client)
+{
+    if (client != NULL && *client != NULL) {
+        (void)esp_http_client_close(*client);
+        (void)esp_http_client_cleanup(*client);
+        *client = NULL;
+    }
+}
+
+/* Re-open the download at byte `received`. Each attempt gets a fresh HTTP/TLS
+ * client, but reuses the same bounded config and keeps certificate validation
+ * enabled. The original URL is used because signed redirect URLs may expire. */
+static esp_err_t ota_download_resume(esp_http_client_handle_t *client,
+                                     const esp_http_client_config_t *config,
                                      const char *url, uint32_t received,
                                      uint32_t expected_size, unsigned attempt,
                                      ota_download_cancel_cb_t cancel_cb,
                                      void *context)
 {
+    if (client == NULL || config == NULL || url == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
     ESP_LOGW(TAG, "Resuming download at byte %u of %u (attempt %u/%u)",
              (unsigned)received, (unsigned)expected_size, attempt,
              (unsigned)OTA_DOWNLOAD_MAX_RESUMES);
 
-    esp_http_client_close(client);
-    vTaskDelay(pdMS_TO_TICKS(OTA_RESUME_BACKOFF_MS));
+    ota_http_client_destroy(client);
+    uint32_t backoff_ms = OTA_RESUME_BACKOFF_MS;
+    for (unsigned step = 1U; step < attempt && backoff_ms < OTA_RESUME_MAX_BACKOFF_MS; ++step) {
+        backoff_ms *= 2U;
+    }
+    if (backoff_ms > OTA_RESUME_MAX_BACKOFF_MS) {
+        backoff_ms = OTA_RESUME_MAX_BACKOFF_MS;
+    }
+    ESP_LOGW(TAG, "Resume backoff: %u ms", (unsigned)backoff_ms);
+    vTaskDelay(pdMS_TO_TICKS(backoff_ms));
     esp_err_t err = ota_wait_for_heap(cancel_cb, context);
     if (err != ESP_OK) {
         return err;
     }
     ota_log_heap_snapshot("before HTTPS resume");
 
-    err = esp_http_client_set_url(client, url);
+    *client = esp_http_client_init(config);
+    if (*client == NULL) {
+        ota_log_heap_snapshot("HTTPS resume client init failed");
+        return ESP_ERR_NO_MEM;
+    }
+
+    err = esp_http_client_set_url(*client, url);
     if (err != ESP_OK) {
+        ota_http_client_destroy(client);
         return err;
     }
     if (received == 0U) {
         /* Nothing downloaded yet: a plain request, no Range header. */
-        (void)esp_http_client_delete_header(client, "Range");
+        (void)esp_http_client_delete_header(*client, "Range");
     } else {
         char range[32];
         (void)snprintf(range, sizeof(range), "bytes=%u-", (unsigned)received);
-        err = esp_http_client_set_header(client, "Range", range);
+        err = esp_http_client_set_header(*client, "Range", range);
         if (err != ESP_OK) {
+            ota_http_client_destroy(client);
             return err;
         }
     }
 
     int64_t content_length = 0;
     int status_code = 0;
-    err = ota_http_open_following_redirects(client, &content_length,
+    err = ota_http_open_following_redirects(*client, &content_length,
                                             &status_code);
     if (err != ESP_OK) {
+        ota_http_client_destroy(client);
         return err;
     }
 
@@ -172,7 +214,7 @@ static esp_err_t ota_download_resume(esp_http_client_handle_t client,
                       "and %u bytes",
                  status_code, (long long)content_length, expected_status,
                  (unsigned)(expected_size - received));
-        esp_http_client_close(client);
+        ota_http_client_destroy(client);
         return status_code == 200 ? ESP_ERR_NOT_SUPPORTED
                                   : ESP_ERR_INVALID_RESPONSE;
     }
@@ -201,8 +243,8 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
     esp_http_client_config_t config = {
         .url = url,
         .timeout_ms = OTA_HTTP_TIMEOUT_MS,
-        .buffer_size = OTA_HTTP_BUFFER_SIZE,
-        .buffer_size_tx = OTA_HTTP_BUFFER_SIZE,
+        .buffer_size = OTA_HTTP_RX_BUFFER_SIZE,
+        .buffer_size_tx = OTA_HTTP_TX_BUFFER_SIZE,
         .keep_alive_enable = true,
         .crt_bundle_attach = esp_crt_bundle_attach,
     };
@@ -226,7 +268,7 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
     if (result != ESP_OK) {
         ESP_LOGE(TAG, "HTTPS open failed: %s", esp_err_to_name(result));
         ota_log_heap_snapshot("HTTPS open failed");
-        esp_http_client_cleanup(client);
+        ota_http_client_destroy(&client);
         return result;
     }
     ota_log_heap_snapshot("after HTTPS open");
@@ -302,8 +344,8 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
             }
             resumes++;
             const esp_err_t resume_err = ota_download_resume(
-                client, url, received, expected_size, resumes, cancel_cb,
-                context);
+                &client, &config, url, received, expected_size, resumes,
+                cancel_cb, context);
             if (resume_err == ESP_ERR_INVALID_STATE ||
                 resume_err == ESP_ERR_NOT_SUPPORTED) {
                 result = resume_err; /* cancelled / cannot resume at all */
@@ -313,7 +355,7 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
                 ESP_LOGW(TAG, "Resume attempt %u failed: %s", resumes,
                          esp_err_to_name(resume_err));
                 if (resume_err == ESP_ERR_NO_MEM ||
-                    heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <
+                    heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
                         OTA_RESUME_MIN_LARGEST_BLOCK) {
                     low_heap_failure = true;
                 }
@@ -343,7 +385,8 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
                      (unsigned)largest);
             ota_log_heap_snapshot("download read interrupted");
-            if (largest < OTA_RESUME_MIN_LARGEST_BLOCK) {
+            if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
+                OTA_RESUME_MIN_LARGEST_BLOCK) {
                 low_heap_failure = true;
             }
             esp_http_client_close(client);
@@ -415,8 +458,7 @@ cleanup:
     if (ota_started) {
         esp_ota_abort(ota_handle);
     }
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
+    ota_http_client_destroy(&client);
     if (result != ESP_OK) {
         ESP_LOGD(TAG, "OTA download transaction ended: %s", esp_err_to_name(result));
     }

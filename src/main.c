@@ -290,7 +290,8 @@ void app_main(void)
 
     // Create the LCD task before running POST so that the status screen can be drawn. The LCD task must be created before POST so that the status screen can be drawn.
     const BaseType_t lcd_task_status =
-        xTaskCreatePinnedToCore(lcd_task, "lcd_task", 7168, NULL, 4, &lcd_task_handle, APP_CORE_SYSTEM);
+        /* Runtime stack report showed 3828 B minimum-ever free from 8192 B. Keep 6144 B (about 1.8 KiB observed margin); revalidate under LCD/menu stress. */
+    xTaskCreatePinnedToCore(lcd_task, "lcd_task", 6144, NULL, 4, &lcd_task_handle, APP_CORE_SYSTEM);
     if (lcd_task_status != pdPASS)
     {
         ESP_LOGE(APP_TAG, "Failed to create LCD task");
@@ -318,6 +319,7 @@ void app_main(void)
         ESP_LOGE(APP_TAG, "FATAL: failed to create buzzer event task");
     }
     xTaskCreatePinnedToCore(led_event_task, "led_evt", 2048, NULL, 7, NULL, APP_CORE_SYSTEM);
+    /* Runtime stack report showed 3340 B minimum-ever free from 4096 B. Keep 3072 B (about 2.3 KiB observed margin); revalidate during fault-log bursts. */
     xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 3072, NULL, 5, NULL, APP_CORE_SYSTEM);
     xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, APP_CORE_SYSTEM);
     xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 3072, NULL, 9, NULL, APP_CORE_SYSTEM);

@@ -30,13 +30,16 @@ void stack_report_log(const char *stage)
     uint32_t total_unused = 0U;
     unsigned tasks_seen = 0U;
     for (size_t i = 0U; i < sizeof(kTaskNames) / sizeof(kTaskNames[0]); ++i) {
-        /* FreeRTOS stores task names truncated to configMAX_TASK_NAME_LEN - 1
-         * (15) characters, and xTaskGetHandle() asserts if the query is longer
-         * than that. Look tasks up by the truncated name. */
-        char key[configMAX_TASK_NAME_LEN];
-        strncpy(key, kTaskNames[i], sizeof(key) - 1U);
-        key[sizeof(key) - 1U] = '\0';
-        const TaskHandle_t handle = xTaskGetHandle(key);
+        /* xTaskGetHandle asserts when the name length reaches the configured
+         * maximum (which includes the NUL terminator). Some descriptive
+         * labels in this list cannot be legal FreeRTOS task names. */
+        if (strlen(kTaskNames[i]) >= configMAX_TASK_NAME_LEN) {
+            ESP_LOGW(TAG, "Skipping stack lookup for overlong task name: %s",
+                     kTaskNames[i]);
+            continue;
+        }
+
+        const TaskHandle_t handle = xTaskGetHandle(kTaskNames[i]);
         if (handle == NULL) {
             continue;
         }

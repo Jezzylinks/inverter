@@ -12,6 +12,8 @@
 #include "freertos/task.h"
 #include "ota/ota_download.h"
 #include "ota/ota_manifest.h"
+#include "cloud/cloud_reporting.h"
+#include "server/network_services.h"
 static const char *TAG = "OTA_SERVICE";
 
 static void secure_zero(void *ptr, size_t len)
@@ -112,16 +114,51 @@ static void download_verifying_callback(void *context)
     notify_status(OTA_STATUS_VERIFYING, 100);
 }
 
+/* uxTaskGetStackHighWaterMark reports the minimum-ever unused stack in words.
+ * Log both units so low headroom can be compared with the configured task size. */
+static void ota_log_task_stack_headroom(const char *stage)
+{
+    const UBaseType_t words = uxTaskGetStackHighWaterMark(NULL);
+    const size_t bytes = (size_t)words * sizeof(StackType_t);
+    ESP_LOGI(TAG, "OTA task stack headroom [%s]: %u words (%u bytes)",
+             stage ? stage : "unknown", (unsigned)words, (unsigned)bytes);
+    if (words < 200U) {
+        ESP_LOGW(TAG, "OTA task stack headroom is critically low (<200 words); "
+                      "increase OTA_TASK_STACK_SIZE after confirming this measurement");
+    }
+}
+
 static void ota_task(void *parameter)
 {
     ota_job_t *job = (ota_job_t *)parameter;
     if (!job) {
+        ota_log_task_stack_headroom("invalid job");
         set_job_finished();
         vTaskDelete(NULL);
         return;
     }
 
     notify_status(OTA_STATUS_STARTED, 0);
+    /* Keep the TLS heap available to the OTA manifest and image sessions. */
+    cloud_reporting_set_ota_paused(true);
+    network_services_status_t network_status = {0};
+    network_services_get_status(&network_status);
+    const bool reconnect_mqtt_after_failure = network_status.mqtt_connected;
+    if (reconnect_mqtt_after_failure) {
+        (void)network_services_mqtt_disconnect();
+    }
+    /* Allow any already-running report to finish before opening OTA TLS. */
+    for (unsigned wait_ms = 0U; wait_ms < 13000U; wait_ms += 250U) {
+        cloud_reporting_status_t cloud_status = {0};
+        if (cloud_reporting_get_status(&cloud_status) != ESP_OK ||
+            !cloud_status.publish_in_progress) {
+            break;
+        }
+        if (cancel_requested()) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(250U));
+    }
     esp_err_t result = ESP_OK;
     if (job->from_manifest) {
         ota_manifest_entry_t entry = {0};
@@ -163,6 +200,11 @@ static void ota_task(void *parameter)
         } else {
             notify_status(OTA_STATUS_FAILED, 0);
         }
+        cloud_reporting_set_ota_paused(false);
+        if (reconnect_mqtt_after_failure) {
+            (void)network_services_mqtt_connect();
+        }
+        ota_log_task_stack_headroom("failed/cancelled");
         secure_zero(job, sizeof(*job));
         free(job);
         set_job_finished();
@@ -170,6 +212,7 @@ static void ota_task(void *parameter)
         return;
     }
 
+    ota_log_task_stack_headroom("success");
     ESP_LOGI(TAG, "OTA verified successfully; manifest version %s",
              job->expected_version[0] ? job->expected_version : "unknown");
     notify_status(OTA_STATUS_SUCCESS, 100);
