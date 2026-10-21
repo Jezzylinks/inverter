@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "esp_http_server.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -26,11 +27,28 @@
 #define NETWORK_HTTP_PORT 80U
 #define NETWORK_HTTP_STACK_SIZE 8192U
 #define NETWORK_SYNC_TASK_STACK_SIZE 8192U
-#define NETWORK_HTTP_MAX_URI_HANDLERS 64U
+/* JSON API (64 handlers incl. OPTIONS) + dashboard (3) + WebSocket (1) = 68.
+ * Each spare slot costs one pointer, so keep generous headroom: when this was
+ * 64 the last handlers failed with ESP_ERR_HTTPD_HANDLERS_FULL, the WebSocket
+ * registration failed, start was torn down and retried on every Wi-Fi status
+ * change, leaking heap until allocations failed. */
+#define NETWORK_HTTP_MAX_URI_HANDLERS 96U
+
+/* Diagnostic: free/largest heap after each start/stop step, to find which
+ * service does not give its memory back across a stop/start cycle. */
+#define NS_HEAP(label)                                                        \
+    ESP_LOGI(NETWORK_SERVICES_TAG, "NSHEAP %-24s free=%u largest=%u", (label), \
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),              \
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT))
 static esp_err_t network_services_start_station_services(void);
 static esp_err_t network_services_stop_station_services(void);
 
 static SemaphoreHandle_t s_mutex;
+/* Serialises network_services_start() / network_services_stop() end to end.
+ * Without it two sync tasks could both pass the "not running" check and call
+ * httpd_start() at once; the loser failed with listen() errno 112 (address in
+ * use) and the services ended up half started. */
+static SemaphoreHandle_t s_lifecycle_mutex;
 static httpd_handle_t s_http_server;
 static network_mqtt_config_t s_mqtt_config;
 static bool s_initialized;
@@ -43,6 +61,7 @@ static bool s_dashboard_running;
 static bool s_station_ready;
 static bool s_internet_ready;
 static bool s_station_services_running;
+static bool s_suspended_for_ota;
 static bool s_sync_scheduled;
 /* Detect status updates that arrive while the sync worker is already running. */
 static uint32_t s_status_generation;
@@ -349,6 +368,9 @@ esp_err_t network_services_init(void)
         return ESP_OK;
     }
     s_mutex = xSemaphoreCreateMutex();
+    if (s_lifecycle_mutex == NULL) {
+        s_lifecycle_mutex = xSemaphoreCreateMutex();
+    }
     if (s_mutex == NULL) {
         return ESP_ERR_NO_MEM;
     }
@@ -407,7 +429,7 @@ esp_err_t network_services_deinit(void)
     return ESP_OK;
 }
 
-esp_err_t network_services_start(void)
+static esp_err_t network_services_start_locked(void)
 {
     if (!s_initialized) {
         return ESP_ERR_INVALID_STATE;
@@ -434,12 +456,28 @@ esp_err_t network_services_start(void)
     http_config.stack_size = NETWORK_HTTP_STACK_SIZE;
     http_config.lru_purge_enable = true;
 
+    NS_HEAP("start:begin");
     httpd_handle_t server = NULL;
-    esp_err_t err = httpd_start(&server, &http_config);
+    esp_err_t err = ESP_FAIL;
+    /* The listening socket of a just-stopped server can take a moment to be
+     * released by lwIP (listen() errno 112). Retry briefly before giving up. */
+    for (unsigned attempt = 0U; attempt < 4U; ++attempt) {
+        err = httpd_start(&server, &http_config);
+        if (err == ESP_OK) {
+            break;
+        }
+        ESP_LOGW(NETWORK_SERVICES_TAG, "httpd_start attempt %u failed: %s",
+                 attempt + 1U, esp_err_to_name(err));
+        vTaskDelay(pdMS_TO_TICKS(250));
+        if (s_teardown_pending) {
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
     if (err != ESP_OK) {
         return err;
     }
     s_http_server = server;
+    NS_HEAP("start:httpd");
 
     err = web_dashboard_server_init();
     if (err == ESP_OK) {
@@ -454,11 +492,13 @@ esp_err_t network_services_start(void)
         ESP_LOGW(NETWORK_SERVICES_TAG, "Dashboard unavailable: %s", esp_err_to_name(err));
     }
 
+    NS_HEAP("start:dashboard");
     err = json_api_server_start(server);
     if (err != ESP_OK) {
         cleanup_http_services();
         return err;
     }
+    NS_HEAP("start:json_api");
     err = websocket_server_init();
     if (err == ESP_OK) {
         err = websocket_server_register(server);
@@ -468,6 +508,7 @@ esp_err_t network_services_start(void)
         return err;
     }
     s_websocket_running = true;
+    NS_HEAP("start:websocket");
 
     err = mdns_service_init(WIFI_HOSTNAME);
     if (err == ESP_OK) {
@@ -479,6 +520,7 @@ esp_err_t network_services_start(void)
     /* Local services are architecture-neutral: they can run on STA, AP, or
      * APSTA once a usable local interface exists. The sync worker manages
      * NTP/MQTT separately after the monitor confirms upstream connectivity. */
+    NS_HEAP("start:mdns");
     services_lock();
     s_running = true;
     services_unlock();
@@ -487,6 +529,23 @@ esp_err_t network_services_start(void)
              wifi_manager_get_mode() == WIFI_MODE_STA ? "STA" :
              wifi_manager_get_mode() == WIFI_MODE_AP ? "AP" : "APSTA");
     return ESP_OK;
+}
+
+esp_err_t network_services_start(void)
+{
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_lifecycle_mutex != NULL &&
+        xSemaphoreTake(s_lifecycle_mutex, pdMS_TO_TICKS(20000)) != pdTRUE) {
+        ESP_LOGW(NETWORK_SERVICES_TAG, "network_services_start(): lifecycle busy");
+        return ESP_ERR_TIMEOUT;
+    }
+    const esp_err_t err = network_services_start_locked();
+    if (s_lifecycle_mutex != NULL) {
+        xSemaphoreGive(s_lifecycle_mutex);
+    }
+    return err;
 }
 
 void network_services_allow_start(void)
@@ -499,7 +558,7 @@ void network_services_allow_start(void)
     s_teardown_pending = false;
 }
 
-esp_err_t network_services_stop(void)
+static esp_err_t network_services_stop_locked(void)
 {
     if (!s_initialized) {
         return ESP_OK;
@@ -519,7 +578,9 @@ esp_err_t network_services_stop(void)
     s_websocket_running = false;
     services_unlock();
 
+    NS_HEAP("stop:begin");
     (void)network_services_stop_station_services();
+    NS_HEAP("stop:station(ntp/mqtt)");
 
     services_lock();
     const bool captive_dns_running = s_captive_dns_running;
@@ -528,6 +589,7 @@ esp_err_t network_services_stop(void)
     if (captive_dns_running) {
         (void)wifi_dns_server_stop();
     }
+    NS_HEAP("stop:captive_dns");
 
     if (!was_running) {
         return ESP_OK;
@@ -536,9 +598,71 @@ esp_err_t network_services_stop(void)
     if (mdns_running) {
         (void)mdns_service_deinit();
     }
+    NS_HEAP("stop:mdns");
     cleanup_http_services();
+    NS_HEAP("stop:http_ws_dashboard");
     ESP_LOGI(NETWORK_SERVICES_TAG, "Local network services stopped");
     return ESP_OK;
+}
+
+esp_err_t network_services_stop(void)
+{
+    if (!s_initialized) {
+        return ESP_OK;
+    }
+    /* Raise the teardown flag before waiting, so a start that is queued behind
+     * us (or runs right after) refuses instead of racing the teardown. */
+    s_teardown_pending = true;
+    if (s_lifecycle_mutex != NULL &&
+        xSemaphoreTake(s_lifecycle_mutex, pdMS_TO_TICKS(20000)) != pdTRUE) {
+        ESP_LOGW(NETWORK_SERVICES_TAG, "network_services_stop(): lifecycle busy");
+        return ESP_ERR_TIMEOUT;
+    }
+    const esp_err_t err = network_services_stop_locked();
+    if (s_lifecycle_mutex != NULL) {
+        xSemaphoreGive(s_lifecycle_mutex);
+    }
+    return err;
+}
+
+esp_err_t network_services_suspend_for_ota(void)
+{
+    if (!s_initialized) {
+        return ESP_OK;
+    }
+    ESP_LOGI(NETWORK_SERVICES_TAG,
+             "Suspending local network services for firmware download");
+    const esp_err_t err = network_services_stop();
+    s_suspended_for_ota = true;
+    return err;
+}
+
+void network_services_resume_after_ota(void)
+{
+    if (!s_initialized || !s_suspended_for_ota) {
+        return;
+    }
+    s_suspended_for_ota = false;
+    s_teardown_pending = false;
+    ESP_LOGI(NETWORK_SERVICES_TAG,
+             "Resuming local network services after firmware download");
+    bool schedule = false;
+    services_lock();
+    ++s_status_generation;
+    if (!s_sync_scheduled) {
+        s_sync_scheduled = true;
+        schedule = true;
+    }
+    services_unlock();
+    if (schedule && xTaskCreatePinnedToCore(network_services_sync_task,
+                                            "net_services_sync",
+                                            NETWORK_SYNC_TASK_STACK_SIZE, NULL, 4U,
+                                            NULL, APP_CORE_SYSTEM) != pdPASS) {
+        services_lock();
+        s_sync_scheduled = false;
+        services_unlock();
+        ESP_LOGW(NETWORK_SERVICES_TAG, "Unable to schedule network-service resume");
+    }
 }
 
 bool network_services_is_running(void)

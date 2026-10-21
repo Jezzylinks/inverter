@@ -12,6 +12,7 @@
 #include <ctype.h>
 #include <strings.h>
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_wifi.h"
@@ -52,7 +53,7 @@
 #define APP_OTA_TASK_STACK_SIZE 4096U
 #define APP_OTA_CHECK_TASK_STACK_SIZE 6144U
 #define APP_OTA_CHECK_TASK_PRIORITY 5U
-#define APP_WIFI_OPERATION_WATCH_STACK_SIZE 4096U
+#define APP_WIFI_OPERATION_WATCH_STACK_SIZE 3072U
 #define APP_WIFI_OPERATION_WATCH_PRIORITY 5U
 /* This task's call chain runs the full Wi-Fi driver start/stop path
  * (wifi_controller_start/stop -> wifi_manager -> esp_wifi_*) and, on
@@ -63,13 +64,13 @@
  * stack high-water-mark data (uxTaskGetStackHighWaterMark) in this
  * environment. Sized up defensively; verify on-device and tune down if
  * headroom data supports it. */
-#define APP_WIFI_TOGGLE_TASK_STACK_SIZE 6144U
+#define APP_WIFI_TOGGLE_TASK_STACK_SIZE 5120U
 #define APP_WIFI_TOGGLE_TASK_PRIORITY 5U
 #define APP_WIFI_TOGGLE_QUEUE_LENGTH 1U
 #define APP_WIFI_TOGGLE_WATCHDOG_POLL_MS 500U
 #define APP_WIFI_OPERATION_TIMEOUT_MS 30000U
 #define APP_WIFI_PREREQUISITE_POLL_MS 500U
-#define APP_WIFI_PREREQUISITE_STACK_SIZE 4096U
+#define APP_WIFI_PREREQUISITE_STACK_SIZE 3072U
 #define APP_WIFI_PREREQUISITE_PRIORITY 5U
 #define APP_WIFI_SCAN_DURATION_MS 40000U
 #define APP_WIFI_SCAN_POLL_MS 250U
@@ -1765,6 +1766,10 @@ static void ota_status_callback(ota_status_t status, int percent)
     }
     app_ota_status_t snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
+    if (status == OTA_STATUS_FAILED || status == OTA_STATUS_CANCELLED) {
+        /* No reboot follows: bring the suspended local services back. */
+        network_services_resume_after_ota();
+    }
     websocket_broadcast_ota_status(app_ota_state_text(snapshot.state),
                                    snapshot.progress_percent,
                                    snapshot.available_version,
@@ -3295,9 +3300,23 @@ static void ota_manifest_check_task(void *parameter)
 
     ota_manifest_entry_t entry = {0};
     bool update_available = false;
+    /* The manifest fetch is a full TLS session (about 17 KB contiguous for one
+     * record plus roughly 10 KB for the handshake / RSA bignums). With the
+     * HTTP/WebSocket/dashboard/mDNS services up, only ~15 KB was free and the
+     * handshake failed with "alloc failed" (mbedTLS -0x0010). Free that memory
+     * for the few seconds the check takes, but only when the heap is actually
+     * too tight so roomier builds are not interrupted. */
+    const bool suspended_for_check =
+        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 40000U;
+    if (suspended_for_check) {
+        (void)network_services_suspend_for_ota();
+    }
     const esp_err_t err = ota_service_check_csv_manifest(job->manifest_url,
                                                          &entry,
                                                          &update_available);
+    if (suspended_for_check) {
+        network_services_resume_after_ota();
+    }
     bool cancelled = false;
     app_ota_status_t snapshot;
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
@@ -3629,9 +3648,16 @@ esp_err_t app_services_confirm_update(void)
     /* Measured stack headroom of every live task, taken at the busiest
      * moment (Wi-Fi up, menus used, about to open a TLS session). */
     stack_report_log("before OTA install");
+    /* The TLS download needs ~17 KB of contiguous heap. With the local
+     * HTTP/WebSocket/mDNS/NTP services running only ~40 KB is free and
+     * fragmented, and the download aborts with "alloc(16749) failed".
+     * Suspend them for the transfer; they are resumed on failure/cancel
+     * (a successful update reboots into the new image). */
+    (void)network_services_suspend_for_ota();
     const esp_err_t err = ota_service_start_from_csv(manifest_url);
     if (err != ESP_OK)
     {
+        network_services_resume_after_ota();
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_ota_status.state = APP_OTA_ERROR;
         snprintf(s_ota_status.error_detail, sizeof(s_ota_status.error_detail),
