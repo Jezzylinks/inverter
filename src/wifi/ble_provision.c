@@ -1,3 +1,6 @@
+#include "sdkconfig.h"
+
+#if CONFIG_BT_ENABLED
 #include "storage/nvs_manager.h"
 /**
  * @file ble_provision.c
@@ -398,3 +401,20 @@ esp_err_t ble_provision_deinit(void)
         return ESP_OK;
 #endif
 }
+
+#else
+#include "esp_err.h"
+#include "wifi/ble_provision.h"
+
+/* Bluetooth is disabled in this build. Keep the public API link-safe without
+ * pulling NimBLE headers or implementation into the firmware. */
+esp_err_t ble_provision_init(void) { return ESP_ERR_NOT_SUPPORTED; }
+esp_err_t ble_provision_start(ble_provision_complete_callback_t callback)
+{
+    (void)callback;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+esp_err_t ble_provision_stop(void) { return ESP_OK; }
+esp_err_t ble_provision_deinit(void) { return ESP_OK; }
+esp_err_t ble_provision_start_advertising(void) { return ESP_ERR_NOT_SUPPORTED; }
+#endif /* CONFIG_BT_ENABLED */
