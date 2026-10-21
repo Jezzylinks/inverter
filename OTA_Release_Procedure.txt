@@ -13,7 +13,7 @@ git pull --ff-only origin master
 
 gh auth status
 
-$VERSION = "1.8.4"
+$VERSION = "1.8.5"
 $TAG = "v$VERSION"
 
 # The firmware must report the version it is released as. If this header is not
@@ -21,15 +21,27 @@ $TAG = "v$VERSION"
 # manifest as newer than itself and keeps offering the same update.
 (Get-Content include\system\firmware_version.h) -replace '#define INVERTER_FIRMWARE_VERSION ".*"', "#define INVERTER_FIRMWARE_VERSION `"v$VERSION`"" | Set-Content include\system\firmware_version.h -Encoding ascii
 
+# BUILD STEP (required). The binary that gets published must be compiled AFTER the
+# header above is changed. Releases 1.8.0 - 1.8.4 skipped this, so each published
+# binary reported the previous release's version (1.8.3 and 1.8.4 are the very same
+# build, reporting v1.8.2) and updated devices kept offering the same update.
+pio run -e esp32dev
+if ($LASTEXITCODE -ne 0) { throw "Build failed - not publishing" }
+
+$BIN = ".pio\build\esp32dev\firmware.bin"
+if (!(Test-Path $BIN)) { throw "Firmware file not found" }
+
+# The firmware must contain the version it is released as, or this is a stale build.
+$bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $BIN))
+$text = [System.Text.Encoding]::ASCII.GetString($bytes)
+if (!$text.Contains($TAG)) { throw "Built firmware does not contain $TAG - stale build, refusing to publish" }
+Write-Host "Verified: firmware.bin contains $TAG"
+
 git add .
 
 git commit -m "Prepare OTA firmware release 1.8.4"
 
 git push origin master
-
-$BIN = ".pio\build\esp32dev\firmware.bin"
-
-if (!(Test-Path $BIN)) { throw "Firmware file not found" }
 
 $SIZE = (Get-Item $BIN).Length
 
