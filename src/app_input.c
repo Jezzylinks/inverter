@@ -129,6 +129,8 @@ static void format_saved_setting_value(const value_edit_context_t *ctx,
 }
 
 static uint8_t s_ota_auth_selection = 1U;
+static bool s_ota_pending_apply_auth = false;
+static bool s_ota_pending_apply_authorized = false;
 static bool s_ota_feedback_active = false;
 static bool s_wifi_settings_child_active = false;
 static bool s_wifi_client_delete_confirmation = false;
@@ -264,6 +266,7 @@ static void exit_factory_reset_to_previous_menu(void)
 
 static void begin_ota_auth(uint8_t selection)
 {
+    s_ota_pending_apply_auth = false;
     s_ota_auth_selection = selection;
     xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
     change_pin_start_ex(&change_pin_ctx, CHANGE_PIN_MODE_VERIFY_ONLY);
@@ -276,30 +279,35 @@ static void begin_ota_auth(uint8_t selection)
     sys_lcd.screen = LCD_SCREEN_SECURITY;
 }
 
+static void begin_ota_pending_apply_auth(void)
+{
+    begin_ota_auth(1U);
+    s_ota_pending_apply_auth = true;
+}
+
 static void return_from_ota_auth(bool authenticated)
 {
+    const bool pending_apply_auth = s_ota_pending_apply_auth;
+    s_ota_pending_apply_auth = false;
+
     atomic_store(&sys_lcd.security.phase, SECURITY_PHASE_IDLE);
     atomic_store(&sys_lcd.security.action, SECURITY_ACTION_NONE);
     sys_state.menu_state = MENU_OTA;
     sys_state.menu_selection = s_ota_auth_selection;
-
-    /* The PIN flow left LCD_SCREEN_SECURITY as the current screen. Any flash
-     * raised while it was current (PIN feedback, or "No Update Ready" below)
-     * captures it as its AUTO return target, and the flash-expiry handler then
-     * restores it with security.phase == IDLE -- which draws the Security
-     * submenu (Change PIN / View PIN Status / Reset PIN) instead of OTA.
-     * Drop such a flash and make the OTA menu the current screen *before*
-     * anything below can flash or show a confirmation. */
     lcd_flash_clear();
-    show_menu_screen(MENU_OTA, sys_state.menu_selection);
 
+    if (pending_apply_auth)
+    {
+        /* PIN protects the destructive staged-image apply path. Keep the
+         * pending prompt visible and require a fresh ENTER to actually apply. */
+        s_ota_pending_apply_authorized = authenticated;
+        app_services_show_ota_status_screen();
+        return;
+    }
+
+    show_menu_screen(MENU_OTA, sys_state.menu_selection);
     if (authenticated)
     {
-        /* The OTA menu is already current. Do not redraw it on failure:
-         * request_update_confirmation() may have shown the "Wi-Fi is OFF"
-         * prerequisite prompt (it returns an error while waiting for the
-         * user), and redrawing the menu here would cover that prompt. A
-         * "No Update Ready" flash returns to the OTA menu by itself. */
         (void)app_services_request_update_confirmation();
     }
 }
@@ -1481,9 +1489,29 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
 
         if (ota_view == LCD_OTA_VIEW_PENDING_APPLY)
         {
-            /* Activation is deliberately separate from download/verification.
-             * Use the existing inverter shutdown sequence before changing the
-             * boot target, then verify that output is actually disabled. */
+            /* Applying a staged image can interrupt inverter output. Require
+             * authentication at apply time, including after a boot reminder. */
+            if (sys_state.security.enabled && !s_ota_pending_apply_authorized)
+            {
+                begin_ota_pending_apply_auth();
+                return;
+            }
+            s_ota_pending_apply_authorized = false;
+
+            /* Hash and version validation must finish before output is touched.
+             * A damaged/stale staged image is discarded while the inverter
+             * continues running. The selector validates again before boot set. */
+            const esp_err_t verify_err = app_services_validate_pending_update();
+            if (verify_err != ESP_OK)
+            {
+                ESP_LOGE(APP_INPUT_TAG, "Pending OTA rejected before shutdown: %s",
+                         esp_err_to_name(verify_err));
+                lcd_flash_info_to("UPDATE REJECTED", "CURRENT KEPT",
+                                  2200U, LCD_SCREEN_OTA);
+                return;
+            }
+
+            ESP_LOGI(APP_INPUT_TAG, "Pending OTA passed pre-shutdown validation");
             if (sys_state.inverter.inverter_state == INVERTER_ON ||
                 sys_state.inverter.inverter_state == INVERTER_STARTING)
             {
