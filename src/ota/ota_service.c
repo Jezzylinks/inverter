@@ -7,6 +7,8 @@
 #include "system/firmware_version.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "esp_partition.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -32,6 +34,44 @@ static bool s_in_progress;
 static bool s_cancel_requested;
 static bool s_rollback_notification_pending;
 static volatile esp_err_t s_last_error = ESP_OK;
+
+#define OTA_PENDING_NVS_NAMESPACE "ota_pending"
+#define OTA_PENDING_KEY "pending"
+#define OTA_PENDING_PART_KEY "part"
+#define OTA_PENDING_VER_KEY "version"
+
+static esp_err_t ota_pending_store(const esp_partition_t *partition, const char *version)
+{
+    if (partition == NULL || version == NULL || version[0] == '\0') return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(OTA_PENDING_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, OTA_PENDING_KEY, 1U);
+    if (err == ESP_OK) err = nvs_set_str(handle, OTA_PENDING_PART_KEY, partition->label);
+    if (err == ESP_OK) err = nvs_set_str(handle, OTA_PENDING_VER_KEY, version);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+static esp_err_t ota_pending_read(char *partition_label, size_t label_len,
+                                  char *version, size_t version_len)
+{
+    if (partition_label == NULL || label_len == 0U || version == NULL || version_len == 0U) return ESP_ERR_INVALID_ARG;
+    partition_label[0] = '\0'; version[0] = '\0';
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(OTA_PENDING_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) return err;
+    uint8_t pending = 0U;
+    err = nvs_get_u8(handle, OTA_PENDING_KEY, &pending);
+    if (err == ESP_OK && pending == 1U) {
+        size_t n = label_len;
+        err = nvs_get_str(handle, OTA_PENDING_PART_KEY, partition_label, &n);
+        if (err == ESP_OK) { n = version_len; err = nvs_get_str(handle, OTA_PENDING_VER_KEY, version, &n); }
+    } else if (err == ESP_OK) err = ESP_ERR_NOT_FOUND;
+    nvs_close(handle);
+    return err;
+}
 
 typedef struct {
     char url[OTA_MAX_URL_LENGTH];
@@ -212,15 +252,26 @@ static void ota_task(void *parameter)
         return;
     }
 
-    ota_log_task_stack_headroom("success");
-    ESP_LOGI(TAG, "OTA verified successfully; manifest version %s",
+    result = ota_pending_store(esp_ota_get_next_update_partition(NULL),
+                               job->expected_version);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "Verified image metadata could not be saved: %s", esp_err_to_name(result));
+        s_last_error = result;
+        notify_status(OTA_STATUS_FAILED, 0);
+        cloud_reporting_set_ota_paused(false);
+        if (reconnect_mqtt_after_failure) (void)network_services_mqtt_connect();
+        secure_zero(job, sizeof(*job)); free(job); set_job_finished(); vTaskDelete(NULL); return;
+    }
+    ota_log_task_stack_headroom("verified/pending activation");
+    ESP_LOGI(TAG, "OTA image verified and pending explicit activation (version %s)",
              job->expected_version[0] ? job->expected_version : "unknown");
     notify_status(OTA_STATUS_SUCCESS, 100);
+    cloud_reporting_set_ota_paused(false);
+    if (reconnect_mqtt_after_failure) (void)network_services_mqtt_connect();
     secure_zero(job, sizeof(*job));
     free(job);
     set_job_finished();
-    vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
+    vTaskDelete(NULL);
 }
 
 static esp_err_t queue_job(ota_job_t *job)
@@ -467,6 +518,45 @@ esp_err_t ota_service_register_status_callback(ota_status_callback_t callback)
     s_status_cb = callback;
     xSemaphoreGive(s_ota_mutex);
     return ESP_OK;
+}
+
+
+bool ota_service_update_pending(void)
+{
+    char label[17] = {0}, version[OTA_MAX_VERSION_LENGTH] = {0};
+    return ota_pending_read(label, sizeof(label), version, sizeof(version)) == ESP_OK;
+}
+
+esp_err_t ota_service_get_pending_version(char *buffer, size_t len)
+{
+    if (buffer == NULL || len == 0U) return ESP_ERR_INVALID_ARG;
+    char label[17] = {0};
+    return ota_pending_read(label, sizeof(label), buffer, len);
+}
+
+/* Select the verified image but never restart here. The caller must perform
+ * the existing controlled inverter shutdown before invoking esp_restart(). */
+esp_err_t ota_service_select_pending_for_boot(void)
+{
+    char label[17] = {0}, version[OTA_MAX_VERSION_LENGTH] = {0};
+    esp_err_t err = ota_pending_read(label, sizeof(label), version, sizeof(version));
+    if (err != ESP_OK) return err;
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
+    if (partition == NULL) return ESP_ERR_NOT_FOUND;
+    if (partition == esp_ota_get_running_partition()) return ESP_ERR_INVALID_STATE;
+    return esp_ota_set_boot_partition(partition);
+}
+
+esp_err_t ota_service_clear_pending(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(OTA_PENDING_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(handle, OTA_PENDING_KEY, 0U);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
 }
 
 bool ota_service_in_progress(void)
