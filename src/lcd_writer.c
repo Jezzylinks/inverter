@@ -50,13 +50,13 @@ static void copy_lcd_safe_text(char *dst, size_t dst_len, const char *src)
     if (dst == NULL || dst_len == 0U) return;
     size_t i = 0U;
     if (src != NULL) {
-        while (i + 1U < dst_len && src[i] != '\\0') {
+        while (i + 1U < dst_len && src[i] != '\0') {
             const unsigned char ch = (unsigned char)src[i];
             dst[i] = (ch >= 32U && ch <= 126U) ? (char)ch : '?';
             ++i;
         }
     }
-    dst[i] = '\\0';
+    dst[i] = '\0';
 }
 
 /* Safely copy a string into the active LCD row width. */
