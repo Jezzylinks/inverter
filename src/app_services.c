@@ -1683,7 +1683,29 @@ void app_services_show_ota_status_screen(void)
         }
     } else if (status.state == APP_OTA_PENDING_APPLY ||
         status.state == APP_OTA_DELETE_CONFIRM) {
-        app_services_show_ota_lcd_impl(&status, false);
+        if (status.state == APP_OTA_PENDING_APPLY &&
+            !ota_service_update_pending()) {
+            /* The marker may have been cleared because the staged image was
+             * stale or lacked the new integrity metadata. Do not resurrect its
+             * old in-memory prompt after it has been discarded. */
+            if (s_services_mutex != NULL) {
+                xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+                s_ota_status.state = APP_OTA_IDLE;
+                s_ota_status.update_available = false;
+                s_ota_status.progress_percent = 0;
+                s_ota_status.available_version[0] = '\0';
+                status = s_ota_status;
+                xSemaphoreGive(s_services_mutex);
+            }
+            LCD_LOCK();
+            sys_state.menu_state = MENU_OTA;
+            if (sys_state.menu_selection >= 3U) sys_state.menu_selection = 0U;
+            const int selection = sys_state.menu_selection;
+            LCD_UNLOCK();
+            show_menu_screen(MENU_OTA, selection);
+        } else {
+            app_services_show_ota_lcd_impl(&status, false);
+        }
     } else if ((status.state == APP_OTA_CHECKING ||
          status.state == APP_OTA_PREPARING ||
          status.state == APP_OTA_DOWNLOADING ||
