@@ -3624,9 +3624,10 @@ static void ota_pending_manifest_check_task(void *parameter)
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_pending_manifest_check_active = false;
         s_pending_manifest_check_task = NULL;
+        /* One manifest attempt per staged image/session avoids repeated TLS
+         * handshakes when the user authenticates and returns to the prompt. */
         s_pending_manifest_checked =
-            verify_err == ESP_OK && job->manifest_url[0] != '\0' &&
-            check_err == ESP_OK;
+            verify_err == ESP_OK && job->manifest_url[0] != '\0';
         if (staged_is_older && discard_err == ESP_OK) {
             s_pending_manifest_checked = true;
         }
