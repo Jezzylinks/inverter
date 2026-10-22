@@ -27,6 +27,7 @@
 #include "lcd/lcd_writer.h"
 #include "lcd/lcd_startup_config.h"
 #include <stdatomic.h>
+#include <stdint.h>
 #include "system/system_state.h"
 #include "security/security.h"
 #include "security/change_pin_flow.h"
