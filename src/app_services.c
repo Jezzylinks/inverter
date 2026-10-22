@@ -1648,7 +1648,31 @@ void app_services_show_ota_status_screen(void)
 {
     app_ota_status_t status;
     app_services_get_ota_status(&status);
-    if (status.state == APP_OTA_PENDING_APPLY ||
+
+    /* The persistent staged image takes precedence over the transient
+     * in-memory state, including after the 60-second prompt timed out. */
+    char pending_version[OTA_MAX_VERSION_LENGTH] = {0};
+    if (ota_service_get_pending_version(pending_version,
+                                        sizeof(pending_version)) == ESP_OK) {
+        if (s_services_mutex != NULL) {
+            xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+            s_ota_status.state = APP_OTA_PENDING_APPLY;
+            s_ota_status.update_available = true;
+            s_ota_status.progress_percent = 100;
+            snprintf(s_ota_status.available_version,
+                     sizeof(s_ota_status.available_version), "%s",
+                     pending_version);
+            status = s_ota_status;
+            xSemaphoreGive(s_services_mutex);
+        }
+        app_services_show_ota_lcd_impl(&status, false);
+        if (s_ota_apply_prompt_task == NULL &&
+            xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
+                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
+            s_ota_apply_prompt_task = NULL;
+            ESP_LOGW(APP_SERVICES_TAG, "Could not start OTA prompt timeout");
+        }
+    } else if (status.state == APP_OTA_PENDING_APPLY ||
         status.state == APP_OTA_DELETE_CONFIRM) {
         app_services_show_ota_lcd_impl(&status, false);
     } else if ((status.state == APP_OTA_CHECKING ||
