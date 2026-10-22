@@ -1506,17 +1506,8 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 return;
             }
 
-            /* Applying a staged image can interrupt inverter output. Require
-             * authentication at apply time, including after a boot reminder. */
-            if (sys_state.security.enabled && !s_ota_pending_apply_authorized)
-            {
-                begin_ota_pending_apply_auth();
-                return;
-            }
-            s_ota_pending_apply_authorized = false;
-
             /* Never hash a megabyte-scale image in the button callback.
-             * The background preflight must have verified it before shutdown. */
+             * The background preflight must have verified it before PIN/apply. */
             if (!ota_service_pending_image_verified())
             {
                 app_services_show_ota_status_screen();
@@ -1532,6 +1523,15 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 }
                 return;
             }
+
+            /* Applying a staged image can interrupt inverter output. Require
+             * authentication at apply time, including after a boot reminder. */
+            if (sys_state.security.enabled && !s_ota_pending_apply_authorized)
+            {
+                begin_ota_pending_apply_auth();
+                return;
+            }
+            s_ota_pending_apply_authorized = false;
 
             ESP_LOGI(APP_INPUT_TAG, "Pending OTA passed background SHA-256 preflight");
             if (sys_state.inverter.inverter_state == INVERTER_ON ||
