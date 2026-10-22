@@ -155,7 +155,7 @@ esp_err_t app_services_defer_pending_update(void);
 esp_err_t app_services_delete_pending_update(void);
 esp_err_t app_services_show_pending_delete_confirmation(void);
 bool app_services_update_pending(void);
-/** True while a background latest-manifest comparison protects staged apply. */
+/** True while background staged-image hashing/latest-manifest comparison runs. */
 bool app_services_pending_manifest_check_active(void);
 
 /** Cancel an in-progress OTA transaction or install confirmation. */
