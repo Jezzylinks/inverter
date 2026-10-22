@@ -633,18 +633,8 @@ esp_err_t ota_service_register_status_callback(ota_status_callback_t callback)
 
 bool ota_service_update_pending(void)
 {
-    char label[17] = {0}, version[OTA_MAX_VERSION_LENGTH] = {0};
-    if (ota_pending_read(label, sizeof(label), version, sizeof(version)) != ESP_OK)
-        return false;
-    const esp_partition_t *partition = esp_partition_find_first(
-        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
-    if (partition == NULL) return false;
-    if (partition == esp_ota_get_running_partition()) {
-        /* The staged image booted successfully but NVS marker cleanup failed. */
-        (void)ota_service_clear_pending();
-        return false;
-    }
-    return true;
+    char version[OTA_MAX_VERSION_LENGTH] = {0};
+    return ota_service_get_pending_version(version, sizeof(version)) == ESP_OK;
 }
 
 static esp_err_t ota_pending_discard_partition(const esp_partition_t *partition)
@@ -683,6 +673,17 @@ esp_err_t ota_service_get_pending_version(char *buffer, size_t len)
         return ESP_ERR_NOT_FOUND;
     }
     if (partition == esp_ota_get_running_partition()) {
+        (void)ota_pending_discard_partition(partition);
+        buffer[0] = '\0';
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    /* Old markers without digest/size are not trusted as staged images. */
+    char pending_sha[OTA_MAX_SHA256_LENGTH] = {0};
+    uint32_t pending_size = 0U;
+    err = ota_pending_integrity_read(pending_sha, sizeof(pending_sha), &pending_size);
+    if (err != ESP_OK || pending_size > partition->size) {
+        ESP_LOGW(TAG, "Discarding staged OTA with missing/invalid integrity metadata");
         (void)ota_pending_discard_partition(partition);
         buffer[0] = '\0';
         return ESP_ERR_NOT_FOUND;
