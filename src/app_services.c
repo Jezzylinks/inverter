@@ -89,6 +89,7 @@ extern SemaphoreHandle_t sys_state_mutex;
 static SemaphoreHandle_t s_services_mutex;
 static TaskHandle_t s_ota_check_task;
 static TaskHandle_t s_ota_apply_prompt_task;
+static volatile bool s_ota_prompt_from_boot_reminder;
 static TaskHandle_t s_ota_manifest_check_task;
 static bool s_ota_manifest_check_active;
 static TaskHandle_t s_wifi_operation_watch_task;
@@ -1666,6 +1667,7 @@ void app_services_show_ota_status_screen(void)
             xSemaphoreGive(s_services_mutex);
         }
         app_services_show_ota_lcd_impl(&status, false);
+        s_ota_prompt_from_boot_reminder = false;
         if (s_ota_apply_prompt_task == NULL &&
             xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
                         3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
@@ -1764,7 +1766,18 @@ static void ota_apply_prompt_timeout_task(void *parameter)
                                 sys_lcd.ota.state == LCD_OTA_VIEW_PENDING_APPLY);
         LCD_UNLOCK();
         if (prompt_still_visible) {
-            show_menu_screen(MENU_OTA, 1U);
+            if (s_ota_prompt_from_boot_reminder) {
+                /* No response to the boot reminder means "later": return to
+                 * the normal home screen without changing the boot target. */
+                LCD_LOCK();
+                sys_state.menu_state = MENU_NONE;
+                sys_state.menu_selection = 0U;
+                sys_state.in_detail_view = false;
+                LCD_UNLOCK();
+                lcd_show_main();
+            } else {
+                show_menu_screen(MENU_OTA, 1U);
+            }
         }
     }
     vTaskDelete(NULL);
@@ -1798,6 +1811,7 @@ static void ota_pending_boot_reminder_task(void *parameter)
                  "Showing boot reminder for staged firmware %s",
                  snapshot.available_version);
         app_services_show_ota_lcd_impl(&snapshot, false);
+        s_ota_prompt_from_boot_reminder = true;
         if (s_ota_apply_prompt_task == NULL &&
             xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
                         3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
@@ -1875,6 +1889,7 @@ static void ota_status_callback(ota_status_t status, int percent)
     xSemaphoreGive(s_services_mutex);
 
     if (start_apply_prompt_timer) {
+        s_ota_prompt_from_boot_reminder = false;
         if (xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
                         3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
             ESP_LOGW(APP_SERVICES_TAG,
@@ -3731,6 +3746,7 @@ esp_err_t app_services_confirm_update(void)
         app_ota_status_t pending_snapshot = s_ota_status;
         xSemaphoreGive(s_services_mutex);
         app_services_show_ota_lcd(&pending_snapshot);
+        s_ota_prompt_from_boot_reminder = false;
         if (s_ota_apply_prompt_task == NULL &&
             xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
                         3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
