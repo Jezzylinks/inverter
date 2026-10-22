@@ -836,10 +836,16 @@ static void draw_ota(const lcd_ota_data_t *d)
             rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_COMPLETE:
-            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE COMPLETE");
-            snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", render->available_version);
-            snprintf(rows[2], LCD_LINE_SIZE, "RESTARTING...");
+            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE VERIFIED");
+            snprintf(rows[1], LCD_LINE_SIZE, "CURRENT FIRMWARE");
+            snprintf(rows[2], LCD_LINE_SIZE, "STILL RUNNING");
             snprintf(rows[3], LCD_LINE_SIZE, "PLEASE WAIT");
+            break;
+        case LCD_OTA_VIEW_PENDING_APPLY:
+            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE VERIFIED");
+            snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", render->available_version);
+            snprintf(rows[2], LCD_LINE_SIZE, "RESTART TO APPLY?");
+            snprintf(rows[3], LCD_LINE_SIZE, "ENTER=YES BACK=NO");
             break;
         case LCD_OTA_VIEW_ERROR:
         default:
@@ -892,8 +898,12 @@ static void draw_ota(const lcd_ota_data_t *d)
         snprintf(row1, LCD_LINE_SIZE, "CURRENT KEPT");
         break;
     case LCD_OTA_VIEW_COMPLETE:
-        snprintf(row0, LCD_LINE_SIZE, "UPDATE COMPLETE");
-        snprintf(row1, LCD_LINE_SIZE, "RESTARTING...");
+        snprintf(row0, LCD_LINE_SIZE, "UPDATE VERIFIED");
+        snprintf(row1, LCD_LINE_SIZE, "CURRENT FIRMWARE");
+        break;
+    case LCD_OTA_VIEW_PENDING_APPLY:
+        snprintf(row0, LCD_LINE_SIZE, "ENTER: APPLY");
+        snprintf(row1, LCD_LINE_SIZE, "BACK: LATER");
         break;
     case LCD_OTA_VIEW_ERROR:
     default:
