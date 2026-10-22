@@ -151,6 +151,7 @@ bool app_services_ota_cancel_confirmation_pending(void);
 esp_err_t app_services_apply_pending_update(void);
 /** Leave the staged image pending; current firmware continues running. */
 esp_err_t app_services_defer_pending_update(void);
+esp_err_t app_services_delete_pending_update(void);
 bool app_services_update_pending(void);
 
 /** Cancel an in-progress OTA transaction or install confirmation. */
