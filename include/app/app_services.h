@@ -32,6 +32,7 @@ typedef enum {
     APP_OTA_VERIFYING,
     APP_OTA_COMPLETE,
     APP_OTA_PENDING_APPLY,
+    APP_OTA_DELETE_CONFIRM,
     APP_OTA_ERROR,
     APP_OTA_CANCELLED,
 } app_ota_state_t;
