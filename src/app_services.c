@@ -3537,6 +3537,156 @@ static void ota_manifest_check_task(void *parameter)
     vTaskDelete(NULL);
 }
 
+typedef struct {
+    char manifest_url[APP_OTA_MANIFEST_URL_MAX];
+    char staged_version[OTA_MAX_VERSION_LENGTH];
+} ota_pending_manifest_job_t;
+
+static void ota_pending_manifest_check_task(void *parameter)
+{
+    ota_pending_manifest_job_t *job = (ota_pending_manifest_job_t *)parameter;
+    if (job == NULL) {
+        if (s_services_mutex != NULL) {
+            xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+            s_pending_manifest_check_active = false;
+            s_pending_manifest_check_task = NULL;
+            xSemaphoreGive(s_services_mutex);
+        }
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ota_manifest_entry_t entry = {0};
+    bool latest_newer_than_running = false;
+    const bool suspended_for_check =
+        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 40000U;
+    if (suspended_for_check) {
+        (void)network_services_suspend_for_ota();
+    }
+    const esp_err_t check_err = ota_service_check_csv_manifest(
+        job->manifest_url, &entry, &latest_newer_than_running);
+    if (suspended_for_check) {
+        network_services_resume_after_ota();
+    }
+
+    bool staged_is_older = false;
+    if (check_err == ESP_OK) {
+        staged_is_older =
+            ota_manifest_compare_versions(entry.version, job->staged_version) > 0;
+    }
+
+    esp_err_t discard_err = ESP_OK;
+    if (staged_is_older) {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Latest release %s is newer than staged %s; discarding stale staged image",
+                 entry.version, job->staged_version);
+        discard_err = ota_service_delete_pending();
+    }
+
+    app_ota_status_t snapshot = {0};
+    bool show_latest_available = false;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_pending_manifest_check_active = false;
+        s_pending_manifest_check_task = NULL;
+        if (staged_is_older && discard_err == ESP_OK) {
+            s_ota_status.state = APP_OTA_AVAILABLE;
+            s_ota_status.update_available = latest_newer_than_running;
+            s_ota_status.confirmation_pending = false;
+            s_ota_status.progress_percent = 0;
+            (void)snprintf(s_ota_status.available_version,
+                           sizeof(s_ota_status.available_version), "%s",
+                           entry.version);
+            s_ota_status.error_detail[0] = '\0';
+            snapshot = s_ota_status;
+            show_latest_available = true;
+        }
+        xSemaphoreGive(s_services_mutex);
+    }
+
+    if (check_err != ESP_OK) {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Could not compare staged OTA %s with latest manifest: %s; keeping staged image",
+                 job->staged_version, esp_err_to_name(check_err));
+    } else if (!staged_is_older) {
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "Staged OTA %s is not older than the latest manifest %s",
+                 job->staged_version, entry.version);
+    } else if (discard_err != ESP_OK) {
+        ESP_LOGE(APP_SERVICES_TAG,
+                 "Could not discard stale staged OTA %s: %s",
+                 job->staged_version, esp_err_to_name(discard_err));
+    }
+
+    if (show_latest_available) {
+        app_services_show_ota_lcd_impl(&snapshot, false);
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "Latest OTA %s is available; user confirmation is required before download",
+                 entry.version);
+    }
+
+    memset(job, 0, sizeof(*job));
+    free(job);
+    vTaskDelete(NULL);
+}
+
+static void app_services_schedule_pending_manifest_check(void)
+{
+    if (s_services_mutex == NULL || !app_wifi_station_has_ip()) {
+        return;
+    }
+
+    char staged_version[OTA_MAX_VERSION_LENGTH] = {0};
+    if (ota_service_get_pending_version(staged_version,
+                                        sizeof(staged_version)) != ESP_OK) {
+        return;
+    }
+
+    char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
+    if (app_services_get_ota_manifest_url(manifest_url,
+                                          sizeof(manifest_url)) != ESP_OK ||
+        !ota_manifest_is_https_url(manifest_url)) {
+        return;
+    }
+
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    if (s_pending_manifest_check_active ||
+        s_ota_status.state != APP_OTA_PENDING_APPLY) {
+        xSemaphoreGive(s_services_mutex);
+        return;
+    }
+
+    ota_pending_manifest_job_t *job = calloc(1, sizeof(*job));
+    if (job == NULL) {
+        xSemaphoreGive(s_services_mutex);
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Could not allocate latest-manifest check; staged OTA remains available");
+        return;
+    }
+    (void)snprintf(job->manifest_url, sizeof(job->manifest_url), "%s",
+                   manifest_url);
+    (void)snprintf(job->staged_version, sizeof(job->staged_version), "%s",
+                   staged_version);
+    s_pending_manifest_check_active = true;
+    xSemaphoreGive(s_services_mutex);
+
+    if (xTaskCreatePinnedToCore(ota_pending_manifest_check_task,
+                                "ota_pending_check",
+                                APP_OTA_CHECK_TASK_STACK_SIZE, job,
+                                APP_OTA_CHECK_TASK_PRIORITY,
+                                &s_pending_manifest_check_task,
+                                APP_CORE_SYSTEM) != pdPASS) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_pending_manifest_check_active = false;
+        s_pending_manifest_check_task = NULL;
+        xSemaphoreGive(s_services_mutex);
+        memset(job, 0, sizeof(*job));
+        free(job);
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Could not start latest-manifest check; staged OTA remains available");
+    }
+}
+
 esp_err_t app_services_check_for_update(bool user_initiated)
 {
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
