@@ -1489,6 +1489,21 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
 
         if (ota_view == LCD_OTA_VIEW_PENDING_APPLY)
         {
+            /* The background manifest check may have replaced this prompt with
+             * a newer release. Never apply based on a stale LCD snapshot. */
+            if (!app_services_update_pending())
+            {
+                s_ota_pending_apply_authorized = false;
+                app_services_show_ota_status_screen();
+                return;
+            }
+            if (app_services_pending_manifest_check_active())
+            {
+                lcd_flash_info_to("CHECKING LATEST", "PLEASE WAIT",
+                                  1200U, LCD_SCREEN_OTA);
+                return;
+            }
+
             /* Applying a staged image can interrupt inverter output. Require
              * authentication at apply time, including after a boot reminder. */
             if (sys_state.security.enabled && !s_ota_pending_apply_authorized)
