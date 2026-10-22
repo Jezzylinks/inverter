@@ -563,6 +563,28 @@ esp_err_t ota_service_clear_pending(void)
     return err;
 }
 
+esp_err_t ota_service_delete_pending(void)
+{
+    char label[17] = {0}, version[OTA_MAX_VERSION_LENGTH] = {0};
+    esp_err_t err = ota_pending_read(label, sizeof(label), version, sizeof(version));
+    if (err != ESP_OK) return err;
+
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
+    if (partition == NULL) return ESP_ERR_NOT_FOUND;
+
+    /* Never erase the running image or whichever partition is already selected
+     * for the next boot. This guards against stale metadata after a partial apply. */
+    if (partition == esp_ota_get_running_partition() ||
+        partition == esp_ota_get_boot_partition()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    err = esp_partition_erase_range(partition, 0U, partition->size);
+    if (err != ESP_OK) return err;
+    return ota_service_clear_pending();
+}
+
 bool ota_service_in_progress(void)
 {
     if (!s_ota_mutex) {
