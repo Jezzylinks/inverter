@@ -93,6 +93,9 @@ static volatile bool s_ota_prompt_from_boot_reminder;
 static volatile uint32_t s_ota_prompt_last_shown_ms;
 static TaskHandle_t s_ota_manifest_check_task;
 static bool s_ota_manifest_check_active;
+static TaskHandle_t s_pending_manifest_check_task;
+static bool s_pending_manifest_check_active;
+static void app_services_schedule_pending_manifest_check(void);
 static TaskHandle_t s_wifi_operation_watch_task;
 static TaskHandle_t s_wifi_prerequisite_task;
 static TaskHandle_t s_wifi_toggle_task;
@@ -1668,6 +1671,7 @@ void app_services_show_ota_status_screen(void)
             xSemaphoreGive(s_services_mutex);
         }
         app_services_show_ota_lcd_impl(&status, false);
+        app_services_schedule_pending_manifest_check();
         s_ota_prompt_last_shown_ms =
             (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         s_ota_prompt_from_boot_reminder = false;
@@ -1825,6 +1829,7 @@ static void ota_pending_boot_reminder_task(void *parameter)
                  "Showing boot reminder for staged firmware %s",
                  snapshot.available_version);
         app_services_show_ota_lcd_impl(&snapshot, false);
+        app_services_schedule_pending_manifest_check();
         s_ota_prompt_last_shown_ms =
             (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         s_ota_prompt_from_boot_reminder = true;
@@ -3953,6 +3958,15 @@ bool app_services_ota_cancel_confirmation_pending(void)
 bool app_services_update_pending(void)
 {
     return ota_service_update_pending();
+}
+
+bool app_services_pending_manifest_check_active(void)
+{
+    if (s_services_mutex == NULL) return false;
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    const bool active = s_pending_manifest_check_active;
+    xSemaphoreGive(s_services_mutex);
+    return active;
 }
 
 esp_err_t app_services_validate_pending_update(void)
