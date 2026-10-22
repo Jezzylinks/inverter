@@ -95,6 +95,7 @@ static TaskHandle_t s_ota_manifest_check_task;
 static bool s_ota_manifest_check_active;
 static TaskHandle_t s_pending_manifest_check_task;
 static bool s_pending_manifest_check_active;
+static bool s_pending_manifest_checked;
 static void app_services_schedule_pending_manifest_check(void);
 static TaskHandle_t s_wifi_operation_watch_task;
 static TaskHandle_t s_wifi_prerequisite_task;
@@ -1886,6 +1887,7 @@ static void ota_status_callback(ota_status_t status, int percent)
         break;
     case OTA_STATUS_SUCCESS:
         s_ota_status.state = APP_OTA_PENDING_APPLY;
+        s_pending_manifest_checked = false;
         s_ota_status.error_detail[0] = '\0';
         s_ota_status.confirmation_pending = false;
         s_ota_status.cancel_confirmation_pending = false;
@@ -3583,7 +3585,9 @@ static void ota_pending_manifest_check_task(void *parameter)
 
     /* Hash verification runs in this worker, never in the button/LCD path.
      * The button path is held until this preflight has completed. */
-    const esp_err_t verify_err = ota_service_validate_pending_for_apply();
+    const esp_err_t verify_err = ota_service_pending_image_verified()
+                                     ? ESP_OK
+                                     : ota_service_validate_pending_for_apply();
     ota_manifest_entry_t entry = {0};
     bool latest_newer_than_running = false;
     esp_err_t check_err = ESP_ERR_INVALID_STATE;
@@ -3620,6 +3624,12 @@ static void ota_pending_manifest_check_task(void *parameter)
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_pending_manifest_check_active = false;
         s_pending_manifest_check_task = NULL;
+        s_pending_manifest_checked =
+            verify_err == ESP_OK && job->manifest_url[0] != '\0' &&
+            check_err == ESP_OK;
+        if (staged_is_older && discard_err == ESP_OK) {
+            s_pending_manifest_checked = true;
+        }
         if (verify_err != ESP_OK && !ota_service_update_pending()) {
             s_ota_status.state = APP_OTA_IDLE;
             s_ota_status.update_available = false;
@@ -3694,10 +3704,16 @@ static void app_services_schedule_pending_manifest_check(void)
         return;
     }
 
+    const bool station_connected = app_wifi_station_has_ip();
+    if (ota_service_pending_image_verified() &&
+        (s_pending_manifest_checked || !station_connected)) {
+        return;
+    }
+
     /* Integrity preflight always runs, even offline. The optional latest
      * manifest comparison only runs when station connectivity is available. */
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
-    if (app_wifi_station_has_ip()) {
+    if (station_connected) {
         if (app_services_get_ota_manifest_url(manifest_url,
                                               sizeof(manifest_url)) != ESP_OK ||
             !ota_manifest_is_https_url(manifest_url)) {
@@ -4216,6 +4232,7 @@ esp_err_t app_services_delete_pending_update(void)
     if (err != ESP_OK && ota_service_update_pending()) return err;
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_pending_manifest_checked = false;
     s_ota_status.state = APP_OTA_IDLE;
     s_ota_status.progress_percent = 0;
     s_ota_status.update_available = false;
