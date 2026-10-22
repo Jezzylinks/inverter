@@ -910,8 +910,8 @@ static void draw_ota(const lcd_ota_data_t *d)
         snprintf(row1, LCD_LINE_SIZE, "CURRENT FIRMWARE");
         break;
     case LCD_OTA_VIEW_PENDING_APPLY:
-        snprintf(row0, LCD_LINE_SIZE, "ENTER APPLY UP DEL");
-        snprintf(row1, LCD_LINE_SIZE, "BACK = LATER");
+        snprintf(row0, LCD_LINE_SIZE, "ENTER=APPLY");
+        snprintf(row1, LCD_LINE_SIZE, "UP=DEL BACK=NO");
         break;
     case LCD_OTA_VIEW_DELETE_CONFIRM:
         snprintf(row0, LCD_LINE_SIZE, "ENTER=DELETE");
