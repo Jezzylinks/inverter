@@ -4175,11 +4175,6 @@ bool app_services_pending_manifest_check_active(void)
     return active;
 }
 
-esp_err_t app_services_validate_pending_update(void)
-{
-    return ota_service_validate_pending_for_apply();
-}
-
 esp_err_t app_services_apply_pending_update(void)
 {
     return ota_service_select_pending_for_boot();
