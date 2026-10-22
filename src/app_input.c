@@ -1507,7 +1507,7 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             }
             if (app_services_pending_manifest_check_active())
             {
-                lcd_flash_info_to("CHECKING LATEST", "PLEASE WAIT",
+                lcd_flash_info_to("VERIFYING UPDATE", "PLEASE WAIT",
                                   1200U, LCD_SCREEN_OTA);
                 return;
             }
