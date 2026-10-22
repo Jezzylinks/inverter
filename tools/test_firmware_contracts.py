@@ -746,7 +746,10 @@ class FirmwareContracts(unittest.TestCase):
         self.assertIn('sha256sum', workflow)
         self.assertIn('firmware.bin', workflow)
         self.assertIn('inverter.csv', workflow)
-        self.assertIn('releases/download/${GITHUB_REF_NAME}/firmware.bin', workflow)
+        self.assertIn('asset_name="inverter-${GITHUB_REF_NAME}.bin"', workflow)
+        self.assertIn('releases/download/${GITHUB_REF_NAME}/${asset_name}', workflow)
+        self.assertIn('fail_size=$((max_size * 95 / 100))', workflow)
+        self.assertIn('size >= fail_size', workflow)
         self.assertIn('gh release create', workflow)
 
 if __name__ == "__main__":
