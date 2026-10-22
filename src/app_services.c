@@ -3928,9 +3928,12 @@ esp_err_t app_services_show_pending_delete_confirmation(void)
 
 esp_err_t app_services_delete_pending_update(void)
 {
-    const esp_err_t err = ota_service_delete_pending();
-    if (err != ESP_OK) return err;
     if (s_services_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    const esp_err_t err = ota_service_delete_pending();
+    /* If the marker is still present, deletion did not safely detach the
+     * image; retain the prompt so the user can retry. If only physical erase
+     * failed after the marker was cleared, forget the staged image anyway. */
+    if (err != ESP_OK && ota_service_update_pending()) return err;
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_ota_status.state = APP_OTA_IDLE;
@@ -3941,7 +3944,7 @@ esp_err_t app_services_delete_pending_update(void)
     s_ota_status.available_version[0] = '\0';
     s_ota_status.error_detail[0] = '\0';
     xSemaphoreGive(s_services_mutex);
-    return ESP_OK;
+    return err;
 }
 
 esp_err_t app_services_cancel_update(void)
