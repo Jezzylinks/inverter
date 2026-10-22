@@ -50,6 +50,7 @@
 #define APP_OTA_MANIFEST_KEY "ota_manifest"
 #define APP_OTA_AUTOCHECK_KEY "ota_auto"
 #define APP_OTA_CHECK_INTERVAL_MS (6U * 60U * 60U * 1000U)
+#define APP_OTA_APPLY_PROMPT_TIMEOUT_MS 60000U
 #define APP_OTA_TASK_STACK_SIZE 4096U
 #define APP_OTA_CHECK_TASK_STACK_SIZE 6144U
 #define APP_OTA_CHECK_TASK_PRIORITY 5U
@@ -87,6 +88,7 @@ extern SemaphoreHandle_t sys_state_mutex;
 
 static SemaphoreHandle_t s_services_mutex;
 static TaskHandle_t s_ota_check_task;
+static TaskHandle_t s_ota_apply_prompt_task;
 static TaskHandle_t s_ota_manifest_check_task;
 static bool s_ota_manifest_check_active;
 static TaskHandle_t s_wifi_operation_watch_task;
@@ -1705,6 +1707,33 @@ static void ota_progress_callback(int percent)
     app_services_show_ota_lcd(&snapshot);
 }
 
+static void ota_apply_prompt_timeout_task(void *parameter)
+{
+    (void)parameter;
+    vTaskDelay(pdMS_TO_TICKS(APP_OTA_APPLY_PROMPT_TIMEOUT_MS));
+
+    bool timed_out = false;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        if (s_ota_status.state == APP_OTA_PENDING_APPLY) {
+            /* Timeout is equivalent to "Later". The staged image remains
+             * persisted; importantly, the boot partition is still unchanged. */
+            s_ota_status.state = APP_OTA_AVAILABLE;
+            s_ota_status.update_available = true;
+            s_ota_status.progress_percent = 100;
+            timed_out = true;
+        }
+        s_ota_apply_prompt_task = NULL;
+        xSemaphoreGive(s_services_mutex);
+    }
+
+    if (timed_out) {
+        ESP_LOGI(APP_SERVICES_TAG, "OTA apply prompt timed out; current firmware retained");
+        show_menu_screen(MENU_OTA, 1U);
+    }
+    vTaskDelete(NULL);
+}
+
 static void ota_status_callback(ota_status_t status, int percent)
 {
     if (!s_services_mutex) {
@@ -1767,7 +1796,18 @@ static void ota_status_callback(ota_status_t status, int percent)
         break;
     }
     app_ota_status_t snapshot = s_ota_status;
+    const bool start_apply_prompt_timer =
+        status == OTA_STATUS_SUCCESS && s_ota_apply_prompt_task == NULL;
     xSemaphoreGive(s_services_mutex);
+
+    if (start_apply_prompt_timer) {
+        if (xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
+                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Could not create OTA apply-prompt timer; user can still defer manually");
+            s_ota_apply_prompt_task = NULL;
+        }
+    }
     if (status == OTA_STATUS_FAILED || status == OTA_STATUS_CANCELLED) {
         /* No reboot follows: bring the suspended local services back. */
         network_services_resume_after_ota();
