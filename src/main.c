@@ -371,18 +371,65 @@ void app_main(void)
     startup_show_stage(LCD_STARTUP_STAGE_LOADING, false, false,
                        lcd_init_result == ESP_OK, false, false);
 
-    xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 3584, NULL, 10, NULL, APP_CORE_SYSTEM);
+    /* These consumers are required for normal operation. In particular,
+     * failure to create the protection consumer must inhibit system_ready;
+     * never silently continue as a healthy inverter without it. */
+    startup_supervisor_begin("RUNTIME_TASKS");
+    bool startup_runtime_tasks_ready = true;
+    const BaseType_t dispatcher_task_status =
+        xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 3584,
+                                NULL, 10, NULL, APP_CORE_SYSTEM);
+    if (dispatcher_task_status != pdPASS)
+    {
+        startup_runtime_tasks_ready = false;
+        ESP_LOGE(APP_TAG, "Required event dispatcher task creation failed");
+    }
     const BaseType_t buzzer_task_status =
-        xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 4096, NULL, 7, NULL, APP_CORE_SYSTEM);
+        xTaskCreatePinnedToCore(buzzer_event_task, "buzzer_evt", 4096,
+                                NULL, 7, NULL, APP_CORE_SYSTEM);
     if (buzzer_task_status != pdPASS)
     {
-        ESP_LOGE(APP_TAG, "FATAL: failed to create buzzer event task");
+        /* Sound is optional; do not make the power-control path depend on it. */
+        ESP_LOGW(APP_TAG, "Buzzer event task unavailable; continuing silently");
     }
-    xTaskCreatePinnedToCore(led_event_task, "led_evt", 2048, NULL, 7, NULL, APP_CORE_SYSTEM);
-    /* Runtime stack report showed 3340 B minimum-ever free from 4096 B. Keep 3072 B (about 2.3 KiB observed margin); revalidate during fault-log bursts. */
-    xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 3072, NULL, 5, NULL, APP_CORE_SYSTEM);
-    xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072, NULL, 4, NULL, APP_CORE_SYSTEM);
-    xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 3072, NULL, 9, NULL, APP_CORE_SYSTEM);
+    const BaseType_t led_task_status =
+        xTaskCreatePinnedToCore(led_event_task, "led_evt", 2048,
+                                NULL, 7, NULL, APP_CORE_SYSTEM);
+    if (led_task_status != pdPASS)
+    {
+        startup_runtime_tasks_ready = false;
+        ESP_LOGE(APP_TAG, "Required LED event task creation failed");
+    }
+    /* Runtime stack report showed 3340 B minimum-ever free from 4096 B.
+     * Keep 3072 B and revalidate during fault-log bursts. */
+    const BaseType_t fault_log_task_status =
+        xTaskCreatePinnedToCore(fault_log_event_task, "logger_evt", 3072,
+                                NULL, 5, NULL, APP_CORE_SYSTEM);
+    if (fault_log_task_status != pdPASS)
+    {
+        startup_runtime_tasks_ready = false;
+        ESP_LOGE(APP_TAG, "Required fault-log event task creation failed");
+    }
+    const BaseType_t monitor_task_status =
+        xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072,
+                                NULL, 4, NULL, APP_CORE_SYSTEM);
+    if (monitor_task_status != pdPASS)
+    {
+        startup_runtime_tasks_ready = false;
+        ESP_LOGE(APP_TAG, "Required monitor event task creation failed");
+    }
+    const BaseType_t protection_task_status =
+        xTaskCreatePinnedToCore(protection_event_task, "prot_evt", 3072,
+                                NULL, 9, NULL, APP_CORE_SYSTEM);
+    if (protection_task_status != pdPASS)
+    {
+        startup_runtime_tasks_ready = false;
+        ESP_LOGE(APP_TAG, "CRITICAL: protection event task creation failed");
+    }
+    startup_supervisor_finish(startup_runtime_tasks_ready,
+                              startup_runtime_tasks_ready
+                                  ? "required event consumers created"
+                                  : "required runtime task creation failed; startup must remain inhibited");
 
     /* Start all consumers before enabling physical inputs so no press can race
      * task creation. */
@@ -508,7 +555,8 @@ void app_main(void)
     }
 
     const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&
-                                 post_completed && startup_post.all_passed;
+                                 startup_runtime_tasks_ready && post_completed &&
+                                 startup_post.all_passed;
 
     /* Initialize only the Wi-Fi panel/control path after POST.  This does
      * not start the radio or any network service; it makes the selected
