@@ -10,7 +10,6 @@
 #include "esp_bt.h"
 #endif
 #include "esp_system.h"
-#include "esp_reset_reason.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
@@ -184,6 +183,7 @@ void app_main(void)
     }
 #endif
     startup_supervisor_begin("BOOTSTRAP");
+    startup_supervisor_finish(true, "app_main entered");
     bool lcd_event_ready = true;
     bool post_completed = false;
     post_result_t startup_post = {0};
