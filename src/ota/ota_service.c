@@ -16,6 +16,9 @@
 #include "ota/ota_manifest.h"
 #include "cloud/cloud_reporting.h"
 #include "server/network_services.h"
+#include "mbedtls/md.h"
+#include <stdio.h>
+#include <strings.h>
 static const char *TAG = "OTA_SERVICE";
 
 static void secure_zero(void *ptr, size_t len)
@@ -39,19 +42,124 @@ static volatile esp_err_t s_last_error = ESP_OK;
 #define OTA_PENDING_KEY "pending"
 #define OTA_PENDING_PART_KEY "part"
 #define OTA_PENDING_VER_KEY "version"
+#define OTA_PENDING_SHA_KEY "sha256"
+#define OTA_PENDING_SIZE_KEY "size"
 
-static esp_err_t ota_pending_store(const esp_partition_t *partition, const char *version)
+static esp_err_t ota_pending_store(const esp_partition_t *partition,
+                                   const char *version,
+                                   const char *sha256,
+                                   uint32_t image_size)
 {
-    if (partition == NULL || version == NULL || version[0] == '\0') return ESP_ERR_INVALID_ARG;
+    if (partition == NULL || version == NULL || version[0] == '\0' ||
+        sha256 == NULL || strlen(sha256) != 64U || image_size == 0U ||
+        image_size > partition->size) {
+        return ESP_ERR_INVALID_ARG;
+    }
     nvs_handle_t handle;
     esp_err_t err = nvs_open(OTA_PENDING_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) return err;
     err = nvs_set_u8(handle, OTA_PENDING_KEY, 1U);
     if (err == ESP_OK) err = nvs_set_str(handle, OTA_PENDING_PART_KEY, partition->label);
     if (err == ESP_OK) err = nvs_set_str(handle, OTA_PENDING_VER_KEY, version);
+    if (err == ESP_OK) err = nvs_set_str(handle, OTA_PENDING_SHA_KEY, sha256);
+    if (err == ESP_OK) err = nvs_set_u32(handle, OTA_PENDING_SIZE_KEY, image_size);
     if (err == ESP_OK) err = nvs_commit(handle);
     nvs_close(handle);
     return err;
+}
+
+/* Read integrity metadata separately so older marker records can still be
+ * identified and safely discarded rather than silently treated as installable. */
+static esp_err_t ota_pending_integrity_read(char *sha256, size_t sha_len,
+                                            uint32_t *image_size)
+{
+    if (sha256 == NULL || sha_len < OTA_MAX_SHA256_LENGTH || image_size == NULL)
+        return ESP_ERR_INVALID_ARG;
+    sha256[0] = '\0';
+    *image_size = 0U;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(OTA_PENDING_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) return err;
+    size_t n = sha_len;
+    err = nvs_get_str(handle, OTA_PENDING_SHA_KEY, sha256, &n);
+    if (err == ESP_OK) err = nvs_get_u32(handle, OTA_PENDING_SIZE_KEY, image_size);
+    nvs_close(handle);
+    if (err != ESP_OK) return err;
+    if (strlen(sha256) != 64U || *image_size == 0U) return ESP_ERR_INVALID_SIZE;
+    return ESP_OK;
+}
+
+/* Hash exactly the recorded firmware payload from flash using a small fixed
+ * buffer. This runs before shutdown; it does not allocate an image-sized block. */
+static esp_err_t ota_pending_verify_image(const esp_partition_t *partition,
+                                          const char *version)
+{
+    if (partition == NULL || version == NULL) return ESP_ERR_INVALID_ARG;
+
+    char expected_sha[OTA_MAX_SHA256_LENGTH] = {0};
+    uint32_t image_size = 0U;
+    esp_err_t err = ota_pending_integrity_read(expected_sha, sizeof(expected_sha),
+                                               &image_size);
+    if (err != ESP_OK) return err;
+    if (image_size > partition->size) return ESP_ERR_INVALID_SIZE;
+
+    char current_version[OTA_MAX_VERSION_LENGTH] = {0};
+    err = ota_service_get_current_version(current_version, sizeof(current_version));
+    if (err != ESP_OK) return err;
+    if (ota_manifest_compare_versions(version, current_version) <= 0) {
+        ESP_LOGW(TAG, "Discarding stale staged OTA %s; running version is %s",
+                 version, current_version);
+        return ESP_ERR_INVALID_VERSION;
+    }
+
+    const mbedtls_md_info_t *md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (md_info == NULL) return ESP_FAIL;
+    mbedtls_md_context_t md;
+    mbedtls_md_init(&md);
+    int md_err = mbedtls_md_setup(&md, md_info, 0);
+    if (md_err == 0) md_err = mbedtls_md_starts(&md);
+    if (md_err != 0) {
+        mbedtls_md_free(&md);
+        return ESP_FAIL;
+    }
+
+    uint8_t chunk[1024];
+    uint32_t offset = 0U;
+    while (offset < image_size) {
+        const size_t amount = (image_size - offset) > sizeof(chunk)
+                                  ? sizeof(chunk) : (size_t)(image_size - offset);
+        err = esp_partition_read(partition, offset, chunk, amount);
+        if (err != ESP_OK) break;
+        md_err = mbedtls_md_update(&md, chunk, amount);
+        if (md_err != 0) {
+            err = ESP_FAIL;
+            break;
+        }
+        offset += (uint32_t)amount;
+        taskYIELD();
+    }
+
+    uint8_t digest[32] = {0};
+    if (err == ESP_OK && md_err == 0) {
+        md_err = mbedtls_md_finish(&md, digest);
+        if (md_err != 0) err = ESP_FAIL;
+    }
+    mbedtls_md_free(&md);
+    secure_zero(chunk, sizeof(chunk));
+    if (err != ESP_OK) return err;
+
+    char actual_sha[OTA_MAX_SHA256_LENGTH] = {0};
+    for (size_t i = 0U; i < sizeof(digest); ++i) {
+        (void)snprintf(&actual_sha[i * 2U], 3U, "%02x", digest[i]);
+    }
+    secure_zero(digest, sizeof(digest));
+    if (strcasecmp(actual_sha, expected_sha) != 0) {
+        ESP_LOGE(TAG, "Staged OTA %s failed SHA-256 verification", version);
+        return ESP_ERR_INVALID_CRC;
+    }
+    ESP_LOGI(TAG, "Staged OTA verified: version=%s partition=%s size=%lu sha256=match",
+             version, partition->label, (unsigned long)image_size);
+    return ESP_OK;
 }
 
 static esp_err_t ota_pending_read(char *partition_label, size_t label_len,
@@ -253,7 +361,9 @@ static void ota_task(void *parameter)
     }
 
     result = ota_pending_store(esp_ota_get_next_update_partition(NULL),
-                               job->expected_version);
+                               job->expected_version,
+                               job->expected_sha256,
+                               job->expected_size);
     if (result != ESP_OK) {
         ESP_LOGE(TAG, "Verified image metadata could not be saved: %s", esp_err_to_name(result));
         s_last_error = result;
