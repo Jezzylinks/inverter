@@ -1953,6 +1953,9 @@ static void ota_status_callback(ota_status_t status, int percent)
                                    snapshot.available_version,
                                    snapshot.error_detail);
     app_services_show_ota_lcd(&snapshot);
+    if (status == OTA_STATUS_SUCCESS) {
+        app_services_schedule_pending_manifest_check();
+    }
 }
 
 static void ota_auto_check_task(void *parameter)
