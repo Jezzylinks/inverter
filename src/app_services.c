@@ -3905,6 +3905,18 @@ esp_err_t app_services_defer_pending_update(void)
     return ESP_OK;
 }
 
+esp_err_t app_services_show_pending_delete_confirmation(void)
+{
+    if (!ota_service_update_pending()) return ESP_ERR_NOT_FOUND;
+    if (s_services_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_ota_status.state = APP_OTA_DELETE_CONFIRM;
+    app_ota_status_t snapshot = s_ota_status;
+    xSemaphoreGive(s_services_mutex);
+    app_services_show_ota_lcd_impl(&snapshot, false);
+    return ESP_OK;
+}
+
 esp_err_t app_services_delete_pending_update(void)
 {
     const esp_err_t err = ota_service_delete_pending();
