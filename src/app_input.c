@@ -1515,20 +1515,25 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             }
             s_ota_pending_apply_authorized = false;
 
-            /* Hash and version validation must finish before output is touched.
-             * A damaged/stale staged image is discarded while the inverter
-             * continues running. The selector validates again before boot set. */
-            const esp_err_t verify_err = app_services_validate_pending_update();
-            if (verify_err != ESP_OK)
+            /* Never hash a megabyte-scale image in the button callback.
+             * The background preflight must have verified it before shutdown. */
+            if (!ota_service_pending_image_verified())
             {
-                ESP_LOGE(APP_INPUT_TAG, "Pending OTA rejected before shutdown: %s",
-                         esp_err_to_name(verify_err));
-                lcd_flash_info_to("UPDATE REJECTED", "CURRENT KEPT",
-                                  2200U, LCD_SCREEN_OTA);
+                app_services_show_ota_status_screen();
+                if (app_services_pending_manifest_check_active())
+                {
+                    lcd_flash_info_to("VERIFYING UPDATE", "PLEASE WAIT",
+                                      1200U, LCD_SCREEN_OTA);
+                }
+                else
+                {
+                    lcd_flash_info_to("UPDATE NOT READY", "VERIFY RETRY",
+                                      1600U, LCD_SCREEN_OTA);
+                }
                 return;
             }
 
-            ESP_LOGI(APP_INPUT_TAG, "Pending OTA passed pre-shutdown validation");
+            ESP_LOGI(APP_INPUT_TAG, "Pending OTA passed background SHA-256 preflight");
             if (sys_state.inverter.inverter_state == INVERTER_ON ||
                 sys_state.inverter.inverter_state == INVERTER_STARTING)
             {
