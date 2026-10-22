@@ -37,6 +37,7 @@ static bool s_in_progress;
 static bool s_cancel_requested;
 static bool s_rollback_notification_pending;
 static volatile esp_err_t s_last_error = ESP_OK;
+static bool s_pending_image_verified;
 
 #define OTA_PENDING_NVS_NAMESPACE "ota_pending"
 #define OTA_PENDING_KEY "pending"
@@ -65,6 +66,7 @@ static esp_err_t ota_pending_store(const esp_partition_t *partition,
     if (err == ESP_OK) err = nvs_set_u32(handle, OTA_PENDING_SIZE_KEY, image_size);
     if (err == ESP_OK) err = nvs_commit(handle);
     nvs_close(handle);
+    if (err == ESP_OK) s_pending_image_verified = false;
     return err;
 }
 
@@ -637,6 +639,11 @@ bool ota_service_update_pending(void)
     return ota_service_get_pending_version(version, sizeof(version)) == ESP_OK;
 }
 
+bool ota_service_pending_image_verified(void)
+{
+    return s_pending_image_verified && ota_service_update_pending();
+}
+
 static esp_err_t ota_pending_discard_partition(const esp_partition_t *partition)
 {
     const esp_partition_t *running = esp_ota_get_running_partition();
@@ -706,6 +713,7 @@ esp_err_t ota_service_get_pending_version(char *buffer, size_t len)
  * offered on every boot. */
 esp_err_t ota_service_validate_pending_for_apply(void)
 {
+    s_pending_image_verified = false;
     char label[17] = {0}, version[OTA_MAX_VERSION_LENGTH] = {0};
     esp_err_t err = ota_pending_read(label, sizeof(label), version, sizeof(version));
     if (err != ESP_OK) return err;
@@ -732,13 +740,18 @@ esp_err_t ota_service_validate_pending_for_apply(void)
         }
         return err;
     }
+    s_pending_image_verified = true;
+    ESP_LOGI(TAG, "Staged OTA preflight verified: version=%s partition=%s",
+             version, partition->label);
     return ESP_OK;
 }
 
-/* Select the staged image only after the caller has verified it and completed
- * the controlled shutdown. Revalidate immediately before changing the boot target. */
+/* Boot selection is deliberately fast. The background preflight must have
+ * hashed the staged image before output shutdown; do not repeat a megabyte-scale
+ * flash read in the button callback or after the inverter has been shut down. */
 esp_err_t ota_service_select_pending_for_boot(void)
 {
+    if (!s_pending_image_verified) return ESP_ERR_INVALID_STATE;
     char label[17] = {0}, version[OTA_MAX_VERSION_LENGTH] = {0};
     esp_err_t err = ota_pending_read(label, sizeof(label), version, sizeof(version));
     if (err != ESP_OK) return err;
@@ -747,15 +760,14 @@ esp_err_t ota_service_select_pending_for_boot(void)
     if (partition == NULL) return ESP_ERR_NOT_FOUND;
     if (partition == esp_ota_get_running_partition()) return ESP_ERR_INVALID_STATE;
 
-    err = ota_pending_verify_image(partition, version);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Refusing boot selection: version=%s partition=%s result=%s",
-                 version, partition->label, esp_err_to_name(err));
-        (void)ota_pending_discard_partition(partition);
-        return err;
+    char current_version[OTA_MAX_VERSION_LENGTH] = {0};
+    err = ota_service_get_current_version(current_version, sizeof(current_version));
+    if (err != ESP_OK || ota_manifest_compare_versions(version, current_version) <= 0) {
+        s_pending_image_verified = false;
+        return err != ESP_OK ? err : ESP_ERR_INVALID_VERSION;
     }
 
-    ESP_LOGI(TAG, "Applying staged OTA: version=%s target=%s size/hash verified",
+    ESP_LOGI(TAG, "Applying staged OTA: version=%s target=%s preflight=verified",
              version, partition->label);
     err = esp_ota_set_boot_partition(partition);
     ESP_LOGI(TAG, "OTA boot selection result: version=%s target=%s result=%s",
@@ -772,6 +784,7 @@ esp_err_t ota_service_select_pending_for_boot(void)
 
 esp_err_t ota_service_clear_pending(void)
 {
+    s_pending_image_verified = false;
     nvs_handle_t handle;
     esp_err_t err = nvs_open(OTA_PENDING_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) return err;
