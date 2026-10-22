@@ -524,14 +524,34 @@ esp_err_t ota_service_register_status_callback(ota_status_callback_t callback)
 bool ota_service_update_pending(void)
 {
     char label[17] = {0}, version[OTA_MAX_VERSION_LENGTH] = {0};
-    return ota_pending_read(label, sizeof(label), version, sizeof(version)) == ESP_OK;
+    if (ota_pending_read(label, sizeof(label), version, sizeof(version)) != ESP_OK)
+        return false;
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
+    if (partition == NULL) return false;
+    if (partition == esp_ota_get_running_partition()) {
+        /* The staged image booted successfully but NVS marker cleanup failed. */
+        (void)ota_service_clear_pending();
+        return false;
+    }
+    return true;
 }
 
 esp_err_t ota_service_get_pending_version(char *buffer, size_t len)
 {
     if (buffer == NULL || len == 0U) return ESP_ERR_INVALID_ARG;
     char label[17] = {0};
-    return ota_pending_read(label, sizeof(label), buffer, len);
+    esp_err_t err = ota_pending_read(label, sizeof(label), buffer, len);
+    if (err != ESP_OK) return err;
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
+    if (partition == NULL) return ESP_ERR_NOT_FOUND;
+    if (partition == esp_ota_get_running_partition()) {
+        (void)ota_service_clear_pending();
+        buffer[0] = '\0';
+        return ESP_ERR_NOT_FOUND;
+    }
+    return ESP_OK;
 }
 
 /* Select the verified image but never restart here. The caller must perform
