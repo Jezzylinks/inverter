@@ -131,6 +131,7 @@ static void format_saved_setting_value(const value_edit_context_t *ctx,
 static uint8_t s_ota_auth_selection = 1U;
 static bool s_ota_pending_apply_auth = false;
 static bool s_ota_pending_apply_authorized = false;
+static uint32_t s_ota_pending_apply_authorized_at_ms = 0U;
 static bool s_ota_feedback_active = false;
 static bool s_wifi_settings_child_active = false;
 static bool s_wifi_client_delete_confirmation = false;
@@ -267,6 +268,8 @@ static void exit_factory_reset_to_previous_menu(void)
 static void begin_ota_auth(uint8_t selection)
 {
     s_ota_pending_apply_auth = false;
+    s_ota_pending_apply_authorized = false;
+    s_ota_pending_apply_authorized_at_ms = 0U;
     s_ota_auth_selection = selection;
     xSemaphoreTake(change_pin_mutex, portMAX_DELAY);
     change_pin_start_ex(&change_pin_ctx, CHANGE_PIN_MODE_VERIFY_ONLY);
@@ -301,6 +304,8 @@ static void return_from_ota_auth(bool authenticated)
         /* PIN protects the destructive staged-image apply path. Keep the
          * pending prompt visible and require a fresh ENTER to actually apply. */
         s_ota_pending_apply_authorized = authenticated;
+        s_ota_pending_apply_authorized_at_ms = authenticated
+            ? (uint32_t)(esp_timer_get_time() / 1000LL) : 0U;
         app_services_show_ota_status_screen();
         return;
     }
@@ -675,6 +680,7 @@ static void exit_ota_to_main_menu(void)
     app_services_ota_clear_error();
     s_ota_feedback_active = false;
     s_ota_pending_apply_authorized = false;
+    s_ota_pending_apply_authorized_at_ms = 0U;
     s_ota_pending_apply_auth = false;
 
     menu_state_t prev = MAIN_MENU;
@@ -1525,13 +1531,22 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
             }
 
             /* Applying a staged image can interrupt inverter output. Require
-             * authentication at apply time, including after a boot reminder. */
-            if (sys_state.security.enabled && !s_ota_pending_apply_authorized)
+             * authentication at apply time, including after a boot reminder.
+             * A PIN grant expires after 30 seconds and cannot survive a prompt
+             * timeout or an abandoned apply attempt. */
+            const uint32_t auth_now_ms =
+                (uint32_t)(esp_timer_get_time() / 1000LL);
+            const bool pending_auth_fresh = s_ota_pending_apply_authorized &&
+                (uint32_t)(auth_now_ms - s_ota_pending_apply_authorized_at_ms) <= 30000U;
+            if (sys_state.security.enabled && !pending_auth_fresh)
             {
+                s_ota_pending_apply_authorized = false;
+                s_ota_pending_apply_authorized_at_ms = 0U;
                 begin_ota_pending_apply_auth();
                 return;
             }
             s_ota_pending_apply_authorized = false;
+            s_ota_pending_apply_authorized_at_ms = 0U;
 
             ESP_LOGI(APP_INPUT_TAG, "Pending OTA passed background SHA-256 preflight");
             if (sys_state.inverter.inverter_state == INVERTER_ON ||
@@ -2874,6 +2889,7 @@ void handle_back_button_event(button_event_info_t *event_info,
              * the current boot target. A previous PIN grant is not reusable
              * after the user defers the update. */
             s_ota_pending_apply_authorized = false;
+            s_ota_pending_apply_authorized_at_ms = 0U;
             (void)app_services_defer_pending_update();
             show_menu_screen(MENU_OTA, 1U);
             return;
