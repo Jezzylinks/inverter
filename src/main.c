@@ -375,13 +375,13 @@ void app_main(void)
      * failure to create the protection consumer must inhibit system_ready;
      * never silently continue as a healthy inverter without it. */
     startup_supervisor_begin("RUNTIME_TASKS");
-    bool startup_runtime_tasks_ready = true;
+    bool startup_required_tasks_ready = true;
     const BaseType_t dispatcher_task_status =
         xTaskCreatePinnedToCore(event_dispatcher_task, "dispatcher", 3584,
                                 NULL, 10, NULL, APP_CORE_SYSTEM);
     if (dispatcher_task_status != pdPASS)
     {
-        startup_runtime_tasks_ready = false;
+        startup_required_tasks_ready = false;
         ESP_LOGE(APP_TAG, "Required event dispatcher task creation failed");
     }
     const BaseType_t buzzer_task_status =
@@ -397,8 +397,7 @@ void app_main(void)
                                 NULL, 7, NULL, APP_CORE_SYSTEM);
     if (led_task_status != pdPASS)
     {
-        startup_runtime_tasks_ready = false;
-        ESP_LOGE(APP_TAG, "Required LED event task creation failed");
+        ESP_LOGW(APP_TAG, "LED event task unavailable; continuing with degraded indicators");
     }
     /* Runtime stack report showed 3340 B minimum-ever free from 4096 B.
      * Keep 3072 B and revalidate during fault-log bursts. */
@@ -407,15 +406,14 @@ void app_main(void)
                                 NULL, 5, NULL, APP_CORE_SYSTEM);
     if (fault_log_task_status != pdPASS)
     {
-        startup_runtime_tasks_ready = false;
-        ESP_LOGE(APP_TAG, "Required fault-log event task creation failed");
+        ESP_LOGW(APP_TAG, "Fault-log event task unavailable; runtime diagnostics degraded");
     }
     const BaseType_t monitor_task_status =
         xTaskCreatePinnedToCore(monitor_event_task, "monitor_evt", 3072,
                                 NULL, 4, NULL, APP_CORE_SYSTEM);
     if (monitor_task_status != pdPASS)
     {
-        startup_runtime_tasks_ready = false;
+        startup_required_tasks_ready = false;
         ESP_LOGE(APP_TAG, "Required monitor event task creation failed");
     }
     const BaseType_t protection_task_status =
@@ -423,11 +421,11 @@ void app_main(void)
                                 NULL, 9, NULL, APP_CORE_SYSTEM);
     if (protection_task_status != pdPASS)
     {
-        startup_runtime_tasks_ready = false;
+        startup_required_tasks_ready = false;
         ESP_LOGE(APP_TAG, "CRITICAL: protection event task creation failed");
     }
-    startup_supervisor_finish(startup_runtime_tasks_ready,
-                              startup_runtime_tasks_ready
+    startup_supervisor_finish(startup_required_tasks_ready,
+                              startup_required_tasks_ready
                                   ? "required event consumers created"
                                   : "required runtime task creation failed; startup must remain inhibited");
 
@@ -544,7 +542,7 @@ void app_main(void)
         }
     }
 
-    if (startup_post.all_passed && startup_runtime_tasks_ready &&
+    if (startup_post.all_passed && startup_required_tasks_ready &&
         nvs_is_initialized())
     {
         app_runtime_start_deferred_settings_persistence();
@@ -556,9 +554,9 @@ void app_main(void)
     }
 
     const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&
-                                 startup_runtime_tasks_ready && post_completed &&
+                                 startup_required_tasks_ready && post_completed &&
                                  startup_post.all_passed;
-    if (!startup_runtime_tasks_ready && lcd_ready)
+    if (!startup_required_tasks_ready && lcd_ready)
     {
         lcd_show_fault("STARTUP TASK ERR", "OUTPUT INHIBITED");
     }
