@@ -647,6 +647,28 @@ bool ota_service_update_pending(void)
     return true;
 }
 
+static esp_err_t ota_pending_discard_partition(const esp_partition_t *partition)
+{
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    const esp_partition_t *boot = esp_ota_get_boot_partition();
+    const esp_err_t clear_err = ota_service_clear_pending();
+    if (clear_err != ESP_OK) return clear_err;
+
+    /* Never erase the running image or current boot target, even when metadata
+     * is stale. Clearing the marker is enough to make it non-installable. */
+    if (partition == NULL || partition == running || partition == boot) {
+        ESP_LOGW(TAG, "Pending marker cleared; staged partition retained for safety");
+        return ESP_OK;
+    }
+    const esp_err_t erase_err =
+        esp_partition_erase_range(partition, 0U, partition->size);
+    if (erase_err != ESP_OK) {
+        ESP_LOGW(TAG, "Pending marker cleared but staged partition erase failed: %s",
+                 esp_err_to_name(erase_err));
+    }
+    return erase_err;
+}
+
 esp_err_t ota_service_get_pending_version(char *buffer, size_t len)
 {
     if (buffer == NULL || len == 0U) return ESP_ERR_INVALID_ARG;
@@ -655,17 +677,65 @@ esp_err_t ota_service_get_pending_version(char *buffer, size_t len)
     if (err != ESP_OK) return err;
     const esp_partition_t *partition = esp_partition_find_first(
         ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
-    if (partition == NULL) return ESP_ERR_NOT_FOUND;
+    if (partition == NULL) {
+        (void)ota_pending_discard_partition(NULL);
+        buffer[0] = '\0';
+        return ESP_ERR_NOT_FOUND;
+    }
     if (partition == esp_ota_get_running_partition()) {
-        (void)ota_service_clear_pending();
+        (void)ota_pending_discard_partition(partition);
+        buffer[0] = '\0';
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    char current_version[OTA_MAX_VERSION_LENGTH] = {0};
+    if (ota_service_get_current_version(current_version, sizeof(current_version)) == ESP_OK &&
+        ota_manifest_compare_versions(buffer, current_version) <= 0) {
+        ESP_LOGW(TAG, "Staged OTA %s is not newer than running %s; discarding",
+                 buffer, current_version);
+        (void)ota_pending_discard_partition(partition);
         buffer[0] = '\0';
         return ESP_ERR_NOT_FOUND;
     }
     return ESP_OK;
 }
 
-/* Select the verified image but never restart here. The caller must perform
- * the existing controlled inverter shutdown before invoking esp_restart(). */
+/* Verify the staged bytes before the application shuts down inverter output.
+ * Invalid, stale, or legacy metadata is cleared so the same broken image is not
+ * offered on every boot. */
+esp_err_t ota_service_validate_pending_for_apply(void)
+{
+    char label[17] = {0}, version[OTA_MAX_VERSION_LENGTH] = {0};
+    esp_err_t err = ota_pending_read(label, sizeof(label), version, sizeof(version));
+    if (err != ESP_OK) return err;
+
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
+    if (partition == NULL) {
+        (void)ota_pending_discard_partition(NULL);
+        return ESP_ERR_NOT_FOUND;
+    }
+    if (partition == esp_ota_get_running_partition()) {
+        (void)ota_pending_discard_partition(partition);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    err = ota_pending_verify_image(partition, version);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Rejecting staged OTA: version=%s partition=%s result=%s",
+                 version, partition->label, esp_err_to_name(err));
+        const esp_err_t discard_err = ota_pending_discard_partition(partition);
+        if (discard_err != ESP_OK) {
+            ESP_LOGE(TAG, "Could not fully discard invalid staged OTA: %s",
+                     esp_err_to_name(discard_err));
+        }
+        return err;
+    }
+    return ESP_OK;
+}
+
+/* Select the staged image only after the caller has verified it and completed
+ * the controlled shutdown. Revalidate immediately before changing the boot target. */
 esp_err_t ota_service_select_pending_for_boot(void)
 {
     char label[17] = {0}, version[OTA_MAX_VERSION_LENGTH] = {0};
@@ -675,11 +745,22 @@ esp_err_t ota_service_select_pending_for_boot(void)
         ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
     if (partition == NULL) return ESP_ERR_NOT_FOUND;
     if (partition == esp_ota_get_running_partition()) return ESP_ERR_INVALID_STATE;
+
+    err = ota_pending_verify_image(partition, version);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Refusing boot selection: version=%s partition=%s result=%s",
+                 version, partition->label, esp_err_to_name(err));
+        (void)ota_pending_discard_partition(partition);
+        return err;
+    }
+
+    ESP_LOGI(TAG, "Applying staged OTA: version=%s target=%s size/hash verified",
+             version, partition->label);
     err = esp_ota_set_boot_partition(partition);
+    ESP_LOGI(TAG, "OTA boot selection result: version=%s target=%s result=%s",
+             version, partition->label, esp_err_to_name(err));
     if (err != ESP_OK) return err;
-    /* Boot-target selection succeeded, so activation must not be reported as
-     * failed merely because cleanup metadata could not be committed. A stale
-     * marker is filtered on the next boot by checking the running partition. */
+
     const esp_err_t clear_err = ota_service_clear_pending();
     if (clear_err != ESP_OK) {
         ESP_LOGW(TAG, "Selected update boot target; pending marker cleanup failed: %s",
