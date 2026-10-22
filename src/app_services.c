@@ -1817,8 +1817,10 @@ static void ota_status_callback(ota_status_t status, int percent)
             s_ota_apply_prompt_task = NULL;
         }
     }
-    if (status == OTA_STATUS_FAILED || status == OTA_STATUS_CANCELLED) {
-        /* No reboot follows: bring the suspended local services back. */
+    if (status == OTA_STATUS_FAILED || status == OTA_STATUS_CANCELLED ||
+        status == OTA_STATUS_SUCCESS) {
+        /* OTA no longer reboots automatically. Restore HTTP/WebSocket and
+         * other local services for both failure and the pending-apply state. */
         network_services_resume_after_ota();
     }
     websocket_broadcast_ota_status(app_ota_state_text(snapshot.state),
