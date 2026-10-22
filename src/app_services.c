@@ -1731,7 +1731,14 @@ static void ota_apply_prompt_timeout_task(void *parameter)
 
     if (timed_out) {
         ESP_LOGI(APP_SERVICES_TAG, "OTA apply prompt timed out; current firmware retained");
-        show_menu_screen(MENU_OTA, 1U);
+        bool prompt_still_visible = false;
+        LCD_LOCK();
+        prompt_still_visible = (sys_lcd.screen == LCD_SCREEN_OTA &&
+                                sys_lcd.ota.state == LCD_OTA_VIEW_PENDING_APPLY);
+        LCD_UNLOCK();
+        if (prompt_still_visible) {
+            show_menu_screen(MENU_OTA, 1U);
+        }
     }
     vTaskDelete(NULL);
 }
