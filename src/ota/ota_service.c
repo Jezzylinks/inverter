@@ -648,15 +648,29 @@ static esp_err_t ota_pending_discard_partition(const esp_partition_t *partition)
 {
     const esp_partition_t *running = esp_ota_get_running_partition();
     const esp_partition_t *boot = esp_ota_get_boot_partition();
-    const esp_err_t clear_err = ota_service_clear_pending();
-    if (clear_err != ESP_OK) return clear_err;
 
-    /* Never erase the running image or current boot target, even when metadata
-     * is stale. Clearing the marker is enough to make it non-installable. */
-    if (partition == NULL || partition == running || partition == boot) {
-        ESP_LOGW(TAG, "Pending marker cleared; staged partition retained for safety");
+    if (partition != NULL && partition == running) {
+        (void)ota_service_clear_pending();
+        ESP_LOGW(TAG, "Pending marker cleared; running partition was not erased");
         return ESP_OK;
     }
+
+    /* If a previous boot-target selection succeeded but marker cleanup failed,
+     * restore the currently running image as boot target before discarding the
+     * staged partition. Never erase a partition still selected for boot. */
+    if (partition != NULL && partition == boot && running != NULL) {
+        const esp_err_t restore_err = esp_ota_set_boot_partition(running);
+        if (restore_err != ESP_OK) {
+            ESP_LOGE(TAG, "Cannot restore running boot target before discard: %s",
+                     esp_err_to_name(restore_err));
+            return restore_err;
+        }
+    }
+
+    const esp_err_t clear_err = ota_service_clear_pending();
+    if (clear_err != ESP_OK) return clear_err;
+    if (partition == NULL) return ESP_OK;
+
     const esp_err_t erase_err =
         esp_partition_erase_range(partition, 0U, partition->size);
     if (erase_err != ESP_OK) {
@@ -802,20 +816,10 @@ esp_err_t ota_service_delete_pending(void)
 
     const esp_partition_t *partition = esp_partition_find_first(
         ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
-    if (partition == NULL) return ESP_ERR_NOT_FOUND;
-
-    /* Never erase the running image or whichever partition is already selected
-     * for the next boot. This guards against stale metadata after a partial apply. */
-    if (partition == esp_ota_get_running_partition() ||
-        partition == esp_ota_get_boot_partition()) {
-        return ESP_ERR_INVALID_STATE;
+    if (partition == NULL) {
+        return ota_pending_discard_partition(NULL);
     }
-
-    /* Clear the pointer first: even if erase fails, an incomplete image can
-     * never remain advertised as installable or be selected by the UI. */
-    err = ota_service_clear_pending();
-    if (err != ESP_OK) return err;
-    return esp_partition_erase_range(partition, 0U, partition->size);
+    return ota_pending_discard_partition(partition);
 }
 
 bool ota_service_in_progress(void)
