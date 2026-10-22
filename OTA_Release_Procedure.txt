@@ -11,6 +11,12 @@ git branch --show-current
 
 git pull --ff-only origin master
 
+# OPTIONAL: Upload the SPIFFS filesystem to a physically connected ESP32.
+# This is a serial/local upload, NOT part of the HTTPS OTA release. It may overwrite
+# the device filesystem, so run it only when you intentionally need to refresh SPIFFS.
+pio run -e esp32dev -t uploadfs
+if ($LASTEXITCODE -ne 0) { throw "Filesystem upload failed" }
+
 gh auth status
 
 $VERSION = "1.8.5"
