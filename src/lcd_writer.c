@@ -42,6 +42,23 @@ static uint32_t _lcd_get_time_ms(void)
     return (uint32_t)(ticks * portTICK_PERIOD_MS);
 }
 
+/* Copy externally supplied text into LCD state without allowing control
+ * bytes or malformed manifest text to become HD44780 commands/glyph codes.
+ * The LCD driver receives only printable single-byte ASCII for OTA metadata. */
+static void copy_lcd_safe_text(char *dst, size_t dst_len, const char *src)
+{
+    if (dst == NULL || dst_len == 0U) return;
+    size_t i = 0U;
+    if (src != NULL) {
+        while (i + 1U < dst_len && src[i] != '\\0') {
+            const unsigned char ch = (unsigned char)src[i];
+            dst[i] = (ch >= 32U && ch <= 126U) ? (char)ch : '?';
+            ++i;
+        }
+    }
+    dst[i] = '\\0';
+}
+
 /* Safely copy a string into the active LCD row width. */
 static void set_line(char *dst, const char *src)
 {
@@ -896,11 +913,11 @@ void lcd_show_ota_status(lcd_ota_view_state_t state, uint8_t progress_pct,
     }
     ota->state = state;
     ota->progress_pct = clamped;
-    snprintf(ota->current_version, sizeof(ota->current_version), "%s",
-             current_version ? current_version : "");
-    snprintf(ota->available_version, sizeof(ota->available_version), "%s",
-             available_version ? available_version : "");
-    snprintf(ota->detail, sizeof(ota->detail), "%s", detail ? detail : "");
+    copy_lcd_safe_text(ota->current_version, sizeof(ota->current_version),
+                        current_version);
+    copy_lcd_safe_text(ota->available_version, sizeof(ota->available_version),
+                        available_version);
+    copy_lcd_safe_text(ota->detail, sizeof(ota->detail), detail);
     ota->retry_available = retry_available;
     ota->entered_ms = _lcd_get_time_ms();
     LCD_UNLOCK();
