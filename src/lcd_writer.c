@@ -896,6 +896,13 @@ void lcd_show_ota_status(lcd_ota_view_state_t state, uint8_t progress_pct,
                          const char *available_version,
                          const char *detail, bool retry_available)
 {
+    char safe_current[LCD_LINE_SIZE] = {0};
+    char safe_available[LCD_LINE_SIZE] = {0};
+    char safe_detail[LCD_LINE_SIZE] = {0};
+    copy_lcd_safe_text(safe_current, sizeof(safe_current), current_version);
+    copy_lcd_safe_text(safe_available, sizeof(safe_available), available_version);
+    copy_lcd_safe_text(safe_detail, sizeof(safe_detail), detail);
+
     LCD_LOCK();
     if (s_startup_released)
         sys_lcd.screen = LCD_SCREEN_OTA;
@@ -903,21 +910,19 @@ void lcd_show_ota_status(lcd_ota_view_state_t state, uint8_t progress_pct,
     const uint8_t clamped = progress_pct > 100U ? 100U : progress_pct;
     if (ota->state == state && ota->progress_pct == clamped &&
         ota->retry_available == retry_available &&
-        strncmp(ota->current_version, current_version ? current_version : "",
+        strncmp(ota->current_version, safe_current,
                 sizeof(ota->current_version)) == 0 &&
-        strncmp(ota->available_version, available_version ? available_version : "",
+        strncmp(ota->available_version, safe_available,
                 sizeof(ota->available_version)) == 0 &&
-        strncmp(ota->detail, detail ? detail : "", sizeof(ota->detail)) == 0) {
+        strncmp(ota->detail, safe_detail, sizeof(ota->detail)) == 0) {
         LCD_UNLOCK();
         return;
     }
     ota->state = state;
     ota->progress_pct = clamped;
-    copy_lcd_safe_text(ota->current_version, sizeof(ota->current_version),
-                        current_version);
-    copy_lcd_safe_text(ota->available_version, sizeof(ota->available_version),
-                        available_version);
-    copy_lcd_safe_text(ota->detail, sizeof(ota->detail), detail);
+    memcpy(ota->current_version, safe_current, sizeof(ota->current_version));
+    memcpy(ota->available_version, safe_available, sizeof(ota->available_version));
+    memcpy(ota->detail, safe_detail, sizeof(ota->detail));
     ota->retry_available = retry_available;
     ota->entered_ms = _lcd_get_time_ms();
     LCD_UNLOCK();
