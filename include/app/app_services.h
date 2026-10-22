@@ -150,8 +150,6 @@ bool app_services_ota_cancel_confirmation_pending(void);
 
 /** Apply a staged, verified image only after the caller has safely stopped inverter output. */
 esp_err_t app_services_apply_pending_update(void);
-/** Verify staged version and SHA-256 before any inverter shutdown is requested. */
-esp_err_t app_services_validate_pending_update(void);
 /** Leave the staged image pending; current firmware continues running. */
 esp_err_t app_services_defer_pending_update(void);
 esp_err_t app_services_delete_pending_update(void);
