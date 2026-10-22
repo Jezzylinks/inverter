@@ -547,9 +547,15 @@ esp_err_t ota_service_select_pending_for_boot(void)
     if (partition == esp_ota_get_running_partition()) return ESP_ERR_INVALID_STATE;
     err = esp_ota_set_boot_partition(partition);
     if (err != ESP_OK) return err;
-    /* The user has explicitly approved activation. Clear the staged marker so
-     * the newly booted image is not mistaken for an update still awaiting apply. */
-    return ota_service_clear_pending();
+    /* Boot-target selection succeeded, so activation must not be reported as
+     * failed merely because cleanup metadata could not be committed. A stale
+     * marker is filtered on the next boot by checking the running partition. */
+    const esp_err_t clear_err = ota_service_clear_pending();
+    if (clear_err != ESP_OK) {
+        ESP_LOGW(TAG, "Selected update boot target; pending marker cleanup failed: %s",
+                 esp_err_to_name(clear_err));
+    }
+    return ESP_OK;
 }
 
 esp_err_t ota_service_clear_pending(void)
@@ -580,9 +586,11 @@ esp_err_t ota_service_delete_pending(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    err = esp_partition_erase_range(partition, 0U, partition->size);
+    /* Clear the pointer first: even if erase fails, an incomplete image can
+     * never remain advertised as installable or be selected by the UI. */
+    err = ota_service_clear_pending();
     if (err != ESP_OK) return err;
-    return ota_service_clear_pending();
+    return esp_partition_erase_range(partition, 0U, partition->size);
 }
 
 bool ota_service_in_progress(void)
