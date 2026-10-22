@@ -3636,6 +3636,24 @@ esp_err_t app_services_request_update_confirmation(void)
 
 esp_err_t app_services_confirm_update(void)
 {
+    /* If a previously verified image was deferred, the existing Install Update
+     * menu item resumes that staged image instead of downloading it again. */
+    char pending_version[OTA_MAX_VERSION_LENGTH] = {0};
+    if (ota_service_get_pending_version(pending_version,
+                                        sizeof(pending_version)) == ESP_OK) {
+        if (s_services_mutex == NULL) return ESP_ERR_INVALID_STATE;
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_ota_status.state = APP_OTA_PENDING_APPLY;
+        s_ota_status.update_available = true;
+        s_ota_status.progress_percent = 100;
+        snprintf(s_ota_status.available_version,
+                 sizeof(s_ota_status.available_version), "%s", pending_version);
+        app_ota_status_t pending_snapshot = s_ota_status;
+        xSemaphoreGive(s_services_mutex);
+        app_services_show_ota_lcd(&pending_snapshot);
+        return ESP_OK;
+    }
+
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
     app_ota_status_t snapshot = {0};
     if (s_services_mutex == NULL) {
