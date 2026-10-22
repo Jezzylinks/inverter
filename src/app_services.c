@@ -1647,7 +1647,9 @@ void app_services_show_ota_status_screen(void)
 {
     app_ota_status_t status;
     app_services_get_ota_status(&status);
-    if ((status.state == APP_OTA_CHECKING ||
+    if (status.state == APP_OTA_PENDING_APPLY) {
+        app_services_show_ota_lcd_impl(&status, false);
+    } else if ((status.state == APP_OTA_CHECKING ||
          status.state == APP_OTA_PREPARING ||
          status.state == APP_OTA_DOWNLOADING ||
          status.state == APP_OTA_VERIFYING) &&
@@ -1968,6 +1970,19 @@ esp_err_t app_services_init(void)
         (void)ota_service_register_status_callback(ota_status_callback);
         (void)ota_service_get_current_version(s_ota_status.installed_version,
                                               sizeof(s_ota_status.installed_version));
+        char pending_version[OTA_MAX_VERSION_LENGTH] = {0};
+        if (ota_service_get_pending_version(pending_version,
+                                            sizeof(pending_version)) == ESP_OK) {
+            s_ota_status.state = APP_OTA_PENDING_APPLY;
+            s_ota_status.update_available = true;
+            s_ota_status.progress_percent = 100;
+            snprintf(s_ota_status.available_version,
+                     sizeof(s_ota_status.available_version), "%s",
+                     pending_version);
+            ESP_LOGI(APP_SERVICES_TAG,
+                     "Verified OTA image is pending explicit activation: %s",
+                     pending_version);
+        }
     }
 
     if (!s_ota_check_task)
