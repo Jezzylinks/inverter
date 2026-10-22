@@ -3955,6 +3955,11 @@ bool app_services_update_pending(void)
     return ota_service_update_pending();
 }
 
+esp_err_t app_services_validate_pending_update(void)
+{
+    return ota_service_validate_pending_for_apply();
+}
+
 esp_err_t app_services_apply_pending_update(void)
 {
     return ota_service_select_pending_for_boot();
