@@ -674,6 +674,8 @@ static void exit_ota_to_main_menu(void)
 {
     app_services_ota_clear_error();
     s_ota_feedback_active = false;
+    s_ota_pending_apply_authorized = false;
+    s_ota_pending_apply_auth = false;
 
     menu_state_t prev = MAIN_MENU;
     int prev_sel = 4;
