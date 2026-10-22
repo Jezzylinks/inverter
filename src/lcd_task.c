@@ -737,10 +737,12 @@ static void draw_ota(const lcd_ota_data_t *d)
 
     const bool entering_post_download_state =
         (render->state == LCD_OTA_VIEW_VERIFYING ||
-         render->state == LCD_OTA_VIEW_COMPLETE) &&
+         render->state == LCD_OTA_VIEW_COMPLETE ||
+         render->state == LCD_OTA_VIEW_PENDING_APPLY) &&
         (!have_last_drawn ||
          (last_drawn_state != LCD_OTA_VIEW_VERIFYING &&
-          last_drawn_state != LCD_OTA_VIEW_COMPLETE));
+          last_drawn_state != LCD_OTA_VIEW_COMPLETE &&
+          last_drawn_state != LCD_OTA_VIEW_PENDING_APPLY));
     const bool leaving_visible_100_percent =
         have_last_drawn &&
         last_drawn_state == LCD_OTA_VIEW_DOWNLOADING &&
