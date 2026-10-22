@@ -844,10 +844,16 @@ static void draw_ota(const lcd_ota_data_t *d)
             snprintf(rows[3], LCD_LINE_SIZE, "PLEASE WAIT");
             break;
         case LCD_OTA_VIEW_PENDING_APPLY:
-            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE VERIFIED");
-            snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", render->available_version);
-            snprintf(rows[2], LCD_LINE_SIZE, "RESTART TO APPLY?");
-            snprintf(rows[3], LCD_LINE_SIZE, "ENTER=YES BACK=NO");
+            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE IS STAGED");
+            snprintf(rows[1], LCD_LINE_SIZE, "ENTER=APPLY");
+            snprintf(rows[2], LCD_LINE_SIZE, "UP=DELETE UPDATE");
+            snprintf(rows[3], LCD_LINE_SIZE, "BACK=LATER");
+            break;
+        case LCD_OTA_VIEW_DELETE_CONFIRM:
+            snprintf(rows[0], LCD_LINE_SIZE, "DELETE STAGED IMAGE?");
+            snprintf(rows[1], LCD_LINE_SIZE, "ENTER=DELETE");
+            snprintf(rows[2], LCD_LINE_SIZE, "BACK=KEEP UPDATE");
+            snprintf(rows[3], LCD_LINE_SIZE, "CURRENT FW SAFE");
             break;
         case LCD_OTA_VIEW_ERROR:
         default:
@@ -904,8 +910,12 @@ static void draw_ota(const lcd_ota_data_t *d)
         snprintf(row1, LCD_LINE_SIZE, "CURRENT FIRMWARE");
         break;
     case LCD_OTA_VIEW_PENDING_APPLY:
-        snprintf(row0, LCD_LINE_SIZE, "ENTER: APPLY");
-        snprintf(row1, LCD_LINE_SIZE, "BACK: LATER");
+        snprintf(row0, LCD_LINE_SIZE, "ENTER APPLY UP DEL");
+        snprintf(row1, LCD_LINE_SIZE, "BACK = LATER");
+        break;
+    case LCD_OTA_VIEW_DELETE_CONFIRM:
+        snprintf(row0, LCD_LINE_SIZE, "ENTER=DELETE");
+        snprintf(row1, LCD_LINE_SIZE, "BACK=KEEP UPDATE");
         break;
     case LCD_OTA_VIEW_ERROR:
     default:
