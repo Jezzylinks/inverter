@@ -10,6 +10,7 @@
 #include "esp_bt.h"
 #endif
 #include "esp_system.h"
+#include "esp_reset_reason.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
@@ -41,6 +42,47 @@
 #include "utility/led.h"
 
 static const char *APP_TAG = "APP_INIT";
+
+/* Startup supervisor: diagnostic stage tracking is deliberately separate from
+ * readiness event bits. A stage can be logged as complete only after its
+ * existing subsystem reports success; this supervisor never manufactures
+ * ADC/LCD readiness and never enables inverter output. */
+typedef struct
+{
+    const char *stage;
+    TickType_t started_at;
+    bool active;
+} startup_supervisor_t;
+
+static startup_supervisor_t s_startup_supervisor = {0};
+
+static void startup_supervisor_begin(const char *stage)
+{
+    s_startup_supervisor.stage = stage;
+    s_startup_supervisor.started_at = xTaskGetTickCount();
+    s_startup_supervisor.active = true;
+    ESP_LOGI("STARTUP_SUPERVISOR",
+             "stage=%s state=IN_PROGRESS reset_reason=%d free_heap=%u largest_block=%u",
+             stage, (int)esp_reset_reason(),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
+
+static void startup_supervisor_finish(bool passed, const char *detail)
+{
+    const uint32_t elapsed_ms = s_startup_supervisor.active
+        ? (uint32_t)((xTaskGetTickCount() - s_startup_supervisor.started_at) *
+                     portTICK_PERIOD_MS)
+        : 0U;
+    ESP_LOGI("STARTUP_SUPERVISOR",
+             "stage=%s state=%s duration_ms=%u free_heap=%u largest_block=%u detail=%s",
+             s_startup_supervisor.stage ? s_startup_supervisor.stage : "UNKNOWN",
+             passed ? "PASSED" : "FAILED", (unsigned)elapsed_ms,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             detail ? detail : "none");
+    s_startup_supervisor.active = false;
+}
 
 static void startup_show_stage(lcd_startup_stage_t stage,
                                bool post_complete,
@@ -141,14 +183,19 @@ void app_main(void)
                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     }
 #endif
+    startup_supervisor_begin("BOOTSTRAP");
     bool lcd_event_ready = true;
     bool post_completed = false;
     post_result_t startup_post = {0};
+    startup_supervisor_begin("WATCHDOG");
     if (!init_watchdog(true, true))
     {
+        startup_supervisor_finish(false, "watchdog initialization failed");
         ESP_LOGE(APP_TAG, "FATAL: watchdog initialization failed");
         return;
     }
+    startup_supervisor_finish(true, "watchdog initialized");
+    startup_supervisor_begin("CORE_SERVICES");
 
     if (!system_events_init())
     {
@@ -227,6 +274,8 @@ void app_main(void)
         ESP_LOGI("MAIN", "NVS ready");
     }
 
+    startup_supervisor_finish(true, "core services initialized; individual degraded services logged above");
+    startup_supervisor_begin("HARDWARE");
     /* Hardware-dependent battery/LCD peripherals use the validated profile. */
     ESP_LOGI("STARTUP", "BEFORE init_hardware()");
     const esp_err_t hardware_err = init_hardware();
@@ -244,7 +293,8 @@ void app_main(void)
                  esp_err_to_name(restore_err));
     }
     log_all_error_flags(sys_state.error.error_flags);
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    startup_supervisor_finish(hardware_err == ESP_OK, esp_err_to_name(hardware_err));
+    startup_supervisor_begin("LCD_CONTROLLER");
     const esp_err_t lcd_power_err = lcd_power_init();
     if (lcd_power_err != ESP_OK)
     {
@@ -256,6 +306,7 @@ void app_main(void)
     const esp_err_t lcd_init_result = lcd_controller_init();
     lcd_set_brightness(200);
     lcd_startup_timer_begin();
+    startup_supervisor_finish(lcd_init_result == ESP_OK, esp_err_to_name(lcd_init_result));
 
     /* Buzzer owns its LEDC timer/channel. A buzzer failure is deliberately
      * non-fatal: physical button events must remain independent of sound. */
@@ -273,7 +324,8 @@ void app_main(void)
     {
         xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
     }
-    xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_READY);
+    /* LCD_READY is owned by lcd_task after it verifies the controller. Do not
+     * publish it here: controller init failure must remain a hard gate. */
     const esp_err_t adc_start_result = adc_manager_start();
     if (adc_start_result != ESP_OK)
     {
@@ -288,13 +340,21 @@ void app_main(void)
         ESP_LOGE(APP_TAG, "Failed to start LCD event receiver");
     }
 
-    // Create the LCD task before running POST so that the status screen can be drawn. The LCD task must be created before POST so that the status screen can be drawn.
-    const BaseType_t lcd_task_status =
-        /* Runtime stack report showed 3828 B minimum-ever free from 8192 B. Keep 6144 B (about 1.8 KiB observed margin); revalidate under LCD/menu stress. */
-    xTaskCreatePinnedToCore(lcd_task, "lcd_task", 6144, NULL, 4, &lcd_task_handle, APP_CORE_SYSTEM);
+    /* LCD task alone publishes LCD_READY after it checks the initialized
+     * controller. Do not start a renderer against a failed controller. */
+    BaseType_t lcd_task_status = pdFAIL;
+    if (lcd_init_result == ESP_OK)
+    {
+        /* Runtime stack report showed 3828 B minimum-ever free from 8192 B.
+         * Keep 6144 B and revalidate under LCD/menu stress. */
+        lcd_task_status = xTaskCreatePinnedToCore(
+            lcd_task, "lcd_task", 6144, NULL, 4, &lcd_task_handle,
+            APP_CORE_SYSTEM);
+    }
     if (lcd_task_status != pdPASS)
     {
-        ESP_LOGE(APP_TAG, "Failed to create LCD task");
+        ESP_LOGE(APP_TAG, "Failed to start LCD task (controller=%s)",
+                 esp_err_to_name(lcd_init_result));
         xEventGroupSetBits(sys_event_group, APP_EVENT_LCD_FAILED);
     }
 
@@ -344,6 +404,7 @@ void app_main(void)
      * task’s completed initialization before running POST. Every 100 ms timeout
      * feeds the watchdog while still allowing either task to publish a fatal
      * result. */
+    startup_supervisor_begin("READINESS_GATES");
     const EventBits_t startup_wait_mask =
         APP_EVENT_ADC_READY | APP_EVENT_ADC_FAILED |
         APP_EVENT_LCD_READY | APP_EVENT_LCD_FAILED;
@@ -383,6 +444,8 @@ void app_main(void)
 
     const bool adc_ready = (startup_bits & APP_EVENT_ADC_READY) != 0U;
     const bool lcd_ready = (startup_bits & APP_EVENT_LCD_READY) != 0U;
+    startup_supervisor_finish(adc_ready && lcd_ready,
+                              (adc_ready && lcd_ready) ? "ADC and LCD readiness confirmed" : "readiness failed or 10s timeout");
     if (adc_ready && lcd_ready)
     {
         startup_show_stage(LCD_STARTUP_STAGE_ADC_READY, false, false,
@@ -391,7 +454,10 @@ void app_main(void)
                            lcd_ready, true, false);
         startup_show_stage(LCD_STARTUP_STAGE_POST, false, false,
                            lcd_ready, true, false);
+        startup_supervisor_begin("POST");
         startup_post = post_run_all();
+        startup_supervisor_finish(startup_post.all_passed,
+                                  startup_post.all_passed ? "all POST checks passed" : "one or more POST checks failed");
         post_completed = true;
         post_show_result_and_notify(startup_post);
         post_buzzer_event(startup_post.all_passed);
@@ -454,6 +520,7 @@ void app_main(void)
                  esp_err_to_name(wifi_panel_init_err));
     }
 
+    startup_supervisor_begin("BACKGROUND_SERVICES");
     if (startup_healthy)
     {
         startup_show_stage(LCD_STARTUP_STAGE_SERVICES, true, true,
@@ -486,6 +553,8 @@ void app_main(void)
         }
     }
 
+    startup_supervisor_finish(startup_healthy,
+                              startup_healthy ? "startup passed; output may be enabled by normal control logic" : "fault latched; output remains inhibited; recovery services continue");
     sys_state.system_ready = startup_healthy;
 
     /* Owner decision: a new OTA image is kept once it has reached runtime,
@@ -522,6 +591,12 @@ void app_main(void)
      * startup minimum has elapsed. This is the single authoritative
      * STARTUP -> NORMAL transition. */
     lcd_startup_release();
+    ESP_LOGI("STARTUP_SUPERVISOR",
+             "terminal_state=%s post_complete=%d post_passed=%d lcd_ready=%d adc_ready=%d nvs_ready=%d free_heap=%u largest_block=%u",
+             startup_healthy ? "READY" : "FAULT_LATCHED", post_completed,
+             startup_post.all_passed, lcd_ready, adc_ready, nvs_is_initialized(),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     if (startup_healthy)
     {
         lcd_boot_complete();
