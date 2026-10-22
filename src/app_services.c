@@ -50,6 +50,7 @@
 #define APP_OTA_MANIFEST_KEY "ota_manifest"
 #define APP_OTA_AUTOCHECK_KEY "ota_auto"
 #define APP_OTA_CHECK_INTERVAL_MS (6U * 60U * 60U * 1000U)
+#define APP_OTA_APPLY_PROMPT_TIMEOUT_MS 60000U
 #define APP_OTA_TASK_STACK_SIZE 4096U
 #define APP_OTA_CHECK_TASK_STACK_SIZE 6144U
 #define APP_OTA_CHECK_TASK_PRIORITY 5U
@@ -87,6 +88,9 @@ extern SemaphoreHandle_t sys_state_mutex;
 
 static SemaphoreHandle_t s_services_mutex;
 static TaskHandle_t s_ota_check_task;
+static TaskHandle_t s_ota_apply_prompt_task;
+static volatile bool s_ota_prompt_from_boot_reminder;
+static volatile uint32_t s_ota_prompt_last_shown_ms;
 static TaskHandle_t s_ota_manifest_check_task;
 static bool s_ota_manifest_check_active;
 static TaskHandle_t s_wifi_operation_watch_task;
@@ -1594,6 +1598,8 @@ static void app_services_show_ota_lcd_impl(const app_ota_status_t *status,
     case APP_OTA_VERIFYING: view = LCD_OTA_VIEW_VERIFYING; break;
     case APP_OTA_AVAILABLE: view = LCD_OTA_VIEW_AVAILABLE; break;
     case APP_OTA_COMPLETE: view = LCD_OTA_VIEW_COMPLETE; break;
+    case APP_OTA_PENDING_APPLY: view = LCD_OTA_VIEW_PENDING_APPLY; break;
+    case APP_OTA_DELETE_CONFIRM: view = LCD_OTA_VIEW_DELETE_CONFIRM; break;
     case APP_OTA_CANCELLED: view = LCD_OTA_VIEW_CANCELLED; break;
     case APP_OTA_IDLE: view = LCD_OTA_VIEW_CURRENT; break;
     case APP_OTA_ERROR:
@@ -1644,7 +1650,37 @@ void app_services_show_ota_status_screen(void)
 {
     app_ota_status_t status;
     app_services_get_ota_status(&status);
-    if ((status.state == APP_OTA_CHECKING ||
+
+    /* The persistent staged image takes precedence over the transient
+     * in-memory state, including after the 60-second prompt timed out. */
+    char pending_version[OTA_MAX_VERSION_LENGTH] = {0};
+    if (ota_service_get_pending_version(pending_version,
+                                        sizeof(pending_version)) == ESP_OK) {
+        if (s_services_mutex != NULL) {
+            xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+            s_ota_status.state = APP_OTA_PENDING_APPLY;
+            s_ota_status.update_available = true;
+            s_ota_status.progress_percent = 100;
+            snprintf(s_ota_status.available_version,
+                     sizeof(s_ota_status.available_version), "%s",
+                     pending_version);
+            status = s_ota_status;
+            xSemaphoreGive(s_services_mutex);
+        }
+        app_services_show_ota_lcd_impl(&status, false);
+        s_ota_prompt_last_shown_ms =
+            (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        s_ota_prompt_from_boot_reminder = false;
+        if (s_ota_apply_prompt_task == NULL &&
+            xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
+                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
+            s_ota_apply_prompt_task = NULL;
+            ESP_LOGW(APP_SERVICES_TAG, "Could not start OTA prompt timeout");
+        }
+    } else if (status.state == APP_OTA_PENDING_APPLY ||
+        status.state == APP_OTA_DELETE_CONFIRM) {
+        app_services_show_ota_lcd_impl(&status, false);
+    } else if ((status.state == APP_OTA_CHECKING ||
          status.state == APP_OTA_PREPARING ||
          status.state == APP_OTA_DOWNLOADING ||
          status.state == APP_OTA_VERIFYING) &&
@@ -1680,6 +1716,8 @@ static const char *app_ota_state_text(app_ota_state_t state)
     case APP_OTA_DOWNLOADING: return "downloading";
     case APP_OTA_VERIFYING: return "verifying";
     case APP_OTA_COMPLETE: return "complete";
+    case APP_OTA_PENDING_APPLY: return "pending_apply";
+    case APP_OTA_DELETE_CONFIRM: return "delete_confirm";
     case APP_OTA_ERROR: return "error";
     case APP_OTA_CANCELLED: return "cancelled";
     default: return "unknown";
@@ -1703,6 +1741,103 @@ static void ota_progress_callback(int percent)
     app_services_show_ota_lcd(&snapshot);
 }
 
+static void ota_apply_prompt_timeout_task(void *parameter)
+{
+    (void)parameter;
+    /* Count the timeout from the most recent time the prompt was shown, not
+     * from the first time it was created. Reopening the prompt grants a full
+     * response window without spawning duplicate timer tasks. */
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(1000U));
+        const uint32_t now_ms =
+            (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        if ((uint32_t)(now_ms - s_ota_prompt_last_shown_ms) >=
+            APP_OTA_APPLY_PROMPT_TIMEOUT_MS) {
+            break;
+        }
+    }
+
+    bool timed_out = false;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        if (s_ota_status.state == APP_OTA_PENDING_APPLY) {
+            /* Timeout is equivalent to "Later". The staged image remains
+             * persisted; importantly, the boot partition is still unchanged. */
+            s_ota_status.state = APP_OTA_AVAILABLE;
+            s_ota_status.update_available = true;
+            s_ota_status.progress_percent = 100;
+            timed_out = true;
+        }
+        s_ota_apply_prompt_task = NULL;
+        xSemaphoreGive(s_services_mutex);
+    }
+
+    if (timed_out) {
+        ESP_LOGI(APP_SERVICES_TAG, "OTA apply prompt timed out; current firmware retained");
+        bool prompt_still_visible = false;
+        LCD_LOCK();
+        prompt_still_visible = (sys_lcd.screen == LCD_SCREEN_OTA &&
+                                sys_lcd.ota.state == LCD_OTA_VIEW_PENDING_APPLY);
+        LCD_UNLOCK();
+        if (prompt_still_visible) {
+            if (s_ota_prompt_from_boot_reminder) {
+                /* No response to the boot reminder means "later": return to
+                 * the normal home screen without changing the boot target. */
+                LCD_LOCK();
+                sys_state.menu_state = MENU_NONE;
+                sys_state.menu_selection = 0U;
+                sys_state.in_detail_view = false;
+                LCD_UNLOCK();
+                lcd_show_main();
+            } else {
+                show_menu_screen(MENU_OTA, 1U);
+            }
+        }
+    }
+    vTaskDelete(NULL);
+}
+
+static void ota_pending_boot_reminder_task(void *parameter)
+{
+    (void)parameter;
+    /* Do not replace the startup sequence or an active screen. Wait until the
+     * inverter has released the LCD and returned to its normal home screen. */
+    for (;;) {
+        if (!ota_service_update_pending()) {
+            vTaskDelete(NULL);
+            return;
+        }
+        bool ready = false;
+        LCD_LOCK();
+        ready = sys_state.system_ready &&
+                sys_state.menu_state == MENU_NONE &&
+                sys_lcd.screen == LCD_SCREEN_MAIN;
+        LCD_UNLOCK();
+        if (ready && !lcd_is_startup_active()) break;
+        vTaskDelay(pdMS_TO_TICKS(500U));
+    }
+
+    app_ota_status_t snapshot;
+    app_services_get_ota_status(&snapshot);
+    if (snapshot.state == APP_OTA_PENDING_APPLY &&
+        ota_service_update_pending()) {
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "Showing boot reminder for staged firmware %s",
+                 snapshot.available_version);
+        app_services_show_ota_lcd_impl(&snapshot, false);
+        s_ota_prompt_last_shown_ms =
+            (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        s_ota_prompt_from_boot_reminder = true;
+        if (s_ota_apply_prompt_task == NULL &&
+            xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
+                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
+            s_ota_apply_prompt_task = NULL;
+            ESP_LOGW(APP_SERVICES_TAG, "Could not start OTA reminder timeout");
+        }
+    }
+    vTaskDelete(NULL);
+}
+
 static void ota_status_callback(ota_status_t status, int percent)
 {
     if (!s_services_mutex) {
@@ -1723,7 +1858,7 @@ static void ota_status_callback(ota_status_t status, int percent)
         s_ota_status.state = APP_OTA_VERIFYING;
         break;
     case OTA_STATUS_SUCCESS:
-        s_ota_status.state = APP_OTA_COMPLETE;
+        s_ota_status.state = APP_OTA_PENDING_APPLY;
         s_ota_status.error_detail[0] = '\0';
         s_ota_status.confirmation_pending = false;
         s_ota_status.cancel_confirmation_pending = false;
@@ -1765,9 +1900,25 @@ static void ota_status_callback(ota_status_t status, int percent)
         break;
     }
     app_ota_status_t snapshot = s_ota_status;
+    const bool start_apply_prompt_timer =
+        status == OTA_STATUS_SUCCESS && s_ota_apply_prompt_task == NULL;
     xSemaphoreGive(s_services_mutex);
-    if (status == OTA_STATUS_FAILED || status == OTA_STATUS_CANCELLED) {
-        /* No reboot follows: bring the suspended local services back. */
+
+    if (start_apply_prompt_timer) {
+        s_ota_prompt_last_shown_ms =
+            (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        s_ota_prompt_from_boot_reminder = false;
+        if (xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
+                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
+            ESP_LOGW(APP_SERVICES_TAG,
+                     "Could not create OTA apply-prompt timer; user can still defer manually");
+            s_ota_apply_prompt_task = NULL;
+        }
+    }
+    if (status == OTA_STATUS_FAILED || status == OTA_STATUS_CANCELLED ||
+        status == OTA_STATUS_SUCCESS) {
+        /* OTA no longer reboots automatically. Restore HTTP/WebSocket and
+         * other local services for both failure and the pending-apply state. */
         network_services_resume_after_ota();
     }
     websocket_broadcast_ota_status(app_ota_state_text(snapshot.state),
@@ -1796,6 +1947,8 @@ static void ota_auto_check_task(void *parameter)
             status.state != APP_OTA_DOWNLOADING &&
             status.state != APP_OTA_VERIFYING &&
             status.state != APP_OTA_CHECKING &&
+            status.state != APP_OTA_PENDING_APPLY &&
+            status.state != APP_OTA_DELETE_CONFIRM &&
             wifi_controller_is_connected())
         {
             (void)app_services_check_for_update(false);
@@ -1926,6 +2079,23 @@ esp_err_t app_services_init(void)
         (void)ota_service_register_status_callback(ota_status_callback);
         (void)ota_service_get_current_version(s_ota_status.installed_version,
                                               sizeof(s_ota_status.installed_version));
+        char pending_version[OTA_MAX_VERSION_LENGTH] = {0};
+        if (ota_service_get_pending_version(pending_version,
+                                            sizeof(pending_version)) == ESP_OK) {
+            s_ota_status.state = APP_OTA_PENDING_APPLY;
+            s_ota_status.update_available = true;
+            s_ota_status.progress_percent = 100;
+            snprintf(s_ota_status.available_version,
+                     sizeof(s_ota_status.available_version), "%s",
+                     pending_version);
+            ESP_LOGI(APP_SERVICES_TAG,
+                     "Verified OTA image is pending explicit activation: %s",
+                     pending_version);
+            if (xTaskCreate(ota_pending_boot_reminder_task, "ota_pending_reminder",
+                            3072U, NULL, 3U, NULL) != pdPASS) {
+                ESP_LOGW(APP_SERVICES_TAG, "Could not create pending OTA boot reminder");
+            }
+        }
     }
 
     if (!s_ota_check_task)
@@ -3579,6 +3749,33 @@ esp_err_t app_services_request_update_confirmation(void)
 
 esp_err_t app_services_confirm_update(void)
 {
+    /* If a previously verified image was deferred, the existing Install Update
+     * menu item resumes that staged image instead of downloading it again. */
+    char pending_version[OTA_MAX_VERSION_LENGTH] = {0};
+    if (ota_service_get_pending_version(pending_version,
+                                        sizeof(pending_version)) == ESP_OK) {
+        if (s_services_mutex == NULL) return ESP_ERR_INVALID_STATE;
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_ota_status.state = APP_OTA_PENDING_APPLY;
+        s_ota_status.update_available = true;
+        s_ota_status.progress_percent = 100;
+        snprintf(s_ota_status.available_version,
+                 sizeof(s_ota_status.available_version), "%s", pending_version);
+        app_ota_status_t pending_snapshot = s_ota_status;
+        xSemaphoreGive(s_services_mutex);
+        app_services_show_ota_lcd(&pending_snapshot);
+        s_ota_prompt_last_shown_ms =
+            (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        s_ota_prompt_from_boot_reminder = false;
+        if (s_ota_apply_prompt_task == NULL &&
+            xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
+                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
+            s_ota_apply_prompt_task = NULL;
+            ESP_LOGW(APP_SERVICES_TAG, "Could not restart OTA apply-prompt timeout");
+        }
+        return ESP_OK;
+    }
+
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
     app_ota_status_t snapshot = {0};
     if (s_services_mutex == NULL) {
@@ -3750,6 +3947,64 @@ bool app_services_ota_cancel_confirmation_pending(void)
     pending = s_ota_cancel_confirmation_pending;
     xSemaphoreGive(s_services_mutex);
     return pending;
+}
+
+
+bool app_services_update_pending(void)
+{
+    return ota_service_update_pending();
+}
+
+esp_err_t app_services_apply_pending_update(void)
+{
+    return ota_service_select_pending_for_boot();
+}
+
+esp_err_t app_services_defer_pending_update(void)
+{
+    if (!ota_service_update_pending()) return ESP_ERR_NOT_FOUND;
+    if (s_services_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_ota_status.state = APP_OTA_AVAILABLE;
+    s_ota_status.update_available = true;
+    s_ota_status.confirmation_pending = false;
+    s_ota_status.cancel_confirmation_pending = false;
+    s_ota_status.progress_percent = 100;
+    xSemaphoreGive(s_services_mutex);
+    return ESP_OK;
+}
+
+esp_err_t app_services_show_pending_delete_confirmation(void)
+{
+    if (!ota_service_update_pending()) return ESP_ERR_NOT_FOUND;
+    if (s_services_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_ota_status.state = APP_OTA_DELETE_CONFIRM;
+    app_ota_status_t snapshot = s_ota_status;
+    xSemaphoreGive(s_services_mutex);
+    app_services_show_ota_lcd_impl(&snapshot, false);
+    return ESP_OK;
+}
+
+esp_err_t app_services_delete_pending_update(void)
+{
+    if (s_services_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    const esp_err_t err = ota_service_delete_pending();
+    /* If the marker is still present, deletion did not safely detach the
+     * image; retain the prompt so the user can retry. If only physical erase
+     * failed after the marker was cleared, forget the staged image anyway. */
+    if (err != ESP_OK && ota_service_update_pending()) return err;
+
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_ota_status.state = APP_OTA_IDLE;
+    s_ota_status.progress_percent = 0;
+    s_ota_status.update_available = false;
+    s_ota_status.confirmation_pending = false;
+    s_ota_status.cancel_confirmation_pending = false;
+    s_ota_status.available_version[0] = '\0';
+    s_ota_status.error_detail[0] = '\0';
+    xSemaphoreGive(s_services_mutex);
+    return err;
 }
 
 esp_err_t app_services_cancel_update(void)

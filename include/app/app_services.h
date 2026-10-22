@@ -31,6 +31,8 @@ typedef enum {
     APP_OTA_DOWNLOADING,
     APP_OTA_VERIFYING,
     APP_OTA_COMPLETE,
+    APP_OTA_PENDING_APPLY,
+    APP_OTA_DELETE_CONFIRM,
     APP_OTA_ERROR,
     APP_OTA_CANCELLED,
 } app_ota_state_t;
@@ -145,6 +147,14 @@ esp_err_t app_services_request_cancel_update(void);
 esp_err_t app_services_confirm_cancel_update(void);
 void app_services_cancel_cancel_update(void);
 bool app_services_ota_cancel_confirmation_pending(void);
+
+/** Apply a staged, verified image only after the caller has safely stopped inverter output. */
+esp_err_t app_services_apply_pending_update(void);
+/** Leave the staged image pending; current firmware continues running. */
+esp_err_t app_services_defer_pending_update(void);
+esp_err_t app_services_delete_pending_update(void);
+esp_err_t app_services_show_pending_delete_confirmation(void);
+bool app_services_update_pending(void);
 
 /** Cancel an in-progress OTA transaction or install confirmation. */
 esp_err_t app_services_cancel_update(void);

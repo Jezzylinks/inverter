@@ -118,6 +118,16 @@ static void draw_commit_rows(const char *const rows[])
 
     uint8_t active_rows = lcd_geometry_rows();
     uint8_t active_cols = lcd_geometry_cols();
+    /* Geometry is runtime-configurable (16x2 or 20x4). Refuse an invalid
+     * geometry rather than indexing the four-row cache or line buffers out
+     * of bounds, which could corrupt the renderer and appear as LCD garbage. */
+    if (active_rows == 0U ||
+        active_rows > (sizeof(cached) / sizeof(cached[0])) ||
+        active_cols == 0U || active_cols >= LCD_LINE_SIZE) {
+        ESP_LOGE(TAG, "Invalid LCD geometry: %u columns x %u rows",
+                 (unsigned)active_cols, (unsigned)active_rows);
+        return;
+    }
     for (uint8_t row = 0; row < active_rows; row++)
     {
         char line[LCD_LINE_SIZE];
@@ -710,13 +720,82 @@ static const char *ota_preparing_label(void)
 
 static void draw_ota(const lcd_ota_data_t *d)
 {
-    const uint8_t pct = d->progress_pct > 100U ? 100U : d->progress_pct;
+    /*
+     * The transfer can enter VERIFYING immediately after the final progress
+     * callback. Hold the completed download screen for one visible LCD
+     * interval, but never block this task or the OTA worker. Error/cancel
+     * screens always take priority over the cosmetic completion hold.
+     */
+    enum { OTA_FINAL_PERCENT_HOLD_MS = 1500U };
+    static bool have_last_drawn = false;
+    static bool final_percent_hold_active = false;
+    static uint32_t final_percent_hold_started_ms = 0U;
+    static lcd_ota_view_state_t last_drawn_state = LCD_OTA_VIEW_CHECKING;
+    static uint8_t last_drawn_pct = 0U;
+
+    const uint32_t now = _lcd_get_time_ms();
+    lcd_ota_data_t held_data;
+    const lcd_ota_data_t *render = d;
+
+    if (final_percent_hold_active &&
+        (render->state == LCD_OTA_VIEW_ERROR ||
+         render->state == LCD_OTA_VIEW_CANCELLED ||
+         render->state == LCD_OTA_VIEW_CANCELLING ||
+         render->state == LCD_OTA_VIEW_DOWNLOADING)) {
+        final_percent_hold_active = false;
+    }
+
+    const bool entering_post_download_state =
+        have_last_drawn &&
+        (render->state == LCD_OTA_VIEW_VERIFYING ||
+         render->state == LCD_OTA_VIEW_COMPLETE ||
+         render->state == LCD_OTA_VIEW_PENDING_APPLY) &&
+        (last_drawn_state == LCD_OTA_VIEW_DOWNLOADING ||
+         last_drawn_state == LCD_OTA_VIEW_VERIFYING);
+    const bool leaving_visible_100_percent =
+        have_last_drawn &&
+        last_drawn_state == LCD_OTA_VIEW_DOWNLOADING &&
+        last_drawn_pct >= 100U &&
+        render->state != LCD_OTA_VIEW_DOWNLOADING;
+
+    if (!final_percent_hold_active &&
+        (entering_post_download_state || leaving_visible_100_percent) &&
+        render->state != LCD_OTA_VIEW_ERROR &&
+        render->state != LCD_OTA_VIEW_CANCELLED &&
+        render->state != LCD_OTA_VIEW_CANCELLING) {
+        final_percent_hold_active = true;
+        final_percent_hold_started_ms = now;
+    }
+
+    if (final_percent_hold_active) {
+        if ((uint32_t)(now - final_percent_hold_started_ms) <
+            OTA_FINAL_PERCENT_HOLD_MS) {
+            held_data = *d;
+            held_data.state = LCD_OTA_VIEW_DOWNLOADING;
+            held_data.progress_pct = 100U;
+            render = &held_data;
+        } else {
+            final_percent_hold_active = false;
+        }
+    }
+
+    /* Update the remembered display only when the actual next state is shown.
+     * While holding 100%, keep the previous DOWNLOADING/100 marker so the
+     * timer is not restarted on every LCD refresh. */
+    if (!final_percent_hold_active) {
+        last_drawn_state = render->state;
+        last_drawn_pct = render->progress_pct > 100U
+                             ? 100U : render->progress_pct;
+        have_last_drawn = true;
+    }
+
+    const uint8_t pct = render->progress_pct > 100U ? 100U : render->progress_pct;
     if (lcd_geometry_is_20x4())
     {
         char bar[LCD_LINE_SIZE];
         char rows[4][LCD_LINE_SIZE] = {{0}};
         format_ota_progress_bar(bar, sizeof(bar), pct);
-        switch (d->state)
+        switch (render->state)
         {
         case LCD_OTA_VIEW_CHECKING:
             snprintf(rows[0], LCD_LINE_SIZE, "CHECKING UPDATE");
@@ -751,13 +830,13 @@ static void draw_ota(const lcd_ota_data_t *d)
         case LCD_OTA_VIEW_AVAILABLE:
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATE AVAILABLE");
             snprintf(rows[1], LCD_LINE_SIZE, "%.8s -> %.8s",
-                     d->current_version, d->available_version);
+                     render->current_version, render->available_version);
             rows[2][0] = '\0';
             rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_CURRENT:
             snprintf(rows[0], LCD_LINE_SIZE, "SOFTWARE UP TO DATE");
-            snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", d->current_version);
+            snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", render->current_version);
             snprintf(rows[2], LCD_LINE_SIZE, "NO UPDATE NEEDED");
             rows[3][0] = '\0';
             break;
@@ -768,15 +847,27 @@ static void draw_ota(const lcd_ota_data_t *d)
             rows[3][0] = '\0';
             break;
         case LCD_OTA_VIEW_COMPLETE:
-            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE COMPLETE");
-            snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", d->available_version);
-            snprintf(rows[2], LCD_LINE_SIZE, "RESTARTING...");
+            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE VERIFIED");
+            snprintf(rows[1], LCD_LINE_SIZE, "CURRENT FIRMWARE");
+            snprintf(rows[2], LCD_LINE_SIZE, "STILL RUNNING");
             snprintf(rows[3], LCD_LINE_SIZE, "PLEASE WAIT");
+            break;
+        case LCD_OTA_VIEW_PENDING_APPLY:
+            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE PENDING");
+            snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", render->available_version);
+            snprintf(rows[2], LCD_LINE_SIZE, "ENTER=APPLY UP=DEL");
+            snprintf(rows[3], LCD_LINE_SIZE, "BACK=LATER");
+            break;
+        case LCD_OTA_VIEW_DELETE_CONFIRM:
+            snprintf(rows[0], LCD_LINE_SIZE, "DELETE STAGED IMAGE?");
+            snprintf(rows[1], LCD_LINE_SIZE, "ENTER=DELETE");
+            snprintf(rows[2], LCD_LINE_SIZE, "BACK=KEEP UPDATE");
+            snprintf(rows[3], LCD_LINE_SIZE, "CURRENT FW SAFE");
             break;
         case LCD_OTA_VIEW_ERROR:
         default:
             snprintf(rows[0], LCD_LINE_SIZE, "UPDATE FAILED");
-            snprintf(rows[1], LCD_LINE_SIZE, "%.20s", d->detail[0] ? d->detail : "TRY AGAIN");
+            snprintf(rows[1], LCD_LINE_SIZE, "%.20s", render->detail[0] ? render->detail : "TRY AGAIN");
             rows[2][0] = '\0';
             rows[3][0] = '\0';
             break;
@@ -789,7 +880,7 @@ static void draw_ota(const lcd_ota_data_t *d)
     char row1[LCD_LINE_SIZE];
     char bar[LCD_LINE_SIZE];
     format_ota_progress_bar(bar, sizeof(bar), pct);
-    switch (d->state)
+    switch (render->state)
     {
     case LCD_OTA_VIEW_CHECKING:
         snprintf(row0, LCD_LINE_SIZE, "CHECKING UPDATE");
@@ -813,19 +904,27 @@ static void draw_ota(const lcd_ota_data_t *d)
         break;
     case LCD_OTA_VIEW_AVAILABLE:
         snprintf(row0, LCD_LINE_SIZE, "UPDATE READY");
-        snprintf(row1, LCD_LINE_SIZE, "%.7s>%.7s", d->current_version, d->available_version);
+        snprintf(row1, LCD_LINE_SIZE, "%.7s>%.7s", render->current_version, render->available_version);
         break;
     case LCD_OTA_VIEW_CURRENT:
         snprintf(row0, LCD_LINE_SIZE, "UP TO DATE");
-        snprintf(row1, LCD_LINE_SIZE, "%.12s", d->current_version);
+        snprintf(row1, LCD_LINE_SIZE, "%.12s", render->current_version);
         break;
     case LCD_OTA_VIEW_CANCELLED:
         snprintf(row0, LCD_LINE_SIZE, "UPDATE CANCELLED");
         snprintf(row1, LCD_LINE_SIZE, "CURRENT KEPT");
         break;
     case LCD_OTA_VIEW_COMPLETE:
-        snprintf(row0, LCD_LINE_SIZE, "UPDATE COMPLETE");
-        snprintf(row1, LCD_LINE_SIZE, "RESTARTING...");
+        snprintf(row0, LCD_LINE_SIZE, "UPDATE VERIFIED");
+        snprintf(row1, LCD_LINE_SIZE, "CURRENT FIRMWARE");
+        break;
+    case LCD_OTA_VIEW_PENDING_APPLY:
+        snprintf(row0, LCD_LINE_SIZE, "PEND %.10s", render->available_version);
+        snprintf(row1, LCD_LINE_SIZE, "E=APPLY U=DEL");
+        break;
+    case LCD_OTA_VIEW_DELETE_CONFIRM:
+        snprintf(row0, LCD_LINE_SIZE, "ENTER=DELETE");
+        snprintf(row1, LCD_LINE_SIZE, "BACK=KEEP UPDATE");
         break;
     case LCD_OTA_VIEW_ERROR:
     default:

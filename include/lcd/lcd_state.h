@@ -140,6 +140,8 @@ extern "C"
         LCD_OTA_VIEW_ERROR,
         LCD_OTA_VIEW_CANCELLED,
         LCD_OTA_VIEW_COMPLETE,
+        LCD_OTA_VIEW_PENDING_APPLY,
+        LCD_OTA_VIEW_DELETE_CONFIRM,
     } lcd_ota_view_state_t;
 
     typedef struct

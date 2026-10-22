@@ -42,6 +42,23 @@ static uint32_t _lcd_get_time_ms(void)
     return (uint32_t)(ticks * portTICK_PERIOD_MS);
 }
 
+/* Copy externally supplied text into LCD state without allowing control
+ * bytes or malformed manifest text to become HD44780 commands/glyph codes.
+ * The LCD driver receives only printable single-byte ASCII for OTA metadata. */
+static void copy_lcd_safe_text(char *dst, size_t dst_len, const char *src)
+{
+    if (dst == NULL || dst_len == 0U) return;
+    size_t i = 0U;
+    if (src != NULL) {
+        while (i + 1U < dst_len && src[i] != '\0') {
+            const unsigned char ch = (unsigned char)src[i];
+            dst[i] = (ch >= 32U && ch <= 126U) ? (char)ch : '?';
+            ++i;
+        }
+    }
+    dst[i] = '\0';
+}
+
 /* Safely copy a string into the active LCD row width. */
 static void set_line(char *dst, const char *src)
 {
@@ -879,6 +896,13 @@ void lcd_show_ota_status(lcd_ota_view_state_t state, uint8_t progress_pct,
                          const char *available_version,
                          const char *detail, bool retry_available)
 {
+    char safe_current[LCD_LINE_SIZE] = {0};
+    char safe_available[LCD_LINE_SIZE] = {0};
+    char safe_detail[LCD_LINE_SIZE] = {0};
+    copy_lcd_safe_text(safe_current, sizeof(safe_current), current_version);
+    copy_lcd_safe_text(safe_available, sizeof(safe_available), available_version);
+    copy_lcd_safe_text(safe_detail, sizeof(safe_detail), detail);
+
     LCD_LOCK();
     if (s_startup_released)
         sys_lcd.screen = LCD_SCREEN_OTA;
@@ -886,21 +910,19 @@ void lcd_show_ota_status(lcd_ota_view_state_t state, uint8_t progress_pct,
     const uint8_t clamped = progress_pct > 100U ? 100U : progress_pct;
     if (ota->state == state && ota->progress_pct == clamped &&
         ota->retry_available == retry_available &&
-        strncmp(ota->current_version, current_version ? current_version : "",
+        strncmp(ota->current_version, safe_current,
                 sizeof(ota->current_version)) == 0 &&
-        strncmp(ota->available_version, available_version ? available_version : "",
+        strncmp(ota->available_version, safe_available,
                 sizeof(ota->available_version)) == 0 &&
-        strncmp(ota->detail, detail ? detail : "", sizeof(ota->detail)) == 0) {
+        strncmp(ota->detail, safe_detail, sizeof(ota->detail)) == 0) {
         LCD_UNLOCK();
         return;
     }
     ota->state = state;
     ota->progress_pct = clamped;
-    snprintf(ota->current_version, sizeof(ota->current_version), "%s",
-             current_version ? current_version : "");
-    snprintf(ota->available_version, sizeof(ota->available_version), "%s",
-             available_version ? available_version : "");
-    snprintf(ota->detail, sizeof(ota->detail), "%s", detail ? detail : "");
+    memcpy(ota->current_version, safe_current, sizeof(ota->current_version));
+    memcpy(ota->available_version, safe_available, sizeof(ota->available_version));
+    memcpy(ota->detail, safe_detail, sizeof(ota->detail));
     ota->retry_available = retry_available;
     ota->entered_ms = _lcd_get_time_ms();
     LCD_UNLOCK();

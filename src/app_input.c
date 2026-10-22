@@ -13,6 +13,7 @@
 #include "lcd/error_log_scroll.h"
 #include "system/system_error_codes.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -725,6 +726,22 @@ static void handle_ota_menu_action(uint8_t selection)
         s_ota_feedback_active = true;
         app_ota_status_t ota_status;
         app_services_get_ota_status(&ota_status);
+
+        /* The user has already authenticated and started this transaction.
+         * Install while busy must return straight to progress, never reopen
+         * the PIN flow or show an intervening flash message. */
+        if (ota_operation_active(ota_status.state)) {
+            app_services_show_ota_status_screen();
+            break;
+        }
+        /* A staged image is already verified. Open its action prompt directly;
+         * do not require the OTA PIN a second time just to resume/defer it. */
+        if (ota_status.state == APP_OTA_PENDING_APPLY ||
+            ota_status.state == APP_OTA_DELETE_CONFIRM ||
+            app_services_update_pending()) {
+            app_services_show_ota_status_screen();
+            break;
+        }
         if (ota_status.state == APP_OTA_ERROR)
         {
             (void)app_services_check_for_update(true);
@@ -1439,6 +1456,63 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         LCD_LOCK();
         ota_view = sys_lcd.ota.state;
         LCD_UNLOCK();
+
+        if (ota_view == LCD_OTA_VIEW_DELETE_CONFIRM)
+        {
+            const esp_err_t delete_err = app_services_delete_pending_update();
+            if (delete_err == ESP_OK) {
+                show_menu_screen(MENU_OTA, 0U);
+                lcd_flash_info_to("UPDATE DELETED", "CHECK TO REDOWNLOAD",
+                                  1800U, LCD_SCREEN_MENU);
+            } else {
+                ESP_LOGE(APP_INPUT_TAG, "Could not fully erase staged OTA image: %s",
+                         esp_err_to_name(delete_err));
+                if (app_services_update_pending()) {
+                    lcd_flash_warning_to("DELETE FAILED", "UPDATE KEPT",
+                                         1800U, LCD_SCREEN_OTA);
+                } else {
+                    show_menu_screen(MENU_OTA, 0U);
+                    lcd_flash_warning_to("ERASE FAILED", "UPDATE NOT PENDING",
+                                         1800U, LCD_SCREEN_MENU);
+                }
+            }
+            return;
+        }
+
+        if (ota_view == LCD_OTA_VIEW_PENDING_APPLY)
+        {
+            /* Activation is deliberately separate from download/verification.
+             * Use the existing inverter shutdown sequence before changing the
+             * boot target, then verify that output is actually disabled. */
+            if (sys_state.inverter.inverter_state == INVERTER_ON ||
+                sys_state.inverter.inverter_state == INVERTER_STARTING)
+            {
+                shutdown_inverter();
+            }
+            if (sys_state.output_enabled ||
+                sys_state.inverter.inverter_state == INVERTER_ON ||
+                sys_state.inverter.inverter_state == INVERTER_STARTING)
+            {
+                lcd_flash_info_to("SHUTDOWN FAILED", "UPDATE NOT APPLIED",
+                                  2000U, LCD_SCREEN_OTA);
+                return;
+            }
+            const esp_err_t apply_err = app_services_apply_pending_update();
+            if (apply_err != ESP_OK)
+            {
+                ESP_LOGE(APP_INPUT_TAG, "Could not select pending OTA image: %s",
+                         esp_err_to_name(apply_err));
+                lcd_flash_info_to("UPDATE NOT APPLIED", "CURRENT KEPT",
+                                  2000U, LCD_SCREEN_OTA);
+                return;
+            }
+            lcd_flash_info_to("UPDATE SELECTED", "RESTARTING SAFELY",
+                              1000U, LCD_SCREEN_OTA);
+            vTaskDelay(pdMS_TO_TICKS(1000U));
+            esp_restart();
+            return;
+        }
+
         if (ota_view == LCD_OTA_VIEW_AVAILABLE)
         {
             if (sys_state.security.enabled)
@@ -1992,6 +2066,20 @@ void handle_up_button_event(button_event_info_t *event_info,
     if (consume_display_wakeup_event(event_info))
     {
         return;
+    }
+
+    if (event_info->event == BUTTON_EVENT_CLICK &&
+        sys_lcd.screen == LCD_SCREEN_OTA)
+    {
+        lcd_ota_view_state_t view;
+        LCD_LOCK();
+        view = sys_lcd.ota.state;
+        LCD_UNLOCK();
+        if (view == LCD_OTA_VIEW_PENDING_APPLY) {
+            (void)app_services_show_pending_delete_confirmation();
+            return;
+        }
+        if (view == LCD_OTA_VIEW_DELETE_CONFIRM) return;
     }
 
     sys_state.last_activity_time = event_info->timestamp_us / 1000;
@@ -2722,9 +2810,23 @@ void handle_back_button_event(button_event_info_t *event_info,
     if (event_info->event == BUTTON_EVENT_CLICK &&
         sys_lcd.screen == LCD_SCREEN_OTA)
     {
-        /* Back leaves an active transfer untouched. When the operation has
-         * already terminated, retain the existing "No Update Running /
-         * Current kept" flash and return to the OTA menu after it expires. */
+        lcd_ota_view_state_t ota_view;
+        LCD_LOCK();
+        ota_view = sys_lcd.ota.state;
+        LCD_UNLOCK();
+        if (ota_view == LCD_OTA_VIEW_DELETE_CONFIRM) {
+            (void)app_services_confirm_update();
+            return;
+        }
+        if (ota_view == LCD_OTA_VIEW_PENDING_APPLY)
+        {
+            /* Back means later: leave the verified image staged and preserve
+             * the current boot target. It can be applied from the OTA menu/app. */
+            (void)app_services_defer_pending_update();
+            show_menu_screen(MENU_OTA, 1U);
+            return;
+        }
+        /* Back leaves an active transfer untouched. */
         return_to_ota_menu_after_back();
         return;
     }

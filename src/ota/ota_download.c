@@ -505,12 +505,11 @@ esp_err_t ota_download_firmware(const char *url, const char *expected_sha256,
         result = ESP_ERR_INVALID_STATE;
         goto cleanup;
     }
+    /* Finalize and validate the image, but deliberately do NOT change the
+     * boot partition here. The running inverter may be powering live loads.
+     * ota_service owns the explicit, user-approved activation decision. */
     result = esp_ota_end(ota_handle);
     ota_started = false;
-    if (result == ESP_OK)
-    {
-        result = esp_ota_set_boot_partition(update_partition);
-    }
 
 cleanup:
     ota_verify_abort(&verify_context);
