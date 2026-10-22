@@ -217,6 +217,21 @@ static void wifi_monitor_task(void *arg)
             wifi_events_get_status_copy(&event_status) == ESP_OK;
         const bool connected = have_event_status && event_status.connected;
         const bool got_ip = have_event_status && event_status.got_ip;
+
+        /* RSSI is not populated by wifi_events.c; that module owns connection
+         * events, not periodic signal measurements. Read the live STA record
+         * here instead of copying the default/stale event_status.rssi value,
+         * which can overwrite the correct LCD value every monitor interval. */
+        int8_t measured_rssi = -127;
+        bool rssi_measurement_valid = false;
+        if (connected) {
+            wifi_ap_record_t ap_info = {0};
+            if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+                measured_rssi = ap_info.rssi;
+                rssi_measurement_valid = true;
+            }
+        }
+
         const wifi_internet_status_t internet = got_ip
             ? wifi_monitor_check_internet()
             : WIFI_INTERNET_UNAVAILABLE;
@@ -228,12 +243,29 @@ static void wifi_monitor_task(void *arg)
 
         bool internet_changed = false;
         wifi_internet_callback_t internet_callback = NULL;
+        bool rssi_changed = false;
+        int8_t published_rssi = -127;
 
         if (s_mutex != NULL) {
             xSemaphoreTake(s_mutex, portMAX_DELAY);
+            const int8_t previous_rssi = s_status.rssi;
+            const bool previously_connected = s_status.connected;
+
             s_status.connected = connected;
             s_status.got_ip = got_ip;
-            s_status.rssi = connected ? event_status.rssi : -127;
+            if (!connected) {
+                /* A confirmed disconnect invalidates the previous signal. */
+                s_status.rssi = -127;
+            } else if (rssi_measurement_valid) {
+                s_status.rssi = measured_rssi;
+            } else if (!previously_connected || previous_rssi <= -127) {
+                /* Do not invent 0 dBm when the driver cannot provide a sample. */
+                s_status.rssi = -127;
+            }
+            /* On a transient driver-read failure while still connected, keep
+             * the last valid sample rather than flickering to zero/offline. */
+            published_rssi = s_status.rssi;
+            rssi_changed = previous_rssi != published_rssi;
             s_status.ip = event_status.ip;
             s_status.internet = internet;
             s_status.uptime_seconds = esp_log_timestamp() / 1000U;
@@ -243,6 +275,10 @@ static void wifi_monitor_task(void *arg)
                 internet_callback = s_internet_callback;
             }
             xSemaphoreGive(s_mutex);
+        }
+
+        if (rssi_changed && published_rssi > -127) {
+            ESP_LOGD(TAG, "Station RSSI: %d dBm", (int)published_rssi);
         }
 
         if (internet_changed) {
@@ -279,8 +315,9 @@ esp_err_t wifi_monitor_init(void)
            0,
            sizeof(s_status));
 
-    s_status.internet =
-        WIFI_INTERNET_UNKNOWN;
+    s_status.internet = WIFI_INTERNET_UNKNOWN;
+    /* RSSI must start as unavailable, never as the zero from memset(). */
+    s_status.rssi = -127;
 
     s_mutex =
         xSemaphoreCreateMutex();
