@@ -118,6 +118,16 @@ static void draw_commit_rows(const char *const rows[])
 
     uint8_t active_rows = lcd_geometry_rows();
     uint8_t active_cols = lcd_geometry_cols();
+    /* Geometry is runtime-configurable (16x2 or 20x4). Refuse an invalid
+     * geometry rather than indexing the four-row cache or line buffers out
+     * of bounds, which could corrupt the renderer and appear as LCD garbage. */
+    if (active_rows == 0U ||
+        active_rows > (sizeof(cached) / sizeof(cached[0])) ||
+        active_cols == 0U || active_cols >= LCD_LINE_SIZE) {
+        ESP_LOGE(TAG, "Invalid LCD geometry: %u columns x %u rows",
+                 (unsigned)active_cols, (unsigned)active_rows);
+        return;
+    }
     for (uint8_t row = 0; row < active_rows; row++)
     {
         char line[LCD_LINE_SIZE];
