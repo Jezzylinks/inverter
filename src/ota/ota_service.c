@@ -545,7 +545,11 @@ esp_err_t ota_service_select_pending_for_boot(void)
         ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
     if (partition == NULL) return ESP_ERR_NOT_FOUND;
     if (partition == esp_ota_get_running_partition()) return ESP_ERR_INVALID_STATE;
-    return esp_ota_set_boot_partition(partition);
+    err = esp_ota_set_boot_partition(partition);
+    if (err != ESP_OK) return err;
+    /* The user has explicitly approved activation. Clear the staged marker so
+     * the newly booted image is not mistaken for an update still awaiting apply. */
+    return ota_service_clear_pending();
 }
 
 esp_err_t ota_service_clear_pending(void)
