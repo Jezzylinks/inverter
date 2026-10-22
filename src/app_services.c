@@ -1648,7 +1648,8 @@ void app_services_show_ota_status_screen(void)
 {
     app_ota_status_t status;
     app_services_get_ota_status(&status);
-    if (status.state == APP_OTA_PENDING_APPLY) {
+    if (status.state == APP_OTA_PENDING_APPLY ||
+        status.state == APP_OTA_DELETE_CONFIRM) {
         app_services_show_ota_lcd_impl(&status, false);
     } else if ((status.state == APP_OTA_CHECKING ||
          status.state == APP_OTA_PREPARING ||
@@ -1889,6 +1890,8 @@ static void ota_auto_check_task(void *parameter)
             status.state != APP_OTA_DOWNLOADING &&
             status.state != APP_OTA_VERIFYING &&
             status.state != APP_OTA_CHECKING &&
+            status.state != APP_OTA_PENDING_APPLY &&
+            status.state != APP_OTA_DELETE_CONFIRM &&
             wifi_controller_is_connected())
         {
             (void)app_services_check_for_update(false);
@@ -3704,6 +3707,12 @@ esp_err_t app_services_confirm_update(void)
         app_ota_status_t pending_snapshot = s_ota_status;
         xSemaphoreGive(s_services_mutex);
         app_services_show_ota_lcd(&pending_snapshot);
+        if (s_ota_apply_prompt_task == NULL &&
+            xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
+                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
+            s_ota_apply_prompt_task = NULL;
+            ESP_LOGW(APP_SERVICES_TAG, "Could not restart OTA apply-prompt timeout");
+        }
         return ESP_OK;
     }
 
