@@ -544,7 +544,8 @@ void app_main(void)
         }
     }
 
-    if (startup_post.all_passed && nvs_is_initialized())
+    if (startup_post.all_passed && startup_runtime_tasks_ready &&
+        nvs_is_initialized())
     {
         app_runtime_start_deferred_settings_persistence();
     }
@@ -557,6 +558,10 @@ void app_main(void)
     const bool startup_healthy = nvs_is_initialized() && lcd_event_ready &&
                                  startup_runtime_tasks_ready && post_completed &&
                                  startup_post.all_passed;
+    if (!startup_runtime_tasks_ready && lcd_ready)
+    {
+        lcd_show_fault("STARTUP TASK ERR", "OUTPUT INHIBITED");
+    }
 
     /* Initialize only the Wi-Fi panel/control path after POST.  This does
      * not start the radio or any network service; it makes the selected
