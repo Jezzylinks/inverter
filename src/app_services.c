@@ -1594,6 +1594,7 @@ static void app_services_show_ota_lcd_impl(const app_ota_status_t *status,
     case APP_OTA_VERIFYING: view = LCD_OTA_VIEW_VERIFYING; break;
     case APP_OTA_AVAILABLE: view = LCD_OTA_VIEW_AVAILABLE; break;
     case APP_OTA_COMPLETE: view = LCD_OTA_VIEW_COMPLETE; break;
+    case APP_OTA_PENDING_APPLY: view = LCD_OTA_VIEW_PENDING_APPLY; break;
     case APP_OTA_CANCELLED: view = LCD_OTA_VIEW_CANCELLED; break;
     case APP_OTA_IDLE: view = LCD_OTA_VIEW_CURRENT; break;
     case APP_OTA_ERROR:
@@ -1680,6 +1681,7 @@ static const char *app_ota_state_text(app_ota_state_t state)
     case APP_OTA_DOWNLOADING: return "downloading";
     case APP_OTA_VERIFYING: return "verifying";
     case APP_OTA_COMPLETE: return "complete";
+    case APP_OTA_PENDING_APPLY: return "pending_apply";
     case APP_OTA_ERROR: return "error";
     case APP_OTA_CANCELLED: return "cancelled";
     default: return "unknown";
@@ -1723,7 +1725,7 @@ static void ota_status_callback(ota_status_t status, int percent)
         s_ota_status.state = APP_OTA_VERIFYING;
         break;
     case OTA_STATUS_SUCCESS:
-        s_ota_status.state = APP_OTA_COMPLETE;
+        s_ota_status.state = APP_OTA_PENDING_APPLY;
         s_ota_status.error_detail[0] = '\0';
         s_ota_status.confirmation_pending = false;
         s_ota_status.cancel_confirmation_pending = false;
@@ -3750,6 +3752,31 @@ bool app_services_ota_cancel_confirmation_pending(void)
     pending = s_ota_cancel_confirmation_pending;
     xSemaphoreGive(s_services_mutex);
     return pending;
+}
+
+
+bool app_services_update_pending(void)
+{
+    return ota_service_update_pending();
+}
+
+esp_err_t app_services_apply_pending_update(void)
+{
+    return ota_service_select_pending_for_boot();
+}
+
+esp_err_t app_services_defer_pending_update(void)
+{
+    if (!ota_service_update_pending()) return ESP_ERR_NOT_FOUND;
+    if (s_services_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_ota_status.state = APP_OTA_AVAILABLE;
+    s_ota_status.update_available = true;
+    s_ota_status.confirmation_pending = false;
+    s_ota_status.cancel_confirmation_pending = false;
+    s_ota_status.progress_percent = 100;
+    xSemaphoreGive(s_services_mutex);
+    return ESP_OK;
 }
 
 esp_err_t app_services_cancel_update(void)
