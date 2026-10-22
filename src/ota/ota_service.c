@@ -37,7 +37,7 @@ static bool s_in_progress;
 static bool s_cancel_requested;
 static bool s_rollback_notification_pending;
 static volatile esp_err_t s_last_error = ESP_OK;
-static bool s_pending_image_verified;
+static volatile bool s_pending_image_verified;
 
 #define OTA_PENDING_NVS_NAMESPACE "ota_pending"
 #define OTA_PENDING_KEY "pending"
