@@ -13,6 +13,7 @@
 #include "lcd/error_log_scroll.h"
 #include "system/system_error_codes.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -1439,6 +1440,41 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
         LCD_LOCK();
         ota_view = sys_lcd.ota.state;
         LCD_UNLOCK();
+
+        if (ota_view == LCD_OTA_VIEW_PENDING_APPLY)
+        {
+            /* Activation is deliberately separate from download/verification.
+             * Use the existing inverter shutdown sequence before changing the
+             * boot target, then verify that output is actually disabled. */
+            if (sys_state.inverter.inverter_state == INVERTER_ON ||
+                sys_state.inverter.inverter_state == INVERTER_STARTING)
+            {
+                shutdown_inverter();
+            }
+            if (sys_state.output_enabled ||
+                sys_state.inverter.inverter_state == INVERTER_ON ||
+                sys_state.inverter.inverter_state == INVERTER_STARTING)
+            {
+                lcd_flash_info_to("SHUTDOWN FAILED", "UPDATE NOT APPLIED",
+                                  2000U, LCD_SCREEN_OTA);
+                return;
+            }
+            const esp_err_t apply_err = app_services_apply_pending_update();
+            if (apply_err != ESP_OK)
+            {
+                ESP_LOGE(APP_INPUT_TAG, "Could not select pending OTA image: %s",
+                         esp_err_to_name(apply_err));
+                lcd_flash_info_to("UPDATE NOT APPLIED", "CURRENT KEPT",
+                                  2000U, LCD_SCREEN_OTA);
+                return;
+            }
+            lcd_flash_info_to("UPDATE SELECTED", "RESTARTING SAFELY",
+                              1000U, LCD_SCREEN_OTA);
+            vTaskDelay(pdMS_TO_TICKS(1000U));
+            esp_restart();
+            return;
+        }
+
         if (ota_view == LCD_OTA_VIEW_AVAILABLE)
         {
             if (sys_state.security.enabled)
@@ -2722,9 +2758,19 @@ void handle_back_button_event(button_event_info_t *event_info,
     if (event_info->event == BUTTON_EVENT_CLICK &&
         sys_lcd.screen == LCD_SCREEN_OTA)
     {
-        /* Back leaves an active transfer untouched. When the operation has
-         * already terminated, retain the existing "No Update Running /
-         * Current kept" flash and return to the OTA menu after it expires. */
+        lcd_ota_view_state_t ota_view;
+        LCD_LOCK();
+        ota_view = sys_lcd.ota.state;
+        LCD_UNLOCK();
+        if (ota_view == LCD_OTA_VIEW_PENDING_APPLY)
+        {
+            /* Back means later: leave the verified image staged and preserve
+             * the current boot target. It can be applied from the OTA menu/app. */
+            (void)app_services_defer_pending_update();
+            show_menu_screen(MENU_OTA, 1U);
+            return;
+        }
+        /* Back leaves an active transfer untouched. */
         return_to_ota_menu_after_back();
         return;
     }
