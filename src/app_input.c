@@ -2849,7 +2849,9 @@ void handle_back_button_event(button_event_info_t *event_info,
         if (ota_view == LCD_OTA_VIEW_PENDING_APPLY)
         {
             /* Back means later: leave the verified image staged and preserve
-             * the current boot target. It can be applied from the OTA menu/app. */
+             * the current boot target. A previous PIN grant is not reusable
+             * after the user defers the update. */
+            s_ota_pending_apply_authorized = false;
             (void)app_services_defer_pending_update();
             show_menu_screen(MENU_OTA, 1U);
             return;
