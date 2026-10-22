@@ -90,6 +90,7 @@ static SemaphoreHandle_t s_services_mutex;
 static TaskHandle_t s_ota_check_task;
 static TaskHandle_t s_ota_apply_prompt_task;
 static volatile bool s_ota_prompt_from_boot_reminder;
+static volatile uint32_t s_ota_prompt_last_shown_ms;
 static TaskHandle_t s_ota_manifest_check_task;
 static bool s_ota_manifest_check_active;
 static TaskHandle_t s_wifi_operation_watch_task;
@@ -1667,6 +1668,8 @@ void app_services_show_ota_status_screen(void)
             xSemaphoreGive(s_services_mutex);
         }
         app_services_show_ota_lcd_impl(&status, false);
+        s_ota_prompt_last_shown_ms =
+            (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         s_ota_prompt_from_boot_reminder = false;
         if (s_ota_apply_prompt_task == NULL &&
             xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
@@ -1741,7 +1744,18 @@ static void ota_progress_callback(int percent)
 static void ota_apply_prompt_timeout_task(void *parameter)
 {
     (void)parameter;
-    vTaskDelay(pdMS_TO_TICKS(APP_OTA_APPLY_PROMPT_TIMEOUT_MS));
+    /* Count the timeout from the most recent time the prompt was shown, not
+     * from the first time it was created. Reopening the prompt grants a full
+     * response window without spawning duplicate timer tasks. */
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(1000U));
+        const uint32_t now_ms =
+            (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        if ((uint32_t)(now_ms - s_ota_prompt_last_shown_ms) >=
+            APP_OTA_APPLY_PROMPT_TIMEOUT_MS) {
+            break;
+        }
+    }
 
     bool timed_out = false;
     if (s_services_mutex != NULL) {
@@ -1811,6 +1825,8 @@ static void ota_pending_boot_reminder_task(void *parameter)
                  "Showing boot reminder for staged firmware %s",
                  snapshot.available_version);
         app_services_show_ota_lcd_impl(&snapshot, false);
+        s_ota_prompt_last_shown_ms =
+            (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         s_ota_prompt_from_boot_reminder = true;
         if (s_ota_apply_prompt_task == NULL &&
             xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
@@ -1889,6 +1905,8 @@ static void ota_status_callback(ota_status_t status, int percent)
     xSemaphoreGive(s_services_mutex);
 
     if (start_apply_prompt_timer) {
+        s_ota_prompt_last_shown_ms =
+            (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         s_ota_prompt_from_boot_reminder = false;
         if (xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
                         3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
@@ -3746,6 +3764,8 @@ esp_err_t app_services_confirm_update(void)
         app_ota_status_t pending_snapshot = s_ota_status;
         xSemaphoreGive(s_services_mutex);
         app_services_show_ota_lcd(&pending_snapshot);
+        s_ota_prompt_last_shown_ms =
+            (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         s_ota_prompt_from_boot_reminder = false;
         if (s_ota_apply_prompt_task == NULL &&
             xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
