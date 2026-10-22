@@ -3578,21 +3578,27 @@ static void ota_pending_manifest_check_task(void *parameter)
         return;
     }
 
+    /* Hash verification runs in this worker, never in the button/LCD path.
+     * The button path is held until this preflight has completed. */
+    const esp_err_t verify_err = ota_service_validate_pending_for_apply();
     ota_manifest_entry_t entry = {0};
     bool latest_newer_than_running = false;
-    const bool suspended_for_check =
-        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 40000U;
-    if (suspended_for_check) {
-        (void)network_services_suspend_for_ota();
-    }
-    const esp_err_t check_err = ota_service_check_csv_manifest(
-        job->manifest_url, &entry, &latest_newer_than_running);
-    if (suspended_for_check) {
-        network_services_resume_after_ota();
+    esp_err_t check_err = ESP_ERR_INVALID_STATE;
+    if (verify_err == ESP_OK && job->manifest_url[0] != '\0') {
+        const bool suspended_for_check =
+            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 40000U;
+        if (suspended_for_check) {
+            (void)network_services_suspend_for_ota();
+        }
+        check_err = ota_service_check_csv_manifest(
+            job->manifest_url, &entry, &latest_newer_than_running);
+        if (suspended_for_check) {
+            network_services_resume_after_ota();
+        }
     }
 
     bool staged_is_older = false;
-    if (check_err == ESP_OK) {
+    if (verify_err == ESP_OK && check_err == ESP_OK) {
         staged_is_older =
             ota_manifest_compare_versions(entry.version, job->staged_version) > 0;
     }
@@ -3606,12 +3612,23 @@ static void ota_pending_manifest_check_task(void *parameter)
     }
 
     app_ota_status_t snapshot = {0};
-    bool show_latest_available = false;
+    bool show_status = false;
     if (s_services_mutex != NULL) {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_pending_manifest_check_active = false;
         s_pending_manifest_check_task = NULL;
-        if (staged_is_older && discard_err == ESP_OK) {
+        if (verify_err != ESP_OK && !ota_service_update_pending()) {
+            s_ota_status.state = APP_OTA_IDLE;
+            s_ota_status.update_available = false;
+            s_ota_status.confirmation_pending = false;
+            s_ota_status.progress_percent = 0;
+            s_ota_status.available_version[0] = '\0';
+            (void)snprintf(s_ota_status.error_detail,
+                           sizeof(s_ota_status.error_detail), "%s",
+                           "Staged image rejected");
+            snapshot = s_ota_status;
+            show_status = true;
+        } else if (staged_is_older && discard_err == ESP_OK) {
             s_ota_status.state = APP_OTA_AVAILABLE;
             s_ota_status.update_available = latest_newer_than_running;
             s_ota_status.confirmation_pending = false;
@@ -3621,18 +3638,26 @@ static void ota_pending_manifest_check_task(void *parameter)
                            entry.version);
             s_ota_status.error_detail[0] = '\0';
             snapshot = s_ota_status;
-            show_latest_available = true;
+            show_status = true;
         }
         xSemaphoreGive(s_services_mutex);
     }
 
-    if (check_err != ESP_OK) {
+    if (verify_err != ESP_OK) {
+        ESP_LOGE(APP_SERVICES_TAG,
+                 "Staged OTA preflight failed for %s: %s; current firmware retained",
+                 job->staged_version, esp_err_to_name(verify_err));
+    } else if (job->manifest_url[0] == '\0') {
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "Staged OTA %s passed SHA-256 preflight; manifest check skipped (offline)",
+                 job->staged_version);
+    } else if (check_err != ESP_OK) {
         ESP_LOGW(APP_SERVICES_TAG,
-                 "Could not compare staged OTA %s with latest manifest: %s; keeping staged image",
+                 "Could not compare staged OTA %s with latest manifest: %s; verified staged image retained",
                  job->staged_version, esp_err_to_name(check_err));
     } else if (!staged_is_older) {
         ESP_LOGI(APP_SERVICES_TAG,
-                 "Staged OTA %s is not older than the latest manifest %s",
+                 "Staged OTA %s passed preflight and is not older than manifest %s",
                  job->staged_version, entry.version);
     } else if (discard_err != ESP_OK) {
         ESP_LOGE(APP_SERVICES_TAG,
@@ -3640,11 +3665,13 @@ static void ota_pending_manifest_check_task(void *parameter)
                  job->staged_version, esp_err_to_name(discard_err));
     }
 
-    if (show_latest_available) {
+    if (show_status) {
         app_services_show_ota_lcd_impl(&snapshot, false);
-        ESP_LOGI(APP_SERVICES_TAG,
-                 "Latest OTA %s is available; user confirmation is required before download",
-                 entry.version);
+        if (staged_is_older && discard_err == ESP_OK) {
+            ESP_LOGI(APP_SERVICES_TAG,
+                     "Latest OTA %s is available; existing confirmation flow will download it",
+                     entry.version);
+        }
     }
 
     memset(job, 0, sizeof(*job));
@@ -3654,7 +3681,7 @@ static void ota_pending_manifest_check_task(void *parameter)
 
 static void app_services_schedule_pending_manifest_check(void)
 {
-    if (s_services_mutex == NULL || !app_wifi_station_has_ip()) {
+    if (s_services_mutex == NULL) {
         return;
     }
 
@@ -3664,11 +3691,15 @@ static void app_services_schedule_pending_manifest_check(void)
         return;
     }
 
+    /* Integrity preflight always runs, even offline. The optional latest
+     * manifest comparison only runs when station connectivity is available. */
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
-    if (app_services_get_ota_manifest_url(manifest_url,
-                                          sizeof(manifest_url)) != ESP_OK ||
-        !ota_manifest_is_https_url(manifest_url)) {
-        return;
+    if (app_wifi_station_has_ip()) {
+        if (app_services_get_ota_manifest_url(manifest_url,
+                                              sizeof(manifest_url)) != ESP_OK ||
+            !ota_manifest_is_https_url(manifest_url)) {
+            manifest_url[0] = '\0';
+        }
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
@@ -3682,7 +3713,7 @@ static void app_services_schedule_pending_manifest_check(void)
     if (job == NULL) {
         xSemaphoreGive(s_services_mutex);
         ESP_LOGW(APP_SERVICES_TAG,
-                 "Could not allocate latest-manifest check; staged OTA remains available");
+                 "Could not allocate staged OTA preflight; image remains blocked from apply");
         return;
     }
     (void)snprintf(job->manifest_url, sizeof(job->manifest_url), "%s",
@@ -3705,7 +3736,7 @@ static void app_services_schedule_pending_manifest_check(void)
         memset(job, 0, sizeof(*job));
         free(job);
         ESP_LOGW(APP_SERVICES_TAG,
-                 "Could not start latest-manifest check; staged OTA remains available");
+                 "Could not start staged OTA preflight; image remains blocked from apply");
     }
 }
 
