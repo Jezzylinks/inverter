@@ -83,6 +83,7 @@ void lcd_show_memory_usage_diagnostic(void)
 #define LCD_FLASH_QUEUE_DEPTH 4
 #define SYSTEM_STARTUP_DISPLAY_DURATION_MS 1500U
 #define LCD_RECOVER_RETRY_MS 1000U /* min gap between failed-write resyncs */
+#define LCD_RECOVER_FULL_INIT_AFTER 3U /* fall back to full init after repeated resync failures */
 #define LCD_FORCE_REDRAW_MS 10000U /* periodic full row rewrite, no clear  */
 
 static uint8_t loading_progress(uint32_t elapsed, uint32_t duration);
@@ -2151,6 +2152,7 @@ void lcd_task(void *arg)
     static uint32_t last_diagnostic_refresh_ms = 0U;
     uint32_t last_lcd_recover_ms = 0U;
     uint32_t last_lcd_refresh_ms = 0U;
+    uint8_t lcd_recovery_failures = 0U;
     bool need_clear = true;
 
     sys_lcd.main.sub_page = MAIN_SUB_OUTPUT;
@@ -2188,20 +2190,69 @@ void lcd_task(void *arg)
          * failed, so resynchronise the controller here, between draw passes,
          * and repaint from scratch. Retry no more than once per interval while
          * the bus is still unreachable. */
-        if (lcd_is_initialized() && lcd_io_error_pending())
+        const bool lcd_needs_recovery =
+            !lcd_is_initialized() || lcd_io_error_pending();
+
+        if (lcd_needs_recovery)
         {
             const uint32_t recover_now_ms = _lcd_get_time_ms();
             if (recover_now_ms - last_lcd_recover_ms >= LCD_RECOVER_RETRY_MS)
             {
                 last_lcd_recover_ms = recover_now_ms;
-                ESP_LOGW(TAG, "LCD write failed (%lu total); resynchronising",
-                         (unsigned long)lcd_io_error_count());
-                if (lcd_resync() == ESP_OK)
+                esp_err_t recover_err = ESP_ERR_INVALID_STATE;
+
+                if (lcd_is_initialized() && lcd_io_error_pending())
                 {
+                    ESP_LOGW(TAG,
+                             "LCD I2C write failed (%lu total); resynchronising",
+                             (unsigned long)lcd_io_error_count());
+                    recover_err = lcd_resync();
+                }
+                else
+                {
+                    /* Also recover from a failed initialisation/reinitialisation.
+                     * Previously the task only entered recovery while the driver
+                     * reported itself initialized, leaving a failed init stuck
+                     * until the inverter was rebooted. */
+                    ESP_LOGW(TAG, "LCD controller not initialized; retrying init");
+                    recover_err = lcd_init(LCD_ADDR, SDA_PIN, SCL_PIN);
+                }
+
+                if (recover_err != ESP_OK)
+                {
+                    if (lcd_recovery_failures < UINT8_MAX)
+                        lcd_recovery_failures++;
+
+                    ESP_LOGE(TAG, "LCD recovery attempt failed (%s), streak=%u",
+                             esp_err_to_name(recover_err),
+                             (unsigned)lcd_recovery_failures);
+
+                    /* Repeated nibble resync failures may mean the controller
+                     * is in a state the soft sequence cannot recover from.
+                     * After a few attempts, perform a complete hardware init.
+                     * The normal one-second retry remains in force if this
+                     * full initialization also fails. */
+                    if (lcd_is_initialized() &&
+                        lcd_recovery_failures >= LCD_RECOVER_FULL_INIT_AFTER)
+                    {
+                        ESP_LOGW(TAG, "LCD resync repeatedly failed; trying full init");
+                        recover_err = lcd_init(LCD_ADDR, SDA_PIN, SCL_PIN);
+                        if (recover_err != ESP_OK)
+                        {
+                            ESP_LOGE(TAG, "LCD full init failed: %s",
+                                     esp_err_to_name(recover_err));
+                        }
+                    }
+                }
+
+                if (recover_err == ESP_OK && lcd_is_initialized())
+                {
+                    lcd_recovery_failures = 0U;
                     lcd_init_cgram();
                     reset_row_cache();
                     need_clear = true;
                     last_lcd_refresh_ms = recover_now_ms;
+                    ESP_LOGI(TAG, "LCD recovery completed; forcing full redraw");
                 }
             }
         }
