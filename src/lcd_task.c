@@ -735,11 +735,20 @@ static void draw_ota(const lcd_ota_data_t *d)
         final_percent_hold_active = false;
     }
 
-    if (!final_percent_hold_active &&
+    const bool entering_post_download_state =
+        (render->state == LCD_OTA_VIEW_VERIFYING ||
+         render->state == LCD_OTA_VIEW_COMPLETE) &&
+        (!have_last_drawn ||
+         (last_drawn_state != LCD_OTA_VIEW_VERIFYING &&
+          last_drawn_state != LCD_OTA_VIEW_COMPLETE));
+    const bool leaving_visible_100_percent =
         have_last_drawn &&
         last_drawn_state == LCD_OTA_VIEW_DOWNLOADING &&
         last_drawn_pct >= 100U &&
-        render->state != LCD_OTA_VIEW_DOWNLOADING &&
+        render->state != LCD_OTA_VIEW_DOWNLOADING;
+
+    if (!final_percent_hold_active &&
+        (entering_post_download_state || leaving_visible_100_percent) &&
         render->state != LCD_OTA_VIEW_ERROR &&
         render->state != LCD_OTA_VIEW_CANCELLED &&
         render->state != LCD_OTA_VIEW_CANCELLING) {
