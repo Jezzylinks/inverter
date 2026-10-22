@@ -121,7 +121,8 @@ static bool s_wifi_scan_cancel_requested;
 static char s_manifest_url[APP_OTA_MANIFEST_URL_MAX];
 static app_ota_status_t s_ota_status;
 
-typedef enum {
+typedef enum
+{
     APP_WIFI_OPERATION_NONE = 0,
     APP_WIFI_OPERATION_ENABLE,
     APP_WIFI_OPERATION_CONNECT_SAVED,
@@ -138,7 +139,8 @@ static TickType_t s_wifi_operation_started_tick;
 static int8_t s_wifi_operation_rssi = -127;
 static bool s_wifi_connection_uses_auth = false;
 
-typedef struct {
+typedef struct
+{
     bool enabled;
     bool previous_enabled;
     bool mode_change;
@@ -167,8 +169,10 @@ static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode);
 static bool app_wifi_end_operation_if_generation(uint32_t generation);
 static void app_wifi_schedule_menu_refresh(uint32_t delay_ms);
 static void app_wifi_report_connected(const char *ssid, int8_t rssi);
+static void ota_apply_prompt_timeout_task(void *parameter);
 
-typedef enum {
+typedef enum
+{
     APP_WIFI_PREREQUISITE_NONE = 0,
     APP_WIFI_PREREQUISITE_OTA_CHECK,
     APP_WIFI_PREREQUISITE_OTA_INSTALL
@@ -212,29 +216,35 @@ static bool app_wifi_station_has_ip(void)
  *    because switching networks disconnects first and rewrites the target. */
 static bool app_wifi_station_connected_to(const char *ssid)
 {
-    if (ssid == NULL || ssid[0] == '\0') {
+    if (ssid == NULL || ssid[0] == '\0')
+    {
         return false;
     }
 
     wifi_status_t status = {0};
-    if (wifi_events_get_status_copy(&status) != ESP_OK || !status.got_ip) {
+    if (wifi_events_get_status_copy(&status) != ESP_OK || !status.got_ip)
+    {
         return false;
     }
 
     wifi_ap_record_t ap = {0};
-    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
+    {
         return strncmp((const char *)ap.ssid, ssid, sizeof(ap.ssid)) == 0;
     }
 
-    if (!wifi_controller_is_connected()) {
+    if (!wifi_controller_is_connected())
+    {
         return false;
     }
     esp_netif_ip_info_t ip = {0};
-    if (wifi_manager_get_ip(&ip) != ESP_OK || ip.ip.addr == 0U) {
+    if (wifi_manager_get_ip(&ip) != ESP_OK || ip.ip.addr == 0U)
+    {
         return false;
     }
     wifi_manager_config_t target = {0};
-    if (wifi_manager_get_config(&target) != ESP_OK) {
+    if (wifi_manager_get_config(&target) != ESP_OK)
+    {
         return false;
     }
     return strcmp(target.ssid, ssid) == 0;
@@ -243,7 +253,8 @@ static bool app_wifi_station_connected_to(const char *ssid)
 static bool app_wifi_scan_cancel_requested(void)
 {
     bool cancel = true;
-    if (s_services_mutex != NULL) {
+    if (s_services_mutex != NULL)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         cancel = s_wifi_scan_cancel_requested;
         xSemaphoreGive(s_services_mutex);
@@ -267,17 +278,20 @@ static void app_wifi_scan_task(void *parameter)
     esp_err_t last_scan_error = ESP_OK;
 
     while (!app_wifi_scan_cancel_requested() &&
-           (xTaskGetTickCount() - started) < duration) {
+           (xTaskGetTickCount() - started) < duration)
+    {
         uint16_t count = WIFI_MAX_SCAN_RESULTS;
         const esp_err_t err = wifi_scan_start_records(records, &count);
         last_scan_error = err;
-        if (err == ESP_OK) {
+        if (err == ESP_OK)
+        {
             const uint8_t visible = count > LCD_WIFI_MAX_AP ? LCD_WIFI_MAX_AP : (uint8_t)count;
             last_count = visible;
             had_successful_scan = true;
             memset(ssids, 0, sizeof(ssids));
             memset(rssi, 0, sizeof(rssi));
-            for (uint8_t i = 0U; i < visible; ++i) {
+            for (uint8_t i = 0U; i < visible; ++i)
+            {
                 strncpy(ssids[i], (const char *)records[i].ssid, LCD_WIFI_SSID_MAX_LEN);
                 ssids[i][LCD_WIFI_SSID_MAX_LEN] = '\0';
                 rssi[i] = records[i].rssi;
@@ -285,7 +299,9 @@ static void app_wifi_scan_task(void *parameter)
                 authmode[i] = (uint8_t)records[i].authmode;
             }
             lcd_update_wifi_scan_results(visible, ssids, rssi, channel, authmode, spinner++);
-        } else if (!app_wifi_scan_cancel_requested()) {
+        }
+        else if (!app_wifi_scan_cancel_requested())
+        {
             lcd_update_wifi_scan_spinner(spinner++);
         }
 
@@ -293,7 +309,8 @@ static void app_wifi_scan_task(void *parameter)
                                       pdMS_TO_TICKS(APP_WIFI_SCAN_INTERVAL_MS);
         while (!app_wifi_scan_cancel_requested() &&
                (int32_t)(wait_until - xTaskGetTickCount()) > 0 &&
-               (xTaskGetTickCount() - started) < duration) {
+               (xTaskGetTickCount() - started) < duration)
+        {
             vTaskDelay(pdMS_TO_TICKS(APP_WIFI_SCAN_POLL_MS));
         }
     }
@@ -302,11 +319,15 @@ static void app_wifi_scan_task(void *parameter)
     LCD_LOCK();
     keep_scan_screen = sys_lcd.screen == LCD_SCREEN_WIFI_SCAN;
     LCD_UNLOCK();
-    if (keep_scan_screen) {
+    if (keep_scan_screen)
+    {
         if (!had_successful_scan && !app_wifi_scan_cancel_requested() &&
-            last_scan_error != ESP_OK) {
+            last_scan_error != ESP_OK)
+        {
             lcd_show_wifi_scan_failed();
-        } else {
+        }
+        else
+        {
             /* Natural completion and ENTER cancellation both expose the latest
              * valid result set and reset selection to the first network. */
             lcd_show_wifi_scan(last_count, ssids, rssi, channel, authmode, 0U, 0U);
@@ -325,13 +346,15 @@ static void app_wifi_prerequisite_task(void *parameter)
 {
     (void)parameter;
 
-    while (true) {
+    while (true)
+    {
         vTaskDelay(pdMS_TO_TICKS(APP_WIFI_PREREQUISITE_POLL_MS));
 
         app_wifi_prerequisite_operation_t operation = APP_WIFI_PREREQUISITE_NONE;
         bool waiting = false;
 
-        if (s_services_mutex != NULL) {
+        if (s_services_mutex != NULL)
+        {
             xSemaphoreTake(s_services_mutex, portMAX_DELAY);
             operation = s_wifi_prerequisite_operation;
             waiting = s_wifi_prerequisite_waiting;
@@ -339,12 +362,14 @@ static void app_wifi_prerequisite_task(void *parameter)
         }
         (void)task_watchdog_health_feed();
 
-        if (!waiting || operation == APP_WIFI_PREREQUISITE_NONE) {
+        if (!waiting || operation == APP_WIFI_PREREQUISITE_NONE)
+        {
             continue;
         }
 
         if ((xTaskGetTickCount() - s_wifi_prerequisite_started_tick) >=
-            pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
+            pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS))
+        {
             xSemaphoreTake(s_services_mutex, portMAX_DELAY);
             s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_NONE;
             s_wifi_prerequisite_pending = false;
@@ -360,35 +385,43 @@ static void app_wifi_prerequisite_task(void *parameter)
             continue;
         }
 
-        if (!app_wifi_station_has_ip() || !wifi_monitor_is_online()) {
+        if (!app_wifi_station_has_ip() || !wifi_monitor_is_online())
+        {
             continue;
         }
 
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         if (s_wifi_prerequisite_operation == operation &&
-            s_wifi_prerequisite_waiting) {
+            s_wifi_prerequisite_waiting)
+        {
             s_wifi_prerequisite_waiting = false;
             s_wifi_prerequisite_ready = true;
-        } else {
+        }
+        else
+        {
             operation = APP_WIFI_PREREQUISITE_NONE;
         }
         xSemaphoreGive(s_services_mutex);
 
-        if (operation == APP_WIFI_PREREQUISITE_NONE) {
+        if (operation == APP_WIFI_PREREQUISITE_NONE)
+        {
             continue;
         }
 
         ESP_LOGI(APP_SERVICES_TAG,
                  "Wi-Fi prerequisite ready for operation=%d", (int)operation);
 
-        if (operation == APP_WIFI_PREREQUISITE_OTA_CHECK) {
+        if (operation == APP_WIFI_PREREQUISITE_OTA_CHECK)
+        {
             xSemaphoreTake(s_services_mutex, portMAX_DELAY);
             s_wifi_prerequisite_ready = false;
             s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_NONE;
             xSemaphoreGive(s_services_mutex);
 
             (void)app_services_check_for_update(true);
-        } else {
+        }
+        else
+        {
             /*
              * Keep the existing OTA authentication boundary in app_input.c.
              * Return to the OTA menu with Install selected; ENTER resumes the
@@ -410,16 +443,17 @@ static void app_wifi_sync_menu_if_visible(void);
 /* Single authoritative UI view of the Wi-Fi action label. It is derived from
  * the live operation/controller/event/driver state in app_wifi_ui_state();
  * nothing else decides what the Connect/Disconnect item shows. */
-typedef enum {
+typedef enum
+{
     APP_WIFI_UI_CONNECT = 0,
     APP_WIFI_UI_CONNECTING,
     APP_WIFI_UI_DISCONNECT,
     APP_WIFI_UI_DISCONNECTING,
 } app_wifi_ui_state_t;
 
-#define APP_WIFI_ANIM_STEP_MS        400U  /* one dot phase                  */
-#define APP_WIFI_ANIM_PHASES         3U    /* ".", "..", "..."               */
-#define APP_WIFI_DISCONNECT_MIN_MS   900U  /* keep "Disconnecting" visible   */
+#define APP_WIFI_ANIM_STEP_MS 400U      /* one dot phase                  */
+#define APP_WIFI_ANIM_PHASES 3U         /* ".", "..", "..."               */
+#define APP_WIFI_DISCONNECT_MIN_MS 900U /* keep "Disconnecting" visible   */
 
 /* Animation phase owned by the watcher task; read by label renderers. */
 static uint8_t s_wifi_anim_phase;
@@ -441,7 +475,8 @@ static void app_wifi_operation_watch_task(void *parameter)
     uint8_t last_rendered_anim_phase = UINT8_MAX;
     app_wifi_ui_state_t last_ui_state = APP_WIFI_UI_CONNECT;
 
-    while (true) {
+    while (true)
+    {
         /*
          * The menu label also animates during controller-driven auto-reconnect,
          * when s_wifi_operation is NONE. Polling only once per second in that
@@ -452,7 +487,7 @@ static void app_wifi_operation_watch_task(void *parameter)
         /* Wake early when an operation starts/ends; otherwise the timeout is
          * only the animation/reconciliation cadence. */
         (void)ulTaskNotifyTake(pdTRUE,
-            pdMS_TO_TICKS(app_wifi_ui_animation_active() ? 100U : 250U));
+                               pdMS_TO_TICKS(app_wifi_ui_animation_active() ? 100U : 250U));
 
         /* Poll the live station/DHCP handshake while an operation is active.
          * Do not depend exclusively on an event callback to finish the
@@ -470,15 +505,19 @@ static void app_wifi_operation_watch_task(void *parameter)
         xSemaphoreGive(s_services_mutex);
 
         if (polled_operation == APP_WIFI_OPERATION_CONNECT_SAVED &&
-            polled_ssid[0] != '\0') {
+            polled_ssid[0] != '\0')
+        {
             if (app_wifi_station_connected_to(polled_ssid) &&
-                app_wifi_end_operation_if_generation(polled_generation)) {
+                app_wifi_end_operation_if_generation(polled_generation))
+            {
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Live Wi-Fi poll confirmed connection to '%s'",
                          polled_ssid);
                 app_wifi_report_connected(polled_ssid, polled_rssi);
             }
-        } else if (polled_operation == APP_WIFI_OPERATION_DISCONNECT) {
+        }
+        else if (polled_operation == APP_WIFI_OPERATION_DISCONNECT)
+        {
             wifi_ap_record_t live_ap = {0};
             /* The driver's station association is authoritative here.
              * In APSTA the AP side may remain active, and the event snapshot
@@ -486,7 +525,8 @@ static void app_wifi_operation_watch_task(void *parameter)
             const bool station_gone =
                 esp_wifi_sta_get_ap_info(&live_ap) != ESP_OK;
             if (station_gone &&
-                app_wifi_end_operation_if_generation(polled_generation)) {
+                app_wifi_end_operation_if_generation(polled_generation))
+            {
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Live Wi-Fi poll confirmed station disconnection");
                 app_wifi_sync_menu_if_visible();
@@ -500,7 +540,8 @@ static void app_wifi_operation_watch_task(void *parameter)
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         if (s_wifi_operation != APP_WIFI_OPERATION_NONE &&
             (uint32_t)(xTaskGetTickCount() - s_wifi_operation_started_tick) >=
-                pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
+                pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS))
+        {
             timed_out_operation = s_wifi_operation;
             timed_out_rssi = s_wifi_operation_rssi;
             strncpy(timed_out_ssid, s_wifi_operation_ssid,
@@ -513,30 +554,39 @@ static void app_wifi_operation_watch_task(void *parameter)
         }
         xSemaphoreGive(s_services_mutex);
 
-        if (timed_out) {
+        if (timed_out)
+        {
             /* A delayed/missed monitor callback must not report failure if
              * the live station state already proves completion. */
             bool connection_really_succeeded = false;
             bool disconnection_really_succeeded = false;
-            if (timed_out_operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
+            if (timed_out_operation == APP_WIFI_OPERATION_CONNECT_SAVED)
+            {
                 connection_really_succeeded =
                     app_wifi_station_connected_to(timed_out_ssid);
-            } else if (timed_out_operation == APP_WIFI_OPERATION_DISCONNECT) {
+            }
+            else if (timed_out_operation == APP_WIFI_OPERATION_DISCONNECT)
+            {
                 wifi_ap_record_t active_ap = {0};
                 disconnection_really_succeeded =
                     esp_wifi_sta_get_ap_info(&active_ap) != ESP_OK;
             }
 
-            if (connection_really_succeeded) {
+            if (connection_really_succeeded)
+            {
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Wi-Fi callback was delayed; confirmed connected to '%s'",
                          timed_out_ssid);
                 app_wifi_report_connected(timed_out_ssid, timed_out_rssi);
-            } else if (disconnection_really_succeeded) {
+            }
+            else if (disconnection_really_succeeded)
+            {
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Wi-Fi callback was delayed; station is disconnected");
                 app_wifi_sync_menu_if_visible();
-            } else {
+            }
+            else
+            {
                 ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi operation timed out after %ums",
                          (unsigned)APP_WIFI_OPERATION_TIMEOUT_MS);
                 lcd_flash_warning_to("Connection Timeout",
@@ -552,13 +602,16 @@ static void app_wifi_operation_watch_task(void *parameter)
         const bool animating = ui_state == APP_WIFI_UI_CONNECTING ||
                                ui_state == APP_WIFI_UI_DISCONNECTING;
         const TickType_t phase_now = xTaskGetTickCount();
-        if (ui_state != last_ui_state) {
+        if (ui_state != last_ui_state)
+        {
             last_ui_state = ui_state;
             last_phase_tick = phase_now;
             __atomic_store_n(&s_wifi_anim_phase, 0U, __ATOMIC_RELAXED);
-        } else if (animating &&
-                   (TickType_t)(phase_now - last_phase_tick) >=
-                       pdMS_TO_TICKS(APP_WIFI_ANIM_STEP_MS)) {
+        }
+        else if (animating &&
+                 (TickType_t)(phase_now - last_phase_tick) >=
+                     pdMS_TO_TICKS(APP_WIFI_ANIM_STEP_MS))
+        {
             last_phase_tick = phase_now;
             const uint8_t phase =
                 __atomic_load_n(&s_wifi_anim_phase, __ATOMIC_RELAXED);
@@ -574,12 +627,14 @@ static void app_wifi_operation_watch_task(void *parameter)
 
         menu_state_t menu_state;
         uint8_t selection;
-        if (sys_state_mutex != NULL) {
+        if (sys_state_mutex != NULL)
+        {
             xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
         }
         menu_state = sys_state.menu_state;
         selection = sys_state.menu_selection;
-        if (sys_state_mutex != NULL) {
+        if (sys_state_mutex != NULL)
+        {
             xSemaphoreGive(sys_state_mutex);
         }
 
@@ -591,7 +646,8 @@ static void app_wifi_operation_watch_task(void *parameter)
          * the snapshot itself (not a private cached string) with the label
          * that should be shown.
          */
-        if (screen == LCD_SCREEN_MENU && menu_state == MENU_WIFI_CONFIG) {
+        if (screen == LCD_SCREEN_MENU && menu_state == MENU_WIFI_CONFIG)
+        {
             const char *connect_label = app_services_wifi_connect_action_label();
             const bool wifi_enabled = app_services_wifi_enabled();
             const uint8_t anim_phase =
@@ -604,7 +660,8 @@ static void app_wifi_operation_watch_task(void *parameter)
                 strcmp(last_connect_label, connect_label) != 0 ||
                 last_wifi_enabled != wifi_enabled ||
                 (animating && last_rendered_anim_phase != anim_phase) ||
-                app_wifi_menu_snapshot_stale(connect_label)) {
+                app_wifi_menu_snapshot_stale(connect_label))
+            {
                 strncpy(last_connect_label, connect_label,
                         sizeof(last_connect_label) - 1U);
                 last_connect_label[sizeof(last_connect_label) - 1U] = '\0';
@@ -613,22 +670,27 @@ static void app_wifi_operation_watch_task(void *parameter)
                 have_menu_snapshot = true;
                 show_menu_screen(MENU_WIFI_CONFIG, selection);
             }
-        } else {
+        }
+        else
+        {
             have_menu_snapshot = false;
         }
 
         /* RSSI can change without a state transition; keep home telemetry live. */
         const TickType_t now = xTaskGetTickCount();
         if (last_rssi_poll == 0U ||
-            (TickType_t)(now - last_rssi_poll) >= pdMS_TO_TICKS(5000U)) {
+            (TickType_t)(now - last_rssi_poll) >= pdMS_TO_TICKS(5000U))
+        {
             wifi_status_t status = {0};
             const bool connected =
                 wifi_events_get_status_copy(&status) == ESP_OK &&
                 status.got_ip;
             int8_t rssi = 0;
-            if (connected) {
+            if (connected)
+            {
                 rssi = wifi_manager_get_rssi();
-                if (rssi == -127) {
+                if (rssi == -127)
+                {
                     rssi = wifi_monitor_get_rssi();
                 }
             }
@@ -641,7 +703,8 @@ static void app_wifi_operation_watch_task(void *parameter)
 static void app_wifi_begin_operation(app_wifi_operation_t operation,
                                      const char *ssid, int8_t rssi)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return;
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
@@ -650,7 +713,8 @@ static void app_wifi_begin_operation(app_wifi_operation_t operation,
     s_wifi_operation_started_tick = xTaskGetTickCount();
     s_wifi_operation_rssi = rssi;
     s_wifi_operation_ssid[0] = '\0';
-    if (ssid != NULL) {
+    if (ssid != NULL)
+    {
         strncpy(s_wifi_operation_ssid, ssid, sizeof(s_wifi_operation_ssid) - 1U);
         s_wifi_operation_ssid[sizeof(s_wifi_operation_ssid) - 1U] = '\0';
     }
@@ -660,7 +724,8 @@ static void app_wifi_begin_operation(app_wifi_operation_t operation,
 
 static void app_wifi_end_operation(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return;
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
@@ -676,7 +741,8 @@ static void app_wifi_end_operation(void)
  * clearing a newer user request. */
 static bool app_wifi_end_operation_if_generation(uint32_t generation)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return false;
     }
 
@@ -687,16 +753,19 @@ static bool app_wifi_end_operation_if_generation(uint32_t generation)
      * keeps polling the live station state and ends it afterwards. */
     if (matches && s_wifi_operation == APP_WIFI_OPERATION_DISCONNECT &&
         (uint32_t)(xTaskGetTickCount() - s_wifi_operation_started_tick) <
-            pdMS_TO_TICKS(APP_WIFI_DISCONNECT_MIN_MS)) {
+            pdMS_TO_TICKS(APP_WIFI_DISCONNECT_MIN_MS))
+    {
         matches = false;
     }
-    if (matches) {
+    if (matches)
+    {
         s_wifi_operation = APP_WIFI_OPERATION_NONE;
         s_wifi_operation_ssid[0] = '\0';
         s_wifi_operation_rssi = -127;
     }
     xSemaphoreGive(s_services_mutex);
-    if (matches) {
+    if (matches)
+    {
         app_wifi_notify_watcher();
     }
     return matches;
@@ -705,15 +774,18 @@ static bool app_wifi_end_operation_if_generation(uint32_t generation)
 static app_wifi_ui_state_t app_wifi_ui_state(void)
 {
     app_wifi_operation_t operation = APP_WIFI_OPERATION_NONE;
-    if (s_services_mutex != NULL) {
+    if (s_services_mutex != NULL)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         operation = s_wifi_operation;
         xSemaphoreGive(s_services_mutex);
     }
-    if (operation == APP_WIFI_OPERATION_DISCONNECT) {
+    if (operation == APP_WIFI_OPERATION_DISCONNECT)
+    {
         return APP_WIFI_UI_DISCONNECTING;
     }
-    if (operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
+    if (operation == APP_WIFI_OPERATION_CONNECT_SAVED)
+    {
         return APP_WIFI_UI_CONNECTING;
     }
 
@@ -726,7 +798,8 @@ static app_wifi_ui_state_t app_wifi_ui_state(void)
     const bool got_ip = have_status && status.got_ip;
 
     /* Connected requires IP + driver association + controller agreement. */
-    if (got_ip && station_associated && wifi_controller_is_connected()) {
+    if (got_ip && station_associated && wifi_controller_is_connected())
+    {
         return APP_WIFI_UI_DISCONNECT;
     }
     /* In progress: controller/event transition, or associated but DHCP not
@@ -735,7 +808,8 @@ static app_wifi_ui_state_t app_wifi_ui_state(void)
         controller_state == WIFI_CONTROLLER_STARTING ||
         (have_status && (status.state == WIFI_STATE_CONNECTING ||
                          status.state == WIFI_STATE_RECONNECTING)) ||
-        (station_associated && !got_ip)) {
+        (station_associated && !got_ip))
+    {
         return APP_WIFI_UI_CONNECTING;
     }
     return APP_WIFI_UI_CONNECT;
@@ -755,28 +829,38 @@ static bool app_wifi_ui_animation_active(void)
 static bool app_wifi_menu_snapshot_stale(const char *want)
 {
     static const char *const labels[] = {
-        "Connect", "Disconnect",
-        "Connecting.", "Connecting..", "Connecting...",
-        "Disconnecting.", "Disconnecting..", "Disconnecting...",
+        "Connect",
+        "Disconnect",
+        "Connecting.",
+        "Connecting..",
+        "Connecting...",
+        "Disconnecting.",
+        "Disconnecting..",
+        "Disconnecting...",
     };
     const char *found = NULL;
 
     LCD_LOCK();
-    for (uint8_t row = 0U; row < LCD_ROWS && found == NULL; ++row) {
+    for (uint8_t row = 0U; row < LCD_ROWS && found == NULL; ++row)
+    {
         const char *text = sys_lcd.menu.rows[row];
-        for (size_t i = 0U; i < sizeof(labels) / sizeof(labels[0]); ++i) {
+        for (size_t i = 0U; i < sizeof(labels) / sizeof(labels[0]); ++i)
+        {
             const size_t len = strlen(labels[i]);
             for (const char *at = strstr(text, labels[i]); at != NULL;
-                 at = strstr(at + 1, labels[i])) {
+                 at = strstr(at + 1, labels[i]))
+            {
                 const char before = (at == text) ? ' ' : at[-1];
                 const char after = at[len];
                 if (!isalnum((unsigned char)before) &&
-                    !isalnum((unsigned char)after) && after != '.') {
+                    !isalnum((unsigned char)after) && after != '.')
+                {
                     found = labels[i];
                     break;
                 }
             }
-            if (found != NULL) {
+            if (found != NULL)
+            {
                 break;
             }
         }
@@ -788,7 +872,8 @@ static bool app_wifi_menu_snapshot_stale(const char *want)
 
 static void app_wifi_notify_watcher(void)
 {
-    if (s_wifi_operation_watch_task != NULL) {
+    if (s_wifi_operation_watch_task != NULL)
+    {
         xTaskNotifyGive(s_wifi_operation_watch_task);
     }
 }
@@ -806,20 +891,24 @@ static void app_wifi_sync_menu_if_visible(void)
               (sys_lcd.screen == LCD_SCREEN_FLASH_MSG &&
                lcd_flash_is_active());
     LCD_UNLOCK();
-    if (!visible) {
+    if (!visible)
+    {
         return;
     }
 
-    if (sys_state_mutex != NULL) {
+    if (sys_state_mutex != NULL)
+    {
         xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
     }
     menu_state = sys_state.menu_state;
     selection = sys_state.menu_selection;
-    if (sys_state_mutex != NULL) {
+    if (sys_state_mutex != NULL)
+    {
         xSemaphoreGive(sys_state_mutex);
     }
 
-    if (menu_state == MENU_WIFI_CONFIG) {
+    if (menu_state == MENU_WIFI_CONFIG)
+    {
         show_menu_screen(menu_state, selection);
         ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi menu synchronized from runtime state");
     }
@@ -834,42 +923,50 @@ static void app_wifi_menu_refresh_task(void *parameter)
 
     /* A queued LCD flash can last slightly longer than its nominal duration.
      * Never redraw the menu over an active flash/result screen. */
-    for (unsigned attempt = 0U; attempt < 12U; ++attempt) {
+    for (unsigned attempt = 0U; attempt < 12U; ++attempt)
+    {
         lcd_screen_id_t screen;
         LCD_LOCK();
         screen = sys_lcd.screen;
         LCD_UNLOCK();
 
-        if (screen == LCD_SCREEN_MENU) {
+        if (screen == LCD_SCREEN_MENU)
+        {
             app_wifi_sync_menu_if_visible();
             break;
         }
-        if (screen == LCD_SCREEN_WIFI_CONNECTING) {
+        if (screen == LCD_SCREEN_WIFI_CONNECTING)
+        {
             /* A confirmed connection leaves the connect screen on its own.
              * Failure/timeout results stay up until the user presses Back. */
             bool connected_result;
             LCD_LOCK();
             connected_result = sys_lcd.wifi_connect.connected;
             LCD_UNLOCK();
-            if (connected_result) {
+            if (connected_result)
+            {
                 menu_state_t menu_state;
                 uint8_t selection;
-                if (sys_state_mutex != NULL) {
+                if (sys_state_mutex != NULL)
+                {
                     xSemaphoreTake(sys_state_mutex, portMAX_DELAY);
                 }
                 menu_state = sys_state.menu_state;
                 selection = sys_state.menu_selection;
-                if (sys_state_mutex != NULL) {
+                if (sys_state_mutex != NULL)
+                {
                     xSemaphoreGive(sys_state_mutex);
                 }
-                if (menu_state == MENU_WIFI_CONFIG) {
+                if (menu_state == MENU_WIFI_CONFIG)
+                {
                     show_menu_screen(MENU_WIFI_CONFIG, selection);
                 }
                 break;
             }
         }
         if (screen != LCD_SCREEN_FLASH_MSG &&
-            screen != LCD_SCREEN_WIFI_CONNECTING) {
+            screen != LCD_SCREEN_WIFI_CONNECTING)
+        {
             break;
         }
         vTaskDelay(pdMS_TO_TICKS(250U));
@@ -887,12 +984,14 @@ static void app_wifi_menu_refresh_task(void *parameter)
 static void app_wifi_report_connected(const char *ssid, int8_t rssi)
 {
     bool newer_operation = false;
-    if (s_services_mutex != NULL) {
+    if (s_services_mutex != NULL)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         newer_operation = s_wifi_operation != APP_WIFI_OPERATION_NONE;
         xSemaphoreGive(s_services_mutex);
     }
-    if (newer_operation) {
+    if (newer_operation)
+    {
         /* A newer request owns the display; a late result must not
          * overwrite its connecting view. */
         return;
@@ -910,13 +1009,15 @@ static void app_wifi_report_connected(const char *ssid, int8_t rssi)
                                 LCD_WIFI_SSID_MAX_LEN) == 0;
     LCD_UNLOCK();
 
-    if (!owns_connect_view) {
+    if (!owns_connect_view)
+    {
         app_wifi_sync_menu_if_visible();
         return;
     }
 
     const int8_t live_rssi = wifi_manager_get_rssi();
-    if (live_rssi != -127 && live_rssi != 0) {
+    if (live_rssi != -127 && live_rssi != 0)
+    {
         rssi = live_rssi;
     }
     lcd_show_wifi_result(true, false, false, ssid, rssi, "LINK ESTABLISHED");
@@ -929,22 +1030,26 @@ static void app_wifi_schedule_menu_refresh(uint32_t delay_ms)
     if (xTaskCreatePinnedToCore(app_wifi_menu_refresh_task, "wifi_menu_refresh",
                                 2048U, (void *)(uintptr_t)delay_ms,
                                 APP_WIFI_OPERATION_WATCH_PRIORITY,
-                                &task, APP_CORE_SYSTEM) != pdPASS) {
+                                &task, APP_CORE_SYSTEM) != pdPASS)
+    {
         ESP_LOGW(APP_SERVICES_TAG, "Could not schedule Wi-Fi menu refresh");
     }
 }
 
 static esp_err_t app_services_execute_wifi_toggle(bool enabled,
-                                                    bool previous_enabled,
-                                                    bool silent)
+                                                  bool previous_enabled,
+                                                  bool silent)
 {
     const uint64_t started_ms = (uint64_t)(esp_timer_get_time() / 1000LL);
 
-    if (!enabled) {
+    if (!enabled)
+    {
         /* Service shutdown can include MQTT, mDNS, HTTP, and WebSocket
          * teardown. Keep it off the button and panel-input task. */
         (void)network_services_stop();
-    } else {
+    }
+    else
+    {
         /* Clear the teardown flag so network_services_start() (called from
          * network_services_sync_task when Wi-Fi connects and gets an IP)
          * is allowed to run again after a previous disable cycle set it. */
@@ -959,7 +1064,8 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
              enabled ? "start" : "stop", esp_err_to_name(controller_err));
     if (!enabled && (controller_err == ESP_ERR_INVALID_STATE ||
                      controller_err == ESP_ERR_WIFI_NOT_INIT ||
-                     controller_err == ESP_ERR_WIFI_NOT_STARTED)) {
+                     controller_err == ESP_ERR_WIFI_NOT_STARTED))
+    {
         /* OFF is idempotent when the radio is already stopped.  This
          * normalization is deliberately limited to OFF: no non-OK start
          * result is treated as a successful ON transition. */
@@ -967,7 +1073,8 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
     }
 
     esp_err_t nvs_err = ESP_OK;
-    if (controller_err == ESP_OK) {
+    if (controller_err == ESP_OK)
+    {
         /* The controller result is the sole authority for the actual radio
          * transition.  Event callbacks only report status and never commit
          * this user setting. */
@@ -976,39 +1083,48 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
         lcd_update_wifi_enabled(enabled);
         ESP_LOGI(APP_SERVICES_TAG, "Committing Wi-Fi runtime state: %s",
                  enabled ? "ON" : "OFF");
-        if (!silent) {
+        if (!silent)
+        {
             /* A manual toggle is the user's choice: remember it (ON when the
              * user turned Wi-Fi on, OFF otherwise). The silent boot
              * activation is derived from that choice, so it must not rewrite
              * it. */
             nvs_err = persist_u8(APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
-            if (nvs_err == ESP_OK) {
+            if (nvs_err == ESP_OK)
+            {
                 /* Read the key back through the same path the boot loader
                  * uses: "commit OK" alone does not prove boot will see it. */
                 uint8_t readback = 0xFFU;
                 nvs_handle_t rb_handle;
                 esp_err_t rb_err = storage_nvs_open(APP_SERVICES_NVS_NAMESPACE,
                                                     NVS_READONLY, &rb_handle);
-                if (rb_err == ESP_OK) {
+                if (rb_err == ESP_OK)
+                {
                     rb_err = nvs_get_u8(rb_handle, APP_WIFI_ENABLED_KEY, &readback);
                     storage_nvs_close(rb_handle);
                 }
-                if (rb_err != ESP_OK || readback != (enabled ? 1U : 0U)) {
+                if (rb_err != ESP_OK || readback != (enabled ? 1U : 0U))
+                {
                     ESP_LOGE(APP_SERVICES_TAG,
                              "Wi-Fi NVS read-back MISMATCH: wrote=%u read=%u err=%s",
                              enabled ? 1U : 0U, (unsigned)readback,
                              esp_err_to_name(rb_err));
                     nvs_err = (rb_err != ESP_OK) ? rb_err : ESP_ERR_INVALID_STATE;
-                } else {
+                }
+                else
+                {
                     /* Record the choice only once it is verifiably stored. */
                     s_wifi_user_choice_on = enabled;
                 }
             }
-            if (nvs_err != ESP_OK) {
+            if (nvs_err != ESP_OK)
+            {
                 ESP_LOGE(APP_SERVICES_TAG,
                          "Wi-Fi NVS persistence failed (%s); runtime state remains actual",
                          esp_err_to_name(nvs_err));
-            } else {
+            }
+            else
+            {
                 ESP_LOGI(APP_SERVICES_TAG,
                          "Wi-Fi user choice saved: %s=%u",
                          APP_WIFI_ENABLED_KEY, enabled ? 1U : 0U);
@@ -1016,17 +1132,21 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
         }
     }
 
-    if (controller_err == ESP_OK) {
+    if (controller_err == ESP_OK)
+    {
         app_wifi_end_operation();
         app_wifi_sync_menu_if_visible();
         /* Successful ON/OFF transitions are reflected by the live menu and
          * home-screen status; do not replace them with a redundant success
          * flash. Persistence failures remain visible to the user. */
-        if (nvs_err != ESP_OK) {
+        if (nvs_err != ESP_OK)
+        {
             lcd_flash_warning_to(enabled ? "Wi-Fi ON" : "Wi-Fi OFF",
                                  "Save failed", 1500U, LCD_SCREEN_MENU);
         }
-    } else {
+    }
+    else
+    {
         sys_state.wifi.enabled = previous_enabled;
         sys_state.inverter.wifi_enabled = previous_enabled;
         lcd_update_wifi_enabled(previous_enabled);
@@ -1034,15 +1154,20 @@ static esp_err_t app_services_execute_wifi_toggle(bool enabled,
                  enabled ? "ON" : "OFF", esp_err_to_name(controller_err));
         app_wifi_end_operation();
         app_wifi_sync_menu_if_visible();
-        if (silent) {
+        if (silent)
+        {
             /* Automatic boot activation: no saved SSID or a failed start is
              * logged, never shown. Manual ON/OFF still reports to the user. */
             ESP_LOGW(APP_SERVICES_TAG,
                      "Auto Wi-Fi On did not complete (%s); staying OFF silently",
                      esp_err_to_name(controller_err));
-        } else if (enabled && controller_err == ESP_ERR_NOT_FOUND) {
+        }
+        else if (enabled && controller_err == ESP_ERR_NOT_FOUND)
+        {
             lcd_flash_message("Wi-Fi Not Config", "Use menuconfig", 1800U);
-        } else {
+        }
+        else
+        {
             lcd_flash_message(enabled ? "Wi-Fi Start Failed" : "Wi-Fi Stop Failed",
                               "Try again", 1500U);
         }
@@ -1061,14 +1186,17 @@ static void app_wifi_toggle_task(void *parameter)
     (void)parameter;
 
     wifi_toggle_request_t request;
-    while (true) {
+    while (true)
+    {
         if (xQueueReceive(s_wifi_toggle_queue, &request,
-                         pdMS_TO_TICKS(APP_WIFI_TOGGLE_WATCHDOG_POLL_MS)) != pdTRUE) {
+                          pdMS_TO_TICKS(APP_WIFI_TOGGLE_WATCHDOG_POLL_MS)) != pdTRUE)
+        {
             continue;
         }
 
         const uint64_t now_ms = (uint64_t)(esp_timer_get_time() / 1000ULL);
-        if (request.mode_change) {
+        if (request.mode_change)
+        {
             ESP_LOGI(APP_SERVICES_TAG,
                      "Wi-Fi mode worker dispatch after %llums",
                      (unsigned long long)(now_ms >= request.requested_ms
@@ -1076,11 +1204,14 @@ static void app_wifi_toggle_task(void *parameter)
                                               : 0U));
             const esp_err_t mode_err =
                 app_services_execute_wifi_mode_change(request.mode);
-            if (mode_err != ESP_OK) {
+            if (mode_err != ESP_OK)
+            {
                 ESP_LOGE(APP_SERVICES_TAG, "Wi-Fi mode change failed: %s",
                          esp_err_to_name(mode_err));
                 lcd_flash_message("Mode Change Failed", "Previous kept", 1400U);
-            } else {
+            }
+            else
+            {
                 show_menu_screen(MENU_WIFI_SETTINGS, sys_state.menu_selection);
             }
             __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
@@ -1100,8 +1231,8 @@ static void app_wifi_toggle_task(void *parameter)
         ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle worker started: %s",
                  request.enabled ? "ON" : "OFF");
         (void)app_services_execute_wifi_toggle(request.enabled,
-                                                request.previous_enabled,
-                                                request.silent);
+                                               request.previous_enabled,
+                                               request.silent);
         ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi toggle worker completed: %s",
                  request.enabled ? "ON" : "OFF");
         __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
@@ -1115,7 +1246,8 @@ static void app_wifi_toggle_task(void *parameter)
                  "wifi_toggle stack high-water: %u words remaining (task stack=%u)",
                  (unsigned)stack_words,
                  (unsigned)(APP_WIFI_TOGGLE_TASK_STACK_SIZE / sizeof(StackType_t)));
-        if (stack_words < 128U) {
+        if (stack_words < 128U)
+        {
             ESP_LOGE(APP_SERVICES_TAG,
                      "wifi_toggle stack critically low (%u words) — "
                      "increase APP_WIFI_TOGGLE_TASK_STACK_SIZE",
@@ -1126,26 +1258,31 @@ static void app_wifi_toggle_task(void *parameter)
 
 static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode)
 {
-    if (mode < WIFI_MODE_STA || mode > WIFI_MODE_APSTA) {
+    if (mode < WIFI_MODE_STA || mode > WIFI_MODE_APSTA)
+    {
         return ESP_ERR_INVALID_ARG;
     }
 
     wifi_manager_config_t old_config = {0};
     esp_err_t err = wifi_manager_get_config(&old_config);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         return err;
     }
 
-    if (old_config.mode == mode) {
+    if (old_config.mode == mode)
+    {
         return ESP_OK;
     }
 
     const bool was_enabled = sys_state.wifi.enabled;
 
-    if (was_enabled) {
+    if (was_enabled)
+    {
         (void)network_services_stop();
         err = wifi_controller_stop();
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             return err;
         }
         /* network_services_stop() latches teardown. Clear that latch before
@@ -1158,39 +1295,47 @@ static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode)
     new_config.mode = mode;
 
     err = wifi_manager_set_config(&new_config);
-    if (err != ESP_OK) {
-        if (was_enabled) {
+    if (err != ESP_OK)
+    {
+        if (was_enabled)
+        {
             (void)wifi_controller_start();
         }
         return err;
     }
 
     wifi_network_config_t stored = {0};
-    if (wifi_storage_load_network_config(&stored) != ESP_OK) {
+    if (wifi_storage_load_network_config(&stored) != ESP_OK)
+    {
         wifi_storage_set_default_network_config(&stored);
     }
     const wifi_mode_t previous_mode = stored.mode;
     stored.mode = mode;
 
     err = wifi_storage_save_network_config(&stored);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         (void)wifi_manager_set_config(&old_config);
-        if (was_enabled) {
+        if (was_enabled)
+        {
             (void)wifi_controller_start();
         }
         return err;
     }
 
-    if (was_enabled) {
+    if (was_enabled)
+    {
         err = wifi_controller_start();
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             /* Roll back both runtime and persistent mode if the selected
              * architecture cannot be started. */
             stored.mode = previous_mode;
             (void)wifi_storage_save_network_config(&stored);
             (void)wifi_manager_set_config(&old_config);
             const esp_err_t restore_err = wifi_controller_start();
-            if (restore_err != ESP_OK) {
+            if (restore_err != ESP_OK)
+            {
                 ESP_LOGE(APP_SERVICES_TAG,
                          "Wi-Fi mode rollback could not restart previous mode: %s",
                          esp_err_to_name(restore_err));
@@ -1200,10 +1345,11 @@ static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode)
     }
 
     ESP_LOGI(APP_SERVICES_TAG, "Wi-Fi mode changed to %s",
-             mode == WIFI_MODE_STA ? "STA" :
-             mode == WIFI_MODE_AP ? "AP" : "APSTA");
+             mode == WIFI_MODE_STA ? "STA" : mode == WIFI_MODE_AP ? "AP"
+                                                                  : "APSTA");
     app_wifi_sync_menu_if_visible();
-    if (sys_state.menu_state == MENU_WIFI_SETTINGS) {
+    if (sys_state.menu_state == MENU_WIFI_SETTINGS)
+    {
         sys_state.menu_selection = (uint8_t)app_menu_wifi_settings_mode_index();
         show_menu_screen(MENU_WIFI_SETTINGS, sys_state.menu_selection);
     }
@@ -1216,7 +1362,8 @@ static esp_err_t app_services_execute_wifi_mode_change(wifi_mode_t mode)
  * not take any mutex that could be held for an extended period. */
 static void app_wifi_lcd_status_callback(const wifi_monitor_status_t *status)
 {
-    if (status == NULL) {
+    if (status == NULL)
+    {
         return;
     }
 
@@ -1233,14 +1380,16 @@ static void app_wifi_lcd_status_callback(const wifi_monitor_status_t *status)
     LCD_LOCK();
     menu_visible = sys_lcd.screen == LCD_SCREEN_MENU;
     LCD_UNLOCK();
-    if (menu_visible) {
+    if (menu_visible)
+    {
         app_wifi_sync_menu_if_visible();
     }
 }
 
 static void app_wifi_status_callback(const wifi_status_t *status)
 {
-    if (status == NULL || s_services_mutex == NULL) {
+    if (status == NULL || s_services_mutex == NULL)
+    {
         return;
     }
 
@@ -1262,11 +1411,13 @@ static void app_wifi_status_callback(const wifi_status_t *status)
     operation_rssi = s_wifi_operation_rssi;
     xSemaphoreGive(s_services_mutex);
 
-    if (operation == APP_WIFI_OPERATION_NONE) {
+    if (operation == APP_WIFI_OPERATION_NONE)
+    {
         return;
     }
 
-    switch (operation) {
+    switch (operation)
+    {
     case APP_WIFI_OPERATION_ENABLE:
         /* ON/OFF completion belongs to app_services_execute_wifi_toggle(),
          * after wifi_controller_start() returns.  AP/STA status events are
@@ -1277,15 +1428,19 @@ static void app_wifi_status_callback(const wifi_status_t *status)
          * requested connection succeeded. Confirm the actual associated SSID
          * before completing the pending operation (important for same-SSID
          * password changes and delayed monitor callbacks). */
-        if (status->got_ip && ssid[0] != '\0') {
-            if (app_wifi_station_connected_to(ssid)) {
+        if (status->got_ip && ssid[0] != '\0')
+        {
+            if (app_wifi_station_connected_to(ssid))
+            {
                 terminal = true;
                 connected = true;
                 message = ssid;
             }
-        } else if (status->state == WIFI_STATE_FAILED ||
-                   (!status->connected &&
-                    status->retry_count >= wifi_manager_get_retry_limit())) {
+        }
+        else if (status->state == WIFI_STATE_FAILED ||
+                 (!status->connected &&
+                  status->retry_count >= wifi_manager_get_retry_limit()))
+        {
             /* APSTA intentionally keeps publishing AP_ACTIVE while the AP is
              * serving clients. Exhausted STA retries are still a terminal
              * failure for this requested connection. */
@@ -1302,16 +1457,20 @@ static void app_wifi_status_callback(const wifi_status_t *status)
             (status->state == WIFI_STATE_IDLE ||
              status->state == WIFI_STATE_DISCONNECTED ||
              status->state == WIFI_STATE_FAILED ||
-             status->state == WIFI_STATE_AP_ACTIVE)) {
+             status->state == WIFI_STATE_AP_ACTIVE))
+        {
             terminal = true;
             message = "Disconnected";
         }
         break;
     case APP_WIFI_OPERATION_PROVISION:
-        if (status->state == WIFI_STATE_PROVISIONING) {
+        if (status->state == WIFI_STATE_PROVISIONING)
+        {
             terminal = true;
             message = "Setup AP Active";
-        } else if (status->state == WIFI_STATE_FAILED) {
+        }
+        else if (status->state == WIFI_STATE_FAILED)
+        {
             terminal = true;
             failed = true;
             message = "Setup AP failed";
@@ -1322,32 +1481,44 @@ static void app_wifi_status_callback(const wifi_status_t *status)
         break;
     }
 
-    if (!terminal) {
+    if (!terminal)
+    {
         return;
     }
 
-    if (!app_wifi_end_operation_if_generation(operation_generation)) {
+    if (!app_wifi_end_operation_if_generation(operation_generation))
+    {
         /* The request changed while this monitor snapshot was being handled. */
         return;
     }
-    if (operation == APP_WIFI_OPERATION_CONNECT_SAVED) {
-        if (connected) {
+    if (operation == APP_WIFI_OPERATION_CONNECT_SAVED)
+    {
+        if (connected)
+        {
             /* Confirmed station association + DHCP: acknowledge briefly and
              * return quickly to the live Wi-Fi menu. */
             app_wifi_report_connected(ssid, operation_rssi);
-        } else {
+        }
+        else
+        {
             lcd_show_wifi_result(false, failed, false, ssid, operation_rssi,
                                  message != NULL ? message : "Connect failed");
             app_wifi_schedule_menu_refresh(1800U);
         }
-    } else if (operation == APP_WIFI_OPERATION_DISABLE ||
-               operation == APP_WIFI_OPERATION_DISCONNECT) {
+    }
+    else if (operation == APP_WIFI_OPERATION_DISABLE ||
+             operation == APP_WIFI_OPERATION_DISCONNECT)
+    {
         app_wifi_sync_menu_if_visible();
-    } else if (failed) {
+    }
+    else if (failed)
+    {
         lcd_flash_warning_to(message != NULL ? message : "Operation failed",
                              "Try again", 1500U, LCD_SCREEN_MENU);
         app_wifi_schedule_menu_refresh(1800U);
-    } else {
+    }
+    else
+    {
         /* Successful state transitions are shown by the owning menu. */
         app_wifi_sync_menu_if_visible();
     }
@@ -1468,7 +1639,8 @@ static void load_persisted_config(void)
     {
         s_manifest_url[0] = '\0';
     }
-    if (s_manifest_url[0] != '\0' && !app_manifest_url_is_valid(s_manifest_url)) {
+    if (s_manifest_url[0] != '\0' && !app_manifest_url_is_valid(s_manifest_url))
+    {
         ESP_LOGW(APP_SERVICES_TAG, "Persisted OTA manifest URL rejected; using configured default");
         s_manifest_url[0] = '\0';
     }
@@ -1520,10 +1692,12 @@ static const char *wifi_state_text(wifi_controller_state_t state)
  * value alone can be stale after a failure, cancellation or completion. */
 bool app_services_ota_lifecycle_active(void)
 {
-    if (ota_service_in_progress()) {
+    if (ota_service_in_progress())
+    {
         return true;
     }
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return false;
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
@@ -1549,7 +1723,8 @@ static bool app_ota_menu_is_visible(void)
 static void app_services_show_ota_lcd_impl(const app_ota_status_t *status,
                                            bool respect_menu)
 {
-    if (status == NULL) {
+    if (status == NULL)
+    {
         return;
     }
 
@@ -1557,14 +1732,16 @@ static void app_services_show_ota_lcd_impl(const app_ota_status_t *status,
         (status->state == APP_OTA_PREPARING ||
          status->state == APP_OTA_DOWNLOADING ||
          status->state == APP_OTA_VERIFYING) &&
-        app_ota_menu_is_visible()) {
+        app_ota_menu_is_visible())
+    {
         return;
     }
 
     /* A failed check/install is a transient notification, not a dead-end
      * OTA page. Restore the actionable OTA menu first so the flash returns to
      * Check for Update / Retry / Back instead of the previous screen. */
-    if (status->state == APP_OTA_ERROR) {
+    if (status->state == APP_OTA_ERROR)
+    {
         const char *detail = status->error_detail[0] != '\0'
                                  ? status->error_detail
                                  : "Check Wi-Fi and retry";
@@ -1579,7 +1756,8 @@ static void app_services_show_ota_lcd_impl(const app_ota_status_t *status,
 
     /* Up to date is a short notification, not a dead-end page: flash the
      * message, then the running version, and return to the OTA menu. */
-    if (status->state == APP_OTA_IDLE) {
+    if (status->state == APP_OTA_IDLE)
+    {
         char version_line[LCD_LINE_SIZE];
         snprintf(version_line, sizeof(version_line), "VERSION %.12s",
                  status->installed_version);
@@ -1595,26 +1773,46 @@ static void app_services_show_ota_lcd_impl(const app_ota_status_t *status,
     }
 
     lcd_ota_view_state_t view = LCD_OTA_VIEW_ERROR;
-    switch (status->state) {
-    case APP_OTA_CHECKING: view = LCD_OTA_VIEW_CHECKING; break;
-    case APP_OTA_PREPARING: view = LCD_OTA_VIEW_PREPARING; break;
-    case APP_OTA_DOWNLOADING: view = LCD_OTA_VIEW_DOWNLOADING; break;
-    case APP_OTA_VERIFYING: view = LCD_OTA_VIEW_VERIFYING; break;
-    case APP_OTA_AVAILABLE: view = LCD_OTA_VIEW_AVAILABLE; break;
-    case APP_OTA_COMPLETE: view = LCD_OTA_VIEW_COMPLETE; break;
-    case APP_OTA_PENDING_APPLY: view = LCD_OTA_VIEW_PENDING_APPLY; break;
-    case APP_OTA_DELETE_CONFIRM: view = LCD_OTA_VIEW_DELETE_CONFIRM; break;
-    case APP_OTA_CANCELLED: view = LCD_OTA_VIEW_CANCELLED; break;
-    case APP_OTA_IDLE: view = LCD_OTA_VIEW_CURRENT; break;
+    switch (status->state)
+    {
+    case APP_OTA_CHECKING:
+        view = LCD_OTA_VIEW_CHECKING;
+        break;
+    case APP_OTA_PREPARING:
+        view = LCD_OTA_VIEW_PREPARING;
+        break;
+    case APP_OTA_DOWNLOADING:
+        view = LCD_OTA_VIEW_DOWNLOADING;
+        break;
+    case APP_OTA_VERIFYING:
+        view = LCD_OTA_VIEW_VERIFYING;
+        break;
+    case APP_OTA_AVAILABLE:
+        view = LCD_OTA_VIEW_AVAILABLE;
+        break;
+    case APP_OTA_COMPLETE:
+        view = LCD_OTA_VIEW_COMPLETE;
+        break;
+    case APP_OTA_PENDING_APPLY:
+        view = LCD_OTA_VIEW_PENDING_APPLY;
+        break;
+    case APP_OTA_DELETE_CONFIRM:
+        view = LCD_OTA_VIEW_DELETE_CONFIRM;
+        break;
+    case APP_OTA_CANCELLED:
+        view = LCD_OTA_VIEW_CANCELLED;
+        break;
+    case APP_OTA_IDLE:
+        view = LCD_OTA_VIEW_CURRENT;
+        break;
     case APP_OTA_ERROR:
     case APP_OTA_CONFIRMING:
     default:
         return;
     }
-    const char *detail = status->state == APP_OTA_CANCELLED ? "Current kept" :
-                         status->state == APP_OTA_IDLE ? "No update" : "";
-    lcd_show_ota_status(view, (uint8_t)(status->progress_percent < 0 ? 0 :
-                                       status->progress_percent),
+    const char *detail = status->state == APP_OTA_CANCELLED ? "Current kept" : status->state == APP_OTA_IDLE ? "No update"
+                                                                                                             : "";
+    lcd_show_ota_status(view, (uint8_t)(status->progress_percent < 0 ? 0 : status->progress_percent),
                         status->installed_version, status->available_version,
                         detail, status->state == APP_OTA_CANCELLED);
 }
@@ -1625,9 +1823,10 @@ static void app_services_show_ota_lcd(const app_ota_status_t *status)
 }
 
 static void app_services_record_ota_error(const char *detail,
-                                                bool user_initiated)
+                                          bool user_initiated)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return;
     }
 
@@ -1639,11 +1838,13 @@ static void app_services_record_ota_error(const char *detail,
     (void)snprintf(s_ota_status.error_detail,
                    sizeof(s_ota_status.error_detail), "%s",
                    (detail != NULL && detail[0] != '\0')
-                       ? detail : "OTA operation failed");
+                       ? detail
+                       : "OTA operation failed");
     snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
 
-    if (user_initiated) {
+    if (user_initiated)
+    {
         app_services_show_ota_lcd(&snapshot);
     }
 }
@@ -1659,8 +1860,10 @@ void app_services_show_ota_status_screen(void)
      * in-memory state, including after the 60-second prompt timed out. */
     char pending_version[OTA_MAX_VERSION_LENGTH] = {0};
     if (ota_service_get_pending_version(pending_version,
-                                        sizeof(pending_version)) == ESP_OK) {
-        if (s_services_mutex != NULL) {
+                                        sizeof(pending_version)) == ESP_OK)
+    {
+        if (s_services_mutex != NULL)
+        {
             xSemaphoreTake(s_services_mutex, portMAX_DELAY);
             s_ota_status.state = APP_OTA_PENDING_APPLY;
             s_ota_status.update_available = true;
@@ -1678,18 +1881,23 @@ void app_services_show_ota_status_screen(void)
         s_ota_prompt_from_boot_reminder = false;
         if (s_ota_apply_prompt_task == NULL &&
             xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
-                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
+                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS)
+        {
             s_ota_apply_prompt_task = NULL;
             ESP_LOGW(APP_SERVICES_TAG, "Could not start OTA prompt timeout");
         }
-    } else if (status.state == APP_OTA_PENDING_APPLY ||
-        status.state == APP_OTA_DELETE_CONFIRM) {
+    }
+    else if (status.state == APP_OTA_PENDING_APPLY ||
+             status.state == APP_OTA_DELETE_CONFIRM)
+    {
         if (status.state == APP_OTA_PENDING_APPLY &&
-            !ota_service_update_pending()) {
+            !ota_service_update_pending())
+        {
             /* The marker may have been cleared because the staged image was
              * stale or lacked the new integrity metadata. Do not resurrect its
              * old in-memory prompt after it has been discarded. */
-            if (s_services_mutex != NULL) {
+            if (s_services_mutex != NULL)
+            {
                 xSemaphoreTake(s_services_mutex, portMAX_DELAY);
                 s_ota_status.state = APP_OTA_IDLE;
                 s_ota_status.update_available = false;
@@ -1700,20 +1908,27 @@ void app_services_show_ota_status_screen(void)
             }
             LCD_LOCK();
             sys_state.menu_state = MENU_OTA;
-            if (sys_state.menu_selection >= 3U) sys_state.menu_selection = 0U;
+            if (sys_state.menu_selection >= 3U)
+                sys_state.menu_selection = 0U;
             const int selection = sys_state.menu_selection;
             LCD_UNLOCK();
             show_menu_screen(MENU_OTA, selection);
-        } else {
+        }
+        else
+        {
             app_services_show_ota_lcd_impl(&status, false);
         }
-    } else if ((status.state == APP_OTA_CHECKING ||
-         status.state == APP_OTA_PREPARING ||
-         status.state == APP_OTA_DOWNLOADING ||
-         status.state == APP_OTA_VERIFYING) &&
-        app_services_ota_lifecycle_active()) {
+    }
+    else if ((status.state == APP_OTA_CHECKING ||
+              status.state == APP_OTA_PREPARING ||
+              status.state == APP_OTA_DOWNLOADING ||
+              status.state == APP_OTA_VERIFYING) &&
+             app_services_ota_lifecycle_active())
+    {
         app_services_show_ota_lcd_impl(&status, false);
-    } else {
+    }
+    else
+    {
         /*
          * ERROR is a completed/failed operation, not an operation in
          * progress. Re-entering Firmware Update after an error must open the
@@ -1723,7 +1938,8 @@ void app_services_show_ota_status_screen(void)
          */
         LCD_LOCK();
         sys_state.menu_state = MENU_OTA;
-        if (sys_state.menu_selection >= 3U) {
+        if (sys_state.menu_selection >= 3U)
+        {
             sys_state.menu_selection = 0U;
         }
         const int selection = sys_state.menu_selection;
@@ -1734,31 +1950,47 @@ void app_services_show_ota_status_screen(void)
 
 static const char *app_ota_state_text(app_ota_state_t state)
 {
-    switch (state) {
-    case APP_OTA_IDLE: return "idle";
-    case APP_OTA_CHECKING: return "checking";
-    case APP_OTA_AVAILABLE: return "available";
-    case APP_OTA_CONFIRMING: return "confirming";
-    case APP_OTA_PREPARING: return "preparing";
-    case APP_OTA_DOWNLOADING: return "downloading";
-    case APP_OTA_VERIFYING: return "verifying";
-    case APP_OTA_COMPLETE: return "complete";
-    case APP_OTA_PENDING_APPLY: return "pending_apply";
-    case APP_OTA_DELETE_CONFIRM: return "delete_confirm";
-    case APP_OTA_ERROR: return "error";
-    case APP_OTA_CANCELLED: return "cancelled";
-    default: return "unknown";
+    switch (state)
+    {
+    case APP_OTA_IDLE:
+        return "idle";
+    case APP_OTA_CHECKING:
+        return "checking";
+    case APP_OTA_AVAILABLE:
+        return "available";
+    case APP_OTA_CONFIRMING:
+        return "confirming";
+    case APP_OTA_PREPARING:
+        return "preparing";
+    case APP_OTA_DOWNLOADING:
+        return "downloading";
+    case APP_OTA_VERIFYING:
+        return "verifying";
+    case APP_OTA_COMPLETE:
+        return "complete";
+    case APP_OTA_PENDING_APPLY:
+        return "pending_apply";
+    case APP_OTA_DELETE_CONFIRM:
+        return "delete_confirm";
+    case APP_OTA_ERROR:
+        return "error";
+    case APP_OTA_CANCELLED:
+        return "cancelled";
+    default:
+        return "unknown";
     }
 }
 
 static void ota_progress_callback(int percent)
 {
-    if (!s_services_mutex) {
+    if (!s_services_mutex)
+    {
         return;
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_ota_status.state = APP_OTA_DOWNLOADING;
-    s_ota_status.progress_percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+    s_ota_status.progress_percent = percent < 0 ? 0 : percent > 100 ? 100
+                                                                    : percent;
     app_ota_status_t snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
     websocket_broadcast_ota_status(app_ota_state_text(snapshot.state),
@@ -1774,20 +2006,24 @@ static void ota_apply_prompt_timeout_task(void *parameter)
     /* Count the timeout from the most recent time the prompt was shown, not
      * from the first time it was created. Reopening the prompt grants a full
      * response window without spawning duplicate timer tasks. */
-    for (;;) {
+    for (;;)
+    {
         vTaskDelay(pdMS_TO_TICKS(1000U));
         const uint32_t now_ms =
             (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         if ((uint32_t)(now_ms - s_ota_prompt_last_shown_ms) >=
-            APP_OTA_APPLY_PROMPT_TIMEOUT_MS) {
+            APP_OTA_APPLY_PROMPT_TIMEOUT_MS)
+        {
             break;
         }
     }
 
     bool timed_out = false;
-    if (s_services_mutex != NULL) {
+    if (s_services_mutex != NULL)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-        if (s_ota_status.state == APP_OTA_PENDING_APPLY) {
+        if (s_ota_status.state == APP_OTA_PENDING_APPLY)
+        {
             /* Timeout is equivalent to "Later". The staged image remains
              * persisted; importantly, the boot partition is still unchanged. */
             s_ota_status.state = APP_OTA_AVAILABLE;
@@ -1799,15 +2035,18 @@ static void ota_apply_prompt_timeout_task(void *parameter)
         xSemaphoreGive(s_services_mutex);
     }
 
-    if (timed_out) {
+    if (timed_out)
+    {
         ESP_LOGI(APP_SERVICES_TAG, "OTA apply prompt timed out; current firmware retained");
         bool prompt_still_visible = false;
         LCD_LOCK();
         prompt_still_visible = (sys_lcd.screen == LCD_SCREEN_OTA &&
                                 sys_lcd.ota.state == LCD_OTA_VIEW_PENDING_APPLY);
         LCD_UNLOCK();
-        if (prompt_still_visible) {
-            if (s_ota_prompt_from_boot_reminder) {
+        if (prompt_still_visible)
+        {
+            if (s_ota_prompt_from_boot_reminder)
+            {
                 /* No response to the boot reminder means "later": return to
                  * the normal home screen without changing the boot target. */
                 LCD_LOCK();
@@ -1816,7 +2055,9 @@ static void ota_apply_prompt_timeout_task(void *parameter)
                 sys_state.in_detail_view = false;
                 LCD_UNLOCK();
                 lcd_show_main();
-            } else {
+            }
+            else
+            {
                 show_menu_screen(MENU_OTA, 1U);
             }
         }
@@ -1829,8 +2070,10 @@ static void ota_pending_boot_reminder_task(void *parameter)
     (void)parameter;
     /* Do not replace the startup sequence or an active screen. Wait until the
      * inverter has released the LCD and returned to its normal home screen. */
-    for (;;) {
-        if (!ota_service_update_pending()) {
+    for (;;)
+    {
+        if (!ota_service_update_pending())
+        {
             vTaskDelete(NULL);
             return;
         }
@@ -1840,14 +2083,16 @@ static void ota_pending_boot_reminder_task(void *parameter)
                 sys_state.menu_state == MENU_NONE &&
                 sys_lcd.screen == LCD_SCREEN_MAIN;
         LCD_UNLOCK();
-        if (ready && !lcd_is_startup_active()) break;
+        if (ready && !lcd_is_startup_active())
+            break;
         vTaskDelay(pdMS_TO_TICKS(500U));
     }
 
     app_ota_status_t snapshot;
     app_services_get_ota_status(&snapshot);
     if (snapshot.state == APP_OTA_PENDING_APPLY &&
-        ota_service_update_pending()) {
+        ota_service_update_pending())
+    {
         ESP_LOGI(APP_SERVICES_TAG,
                  "Showing boot reminder for staged firmware %s",
                  snapshot.available_version);
@@ -1858,7 +2103,8 @@ static void ota_pending_boot_reminder_task(void *parameter)
         s_ota_prompt_from_boot_reminder = true;
         if (s_ota_apply_prompt_task == NULL &&
             xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
-                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
+                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS)
+        {
             s_ota_apply_prompt_task = NULL;
             ESP_LOGW(APP_SERVICES_TAG, "Could not start OTA reminder timeout");
         }
@@ -1868,13 +2114,16 @@ static void ota_pending_boot_reminder_task(void *parameter)
 
 static void ota_status_callback(ota_status_t status, int percent)
 {
-    if (!s_services_mutex) {
+    if (!s_services_mutex)
+    {
         return;
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    s_ota_status.progress_percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
-    switch (status) {
+    s_ota_status.progress_percent = percent < 0 ? 0 : percent > 100 ? 100
+                                                                    : percent;
+    switch (status)
+    {
     case OTA_STATUS_STARTED:
         s_ota_status.state = APP_OTA_PREPARING;
         s_ota_status.error_detail[0] = '\0';
@@ -1905,16 +2154,20 @@ static void ota_status_callback(ota_status_t status, int percent)
         s_ota_status.confirmation_pending = false;
         s_ota_status.cancel_confirmation_pending = false;
         s_ota_cancel_confirmation_pending = false;
-        if (cause == ESP_ERR_INVALID_VERSION) {
+        if (cause == ESP_ERR_INVALID_VERSION)
+        {
             /* The manifest is not newer than the running firmware: this is
              * "up to date", not a failed update. */
             s_ota_status.state = APP_OTA_IDLE;
             s_ota_status.update_available = false;
             s_ota_status.available_version[0] = '\0';
             s_ota_status.error_detail[0] = '\0';
-        } else {
+        }
+        else
+        {
             const char *name = esp_err_to_name(cause);
-            if (strncmp(name, "ESP_", 4) == 0) {
+            if (strncmp(name, "ESP_", 4) == 0)
+            {
                 name += 4;
             }
             s_ota_status.state = APP_OTA_ERROR;
@@ -1933,19 +2186,22 @@ static void ota_status_callback(ota_status_t status, int percent)
         status == OTA_STATUS_SUCCESS && s_ota_apply_prompt_task == NULL;
     xSemaphoreGive(s_services_mutex);
 
-    if (start_apply_prompt_timer) {
+    if (start_apply_prompt_timer)
+    {
         s_ota_prompt_last_shown_ms =
             (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         s_ota_prompt_from_boot_reminder = false;
         if (xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
-                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
+                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS)
+        {
             ESP_LOGW(APP_SERVICES_TAG,
                      "Could not create OTA apply-prompt timer; user can still defer manually");
             s_ota_apply_prompt_task = NULL;
         }
     }
     if (status == OTA_STATUS_FAILED || status == OTA_STATUS_CANCELLED ||
-        status == OTA_STATUS_SUCCESS) {
+        status == OTA_STATUS_SUCCESS)
+    {
         /* OTA no longer reboots automatically. Restore HTTP/WebSocket and
          * other local services for both failure and the pending-apply state. */
         network_services_resume_after_ota();
@@ -1955,7 +2211,8 @@ static void ota_status_callback(ota_status_t status, int percent)
                                    snapshot.available_version,
                                    snapshot.error_detail);
     app_services_show_ota_lcd(&snapshot);
-    if (status == OTA_STATUS_SUCCESS) {
+    if (status == OTA_STATUS_SUCCESS)
+    {
         app_services_schedule_pending_manifest_check();
     }
 }
@@ -2085,11 +2342,13 @@ esp_err_t app_services_init(void)
          * network-probe timing and monitor mutex contention. */
         (void)wifi_monitor_register_callback(app_wifi_lcd_status_callback);
         const esp_err_t network_err = network_services_init();
-        if (network_err != ESP_OK) {
+        if (network_err != ESP_OK)
+        {
             ESP_LOGW(APP_SERVICES_TAG,
                      "Network services unavailable: %s",
                      esp_err_to_name(network_err));
-            if (err == ESP_OK) {
+            if (err == ESP_OK)
+            {
                 err = network_err;
             }
         }
@@ -2113,7 +2372,8 @@ esp_err_t app_services_init(void)
                                               sizeof(s_ota_status.installed_version));
         char pending_version[OTA_MAX_VERSION_LENGTH] = {0};
         if (ota_service_get_pending_version(pending_version,
-                                            sizeof(pending_version)) == ESP_OK) {
+                                            sizeof(pending_version)) == ESP_OK)
+        {
             s_ota_status.state = APP_OTA_PENDING_APPLY;
             s_ota_status.update_available = true;
             s_ota_status.progress_percent = 100;
@@ -2124,7 +2384,8 @@ esp_err_t app_services_init(void)
                      "Verified OTA image is pending explicit activation: %s",
                      pending_version);
             if (xTaskCreate(ota_pending_boot_reminder_task, "ota_pending_reminder",
-                            3072U, NULL, 3U, NULL) != pdPASS) {
+                            3072U, NULL, 3U, NULL) != pdPASS)
+            {
                 ESP_LOGW(APP_SERVICES_TAG, "Could not create pending OTA boot reminder");
             }
         }
@@ -2133,7 +2394,7 @@ esp_err_t app_services_init(void)
     if (!s_ota_check_task)
     {
         if (xTaskCreatePinnedToCore(ota_auto_check_task, "ota_check", APP_OTA_TASK_STACK_SIZE,
-                        NULL, APP_OTA_CHECK_TASK_PRIORITY, &s_ota_check_task, APP_CORE_SYSTEM) != pdPASS)
+                                    NULL, APP_OTA_CHECK_TASK_PRIORITY, &s_ota_check_task, APP_CORE_SYSTEM) != pdPASS)
         {
             s_ota_check_task = NULL;
             ESP_LOGW(APP_SERVICES_TAG, "Could not create OTA availability task");
@@ -2147,7 +2408,8 @@ esp_err_t app_services_init(void)
     {
         s_wifi_toggle_queue = xQueueCreate(APP_WIFI_TOGGLE_QUEUE_LENGTH,
                                            sizeof(wifi_toggle_request_t));
-        if (!s_wifi_toggle_queue) {
+        if (!s_wifi_toggle_queue)
+        {
             ESP_LOGE(APP_SERVICES_TAG, "Could not create Wi-Fi toggle queue");
             return ESP_ERR_NO_MEM;
         }
@@ -2155,11 +2417,11 @@ esp_err_t app_services_init(void)
     if (!s_wifi_toggle_task)
     {
         if (xTaskCreatePinnedToCore(app_wifi_toggle_task,
-                        "wifi_toggle",
-                        APP_WIFI_TOGGLE_TASK_STACK_SIZE,
-                        NULL,
-                        APP_WIFI_TOGGLE_TASK_PRIORITY,
-                        &s_wifi_toggle_task, APP_CORE_SYSTEM) != pdPASS)
+                                    "wifi_toggle",
+                                    APP_WIFI_TOGGLE_TASK_STACK_SIZE,
+                                    NULL,
+                                    APP_WIFI_TOGGLE_TASK_PRIORITY,
+                                    &s_wifi_toggle_task, APP_CORE_SYSTEM) != pdPASS)
         {
             vQueueDelete(s_wifi_toggle_queue);
             s_wifi_toggle_queue = NULL;
@@ -2173,11 +2435,11 @@ esp_err_t app_services_init(void)
     if (!s_wifi_prerequisite_task)
     {
         if (xTaskCreatePinnedToCore(app_wifi_prerequisite_task,
-                        "wifi_prereq",
-                        APP_WIFI_PREREQUISITE_STACK_SIZE,
-                        NULL,
-                        APP_WIFI_PREREQUISITE_PRIORITY,
-                        &s_wifi_prerequisite_task, APP_CORE_SYSTEM) != pdPASS)
+                                    "wifi_prereq",
+                                    APP_WIFI_PREREQUISITE_STACK_SIZE,
+                                    NULL,
+                                    APP_WIFI_PREREQUISITE_PRIORITY,
+                                    &s_wifi_prerequisite_task, APP_CORE_SYSTEM) != pdPASS)
         {
             s_wifi_prerequisite_task = NULL;
             ESP_LOGW(APP_SERVICES_TAG, "Could not create Wi-Fi prerequisite task");
@@ -2192,7 +2454,8 @@ esp_err_t app_services_init(void)
 
 static esp_err_t app_wifi_ensure_watcher(void)
 {
-    if (s_wifi_operation_watch_task != NULL) {
+    if (s_wifi_operation_watch_task != NULL)
+    {
         return ESP_OK;
     }
     if (xTaskCreatePinnedToCore(app_wifi_operation_watch_task,
@@ -2201,7 +2464,8 @@ static esp_err_t app_wifi_ensure_watcher(void)
                                 NULL,
                                 APP_WIFI_OPERATION_WATCH_PRIORITY,
                                 &s_wifi_operation_watch_task,
-                                APP_CORE_SYSTEM) != pdPASS) {
+                                APP_CORE_SYSTEM) != pdPASS)
+    {
         s_wifi_operation_watch_task = NULL;
         ESP_LOGW(APP_SERVICES_TAG, "Could not create Wi-Fi operation watcher");
         return ESP_ERR_NO_MEM;
@@ -2212,9 +2476,11 @@ static esp_err_t app_wifi_ensure_watcher(void)
 
 esp_err_t app_services_wifi_toggle_init(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         s_services_mutex = xSemaphoreCreateMutex();
-        if (s_services_mutex == NULL) {
+        if (s_services_mutex == NULL)
+        {
             return ESP_ERR_NO_MEM;
         }
     }
@@ -2222,21 +2488,25 @@ esp_err_t app_services_wifi_toggle_init(void)
     /* Runs on every boot, healthy or not, before the automatic Wi-Fi start. */
     load_wifi_user_choice();
 
-    if (s_wifi_toggle_queue == NULL) {
+    if (s_wifi_toggle_queue == NULL)
+    {
         s_wifi_toggle_queue = xQueueCreate(APP_WIFI_TOGGLE_QUEUE_LENGTH,
                                            sizeof(wifi_toggle_request_t));
-        if (s_wifi_toggle_queue == NULL) {
+        if (s_wifi_toggle_queue == NULL)
+        {
             return ESP_ERR_NO_MEM;
         }
     }
 
-    if (s_wifi_toggle_task == NULL) {
+    if (s_wifi_toggle_task == NULL)
+    {
         if (xTaskCreatePinnedToCore(app_wifi_toggle_task,
-                        "wifi_toggle",
-                        APP_WIFI_TOGGLE_TASK_STACK_SIZE,
-                        NULL,
-                        APP_WIFI_TOGGLE_TASK_PRIORITY,
-                        &s_wifi_toggle_task, APP_CORE_SYSTEM) != pdPASS) {
+                                    "wifi_toggle",
+                                    APP_WIFI_TOGGLE_TASK_STACK_SIZE,
+                                    NULL,
+                                    APP_WIFI_TOGGLE_TASK_PRIORITY,
+                                    &s_wifi_toggle_task, APP_CORE_SYSTEM) != pdPASS)
+        {
             vQueueDelete(s_wifi_toggle_queue);
             s_wifi_toggle_queue = NULL;
             s_wifi_toggle_task = NULL;
@@ -2246,11 +2516,14 @@ esp_err_t app_services_wifi_toggle_init(void)
     }
 
     const esp_err_t controller_err = wifi_controller_init();
-    if (controller_err != ESP_OK) {
+    if (controller_err != ESP_OK)
+    {
         ESP_LOGW(APP_SERVICES_TAG,
                  "Wi-Fi controller initialization deferred: %s",
                  esp_err_to_name(controller_err));
-    } else {
+    }
+    else
+    {
         wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
     }
     /* The label watcher must exist even when broader services are suppressed
@@ -2267,32 +2540,38 @@ static esp_err_t app_wifi_request_enabled(bool enabled, bool silent)
      * unhealthy, while the button/event tasks remain alive for safe
      * diagnostics and recovery.  Lazily establish only the mutex, toggle
      * queue/worker, and Wi-Fi controller required by this action. */
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         s_services_mutex = xSemaphoreCreateMutex();
-        if (s_services_mutex == NULL) {
+        if (s_services_mutex == NULL)
+        {
             ESP_LOGE(APP_SERVICES_TAG,
                      "Wi-Fi toggle rejected: could not create services mutex");
             return ESP_ERR_NO_MEM;
         }
     }
 
-    if (s_wifi_toggle_queue == NULL) {
+    if (s_wifi_toggle_queue == NULL)
+    {
         s_wifi_toggle_queue = xQueueCreate(APP_WIFI_TOGGLE_QUEUE_LENGTH,
                                            sizeof(wifi_toggle_request_t));
-        if (s_wifi_toggle_queue == NULL) {
+        if (s_wifi_toggle_queue == NULL)
+        {
             ESP_LOGE(APP_SERVICES_TAG,
                      "Wi-Fi toggle rejected: could not create toggle queue");
             return ESP_ERR_NO_MEM;
         }
     }
 
-    if (s_wifi_toggle_task == NULL) {
+    if (s_wifi_toggle_task == NULL)
+    {
         if (xTaskCreatePinnedToCore(app_wifi_toggle_task,
-                        "wifi_toggle",
-                        APP_WIFI_TOGGLE_TASK_STACK_SIZE,
-                        NULL,
-                        APP_WIFI_TOGGLE_TASK_PRIORITY,
-                        &s_wifi_toggle_task, APP_CORE_SYSTEM) != pdPASS) {
+                                    "wifi_toggle",
+                                    APP_WIFI_TOGGLE_TASK_STACK_SIZE,
+                                    NULL,
+                                    APP_WIFI_TOGGLE_TASK_PRIORITY,
+                                    &s_wifi_toggle_task, APP_CORE_SYSTEM) != pdPASS)
+        {
             vQueueDelete(s_wifi_toggle_queue);
             s_wifi_toggle_queue = NULL;
             s_wifi_toggle_task = NULL;
@@ -2304,7 +2583,8 @@ static esp_err_t app_wifi_request_enabled(bool enabled, bool silent)
     }
 
     const esp_err_t controller_init_err = wifi_controller_init();
-    if (controller_init_err != ESP_OK) {
+    if (controller_init_err != ESP_OK)
+    {
         ESP_LOGE(APP_SERVICES_TAG,
                  "Wi-Fi toggle rejected: controller initialization failed: %s",
                  esp_err_to_name(controller_init_err));
@@ -2326,9 +2606,11 @@ static esp_err_t app_wifi_request_enabled(bool enabled, bool silent)
                                      &expected, 1U,
                                      false,
                                      __ATOMIC_SEQ_CST,
-                                     __ATOMIC_SEQ_CST)) {
+                                     __ATOMIC_SEQ_CST))
+    {
         ESP_LOGW(APP_SERVICES_TAG, "Wi-Fi toggle rejected: operation already pending");
-        if (!silent) {
+        if (!silent)
+        {
             lcd_flash_message("Wi-Fi Busy", "Please wait", 900U);
         }
         return ESP_ERR_TIMEOUT;
@@ -2337,7 +2619,8 @@ static esp_err_t app_wifi_request_enabled(bool enabled, bool silent)
 
     /* Build request and operation state now that admission is guaranteed. */
     char ssid[WIFI_MAX_SSID_LEN + 1U] = {0};
-    if (enabled) {
+    if (enabled)
+    {
         strncpy(ssid, WIFI_COMPILED_STA_SSID, sizeof(ssid) - 1U);
     }
 
@@ -2354,12 +2637,14 @@ static esp_err_t app_wifi_request_enabled(bool enabled, bool silent)
                                      : APP_WIFI_OPERATION_DISABLE,
                              ssid, -127);
 
-    if (xQueueSend(s_wifi_toggle_queue, &request, 0) != pdTRUE) {
+    if (xQueueSend(s_wifi_toggle_queue, &request, 0) != pdTRUE)
+    {
         /* Queue full -- should not happen (queue length 1 and admitted flag
          * prevents concurrent senders), but handle defensively. */
         app_wifi_end_operation();
         __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
-        if (!silent) {
+        if (!silent)
+        {
             lcd_flash_message("Wi-Fi Busy", "Please wait", 900U);
         }
         ESP_LOGE(APP_SERVICES_TAG, "Wi-Fi toggle queue send failed (full?)");
@@ -2367,7 +2652,8 @@ static esp_err_t app_wifi_request_enabled(bool enabled, bool silent)
     }
 
     /* Immediate progress feedback to the LCD. */
-    if (!silent) {
+    if (!silent)
+    {
         lcd_flash_message(enabled ? "Wi-Fi STARTING" : "Wi-Fi STOPPING",
                           "Please wait", 900U);
     }
@@ -2388,46 +2674,62 @@ bool app_services_wifi_enabled(void)
 
 const char *app_services_wifi_mode_name(void)
 {
-    if (s_wifi_mode_edit_active) {
-        switch (s_wifi_mode_edit_value) {
-        case WIFI_MODE_STA: return "STA";
-        case WIFI_MODE_AP: return "AP";
-        case WIFI_MODE_APSTA: return "APSTA";
-        default: break;
+    if (s_wifi_mode_edit_active)
+    {
+        switch (s_wifi_mode_edit_value)
+        {
+        case WIFI_MODE_STA:
+            return "STA";
+        case WIFI_MODE_AP:
+            return "AP";
+        case WIFI_MODE_APSTA:
+            return "APSTA";
+        default:
+            break;
         }
     }
 
     wifi_mode_t mode = wifi_manager_get_mode();
-    if (mode == WIFI_MODE_NULL) {
+    if (mode == WIFI_MODE_NULL)
+    {
         wifi_network_config_t stored = {0};
-        if (wifi_storage_load_network_config(&stored) == ESP_OK) {
+        if (wifi_storage_load_network_config(&stored) == ESP_OK)
+        {
             mode = stored.mode;
         }
     }
 
-    switch (mode) {
-    case WIFI_MODE_STA: return "STA";
-    case WIFI_MODE_AP: return "AP";
-    case WIFI_MODE_APSTA: return "APSTA";
-    default: return "OFF";
+    switch (mode)
+    {
+    case WIFI_MODE_STA:
+        return "STA";
+    case WIFI_MODE_AP:
+        return "AP";
+    case WIFI_MODE_APSTA:
+        return "APSTA";
+    default:
+        return "OFF";
     }
 }
 
 esp_err_t app_services_wifi_mode_edit_begin(void)
 {
     esp_err_t err = wifi_controller_init();
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         return err;
     }
     wifi_controller_set_auto_connect(sys_state.wifi.auto_reconnect);
 
     wifi_manager_config_t config = {0};
     err = wifi_manager_get_config(&config);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         return err;
     }
 
-    if (config.mode < WIFI_MODE_STA || config.mode > WIFI_MODE_APSTA) {
+    if (config.mode < WIFI_MODE_STA || config.mode > WIFI_MODE_APSTA)
+    {
         config.mode = WIFI_COMPILED_OPERATION_MODE;
     }
 
@@ -2438,25 +2740,30 @@ esp_err_t app_services_wifi_mode_edit_begin(void)
 
 esp_err_t app_services_wifi_mode_edit_step(int direction)
 {
-    if (!s_wifi_mode_edit_active || direction == 0) {
+    if (!s_wifi_mode_edit_active || direction == 0)
+    {
         return ESP_ERR_INVALID_STATE;
     }
 
     static const wifi_mode_t modes[] = {
-        WIFI_MODE_STA, WIFI_MODE_AP, WIFI_MODE_APSTA
-    };
+        WIFI_MODE_STA, WIFI_MODE_AP, WIFI_MODE_APSTA};
     size_t index = 0U;
-    for (size_t i = 0U; i < sizeof(modes) / sizeof(modes[0]); ++i) {
-        if (modes[i] == s_wifi_mode_edit_value) {
+    for (size_t i = 0U; i < sizeof(modes) / sizeof(modes[0]); ++i)
+    {
+        if (modes[i] == s_wifi_mode_edit_value)
+        {
             index = i;
             break;
         }
     }
 
     const size_t count = sizeof(modes) / sizeof(modes[0]);
-    if (direction > 0) {
+    if (direction > 0)
+    {
         index = (index + 1U) % count;
-    } else {
+    }
+    else
+    {
         index = (index + count - 1U) % count;
     }
     s_wifi_mode_edit_value = modes[index];
@@ -2465,7 +2772,8 @@ esp_err_t app_services_wifi_mode_edit_step(int direction)
 
 esp_err_t app_services_wifi_mode_edit_confirm(void)
 {
-    if (!s_wifi_mode_edit_active) {
+    if (!s_wifi_mode_edit_active)
+    {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -2475,20 +2783,24 @@ esp_err_t app_services_wifi_mode_edit_confirm(void)
     /* The selector must remain usable even when the broader application
      * services were suppressed during startup recovery. Establish only the
      * existing Wi-Fi mode-change worker path; do not start unrelated services. */
-    if (s_wifi_toggle_queue == NULL) {
+    if (s_wifi_toggle_queue == NULL)
+    {
         s_wifi_toggle_queue = xQueueCreate(APP_WIFI_TOGGLE_QUEUE_LENGTH,
                                            sizeof(wifi_toggle_request_t));
-        if (s_wifi_toggle_queue == NULL) {
+        if (s_wifi_toggle_queue == NULL)
+        {
             return ESP_ERR_NO_MEM;
         }
     }
-    if (s_wifi_toggle_task == NULL) {
+    if (s_wifi_toggle_task == NULL)
+    {
         if (xTaskCreatePinnedToCore(app_wifi_toggle_task,
-                        "wifi_toggle",
-                        APP_WIFI_TOGGLE_TASK_STACK_SIZE,
-                        NULL,
-                        APP_WIFI_TOGGLE_TASK_PRIORITY,
-                        &s_wifi_toggle_task, APP_CORE_SYSTEM) != pdPASS) {
+                                    "wifi_toggle",
+                                    APP_WIFI_TOGGLE_TASK_STACK_SIZE,
+                                    NULL,
+                                    APP_WIFI_TOGGLE_TASK_PRIORITY,
+                                    &s_wifi_toggle_task, APP_CORE_SYSTEM) != pdPASS)
+        {
             vQueueDelete(s_wifi_toggle_queue);
             s_wifi_toggle_queue = NULL;
             return ESP_ERR_NO_MEM;
@@ -2498,7 +2810,8 @@ esp_err_t app_services_wifi_mode_edit_confirm(void)
 
     uint32_t expected = 0U;
     if (!__atomic_compare_exchange_n(&s_wifi_toggle_admitted, &expected, 1U,
-                                     false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+                                     false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+    {
         return ESP_ERR_TIMEOUT;
     }
 
@@ -2510,7 +2823,8 @@ esp_err_t app_services_wifi_mode_edit_confirm(void)
         .requested_ms = (uint64_t)(esp_timer_get_time() / 1000ULL),
     };
 
-    if (xQueueSend(s_wifi_toggle_queue, &request, 0) != pdTRUE) {
+    if (xQueueSend(s_wifi_toggle_queue, &request, 0) != pdTRUE)
+    {
         __atomic_store_n(&s_wifi_toggle_admitted, 0U, __ATOMIC_SEQ_CST);
         return ESP_ERR_TIMEOUT;
     }
@@ -2536,7 +2850,8 @@ const char *app_services_wifi_connect_action_label(void)
     static const char *const k_disconnecting[APP_WIFI_ANIM_PHASES] = {
         "Disconnecting.", "Disconnecting..", "Disconnecting..."};
 
-    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+    if (wifi_manager_get_mode() == WIFI_MODE_AP)
+    {
         return "AP Clients";
     }
 
@@ -2545,7 +2860,8 @@ const char *app_services_wifi_connect_action_label(void)
     const uint8_t phase =
         __atomic_load_n(&s_wifi_anim_phase, __ATOMIC_RELAXED) %
         APP_WIFI_ANIM_PHASES;
-    switch (app_wifi_ui_state()) {
+    switch (app_wifi_ui_state())
+    {
     case APP_WIFI_UI_DISCONNECTING:
         return k_disconnecting[phase];
     case APP_WIFI_UI_CONNECTING:
@@ -2576,20 +2892,24 @@ bool app_services_wifi_is_ap_only(void)
 
 esp_err_t app_services_wifi_scan(void)
 {
-    if (!sys_state.wifi.enabled) {
+    if (!sys_state.wifi.enabled)
+    {
         lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
         return ESP_ERR_INVALID_STATE;
     }
-    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+    if (wifi_manager_get_mode() == WIFI_MODE_AP)
+    {
         lcd_flash_message("Scan Unavailable", "AP mode only", 1400U);
         return ESP_ERR_NOT_SUPPORTED;
     }
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return ESP_ERR_INVALID_STATE;
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    if (s_wifi_scan_active) {
+    if (s_wifi_scan_active)
+    {
         xSemaphoreGive(s_services_mutex);
         return ESP_ERR_INVALID_STATE;
     }
@@ -2599,8 +2919,9 @@ esp_err_t app_services_wifi_scan(void)
 
     lcd_show_wifi_scan_start();
     if (xTaskCreatePinnedToCore(app_wifi_scan_task, "wifi_scan_ui",
-                    APP_WIFI_SCAN_TASK_STACK_SIZE, NULL,
-                    APP_WIFI_SCAN_TASK_PRIORITY, &s_wifi_scan_task, APP_CORE_SYSTEM) != pdPASS) {
+                                APP_WIFI_SCAN_TASK_STACK_SIZE, NULL,
+                                APP_WIFI_SCAN_TASK_PRIORITY, &s_wifi_scan_task, APP_CORE_SYSTEM) != pdPASS)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_wifi_scan_active = false;
         s_wifi_scan_cancel_requested = false;
@@ -2614,24 +2935,28 @@ esp_err_t app_services_wifi_scan(void)
 
 esp_err_t app_services_wifi_scan_cancel(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return ESP_ERR_INVALID_STATE;
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool active = s_wifi_scan_active;
-    if (active) {
+    if (active)
+    {
         s_wifi_scan_cancel_requested = true;
     }
     xSemaphoreGive(s_services_mutex);
 
-    if (!active) {
+    if (!active)
+    {
         return ESP_ERR_INVALID_STATE;
     }
 
     /* Stop the lower-level ESP-IDF scan immediately when one is in progress;
      * the worker task will then publish any results the scan API retained. */
     const esp_err_t err = wifi_scan_cancel();
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+    {
         return err;
     }
     return ESP_OK;
@@ -2640,7 +2965,8 @@ esp_err_t app_services_wifi_scan_cancel(void)
 bool app_services_wifi_scan_is_active(void)
 {
     bool active = false;
-    if (s_services_mutex != NULL) {
+    if (s_services_mutex != NULL)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         active = s_wifi_scan_active;
         xSemaphoreGive(s_services_mutex);
@@ -2651,7 +2977,8 @@ bool app_services_wifi_scan_is_active(void)
 bool app_services_wifi_operation_in_progress(void)
 {
     bool operation_pending = false;
-    if (s_services_mutex != NULL) {
+    if (s_services_mutex != NULL)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         operation_pending = (s_wifi_operation != APP_WIFI_OPERATION_NONE) ||
                             s_wifi_scan_active;
@@ -2674,21 +3001,25 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
     wifi_auth_mode_t authmode)
 {
     if (ssid == NULL || ssid[0] == '\0' || password == NULL ||
-        strlen(ssid) > WIFI_MAX_SSID_LEN || strlen(password) > 63U) {
+        strlen(ssid) > WIFI_MAX_SSID_LEN || strlen(password) > 63U)
+    {
         return ESP_ERR_INVALID_ARG;
     }
     /* wifi_manager_config_valid() rejects non-empty station passwords under
      * WPA's 8-character minimum. Report that exact problem instead of the
      * misleading generic "Network Invalid" message. */
-    if (password[0] != '\0' && strlen(password) < 8U) {
+    if (password[0] != '\0' && strlen(password) < 8U)
+    {
         lcd_flash_message("Password Too Short", "Use 8+ characters", 1400U);
         return ESP_ERR_INVALID_ARG;
     }
-    if (!sys_state.wifi.enabled) {
+    if (!sys_state.wifi.enabled)
+    {
         lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
         return ESP_ERR_INVALID_STATE;
     }
-    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+    if (wifi_manager_get_mode() == WIFI_MODE_AP)
+    {
         lcd_flash_message("AP Mode", "No STA Connect", 1400U);
         return ESP_ERR_NOT_SUPPORTED;
     }
@@ -2700,11 +3031,13 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
     const bool station_ready =
         wifi_events_get_status_copy(&live_status) == ESP_OK &&
         live_status.got_ip;
-    if (station_ready && wifi_controller_is_connected()) {
+    if (station_ready && wifi_controller_is_connected())
+    {
         wifi_ap_record_t current_ap = {0};
         if (esp_wifi_sta_get_ap_info(&current_ap) == ESP_OK &&
             strncmp((const char *)current_ap.ssid, ssid,
-                    sizeof(current_ap.ssid)) == 0) {
+                    sizeof(current_ap.ssid)) == 0)
+        {
             show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
             return ESP_OK;
         }
@@ -2715,7 +3048,8 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
      * same target, but permit a fresh attempt after a failed authentication. */
     wifi_manager_config_t config = {0};
     esp_err_t err = wifi_manager_get_config(&config);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         return err;
     }
 
@@ -2723,17 +3057,20 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
         strcmp(config.ssid, ssid) == 0 &&
         strcmp(config.password, password) == 0;
     if (same_active_config &&
-        wifi_controller_get_state() == WIFI_CONTROLLER_CONNECTING) {
+        wifi_controller_get_state() == WIFI_CONTROLLER_CONNECTING)
+    {
         return ESP_OK;
     }
 
     /* ESP32 has one station association. Explicitly drop a different active
      * or in-flight station before replacing the target credentials. */
-    if (station_ready || wifi_controller_get_state() == WIFI_CONTROLLER_CONNECTING) {
+    if (station_ready || wifi_controller_get_state() == WIFI_CONTROLLER_CONNECTING)
+    {
         const esp_err_t disconnect_err = wifi_controller_disconnect();
         if (disconnect_err != ESP_OK &&
             disconnect_err != ESP_ERR_WIFI_NOT_CONNECT &&
-            disconnect_err != ESP_ERR_WIFI_NOT_STARTED) {
+            disconnect_err != ESP_ERR_WIFI_NOT_STARTED)
+        {
             ESP_LOGW(APP_SERVICES_TAG,
                      "Could not disconnect previous station before switching: %s",
                      esp_err_to_name(disconnect_err));
@@ -2747,7 +3084,8 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
     config.password[sizeof(config.password) - 1U] = '\0';
     config.authmode = authmode;
     err = wifi_manager_set_config(&config);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGE(APP_SERVICES_TAG,
                  "Rejected scanned-network configuration for SSID='%s': %s (0x%x)",
                  ssid, esp_err_to_name(err), err);
@@ -2760,7 +3098,8 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
     strncpy(credentials.password, password, sizeof(credentials.password) - 1U);
     (void)wifi_storage_save_credentials(&credentials);
 
-    if (s_services_mutex != NULL) {
+    if (s_services_mutex != NULL)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_wifi_connection_uses_auth = password[0] != '\0';
         xSemaphoreGive(s_services_mutex);
@@ -2768,7 +3107,8 @@ static esp_err_t app_services_wifi_connect_network_with_authmode(
     app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, ssid, rssi);
     lcd_show_wifi_connecting(ssid, rssi);
     err = wifi_controller_reconnect();
-    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN)
+    {
         app_wifi_end_operation();
         lcd_show_wifi_result(false, true, false, ssid, rssi, "Connect failed");
     }
@@ -2781,23 +3121,29 @@ esp_err_t app_services_wifi_connect_selected(uint8_t selected_index)
     int8_t selected_rssi = -127;
     uint8_t authmode = (uint8_t)WIFI_AUTH_OPEN;
     LCD_LOCK();
-    if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS) {
+    if (sys_lcd.screen == LCD_SCREEN_WIFI_NETWORK_DETAILS)
+    {
         strncpy(ssid, sys_lcd.wifi_network_detail.ssid, sizeof(ssid) - 1U);
         selected_rssi = sys_lcd.wifi_network_detail.rssi;
         authmode = sys_lcd.wifi_network_detail.authmode;
-    } else if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN &&
-               sys_lcd.wifi_scan.stage == LCD_WIFI_SCAN_COMPLETE &&
-               selected_index < sys_lcd.wifi_scan.count) {
+    }
+    else if (sys_lcd.screen == LCD_SCREEN_WIFI_SCAN &&
+             sys_lcd.wifi_scan.stage == LCD_WIFI_SCAN_COMPLETE &&
+             selected_index < sys_lcd.wifi_scan.count)
+    {
         strncpy(ssid, sys_lcd.wifi_scan.ssid[selected_index], sizeof(ssid) - 1U);
         selected_rssi = sys_lcd.wifi_scan.rssi[selected_index];
         authmode = sys_lcd.wifi_scan.authmode[selected_index];
-    } else {
+    }
+    else
+    {
         LCD_UNLOCK();
         return ESP_ERR_INVALID_STATE;
     }
     LCD_UNLOCK();
 
-    if ((wifi_auth_mode_t)authmode == WIFI_AUTH_OPEN) {
+    if ((wifi_auth_mode_t)authmode == WIFI_AUTH_OPEN)
+    {
         return app_services_wifi_connect_network_with_authmode(
             ssid, "", selected_rssi, WIFI_AUTH_OPEN);
     }
@@ -2813,7 +3159,8 @@ esp_err_t app_services_wifi_submit_password(void)
     int8_t rssi = -127;
     uint8_t authmode = (uint8_t)WIFI_AUTH_OPEN;
     LCD_LOCK();
-    if (sys_lcd.screen != LCD_SCREEN_WIFI_PASSWORD) {
+    if (sys_lcd.screen != LCD_SCREEN_WIFI_PASSWORD)
+    {
         LCD_UNLOCK();
         return ESP_ERR_INVALID_STATE;
     }
@@ -2823,7 +3170,8 @@ esp_err_t app_services_wifi_submit_password(void)
     authmode = sys_lcd.wifi_password.authmode;
     LCD_UNLOCK();
 
-    if (password[0] == '\0') {
+    if (password[0] == '\0')
+    {
         lcd_flash_message("Password required", "Enter network key", 1200U);
         return ESP_ERR_INVALID_STATE;
     }
@@ -2833,7 +3181,7 @@ esp_err_t app_services_wifi_submit_password(void)
 }
 
 esp_err_t app_services_wifi_connect_network(const char *ssid,
-                                               const char *password)
+                                            const char *password)
 {
     return app_services_wifi_connect_network_with_rssi(ssid, password, -127);
 }
@@ -2873,24 +3221,29 @@ static bool app_wifi_background_enable_needed(void)
  * user may act in between. Never touches the LCD. */
 static bool app_wifi_background_connect_allowed(void)
 {
-    if (!sys_state.wifi.auto_reconnect) {
+    if (!sys_state.wifi.auto_reconnect)
+    {
         /* Auto-reconnect is the gate for connecting: when it is off the
          * station only connects on an explicit user request. */
         return false;
     }
-    if (!sys_state.wifi.enabled || wifi_manager_get_mode() == WIFI_MODE_AP) {
+    if (!sys_state.wifi.enabled || wifi_manager_get_mode() == WIFI_MODE_AP)
+    {
         /* Wi-Fi must already be enabled; a connect cannot work otherwise. */
         return false;
     }
-    if (wifi_controller_manual_disconnect_active()) {
+    if (wifi_controller_manual_disconnect_active())
+    {
         return false;
     }
     if (app_services_wifi_operation_in_progress() ||
-        app_services_wifi_scan_is_active()) {
+        app_services_wifi_scan_is_active())
+    {
         return false;
     }
 
-    switch (wifi_controller_get_state()) {
+    switch (wifi_controller_get_state())
+    {
     case WIFI_CONTROLLER_STARTING:
     case WIFI_CONTROLLER_CONNECTING:
     case WIFI_CONTROLLER_CONNECTED:
@@ -2904,7 +3257,8 @@ static bool app_wifi_background_connect_allowed(void)
     }
 
     wifi_status_t status = {0};
-    if (wifi_events_get_status_copy(&status) == ESP_OK && status.got_ip) {
+    if (wifi_events_get_status_copy(&status) == ESP_OK && status.got_ip)
+    {
         return false;
     }
 
@@ -2920,7 +3274,8 @@ static bool app_wifi_background_connect_allowed(void)
  */
 static esp_err_t app_wifi_background_enable(void)
 {
-    if (!app_wifi_background_enable_needed()) {
+    if (!app_wifi_background_enable_needed())
+    {
         return ESP_OK;
     }
 
@@ -2933,7 +3288,8 @@ static esp_err_t app_wifi_background_enable(void)
     esp_err_t err = app_wifi_request_enabled(true, true);
     while (err == ESP_ERR_TIMEOUT && app_wifi_background_enable_needed() &&
            (xTaskGetTickCount() - retry_started) <
-               pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
+               pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS))
+    {
         ESP_LOGI(APP_SERVICES_TAG,
                  "Auto Wi-Fi On deferred: toggle path busy, retrying");
         vTaskDelay(pdMS_TO_TICKS(500U));
@@ -2954,31 +3310,37 @@ static void app_wifi_background_start_task(void *parameter)
      * worker to finish. app_main and inverter safety/startup never wait for
      * Wi-Fi readiness.
      */
-    if (app_wifi_background_enable_needed()) {
+    if (app_wifi_background_enable_needed())
+    {
         const esp_err_t enable_err = app_wifi_background_enable();
-        if (enable_err != ESP_OK) {
+        if (enable_err != ESP_OK)
+        {
             ESP_LOGW(APP_SERVICES_TAG,
                      "Auto Wi-Fi On request was not accepted: %s",
                      esp_err_to_name(enable_err));
             ready_for_connect = false;
         }
 
-        if (ready_for_connect) {
+        if (ready_for_connect)
+        {
             const TickType_t enable_wait_started = xTaskGetTickCount();
             while (__atomic_load_n(&s_wifi_toggle_admitted, __ATOMIC_SEQ_CST) != 0U &&
                    (xTaskGetTickCount() - enable_wait_started) <
-                       pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
+                       pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS))
+            {
                 vTaskDelay(pdMS_TO_TICKS(100U));
                 (void)task_watchdog_health_feed();
             }
-            if (__atomic_load_n(&s_wifi_toggle_admitted, __ATOMIC_SEQ_CST) != 0U) {
+            if (__atomic_load_n(&s_wifi_toggle_admitted, __ATOMIC_SEQ_CST) != 0U)
+            {
                 ESP_LOGW(APP_SERVICES_TAG,
                          "Auto Wi-Fi On timed out waiting for the existing toggle worker");
                 ready_for_connect = false;
             }
         }
 
-        if (ready_for_connect) {
+        if (ready_for_connect)
+        {
             /*
              * wifi_controller_start() may return before its state machine
              * leaves STARTING. Do not issue a saved-network reconnect while
@@ -2988,11 +3350,13 @@ static void app_wifi_background_start_task(void *parameter)
             const TickType_t controller_wait_started = xTaskGetTickCount();
             while (wifi_controller_get_state() == WIFI_CONTROLLER_STARTING &&
                    (xTaskGetTickCount() - controller_wait_started) <
-                       pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS)) {
+                       pdMS_TO_TICKS(APP_WIFI_OPERATION_TIMEOUT_MS))
+            {
                 vTaskDelay(pdMS_TO_TICKS(100U));
                 (void)task_watchdog_health_feed();
             }
-            if (wifi_controller_get_state() == WIFI_CONTROLLER_STARTING) {
+            if (wifi_controller_get_state() == WIFI_CONTROLLER_STARTING)
+            {
                 ESP_LOGW(APP_SERVICES_TAG,
                          "Auto Wi-Fi On: controller did not leave STARTING before timeout");
                 ready_for_connect = false;
@@ -3000,7 +3364,8 @@ static void app_wifi_background_start_task(void *parameter)
         }
     }
 
-    if (ready_for_connect && app_wifi_background_connect_allowed()) {
+    if (ready_for_connect && app_wifi_background_connect_allowed())
+    {
         /*
          * Reuse the controller's existing saved-network reconnect mechanism.
          * Do not register a foreground operation or display a connection
@@ -3008,14 +3373,19 @@ static void app_wifi_background_start_task(void *parameter)
          * auto-reconnect policy owns retry/backoff and status reporting.
          */
         const esp_err_t err = wifi_controller_reconnect();
-        if (err == ESP_OK || err == ESP_ERR_WIFI_CONN) {
+        if (err == ESP_OK || err == ESP_ERR_WIFI_CONN)
+        {
             ESP_LOGI(APP_SERVICES_TAG, "Background saved-network connect started");
-        } else {
+        }
+        else
+        {
             ESP_LOGW(APP_SERVICES_TAG,
                      "Background saved-network connect request failed: %s",
                      esp_err_to_name(err));
         }
-    } else if (ready_for_connect) {
+    }
+    else if (ready_for_connect)
+    {
         ESP_LOGI(APP_SERVICES_TAG,
                  "Background saved-network connect not needed or not allowed");
     }
@@ -3038,11 +3408,13 @@ esp_err_t app_services_wifi_background_start(void)
              sys_state.wifi.enabled ? 1U : 0U,
              wifi_state_text(wifi_controller_get_state()));
     if (!app_wifi_background_enable_needed() &&
-        !app_wifi_background_connect_allowed()) {
+        !app_wifi_background_connect_allowed())
+    {
         ESP_LOGI(APP_SERVICES_TAG, "Background Wi-Fi start not needed");
         return ESP_ERR_INVALID_STATE;
     }
-    if (s_wifi_background_connect_task != NULL) {
+    if (s_wifi_background_connect_task != NULL)
+    {
         return ESP_OK; /* already queued; idempotent */
     }
 
@@ -3052,7 +3424,8 @@ esp_err_t app_services_wifi_background_start(void)
                                 APP_WIFI_BACKGROUND_CONNECT_STACK_SIZE,
                                 NULL,
                                 APP_WIFI_BACKGROUND_CONNECT_PRIORITY,
-                                &handle, APP_CORE_SYSTEM) != pdPASS) {
+                                &handle, APP_CORE_SYSTEM) != pdPASS)
+    {
         ESP_LOGW(APP_SERVICES_TAG,
                  "Could not create background Wi-Fi start task");
         return ESP_ERR_NO_MEM;
@@ -3066,25 +3439,30 @@ esp_err_t app_services_wifi_reconnect(void)
     wifi_status_t current_status = {0};
     if (wifi_events_get_status_copy(&current_status) == ESP_OK &&
         current_status.got_ip &&
-        wifi_controller_is_connected()) {
+        wifi_controller_is_connected())
+    {
         app_wifi_sync_menu_if_visible();
         return ESP_OK;
     }
-    if (wifi_controller_get_state() == WIFI_CONTROLLER_CONNECTING) {
+    if (wifi_controller_get_state() == WIFI_CONTROLLER_CONNECTING)
+    {
         /* A request already in flight is idempotent; a FAILED state remains
          * retryable so the user can correct a password and try again. */
         return ESP_OK;
     }
-    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+    if (wifi_manager_get_mode() == WIFI_MODE_AP)
+    {
         lcd_flash_message("AP Mode", "No STA Connect", 1400U);
         return ESP_ERR_NOT_SUPPORTED;
     }
-    if (!sys_state.wifi.enabled) {
+    if (!sys_state.wifi.enabled)
+    {
         lcd_flash_message("Wi-Fi Disabled", "Enable first", 1400U);
         return ESP_ERR_INVALID_STATE;
     }
     wifi_manager_config_t config = {0};
-    if (wifi_manager_get_config(&config) != ESP_OK || config.ssid[0] == '\0') {
+    if (wifi_manager_get_config(&config) != ESP_OK || config.ssid[0] == '\0')
+    {
         lcd_flash_message("Wi-Fi Not Config", "Scan a network", 1800U);
         return ESP_ERR_NOT_FOUND;
     }
@@ -3097,7 +3475,8 @@ esp_err_t app_services_wifi_reconnect(void)
      */
     app_wifi_begin_operation(APP_WIFI_OPERATION_CONNECT_SAVED, config.ssid, -127);
     esp_err_t err = wifi_controller_reconnect();
-    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN)
+    {
         app_wifi_end_operation();
         app_wifi_sync_menu_if_visible();
         ESP_LOGW(APP_SERVICES_TAG, "Saved Wi-Fi reconnect request failed: %s",
@@ -3109,7 +3488,8 @@ esp_err_t app_services_wifi_reconnect(void)
 esp_err_t app_services_wifi_disconnect(void)
 {
     /* A disconnect request is idempotent when STA is already disconnected. */
-    if (!wifi_controller_is_connected()) {
+    if (!wifi_controller_is_connected())
+    {
         app_wifi_end_operation();
         app_wifi_sync_menu_if_visible();
         return ESP_OK;
@@ -3117,12 +3497,14 @@ esp_err_t app_services_wifi_disconnect(void)
 
     app_wifi_begin_operation(APP_WIFI_OPERATION_DISCONNECT, NULL, -127);
     const esp_err_t err = wifi_controller_disconnect();
-    if (err == ESP_ERR_WIFI_NOT_CONNECT || err == ESP_ERR_WIFI_NOT_STARTED) {
+    if (err == ESP_ERR_WIFI_NOT_CONNECT || err == ESP_ERR_WIFI_NOT_STARTED)
+    {
         app_wifi_end_operation();
         app_wifi_sync_menu_if_visible();
         return ESP_OK;
     }
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         app_wifi_end_operation();
         lcd_show_wifi_result(false, true, false, "", -127, "Disconnect failed");
     }
@@ -3153,28 +3535,38 @@ void app_services_show_wifi_status(void)
     (void)wifi_manager_get_config(&config);
 
     char ssid[WIFI_MAX_SSID_LEN + 1U] = {0};
-    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+    if (wifi_manager_get_mode() == WIFI_MODE_AP)
+    {
         strncpy(ssid, config.ap_ssid, sizeof(ssid) - 1U);
-    } else {
+    }
+    else
+    {
         strncpy(ssid, config.ssid, sizeof(ssid) - 1U);
     }
-    if (ssid[0] == '\0') {
+    if (ssid[0] == '\0')
+    {
         strncpy(ssid, "Not configured", sizeof(ssid) - 1U);
     }
 
     char ip[16] = "0.0.0.0";
     char gateway[16] = "0.0.0.0";
-    if (status.got_ip) {
+    if (status.got_ip)
+    {
         snprintf(ip, sizeof(ip), IPSTR, IP2STR(&status.ip));
         snprintf(gateway, sizeof(gateway), IPSTR, IP2STR(&status.gateway));
     }
 
     char state_text[LCD_LINE_SIZE] = {0};
-    if (!sys_state.wifi.enabled) {
+    if (!sys_state.wifi.enabled)
+    {
         snprintf(state_text, sizeof(state_text), "Wi-Fi OFF");
-    } else if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+    }
+    else if (wifi_manager_get_mode() == WIFI_MODE_AP)
+    {
         snprintf(state_text, sizeof(state_text), "AP active");
-    } else {
+    }
+    else
+    {
         snprintf(state_text, sizeof(state_text), "%s",
                  wifi_state_text(wifi_controller_get_state()));
     }
@@ -3189,9 +3581,12 @@ const char *app_services_wifi_saved_network_label(void)
     static char label[LCD_LINE_SIZE];
     wifi_credentials_t credentials = {0};
     if (wifi_storage_load_credentials(&credentials) == ESP_OK &&
-        credentials.ssid[0] != '\0') {
+        credentials.ssid[0] != '\0')
+    {
         snprintf(label, sizeof(label), "Saved: %.9s", credentials.ssid);
-    } else {
+    }
+    else
+    {
         snprintf(label, sizeof(label), "Saved: None");
     }
     return label;
@@ -3200,7 +3595,8 @@ const char *app_services_wifi_saved_network_label(void)
 bool app_services_wifi_forget_confirmation_pending(void)
 {
     bool pending = false;
-    if (s_services_mutex != NULL) {
+    if (s_services_mutex != NULL)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         pending = s_wifi_forget_pending;
         xSemaphoreGive(s_services_mutex);
@@ -3212,7 +3608,8 @@ esp_err_t app_services_wifi_request_forget_saved(void)
 {
     wifi_credentials_t credentials = {0};
     if (wifi_storage_load_credentials(&credentials) != ESP_OK ||
-        credentials.ssid[0] == '\0') {
+        credentials.ssid[0] == '\0')
+    {
         lcd_flash_message("No Saved Network", "Nothing to forget", 1400U);
         return ESP_ERR_NOT_FOUND;
     }
@@ -3230,18 +3627,21 @@ esp_err_t app_services_wifi_confirm_forget_saved(void)
     xSemaphoreGive(s_services_mutex);
 
     esp_err_t err = wifi_storage_erase_credentials();
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         lcd_flash_message("Forget failed", "Try again", 1400U);
         return err;
     }
 
     wifi_manager_config_t config = {0};
-    if (wifi_manager_get_config(&config) == ESP_OK) {
+    if (wifi_manager_get_config(&config) == ESP_OK)
+    {
         config.ssid[0] = '\0';
         config.password[0] = '\0';
         (void)wifi_manager_set_config(&config);
     }
-    if (wifi_controller_is_connected()) {
+    if (wifi_controller_is_connected())
+    {
         (void)wifi_controller_disconnect();
     }
     lcd_flash_message("Network Forgotten", "Wi-Fi ready", 1200U);
@@ -3250,7 +3650,8 @@ esp_err_t app_services_wifi_confirm_forget_saved(void)
 
 void app_services_wifi_cancel_forget_saved(void)
 {
-    if (s_services_mutex != NULL) {
+    if (s_services_mutex != NULL)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_wifi_forget_pending = false;
         xSemaphoreGive(s_services_mutex);
@@ -3260,7 +3661,8 @@ void app_services_wifi_cancel_forget_saved(void)
 bool app_services_wifi_disconnect_confirmation_pending(void)
 {
     bool pending = false;
-    if (s_services_mutex != NULL) {
+    if (s_services_mutex != NULL)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         pending = s_wifi_disconnect_pending;
         xSemaphoreGive(s_services_mutex);
@@ -3270,7 +3672,8 @@ bool app_services_wifi_disconnect_confirmation_pending(void)
 
 esp_err_t app_services_wifi_request_disconnect(void)
 {
-    if (!wifi_controller_is_connected()) {
+    if (!wifi_controller_is_connected())
+    {
         show_menu_screen(MENU_WIFI_CONFIG, sys_state.menu_selection);
         return ESP_OK;
     }
@@ -3297,7 +3700,8 @@ esp_err_t app_services_wifi_confirm_disconnect(void)
 
 void app_services_wifi_cancel_disconnect(void)
 {
-    if (s_services_mutex != NULL) {
+    if (s_services_mutex != NULL)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_wifi_disconnect_pending = false;
         xSemaphoreGive(s_services_mutex);
@@ -3306,7 +3710,8 @@ void app_services_wifi_cancel_disconnect(void)
 
 bool app_services_wifi_dhcp_enabled(void)
 {
-    if (wifi_manager_get_mode() == WIFI_MODE_AP) {
+    if (wifi_manager_get_mode() == WIFI_MODE_AP)
+    {
         return wifi_manager_ap_dhcp_enabled();
     }
 
@@ -3318,43 +3723,53 @@ esp_err_t app_services_wifi_toggle_dhcp(void)
 {
     wifi_manager_config_t config = {0};
     esp_err_t err = wifi_manager_get_config(&config);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         return err;
     }
 
     const bool ap_mode = config.mode == WIFI_MODE_AP;
     const bool new_value = ap_mode ? !config.ap_dhcp : !config.dhcp;
 
-    if (ap_mode) {
+    if (ap_mode)
+    {
         err = wifi_manager_set_ap_dhcp(new_value);
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             return err;
         }
         config.ap_dhcp = new_value;
-    } else {
+    }
+    else
+    {
         config.dhcp = new_value;
         err = wifi_manager_set_config(&config);
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             return err;
         }
     }
 
     wifi_network_config_t stored = {0};
-    if (wifi_storage_load_network_config(&stored) != ESP_OK) {
+    if (wifi_storage_load_network_config(&stored) != ESP_OK)
+    {
         wifi_storage_set_default_network_config(&stored);
     }
-    if (ap_mode) {
+    if (ap_mode)
+    {
         stored.ap_dhcp = new_value;
-    } else {
+    }
+    else
+    {
         stored.dhcp = new_value;
         stored.ip_info = config.ip_info;
         stored.dns = config.dns;
     }
     err = wifi_storage_save_network_config(&stored);
-    if (err == ESP_OK) {
+    if (err == ESP_OK)
+    {
         lcd_flash_message(new_value ? "DHCP ON" : "DHCP OFF",
-                          ap_mode ? "AP DHCP" :
-                          (wifi_controller_is_connected() ? "Reconnect needed" : "Saved"),
+                          ap_mode ? "AP DHCP" : (wifi_controller_is_connected() ? "Reconnect needed" : "Saved"),
                           1400U);
     }
     return err;
@@ -3377,10 +3792,12 @@ esp_err_t app_services_disconnect_ap_client_at(uint8_t index)
     wifi_ap_client_info_t clients[WIFI_AP_MAX_CLIENTS] = {0};
     size_t count = 0U;
     esp_err_t err = app_services_get_ap_clients(clients, WIFI_AP_MAX_CLIENTS, &count);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_SIZE) {
+    if (err != ESP_OK && err != ESP_ERR_INVALID_SIZE)
+    {
         return err;
     }
-    if (index >= count) {
+    if (index >= count)
+    {
         return ESP_ERR_NOT_FOUND;
     }
     return app_services_disconnect_ap_client(clients[index].mac);
@@ -3388,11 +3805,13 @@ esp_err_t app_services_disconnect_ap_client_at(uint8_t index)
 
 void app_services_show_ap_clients(void)
 {
-    if (!app_services_wifi_can_manage_clients()) {
+    if (!app_services_wifi_can_manage_clients())
+    {
         lcd_flash_message("AP Clients", "AP mode required", 1400U);
         return;
     }
-    if (!sys_state.wifi.enabled) {
+    if (!sys_state.wifi.enabled)
+    {
         /* AP mode can be selected while the radio is OFF: this is not a
          * system fault and must not eject the user from the Wi-Fi menu. */
         lcd_flash_message("Wi-Fi is OFF", "Turn Wi-Fi ON", 1400U);
@@ -3402,7 +3821,8 @@ void app_services_show_ap_clients(void)
     char macs[WIFI_AP_MAX_CLIENTS][18] = {{0}};
     size_t count = 0U;
     const esp_err_t err = app_services_get_ap_clients(clients, WIFI_AP_MAX_CLIENTS, &count);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_SIZE) {
+    if (err != ESP_OK && err != ESP_ERR_INVALID_SIZE)
+    {
         /* Radio startup/offline errors are recoverable UI conditions, not a
          * global system fault. Keep the user in the Wi-Fi menu. */
         ESP_LOGW(APP_SERVICES_TAG, "Could not read AP clients: %s",
@@ -3410,7 +3830,8 @@ void app_services_show_ap_clients(void)
         lcd_flash_message("AP Clients Unavailable", "Check Wi-Fi state", 1400U);
         return;
     }
-    for (size_t i = 0U; i < count; ++i) {
+    for (size_t i = 0U; i < count; ++i)
+    {
         snprintf(macs[i], sizeof(macs[i]), "%02X:%02X:%02X:%02X:%02X:%02X",
                  clients[i].mac[0], clients[i].mac[1], clients[i].mac[2],
                  clients[i].mac[3], clients[i].mac[4], clients[i].mac[5]);
@@ -3487,7 +3908,8 @@ esp_err_t app_services_get_ota_manifest_url(char *buffer, size_t buffer_len)
     return app_ota_effective_manifest_url(buffer, buffer_len);
 }
 
-typedef struct {
+typedef struct
+{
     char manifest_url[APP_OTA_MANIFEST_URL_MAX];
     bool user_initiated;
 } ota_manifest_check_job_t;
@@ -3495,7 +3917,8 @@ typedef struct {
 static void ota_manifest_check_task(void *parameter)
 {
     ota_manifest_check_job_t *job = (ota_manifest_check_job_t *)parameter;
-    if (!job) {
+    if (!job)
+    {
         vTaskDelete(NULL);
         return;
     }
@@ -3510,13 +3933,15 @@ static void ota_manifest_check_task(void *parameter)
      * too tight so roomier builds are not interrupted. */
     const bool suspended_for_check =
         heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 40000U;
-    if (suspended_for_check) {
+    if (suspended_for_check)
+    {
         (void)network_services_suspend_for_ota();
     }
     const esp_err_t err = ota_service_check_csv_manifest(job->manifest_url,
                                                          &entry,
                                                          &update_available);
-    if (suspended_for_check) {
+    if (suspended_for_check)
+    {
         network_services_resume_after_ota();
     }
     bool cancelled = false;
@@ -3524,21 +3949,28 @@ static void ota_manifest_check_task(void *parameter)
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     cancelled = s_ota_check_cancel_requested;
     s_ota_check_cancel_requested = false;
-    if (cancelled) {
+    if (cancelled)
+    {
         s_ota_status.state = APP_OTA_CANCELLED;
         s_ota_status.progress_percent = 0;
-    } else if (err == ESP_OK && update_available) {
+    }
+    else if (err == ESP_OK && update_available)
+    {
         s_ota_status.state = APP_OTA_AVAILABLE;
         s_ota_status.error_detail[0] = '\0';
         s_ota_status.update_available = true;
         strncpy(s_ota_status.available_version, entry.version,
                 sizeof(s_ota_status.available_version) - 1U);
-    } else if (err == ESP_OK) {
+    }
+    else if (err == ESP_OK)
+    {
         s_ota_status.state = APP_OTA_IDLE;
         s_ota_status.error_detail[0] = '\0';
         s_ota_status.update_available = false;
         s_ota_status.available_version[0] = '\0';
-    } else {
+    }
+    else
+    {
         s_ota_status.state = APP_OTA_ERROR;
         snprintf(s_ota_status.error_detail, sizeof(s_ota_status.error_detail),
                  "ERR:%s", esp_err_to_name(err));
@@ -3553,10 +3985,12 @@ static void ota_manifest_check_task(void *parameter)
     s_ota_cancel_confirmation_pending = false;
     xSemaphoreGive(s_services_mutex);
 
-    if (err != ESP_OK && !cancelled) {
+    if (err != ESP_OK && !cancelled)
+    {
         ESP_LOGW(APP_SERVICES_TAG, "OTA check failed: %s", esp_err_to_name(err));
     }
-    if (job->user_initiated || update_available || cancelled) {
+    if (job->user_initiated || update_available || cancelled)
+    {
         app_services_show_ota_lcd(&snapshot);
     }
     memset(job, 0, sizeof(*job));
@@ -3564,7 +3998,8 @@ static void ota_manifest_check_task(void *parameter)
     vTaskDelete(NULL);
 }
 
-typedef struct {
+typedef struct
+{
     char manifest_url[APP_OTA_MANIFEST_URL_MAX];
     char staged_version[OTA_MAX_VERSION_LENGTH];
 } ota_pending_manifest_job_t;
@@ -3572,8 +4007,10 @@ typedef struct {
 static void ota_pending_manifest_check_task(void *parameter)
 {
     ota_pending_manifest_job_t *job = (ota_pending_manifest_job_t *)parameter;
-    if (job == NULL) {
-        if (s_services_mutex != NULL) {
+    if (job == NULL)
+    {
+        if (s_services_mutex != NULL)
+        {
             xSemaphoreTake(s_services_mutex, portMAX_DELAY);
             s_pending_manifest_check_active = false;
             s_pending_manifest_check_task = NULL;
@@ -3591,27 +4028,32 @@ static void ota_pending_manifest_check_task(void *parameter)
     ota_manifest_entry_t entry = {0};
     bool latest_newer_than_running = false;
     esp_err_t check_err = ESP_ERR_INVALID_STATE;
-    if (verify_err == ESP_OK && job->manifest_url[0] != '\0') {
+    if (verify_err == ESP_OK && job->manifest_url[0] != '\0')
+    {
         const bool suspended_for_check =
             heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 40000U;
-        if (suspended_for_check) {
+        if (suspended_for_check)
+        {
             (void)network_services_suspend_for_ota();
         }
         check_err = ota_service_check_csv_manifest(
             job->manifest_url, &entry, &latest_newer_than_running);
-        if (suspended_for_check) {
+        if (suspended_for_check)
+        {
             network_services_resume_after_ota();
         }
     }
 
     bool staged_is_older = false;
-    if (verify_err == ESP_OK && check_err == ESP_OK) {
+    if (verify_err == ESP_OK && check_err == ESP_OK)
+    {
         staged_is_older =
             ota_manifest_compare_versions(entry.version, job->staged_version) > 0;
     }
 
     esp_err_t discard_err = ESP_OK;
-    if (staged_is_older) {
+    if (staged_is_older)
+    {
         ESP_LOGW(APP_SERVICES_TAG,
                  "Latest release %s is newer than staged %s; discarding stale staged image",
                  entry.version, job->staged_version);
@@ -3620,7 +4062,8 @@ static void ota_pending_manifest_check_task(void *parameter)
 
     app_ota_status_t snapshot = {0};
     bool show_status = false;
-    if (s_services_mutex != NULL) {
+    if (s_services_mutex != NULL)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_pending_manifest_check_active = false;
         s_pending_manifest_check_task = NULL;
@@ -3628,10 +4071,12 @@ static void ota_pending_manifest_check_task(void *parameter)
          * handshakes when the user authenticates and returns to the prompt. */
         s_pending_manifest_checked =
             verify_err == ESP_OK && job->manifest_url[0] != '\0';
-        if (staged_is_older && discard_err == ESP_OK) {
+        if (staged_is_older && discard_err == ESP_OK)
+        {
             s_pending_manifest_checked = true;
         }
-        if (verify_err != ESP_OK && !ota_service_update_pending()) {
+        if (verify_err != ESP_OK && !ota_service_update_pending())
+        {
             s_ota_status.state = APP_OTA_IDLE;
             s_ota_status.update_available = false;
             s_ota_status.confirmation_pending = false;
@@ -3642,7 +4087,9 @@ static void ota_pending_manifest_check_task(void *parameter)
                            "Staged image rejected");
             snapshot = s_ota_status;
             show_status = true;
-        } else if (staged_is_older && discard_err == ESP_OK) {
+        }
+        else if (staged_is_older && discard_err == ESP_OK)
+        {
             s_ota_status.state = APP_OTA_AVAILABLE;
             s_ota_status.update_available = latest_newer_than_running;
             s_ota_status.confirmation_pending = false;
@@ -3657,31 +4104,42 @@ static void ota_pending_manifest_check_task(void *parameter)
         xSemaphoreGive(s_services_mutex);
     }
 
-    if (verify_err != ESP_OK) {
+    if (verify_err != ESP_OK)
+    {
         ESP_LOGE(APP_SERVICES_TAG,
                  "Staged OTA preflight failed for %s: %s; current firmware retained",
                  job->staged_version, esp_err_to_name(verify_err));
-    } else if (job->manifest_url[0] == '\0') {
+    }
+    else if (job->manifest_url[0] == '\0')
+    {
         ESP_LOGI(APP_SERVICES_TAG,
                  "Staged OTA %s passed SHA-256 preflight; manifest check skipped (offline)",
                  job->staged_version);
-    } else if (check_err != ESP_OK) {
+    }
+    else if (check_err != ESP_OK)
+    {
         ESP_LOGW(APP_SERVICES_TAG,
                  "Could not compare staged OTA %s with latest manifest: %s; verified staged image retained",
                  job->staged_version, esp_err_to_name(check_err));
-    } else if (!staged_is_older) {
+    }
+    else if (!staged_is_older)
+    {
         ESP_LOGI(APP_SERVICES_TAG,
                  "Staged OTA %s passed preflight and is not older than manifest %s",
                  job->staged_version, entry.version);
-    } else if (discard_err != ESP_OK) {
+    }
+    else if (discard_err != ESP_OK)
+    {
         ESP_LOGE(APP_SERVICES_TAG,
                  "Could not discard stale staged OTA %s: %s",
                  job->staged_version, esp_err_to_name(discard_err));
     }
 
-    if (show_status) {
+    if (show_status)
+    {
         app_services_show_ota_lcd_impl(&snapshot, false);
-        if (staged_is_older && discard_err == ESP_OK) {
+        if (staged_is_older && discard_err == ESP_OK)
+        {
             ESP_LOGI(APP_SERVICES_TAG,
                      "Latest OTA %s is available; existing confirmation flow will download it",
                      entry.version);
@@ -3695,42 +4153,49 @@ static void ota_pending_manifest_check_task(void *parameter)
 
 static void app_services_schedule_pending_manifest_check(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return;
     }
 
     char staged_version[OTA_MAX_VERSION_LENGTH] = {0};
     if (ota_service_get_pending_version(staged_version,
-                                        sizeof(staged_version)) != ESP_OK) {
+                                        sizeof(staged_version)) != ESP_OK)
+    {
         return;
     }
 
     const bool station_connected = app_wifi_station_has_ip();
     if (ota_service_pending_image_verified() &&
-        (s_pending_manifest_checked || !station_connected)) {
+        (s_pending_manifest_checked || !station_connected))
+    {
         return;
     }
 
     /* Integrity preflight always runs, even offline. The optional latest
      * manifest comparison only runs when station connectivity is available. */
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
-    if (station_connected) {
+    if (station_connected)
+    {
         if (app_services_get_ota_manifest_url(manifest_url,
                                               sizeof(manifest_url)) != ESP_OK ||
-            !ota_manifest_is_https_url(manifest_url)) {
+            !ota_manifest_is_https_url(manifest_url))
+        {
             manifest_url[0] = '\0';
         }
     }
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     if (s_pending_manifest_check_active ||
-        s_ota_status.state != APP_OTA_PENDING_APPLY) {
+        s_ota_status.state != APP_OTA_PENDING_APPLY)
+    {
         xSemaphoreGive(s_services_mutex);
         return;
     }
 
     ota_pending_manifest_job_t *job = calloc(1, sizeof(*job));
-    if (job == NULL) {
+    if (job == NULL)
+    {
         xSemaphoreGive(s_services_mutex);
         ESP_LOGW(APP_SERVICES_TAG,
                  "Could not allocate staged OTA preflight; image remains blocked from apply");
@@ -3748,7 +4213,8 @@ static void app_services_schedule_pending_manifest_check(void)
                                 APP_OTA_CHECK_TASK_STACK_SIZE, job,
                                 APP_OTA_CHECK_TASK_PRIORITY,
                                 &s_pending_manifest_check_task,
-                                APP_CORE_SYSTEM) != pdPASS) {
+                                APP_CORE_SYSTEM) != pdPASS)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_pending_manifest_check_active = false;
         s_pending_manifest_check_task = NULL;
@@ -3763,13 +4229,16 @@ static void app_services_schedule_pending_manifest_check(void)
 esp_err_t app_services_check_for_update(bool user_initiated)
 {
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         ESP_LOGW(APP_SERVICES_TAG,
                  "Update check requested before app services initialization");
         return ESP_ERR_INVALID_STATE;
     }
-    if (!app_wifi_station_has_ip()) {
-        if (user_initiated && !app_services_wifi_enabled()) {
+    if (!app_wifi_station_has_ip())
+    {
+        if (user_initiated && !app_services_wifi_enabled())
+        {
             xSemaphoreTake(s_services_mutex, portMAX_DELAY);
             s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_OTA_CHECK;
             s_wifi_prerequisite_pending = true;
@@ -3781,7 +4250,8 @@ esp_err_t app_services_check_for_update(bool user_initiated)
                      "OTA check paused: Wi-Fi is OFF; prerequisite prompt shown");
             return ESP_ERR_INVALID_STATE;
         }
-        if (user_initiated) {
+        if (user_initiated)
+        {
             lcd_flash_warning_to("Wi-Fi ON", "Connect first",
                                  1800U, LCD_SCREEN_MENU);
         }
@@ -3791,13 +4261,15 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     /* The monitor's TCP reachability result can lag a newly acquired DHCP
      * lease. Let the actual HTTPS manifest request validate DNS/TLS/endpoint
      * reachability instead of rejecting a user check on a stale probe. */
-    if (!wifi_monitor_is_online()) {
+    if (!wifi_monitor_is_online())
+    {
         ESP_LOGW(APP_SERVICES_TAG,
                  "Internet probe is not yet positive; attempting HTTPS manifest check");
     }
     const esp_err_t url_err =
         app_services_get_ota_manifest_url(manifest_url, sizeof(manifest_url));
-    if (url_err != ESP_OK || !ota_manifest_is_https_url(manifest_url)) {
+    if (url_err != ESP_OK || !ota_manifest_is_https_url(manifest_url))
+    {
         ESP_LOGE(APP_SERVICES_TAG,
                  "OTA manifest URL unavailable or invalid (get=%s, https_valid=%d)",
                  esp_err_to_name(url_err),
@@ -3814,12 +4286,14 @@ esp_err_t app_services_check_for_update(bool user_initiated)
                       s_ota_status.state == APP_OTA_DOWNLOADING ||
                       s_ota_status.state == APP_OTA_VERIFYING ||
                       s_ota_status.state == APP_OTA_CHECKING;
-    if (busy) {
+    if (busy)
+    {
         xSemaphoreGive(s_services_mutex);
         return ESP_ERR_INVALID_STATE;
     }
     ota_manifest_check_job_t *job = calloc(1, sizeof(*job));
-    if (!job) {
+    if (!job)
+    {
         xSemaphoreGive(s_services_mutex);
         app_services_record_ota_error("ERR:NO_MEM", user_initiated);
         return ESP_ERR_NO_MEM;
@@ -3833,8 +4307,9 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     xSemaphoreGive(s_services_mutex);
 
     if (xTaskCreatePinnedToCore(ota_manifest_check_task, "ota_manifest_check",
-                    APP_OTA_CHECK_TASK_STACK_SIZE, job,
-                    APP_OTA_CHECK_TASK_PRIORITY, &s_ota_manifest_check_task, APP_CORE_SYSTEM) != pdPASS) {
+                                APP_OTA_CHECK_TASK_STACK_SIZE, job,
+                                APP_OTA_CHECK_TASK_PRIORITY, &s_ota_manifest_check_task, APP_CORE_SYSTEM) != pdPASS)
+    {
         app_ota_status_t failed_status;
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_ota_manifest_check_task = NULL;
@@ -3846,7 +4321,8 @@ esp_err_t app_services_check_for_update(bool user_initiated)
         xSemaphoreGive(s_services_mutex);
         memset(job, 0, sizeof(*job));
         free(job);
-        if (user_initiated) {
+        if (user_initiated)
+        {
             app_services_show_ota_lcd(&failed_status);
         }
         return ESP_ERR_NO_MEM;
@@ -3855,7 +4331,8 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
-    if (user_initiated) {
+    if (user_initiated)
+    {
         app_services_show_ota_lcd(&snapshot);
     }
     return ESP_OK;
@@ -3863,7 +4340,8 @@ esp_err_t app_services_check_for_update(bool user_initiated)
 
 bool app_services_wifi_prerequisite_pending(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return false;
     }
 
@@ -3875,7 +4353,8 @@ bool app_services_wifi_prerequisite_pending(void)
 
 esp_err_t app_services_confirm_wifi_prerequisite(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -3885,7 +4364,8 @@ esp_err_t app_services_confirm_wifi_prerequisite(void)
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     operation = s_wifi_prerequisite_operation;
     pending = s_wifi_prerequisite_pending;
-    if (pending) {
+    if (pending)
+    {
         s_wifi_prerequisite_pending = false;
         s_wifi_prerequisite_waiting = true;
         s_wifi_prerequisite_ready = false;
@@ -3893,12 +4373,14 @@ esp_err_t app_services_confirm_wifi_prerequisite(void)
     }
     xSemaphoreGive(s_services_mutex);
 
-    if (!pending || operation == APP_WIFI_PREREQUISITE_NONE) {
+    if (!pending || operation == APP_WIFI_PREREQUISITE_NONE)
+    {
         return ESP_ERR_INVALID_STATE;
     }
 
     const esp_err_t err = app_services_set_wifi_enabled(true);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_NONE;
         s_wifi_prerequisite_pending = false;
@@ -3919,7 +4401,8 @@ esp_err_t app_services_confirm_wifi_prerequisite(void)
 
 void app_services_cancel_wifi_prerequisite(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return;
     }
 
@@ -3935,12 +4418,14 @@ void app_services_cancel_wifi_prerequisite(void)
 
 esp_err_t app_services_request_update_confirmation(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         ESP_LOGW(APP_SERVICES_TAG,
                  "Update confirmation requested before app services initialization");
         return ESP_ERR_INVALID_STATE;
     }
-    if (!app_wifi_station_has_ip() && !app_services_wifi_enabled()) {
+    if (!app_wifi_station_has_ip() && !app_services_wifi_enabled())
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_wifi_prerequisite_operation = APP_WIFI_PREREQUISITE_OTA_INSTALL;
         s_wifi_prerequisite_pending = true;
@@ -3981,8 +4466,10 @@ esp_err_t app_services_confirm_update(void)
      * menu item resumes that staged image instead of downloading it again. */
     char pending_version[OTA_MAX_VERSION_LENGTH] = {0};
     if (ota_service_get_pending_version(pending_version,
-                                        sizeof(pending_version)) == ESP_OK) {
-        if (s_services_mutex == NULL) return ESP_ERR_INVALID_STATE;
+                                        sizeof(pending_version)) == ESP_OK)
+    {
+        if (s_services_mutex == NULL)
+            return ESP_ERR_INVALID_STATE;
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_ota_status.state = APP_OTA_PENDING_APPLY;
         s_ota_status.update_available = true;
@@ -3997,7 +4484,8 @@ esp_err_t app_services_confirm_update(void)
         s_ota_prompt_from_boot_reminder = false;
         if (s_ota_apply_prompt_task == NULL &&
             xTaskCreate(ota_apply_prompt_timeout_task, "ota_apply_prompt",
-                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS) {
+                        3072U, NULL, 3U, &s_ota_apply_prompt_task) != pdPASS)
+        {
             s_ota_apply_prompt_task = NULL;
             ESP_LOGW(APP_SERVICES_TAG, "Could not restart OTA apply-prompt timeout");
         }
@@ -4006,7 +4494,8 @@ esp_err_t app_services_confirm_update(void)
 
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
     app_ota_status_t snapshot = {0};
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         ESP_LOGW(APP_SERVICES_TAG,
                  "Update confirmation received before app services initialization");
         return ESP_ERR_INVALID_STATE;
@@ -4061,7 +4550,8 @@ esp_err_t app_services_confirm_update(void)
         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     ESP_LOGI(APP_SERVICES_TAG, "Pre-OTA largest internal block: %u bytes",
              (unsigned)ota_largest_internal);
-    if (ota_largest_internal < 20000U) {
+    if (ota_largest_internal < 20000U)
+    {
         xSemaphoreTake(s_services_mutex, portMAX_DELAY);
         s_ota_status.state = APP_OTA_AVAILABLE;
         s_ota_status.progress_percent = 0;
@@ -4100,7 +4590,8 @@ esp_err_t app_services_confirm_update(void)
 
 esp_err_t app_services_request_cancel_update(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         ESP_LOGW(APP_SERVICES_TAG,
                  "Cancel update requested before app services initialization");
         return ESP_ERR_INVALID_STATE;
@@ -4108,11 +4599,13 @@ esp_err_t app_services_request_cancel_update(void)
     const bool service_busy = ota_service_in_progress();
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool check_busy = s_ota_manifest_check_active;
-    if (service_busy || check_busy) {
+    if (service_busy || check_busy)
+    {
         s_ota_cancel_confirmation_pending = true;
     }
     xSemaphoreGive(s_services_mutex);
-    if (!service_busy && !check_busy) {
+    if (!service_busy && !check_busy)
+    {
         lcd_flash_message("No Update Running", "Current kept", 1200U);
         return ESP_ERR_INVALID_STATE;
     }
@@ -4122,7 +4615,8 @@ esp_err_t app_services_request_cancel_update(void)
 
 esp_err_t app_services_confirm_cancel_update(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         ESP_LOGW(APP_SERVICES_TAG,
                  "Cancel confirmation received before app services initialization");
         return ESP_ERR_INVALID_STATE;
@@ -4131,7 +4625,8 @@ esp_err_t app_services_confirm_cancel_update(void)
     const bool pending = s_ota_cancel_confirmation_pending;
     s_ota_cancel_confirmation_pending = false;
     xSemaphoreGive(s_services_mutex);
-    if (!pending) {
+    if (!pending)
+    {
         return ESP_ERR_INVALID_STATE;
     }
     return app_services_cancel_update();
@@ -4139,7 +4634,8 @@ esp_err_t app_services_confirm_cancel_update(void)
 
 void app_services_cancel_cancel_update(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return;
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
@@ -4153,11 +4649,13 @@ void app_services_cancel_cancel_update(void)
  * update or a completed update is left exactly as it is. */
 void app_services_ota_clear_error(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return;
     }
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
-    if (s_ota_status.state == APP_OTA_ERROR) {
+    if (s_ota_status.state == APP_OTA_ERROR)
+    {
         s_ota_status.state = APP_OTA_IDLE;
         s_ota_status.error_detail[0] = '\0';
         s_ota_status.progress_percent = 0;
@@ -4167,7 +4665,8 @@ void app_services_ota_clear_error(void)
 
 bool app_services_ota_cancel_confirmation_pending(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         return false;
     }
     bool pending = false;
@@ -4177,7 +4676,6 @@ bool app_services_ota_cancel_confirmation_pending(void)
     return pending;
 }
 
-
 bool app_services_update_pending(void)
 {
     return ota_service_update_pending();
@@ -4185,7 +4683,8 @@ bool app_services_update_pending(void)
 
 bool app_services_pending_manifest_check_active(void)
 {
-    if (s_services_mutex == NULL) return false;
+    if (s_services_mutex == NULL)
+        return false;
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     const bool active = s_pending_manifest_check_active;
     xSemaphoreGive(s_services_mutex);
@@ -4199,8 +4698,10 @@ esp_err_t app_services_apply_pending_update(void)
 
 esp_err_t app_services_defer_pending_update(void)
 {
-    if (!ota_service_update_pending()) return ESP_ERR_NOT_FOUND;
-    if (s_services_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    if (!ota_service_update_pending())
+        return ESP_ERR_NOT_FOUND;
+    if (s_services_mutex == NULL)
+        return ESP_ERR_INVALID_STATE;
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_ota_status.state = APP_OTA_AVAILABLE;
     s_ota_status.update_available = true;
@@ -4213,8 +4714,10 @@ esp_err_t app_services_defer_pending_update(void)
 
 esp_err_t app_services_show_pending_delete_confirmation(void)
 {
-    if (!ota_service_update_pending()) return ESP_ERR_NOT_FOUND;
-    if (s_services_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    if (!ota_service_update_pending())
+        return ESP_ERR_NOT_FOUND;
+    if (s_services_mutex == NULL)
+        return ESP_ERR_INVALID_STATE;
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_ota_status.state = APP_OTA_DELETE_CONFIRM;
     app_ota_status_t snapshot = s_ota_status;
@@ -4225,12 +4728,14 @@ esp_err_t app_services_show_pending_delete_confirmation(void)
 
 esp_err_t app_services_delete_pending_update(void)
 {
-    if (s_services_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    if (s_services_mutex == NULL)
+        return ESP_ERR_INVALID_STATE;
     const esp_err_t err = ota_service_delete_pending();
     /* If the marker is still present, deletion did not safely detach the
      * image; retain the prompt so the user can retry. If only physical erase
      * failed after the marker was cleared, forget the staged image anyway. */
-    if (err != ESP_OK && ota_service_update_pending()) return err;
+    if (err != ESP_OK && ota_service_update_pending())
+        return err;
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     s_pending_manifest_checked = false;
@@ -4247,7 +4752,8 @@ esp_err_t app_services_delete_pending_update(void)
 
 esp_err_t app_services_cancel_update(void)
 {
-    if (s_services_mutex == NULL) {
+    if (s_services_mutex == NULL)
+    {
         ESP_LOGW(APP_SERVICES_TAG,
                  "Cancel update requested before app services initialization");
         return ESP_ERR_INVALID_STATE;
@@ -4257,23 +4763,29 @@ esp_err_t app_services_cancel_update(void)
     const bool checking = s_ota_manifest_check_active;
     s_ota_status.confirmation_pending = false;
     s_ota_cancel_confirmation_pending = false;
-    if (pending) {
+    if (pending)
+    {
         s_ota_status.state = APP_OTA_AVAILABLE;
     }
-    if (checking) {
+    if (checking)
+    {
         s_ota_check_cancel_requested = true;
         s_ota_status.state = APP_OTA_CANCELLED;
     }
     xSemaphoreGive(s_services_mutex);
 
-    if (ota_service_in_progress()) {
+    if (ota_service_in_progress())
+    {
         lcd_show_ota_status(LCD_OTA_VIEW_CANCELLING, 0U, "", "",
                             "Please wait", false);
         return ota_service_cancel();
     }
-    if (pending) {
+    if (pending)
+    {
         lcd_flash_message("Update Deferred", "Current kept", 1200U);
-    } else if (checking) {
+    }
+    else if (checking)
+    {
         lcd_show_ota_status(LCD_OTA_VIEW_CANCELLED, 0U, "", "",
                             "Current kept", false);
     }
