@@ -1465,10 +1465,16 @@ void handle_enter_menu_button_event(button_event_info_t *event_info,
                 lcd_flash_info_to("UPDATE DELETED", "CHECK TO REDOWNLOAD",
                                   1800U, LCD_SCREEN_MENU);
             } else {
-                ESP_LOGE(APP_INPUT_TAG, "Could not delete staged OTA image: %s",
+                ESP_LOGE(APP_INPUT_TAG, "Could not fully erase staged OTA image: %s",
                          esp_err_to_name(delete_err));
-                lcd_flash_warning_to("DELETE FAILED", "UPDATE KEPT",
-                                     1800U, LCD_SCREEN_OTA);
+                if (app_services_update_pending()) {
+                    lcd_flash_warning_to("DELETE FAILED", "UPDATE KEPT",
+                                         1800U, LCD_SCREEN_OTA);
+                } else {
+                    show_menu_screen(MENU_OTA, 0U);
+                    lcd_flash_warning_to("ERASE FAILED", "UPDATE NOT PENDING",
+                                         1800U, LCD_SCREEN_MENU);
+                }
             }
             return;
         }
