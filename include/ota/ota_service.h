@@ -82,6 +82,8 @@ esp_err_t ota_service_get_pending_version(char *buffer, size_t len);
  * inverter output. Caller must first complete the existing safe shutdown. */
 esp_err_t ota_service_select_pending_for_boot(void);
 esp_err_t ota_service_clear_pending(void);
+/** Erase the inactive staged image and clear its persistent pending marker. */
+esp_err_t ota_service_delete_pending(void);
 bool ota_service_in_progress(void);
 
 #ifdef __cplusplus
