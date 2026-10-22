@@ -736,13 +736,12 @@ static void draw_ota(const lcd_ota_data_t *d)
     }
 
     const bool entering_post_download_state =
+        have_last_drawn &&
         (render->state == LCD_OTA_VIEW_VERIFYING ||
          render->state == LCD_OTA_VIEW_COMPLETE ||
          render->state == LCD_OTA_VIEW_PENDING_APPLY) &&
-        (!have_last_drawn ||
-         (last_drawn_state != LCD_OTA_VIEW_VERIFYING &&
-          last_drawn_state != LCD_OTA_VIEW_COMPLETE &&
-          last_drawn_state != LCD_OTA_VIEW_PENDING_APPLY));
+        (last_drawn_state == LCD_OTA_VIEW_DOWNLOADING ||
+         last_drawn_state == LCD_OTA_VIEW_VERIFYING);
     const bool leaving_visible_100_percent =
         have_last_drawn &&
         last_drawn_state == LCD_OTA_VIEW_DOWNLOADING &&
@@ -844,9 +843,9 @@ static void draw_ota(const lcd_ota_data_t *d)
             snprintf(rows[3], LCD_LINE_SIZE, "PLEASE WAIT");
             break;
         case LCD_OTA_VIEW_PENDING_APPLY:
-            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE IS STAGED");
-            snprintf(rows[1], LCD_LINE_SIZE, "ENTER=APPLY");
-            snprintf(rows[2], LCD_LINE_SIZE, "UP=DELETE UPDATE");
+            snprintf(rows[0], LCD_LINE_SIZE, "UPDATE PENDING");
+            snprintf(rows[1], LCD_LINE_SIZE, "VERSION %.11s", render->available_version);
+            snprintf(rows[2], LCD_LINE_SIZE, "ENTER=APPLY UP=DEL");
             snprintf(rows[3], LCD_LINE_SIZE, "BACK=LATER");
             break;
         case LCD_OTA_VIEW_DELETE_CONFIRM:
@@ -910,8 +909,8 @@ static void draw_ota(const lcd_ota_data_t *d)
         snprintf(row1, LCD_LINE_SIZE, "CURRENT FIRMWARE");
         break;
     case LCD_OTA_VIEW_PENDING_APPLY:
-        snprintf(row0, LCD_LINE_SIZE, "ENTER=APPLY");
-        snprintf(row1, LCD_LINE_SIZE, "UP=DEL BACK=NO");
+        snprintf(row0, LCD_LINE_SIZE, "PEND %.10s", render->available_version);
+        snprintf(row1, LCD_LINE_SIZE, "E=APPLY U=DEL");
         break;
     case LCD_OTA_VIEW_DELETE_CONFIRM:
         snprintf(row0, LCD_LINE_SIZE, "ENTER=DELETE");
