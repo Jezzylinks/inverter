@@ -93,6 +93,10 @@ static volatile bool s_ota_prompt_from_boot_reminder;
 static volatile uint32_t s_ota_prompt_last_shown_ms;
 static TaskHandle_t s_ota_manifest_check_task;
 static bool s_ota_manifest_check_active;
+static TaskHandle_t s_pending_manifest_check_task;
+static bool s_pending_manifest_check_active;
+static bool s_pending_manifest_checked;
+static void app_services_schedule_pending_manifest_check(void);
 static TaskHandle_t s_wifi_operation_watch_task;
 static TaskHandle_t s_wifi_prerequisite_task;
 static TaskHandle_t s_wifi_toggle_task;
@@ -1668,6 +1672,7 @@ void app_services_show_ota_status_screen(void)
             xSemaphoreGive(s_services_mutex);
         }
         app_services_show_ota_lcd_impl(&status, false);
+        app_services_schedule_pending_manifest_check();
         s_ota_prompt_last_shown_ms =
             (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         s_ota_prompt_from_boot_reminder = false;
@@ -1679,7 +1684,29 @@ void app_services_show_ota_status_screen(void)
         }
     } else if (status.state == APP_OTA_PENDING_APPLY ||
         status.state == APP_OTA_DELETE_CONFIRM) {
-        app_services_show_ota_lcd_impl(&status, false);
+        if (status.state == APP_OTA_PENDING_APPLY &&
+            !ota_service_update_pending()) {
+            /* The marker may have been cleared because the staged image was
+             * stale or lacked the new integrity metadata. Do not resurrect its
+             * old in-memory prompt after it has been discarded. */
+            if (s_services_mutex != NULL) {
+                xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+                s_ota_status.state = APP_OTA_IDLE;
+                s_ota_status.update_available = false;
+                s_ota_status.progress_percent = 0;
+                s_ota_status.available_version[0] = '\0';
+                status = s_ota_status;
+                xSemaphoreGive(s_services_mutex);
+            }
+            LCD_LOCK();
+            sys_state.menu_state = MENU_OTA;
+            if (sys_state.menu_selection >= 3U) sys_state.menu_selection = 0U;
+            const int selection = sys_state.menu_selection;
+            LCD_UNLOCK();
+            show_menu_screen(MENU_OTA, selection);
+        } else {
+            app_services_show_ota_lcd_impl(&status, false);
+        }
     } else if ((status.state == APP_OTA_CHECKING ||
          status.state == APP_OTA_PREPARING ||
          status.state == APP_OTA_DOWNLOADING ||
@@ -1825,6 +1852,7 @@ static void ota_pending_boot_reminder_task(void *parameter)
                  "Showing boot reminder for staged firmware %s",
                  snapshot.available_version);
         app_services_show_ota_lcd_impl(&snapshot, false);
+        app_services_schedule_pending_manifest_check();
         s_ota_prompt_last_shown_ms =
             (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         s_ota_prompt_from_boot_reminder = true;
@@ -1859,6 +1887,7 @@ static void ota_status_callback(ota_status_t status, int percent)
         break;
     case OTA_STATUS_SUCCESS:
         s_ota_status.state = APP_OTA_PENDING_APPLY;
+        s_pending_manifest_checked = false;
         s_ota_status.error_detail[0] = '\0';
         s_ota_status.confirmation_pending = false;
         s_ota_status.cancel_confirmation_pending = false;
@@ -1926,6 +1955,9 @@ static void ota_status_callback(ota_status_t status, int percent)
                                    snapshot.available_version,
                                    snapshot.error_detail);
     app_services_show_ota_lcd(&snapshot);
+    if (status == OTA_STATUS_SUCCESS) {
+        app_services_schedule_pending_manifest_check();
+    }
 }
 
 static void ota_auto_check_task(void *parameter)
@@ -3532,6 +3564,202 @@ static void ota_manifest_check_task(void *parameter)
     vTaskDelete(NULL);
 }
 
+typedef struct {
+    char manifest_url[APP_OTA_MANIFEST_URL_MAX];
+    char staged_version[OTA_MAX_VERSION_LENGTH];
+} ota_pending_manifest_job_t;
+
+static void ota_pending_manifest_check_task(void *parameter)
+{
+    ota_pending_manifest_job_t *job = (ota_pending_manifest_job_t *)parameter;
+    if (job == NULL) {
+        if (s_services_mutex != NULL) {
+            xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+            s_pending_manifest_check_active = false;
+            s_pending_manifest_check_task = NULL;
+            xSemaphoreGive(s_services_mutex);
+        }
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* Hash verification runs in this worker, never in the button/LCD path.
+     * The button path is held until this preflight has completed. */
+    const esp_err_t verify_err = ota_service_pending_image_verified()
+                                     ? ESP_OK
+                                     : ota_service_validate_pending_for_apply();
+    ota_manifest_entry_t entry = {0};
+    bool latest_newer_than_running = false;
+    esp_err_t check_err = ESP_ERR_INVALID_STATE;
+    if (verify_err == ESP_OK && job->manifest_url[0] != '\0') {
+        const bool suspended_for_check =
+            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 40000U;
+        if (suspended_for_check) {
+            (void)network_services_suspend_for_ota();
+        }
+        check_err = ota_service_check_csv_manifest(
+            job->manifest_url, &entry, &latest_newer_than_running);
+        if (suspended_for_check) {
+            network_services_resume_after_ota();
+        }
+    }
+
+    bool staged_is_older = false;
+    if (verify_err == ESP_OK && check_err == ESP_OK) {
+        staged_is_older =
+            ota_manifest_compare_versions(entry.version, job->staged_version) > 0;
+    }
+
+    esp_err_t discard_err = ESP_OK;
+    if (staged_is_older) {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Latest release %s is newer than staged %s; discarding stale staged image",
+                 entry.version, job->staged_version);
+        discard_err = ota_service_delete_pending();
+    }
+
+    app_ota_status_t snapshot = {0};
+    bool show_status = false;
+    if (s_services_mutex != NULL) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_pending_manifest_check_active = false;
+        s_pending_manifest_check_task = NULL;
+        /* One manifest attempt per staged image/session avoids repeated TLS
+         * handshakes when the user authenticates and returns to the prompt. */
+        s_pending_manifest_checked =
+            verify_err == ESP_OK && job->manifest_url[0] != '\0';
+        if (staged_is_older && discard_err == ESP_OK) {
+            s_pending_manifest_checked = true;
+        }
+        if (verify_err != ESP_OK && !ota_service_update_pending()) {
+            s_ota_status.state = APP_OTA_IDLE;
+            s_ota_status.update_available = false;
+            s_ota_status.confirmation_pending = false;
+            s_ota_status.progress_percent = 0;
+            s_ota_status.available_version[0] = '\0';
+            (void)snprintf(s_ota_status.error_detail,
+                           sizeof(s_ota_status.error_detail), "%s",
+                           "Staged image rejected");
+            snapshot = s_ota_status;
+            show_status = true;
+        } else if (staged_is_older && discard_err == ESP_OK) {
+            s_ota_status.state = APP_OTA_AVAILABLE;
+            s_ota_status.update_available = latest_newer_than_running;
+            s_ota_status.confirmation_pending = false;
+            s_ota_status.progress_percent = 0;
+            (void)snprintf(s_ota_status.available_version,
+                           sizeof(s_ota_status.available_version), "%s",
+                           entry.version);
+            s_ota_status.error_detail[0] = '\0';
+            snapshot = s_ota_status;
+            show_status = true;
+        }
+        xSemaphoreGive(s_services_mutex);
+    }
+
+    if (verify_err != ESP_OK) {
+        ESP_LOGE(APP_SERVICES_TAG,
+                 "Staged OTA preflight failed for %s: %s; current firmware retained",
+                 job->staged_version, esp_err_to_name(verify_err));
+    } else if (job->manifest_url[0] == '\0') {
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "Staged OTA %s passed SHA-256 preflight; manifest check skipped (offline)",
+                 job->staged_version);
+    } else if (check_err != ESP_OK) {
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Could not compare staged OTA %s with latest manifest: %s; verified staged image retained",
+                 job->staged_version, esp_err_to_name(check_err));
+    } else if (!staged_is_older) {
+        ESP_LOGI(APP_SERVICES_TAG,
+                 "Staged OTA %s passed preflight and is not older than manifest %s",
+                 job->staged_version, entry.version);
+    } else if (discard_err != ESP_OK) {
+        ESP_LOGE(APP_SERVICES_TAG,
+                 "Could not discard stale staged OTA %s: %s",
+                 job->staged_version, esp_err_to_name(discard_err));
+    }
+
+    if (show_status) {
+        app_services_show_ota_lcd_impl(&snapshot, false);
+        if (staged_is_older && discard_err == ESP_OK) {
+            ESP_LOGI(APP_SERVICES_TAG,
+                     "Latest OTA %s is available; existing confirmation flow will download it",
+                     entry.version);
+        }
+    }
+
+    memset(job, 0, sizeof(*job));
+    free(job);
+    vTaskDelete(NULL);
+}
+
+static void app_services_schedule_pending_manifest_check(void)
+{
+    if (s_services_mutex == NULL) {
+        return;
+    }
+
+    char staged_version[OTA_MAX_VERSION_LENGTH] = {0};
+    if (ota_service_get_pending_version(staged_version,
+                                        sizeof(staged_version)) != ESP_OK) {
+        return;
+    }
+
+    const bool station_connected = app_wifi_station_has_ip();
+    if (ota_service_pending_image_verified() &&
+        (s_pending_manifest_checked || !station_connected)) {
+        return;
+    }
+
+    /* Integrity preflight always runs, even offline. The optional latest
+     * manifest comparison only runs when station connectivity is available. */
+    char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
+    if (station_connected) {
+        if (app_services_get_ota_manifest_url(manifest_url,
+                                              sizeof(manifest_url)) != ESP_OK ||
+            !ota_manifest_is_https_url(manifest_url)) {
+            manifest_url[0] = '\0';
+        }
+    }
+
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    if (s_pending_manifest_check_active ||
+        s_ota_status.state != APP_OTA_PENDING_APPLY) {
+        xSemaphoreGive(s_services_mutex);
+        return;
+    }
+
+    ota_pending_manifest_job_t *job = calloc(1, sizeof(*job));
+    if (job == NULL) {
+        xSemaphoreGive(s_services_mutex);
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Could not allocate staged OTA preflight; image remains blocked from apply");
+        return;
+    }
+    (void)snprintf(job->manifest_url, sizeof(job->manifest_url), "%s",
+                   manifest_url);
+    (void)snprintf(job->staged_version, sizeof(job->staged_version), "%s",
+                   staged_version);
+    s_pending_manifest_check_active = true;
+    xSemaphoreGive(s_services_mutex);
+
+    if (xTaskCreatePinnedToCore(ota_pending_manifest_check_task,
+                                "ota_pending_check",
+                                APP_OTA_CHECK_TASK_STACK_SIZE, job,
+                                APP_OTA_CHECK_TASK_PRIORITY,
+                                &s_pending_manifest_check_task,
+                                APP_CORE_SYSTEM) != pdPASS) {
+        xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+        s_pending_manifest_check_active = false;
+        s_pending_manifest_check_task = NULL;
+        xSemaphoreGive(s_services_mutex);
+        memset(job, 0, sizeof(*job));
+        free(job);
+        ESP_LOGW(APP_SERVICES_TAG,
+                 "Could not start staged OTA preflight; image remains blocked from apply");
+    }
+}
+
 esp_err_t app_services_check_for_update(bool user_initiated)
 {
     char manifest_url[APP_OTA_MANIFEST_URL_MAX] = {0};
@@ -3955,6 +4183,15 @@ bool app_services_update_pending(void)
     return ota_service_update_pending();
 }
 
+bool app_services_pending_manifest_check_active(void)
+{
+    if (s_services_mutex == NULL) return false;
+    xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    const bool active = s_pending_manifest_check_active;
+    xSemaphoreGive(s_services_mutex);
+    return active;
+}
+
 esp_err_t app_services_apply_pending_update(void)
 {
     return ota_service_select_pending_for_boot();
@@ -3996,6 +4233,7 @@ esp_err_t app_services_delete_pending_update(void)
     if (err != ESP_OK && ota_service_update_pending()) return err;
 
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
+    s_pending_manifest_checked = false;
     s_ota_status.state = APP_OTA_IDLE;
     s_ota_status.progress_percent = 0;
     s_ota_status.update_available = false;

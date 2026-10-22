@@ -16,6 +16,9 @@
 #include "ota/ota_manifest.h"
 #include "cloud/cloud_reporting.h"
 #include "server/network_services.h"
+#include "mbedtls/md.h"
+#include <stdio.h>
+#include <strings.h>
 static const char *TAG = "OTA_SERVICE";
 
 static void secure_zero(void *ptr, size_t len)
@@ -34,24 +37,131 @@ static bool s_in_progress;
 static bool s_cancel_requested;
 static bool s_rollback_notification_pending;
 static volatile esp_err_t s_last_error = ESP_OK;
+static volatile bool s_pending_image_verified;
 
 #define OTA_PENDING_NVS_NAMESPACE "ota_pending"
 #define OTA_PENDING_KEY "pending"
 #define OTA_PENDING_PART_KEY "part"
 #define OTA_PENDING_VER_KEY "version"
+#define OTA_PENDING_SHA_KEY "sha256"
+#define OTA_PENDING_SIZE_KEY "size"
 
-static esp_err_t ota_pending_store(const esp_partition_t *partition, const char *version)
+static esp_err_t ota_pending_store(const esp_partition_t *partition,
+                                   const char *version,
+                                   const char *sha256,
+                                   uint32_t image_size)
 {
-    if (partition == NULL || version == NULL || version[0] == '\0') return ESP_ERR_INVALID_ARG;
+    if (partition == NULL || version == NULL || version[0] == '\0' ||
+        sha256 == NULL || strlen(sha256) != 64U || image_size == 0U ||
+        image_size > partition->size) {
+        return ESP_ERR_INVALID_ARG;
+    }
     nvs_handle_t handle;
     esp_err_t err = nvs_open(OTA_PENDING_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) return err;
     err = nvs_set_u8(handle, OTA_PENDING_KEY, 1U);
     if (err == ESP_OK) err = nvs_set_str(handle, OTA_PENDING_PART_KEY, partition->label);
     if (err == ESP_OK) err = nvs_set_str(handle, OTA_PENDING_VER_KEY, version);
+    if (err == ESP_OK) err = nvs_set_str(handle, OTA_PENDING_SHA_KEY, sha256);
+    if (err == ESP_OK) err = nvs_set_u32(handle, OTA_PENDING_SIZE_KEY, image_size);
     if (err == ESP_OK) err = nvs_commit(handle);
     nvs_close(handle);
+    if (err == ESP_OK) s_pending_image_verified = false;
     return err;
+}
+
+/* Read integrity metadata separately so older marker records can still be
+ * identified and safely discarded rather than silently treated as installable. */
+static esp_err_t ota_pending_integrity_read(char *sha256, size_t sha_len,
+                                            uint32_t *image_size)
+{
+    if (sha256 == NULL || sha_len < OTA_MAX_SHA256_LENGTH || image_size == NULL)
+        return ESP_ERR_INVALID_ARG;
+    sha256[0] = '\0';
+    *image_size = 0U;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(OTA_PENDING_NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK) return err;
+    size_t n = sha_len;
+    err = nvs_get_str(handle, OTA_PENDING_SHA_KEY, sha256, &n);
+    if (err == ESP_OK) err = nvs_get_u32(handle, OTA_PENDING_SIZE_KEY, image_size);
+    nvs_close(handle);
+    if (err != ESP_OK) return err;
+    if (strlen(sha256) != 64U || *image_size == 0U) return ESP_ERR_INVALID_SIZE;
+    return ESP_OK;
+}
+
+/* Hash exactly the recorded firmware payload from flash using a small fixed
+ * buffer. This runs before shutdown; it does not allocate an image-sized block. */
+static esp_err_t ota_pending_verify_image(const esp_partition_t *partition,
+                                          const char *version)
+{
+    if (partition == NULL || version == NULL) return ESP_ERR_INVALID_ARG;
+
+    char expected_sha[OTA_MAX_SHA256_LENGTH] = {0};
+    uint32_t image_size = 0U;
+    esp_err_t err = ota_pending_integrity_read(expected_sha, sizeof(expected_sha),
+                                               &image_size);
+    if (err != ESP_OK) return err;
+    if (image_size > partition->size) return ESP_ERR_INVALID_SIZE;
+
+    char current_version[OTA_MAX_VERSION_LENGTH] = {0};
+    err = ota_service_get_current_version(current_version, sizeof(current_version));
+    if (err != ESP_OK) return err;
+    if (ota_manifest_compare_versions(version, current_version) <= 0) {
+        ESP_LOGW(TAG, "Discarding stale staged OTA %s; running version is %s",
+                 version, current_version);
+        return ESP_ERR_INVALID_VERSION;
+    }
+
+    const mbedtls_md_info_t *md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (md_info == NULL) return ESP_FAIL;
+    mbedtls_md_context_t md;
+    mbedtls_md_init(&md);
+    int md_err = mbedtls_md_setup(&md, md_info, 0);
+    if (md_err == 0) md_err = mbedtls_md_starts(&md);
+    if (md_err != 0) {
+        mbedtls_md_free(&md);
+        return ESP_FAIL;
+    }
+
+    uint8_t chunk[1024];
+    uint32_t offset = 0U;
+    while (offset < image_size) {
+        const size_t amount = (image_size - offset) > sizeof(chunk)
+                                  ? sizeof(chunk) : (size_t)(image_size - offset);
+        err = esp_partition_read(partition, offset, chunk, amount);
+        if (err != ESP_OK) break;
+        md_err = mbedtls_md_update(&md, chunk, amount);
+        if (md_err != 0) {
+            err = ESP_FAIL;
+            break;
+        }
+        offset += (uint32_t)amount;
+        taskYIELD();
+    }
+
+    uint8_t digest[32] = {0};
+    if (err == ESP_OK && md_err == 0) {
+        md_err = mbedtls_md_finish(&md, digest);
+        if (md_err != 0) err = ESP_FAIL;
+    }
+    mbedtls_md_free(&md);
+    secure_zero(chunk, sizeof(chunk));
+    if (err != ESP_OK) return err;
+
+    char actual_sha[OTA_MAX_SHA256_LENGTH] = {0};
+    for (size_t i = 0U; i < sizeof(digest); ++i) {
+        (void)snprintf(&actual_sha[i * 2U], 3U, "%02x", digest[i]);
+    }
+    secure_zero(digest, sizeof(digest));
+    if (strcasecmp(actual_sha, expected_sha) != 0) {
+        ESP_LOGE(TAG, "Staged OTA %s failed SHA-256 verification", version);
+        return ESP_ERR_INVALID_CRC;
+    }
+    ESP_LOGI(TAG, "Staged OTA verified: version=%s partition=%s size=%lu sha256=match",
+             version, partition->label, (unsigned long)image_size);
+    return ESP_OK;
 }
 
 static esp_err_t ota_pending_read(char *partition_label, size_t label_len,
@@ -253,7 +363,9 @@ static void ota_task(void *parameter)
     }
 
     result = ota_pending_store(esp_ota_get_next_update_partition(NULL),
-                               job->expected_version);
+                               job->expected_version,
+                               job->expected_sha256,
+                               job->expected_size);
     if (result != ESP_OK) {
         ESP_LOGE(TAG, "Verified image metadata could not be saved: %s", esp_err_to_name(result));
         s_last_error = result;
@@ -523,18 +635,49 @@ esp_err_t ota_service_register_status_callback(ota_status_callback_t callback)
 
 bool ota_service_update_pending(void)
 {
-    char label[17] = {0}, version[OTA_MAX_VERSION_LENGTH] = {0};
-    if (ota_pending_read(label, sizeof(label), version, sizeof(version)) != ESP_OK)
-        return false;
-    const esp_partition_t *partition = esp_partition_find_first(
-        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
-    if (partition == NULL) return false;
-    if (partition == esp_ota_get_running_partition()) {
-        /* The staged image booted successfully but NVS marker cleanup failed. */
+    char version[OTA_MAX_VERSION_LENGTH] = {0};
+    return ota_service_get_pending_version(version, sizeof(version)) == ESP_OK;
+}
+
+bool ota_service_pending_image_verified(void)
+{
+    return s_pending_image_verified && ota_service_update_pending();
+}
+
+static esp_err_t ota_pending_discard_partition(const esp_partition_t *partition)
+{
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    const esp_partition_t *boot = esp_ota_get_boot_partition();
+
+    if (partition != NULL && partition == running) {
         (void)ota_service_clear_pending();
-        return false;
+        ESP_LOGW(TAG, "Pending marker cleared; running partition was not erased");
+        return ESP_OK;
     }
-    return true;
+
+    /* If a previous boot-target selection succeeded but marker cleanup failed,
+     * restore the currently running image as boot target before discarding the
+     * staged partition. Never erase a partition still selected for boot. */
+    if (partition != NULL && partition == boot && running != NULL) {
+        const esp_err_t restore_err = esp_ota_set_boot_partition(running);
+        if (restore_err != ESP_OK) {
+            ESP_LOGE(TAG, "Cannot restore running boot target before discard: %s",
+                     esp_err_to_name(restore_err));
+            return restore_err;
+        }
+    }
+
+    const esp_err_t clear_err = ota_service_clear_pending();
+    if (clear_err != ESP_OK) return clear_err;
+    if (partition == NULL) return ESP_OK;
+
+    const esp_err_t erase_err =
+        esp_partition_erase_range(partition, 0U, partition->size);
+    if (erase_err != ESP_OK) {
+        ESP_LOGW(TAG, "Pending marker cleared but staged partition erase failed: %s",
+                 esp_err_to_name(erase_err));
+    }
+    return erase_err;
 }
 
 esp_err_t ota_service_get_pending_version(char *buffer, size_t len)
@@ -545,19 +688,84 @@ esp_err_t ota_service_get_pending_version(char *buffer, size_t len)
     if (err != ESP_OK) return err;
     const esp_partition_t *partition = esp_partition_find_first(
         ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
-    if (partition == NULL) return ESP_ERR_NOT_FOUND;
+    if (partition == NULL) {
+        (void)ota_pending_discard_partition(NULL);
+        buffer[0] = '\0';
+        return ESP_ERR_NOT_FOUND;
+    }
     if (partition == esp_ota_get_running_partition()) {
-        (void)ota_service_clear_pending();
+        (void)ota_pending_discard_partition(partition);
+        buffer[0] = '\0';
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    /* Old markers without digest/size are not trusted as staged images. */
+    char pending_sha[OTA_MAX_SHA256_LENGTH] = {0};
+    uint32_t pending_size = 0U;
+    err = ota_pending_integrity_read(pending_sha, sizeof(pending_sha), &pending_size);
+    if (err != ESP_OK || pending_size > partition->size) {
+        ESP_LOGW(TAG, "Discarding staged OTA with missing/invalid integrity metadata");
+        (void)ota_pending_discard_partition(partition);
+        buffer[0] = '\0';
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    char current_version[OTA_MAX_VERSION_LENGTH] = {0};
+    if (ota_service_get_current_version(current_version, sizeof(current_version)) == ESP_OK &&
+        ota_manifest_compare_versions(buffer, current_version) <= 0) {
+        ESP_LOGW(TAG, "Staged OTA %s is not newer than running %s; discarding",
+                 buffer, current_version);
+        (void)ota_pending_discard_partition(partition);
         buffer[0] = '\0';
         return ESP_ERR_NOT_FOUND;
     }
     return ESP_OK;
 }
 
-/* Select the verified image but never restart here. The caller must perform
- * the existing controlled inverter shutdown before invoking esp_restart(). */
+/* Verify the staged bytes before the application shuts down inverter output.
+ * Invalid, stale, or legacy metadata is cleared so the same broken image is not
+ * offered on every boot. */
+esp_err_t ota_service_validate_pending_for_apply(void)
+{
+    s_pending_image_verified = false;
+    char label[17] = {0}, version[OTA_MAX_VERSION_LENGTH] = {0};
+    esp_err_t err = ota_pending_read(label, sizeof(label), version, sizeof(version));
+    if (err != ESP_OK) return err;
+
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
+    if (partition == NULL) {
+        (void)ota_pending_discard_partition(NULL);
+        return ESP_ERR_NOT_FOUND;
+    }
+    if (partition == esp_ota_get_running_partition()) {
+        (void)ota_pending_discard_partition(partition);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    err = ota_pending_verify_image(partition, version);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Rejecting staged OTA: version=%s partition=%s result=%s",
+                 version, partition->label, esp_err_to_name(err));
+        const esp_err_t discard_err = ota_pending_discard_partition(partition);
+        if (discard_err != ESP_OK) {
+            ESP_LOGE(TAG, "Could not fully discard invalid staged OTA: %s",
+                     esp_err_to_name(discard_err));
+        }
+        return err;
+    }
+    s_pending_image_verified = true;
+    ESP_LOGI(TAG, "Staged OTA preflight verified: version=%s partition=%s",
+             version, partition->label);
+    return ESP_OK;
+}
+
+/* Boot selection is deliberately fast. The background preflight must have
+ * hashed the staged image before output shutdown; do not repeat a megabyte-scale
+ * flash read in the button callback or after the inverter has been shut down. */
 esp_err_t ota_service_select_pending_for_boot(void)
 {
+    if (!s_pending_image_verified) return ESP_ERR_INVALID_STATE;
     char label[17] = {0}, version[OTA_MAX_VERSION_LENGTH] = {0};
     esp_err_t err = ota_pending_read(label, sizeof(label), version, sizeof(version));
     if (err != ESP_OK) return err;
@@ -565,11 +773,21 @@ esp_err_t ota_service_select_pending_for_boot(void)
         ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
     if (partition == NULL) return ESP_ERR_NOT_FOUND;
     if (partition == esp_ota_get_running_partition()) return ESP_ERR_INVALID_STATE;
+
+    char current_version[OTA_MAX_VERSION_LENGTH] = {0};
+    err = ota_service_get_current_version(current_version, sizeof(current_version));
+    if (err != ESP_OK || ota_manifest_compare_versions(version, current_version) <= 0) {
+        s_pending_image_verified = false;
+        return err != ESP_OK ? err : ESP_ERR_INVALID_VERSION;
+    }
+
+    ESP_LOGI(TAG, "Applying staged OTA: version=%s target=%s preflight=verified",
+             version, partition->label);
     err = esp_ota_set_boot_partition(partition);
+    ESP_LOGI(TAG, "OTA boot selection result: version=%s target=%s result=%s",
+             version, partition->label, esp_err_to_name(err));
     if (err != ESP_OK) return err;
-    /* Boot-target selection succeeded, so activation must not be reported as
-     * failed merely because cleanup metadata could not be committed. A stale
-     * marker is filtered on the next boot by checking the running partition. */
+
     const esp_err_t clear_err = ota_service_clear_pending();
     if (clear_err != ESP_OK) {
         ESP_LOGW(TAG, "Selected update boot target; pending marker cleanup failed: %s",
@@ -580,6 +798,7 @@ esp_err_t ota_service_select_pending_for_boot(void)
 
 esp_err_t ota_service_clear_pending(void)
 {
+    s_pending_image_verified = false;
     nvs_handle_t handle;
     esp_err_t err = nvs_open(OTA_PENDING_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) return err;
@@ -597,20 +816,10 @@ esp_err_t ota_service_delete_pending(void)
 
     const esp_partition_t *partition = esp_partition_find_first(
         ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
-    if (partition == NULL) return ESP_ERR_NOT_FOUND;
-
-    /* Never erase the running image or whichever partition is already selected
-     * for the next boot. This guards against stale metadata after a partial apply. */
-    if (partition == esp_ota_get_running_partition() ||
-        partition == esp_ota_get_boot_partition()) {
-        return ESP_ERR_INVALID_STATE;
+    if (partition == NULL) {
+        return ota_pending_discard_partition(NULL);
     }
-
-    /* Clear the pointer first: even if erase fails, an incomplete image can
-     * never remain advertised as installable or be selected by the UI. */
-    err = ota_service_clear_pending();
-    if (err != ESP_OK) return err;
-    return esp_partition_erase_range(partition, 0U, partition->size);
+    return ota_pending_discard_partition(partition);
 }
 
 bool ota_service_in_progress(void)

@@ -59,14 +59,18 @@ jobs:
           test -s "${bin}"
           size="$(wc -c < "${bin}" | tr -d '[:space:]')"
           max_size=$((0x180000))
-          if (( size <= 0 || size > max_size )); then
-            echo "::error::Firmware size ${size} bytes does not fit the 0x180000-byte OTA app partition."
+          # Keep a 5% reserve for partition-layout/toolchain differences and
+          # future image growth. Failing at 95% is intentional, not a warning.
+          fail_size=$((max_size * 95 / 100))
+          if (( size <= 0 || size >= fail_size )); then
+            echo "::error::Firmware size ${size} bytes must be below the 95% safety limit (${fail_size} bytes) for the 0x180000-byte OTA app partition."
             exit 1
           fi
           sha256="$(sha256sum "${bin}" | awk '{print $1}')"
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/firmware.bin"
+          asset_name="inverter-${GITHUB_REF_NAME}.bin"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${asset_name}"
           mkdir -p release-assets
-          cp "${bin}" release-assets/firmware.bin
+          cp "${bin}" "release-assets/${asset_name}"
           printf 'version,url,sha256,size\n%s,%s,%s,%s\n' "${GITHUB_REF_NAME}" "${url}" "${sha256}" "${size}" > release-assets/inverter.csv
           echo "Prepared manifest:"
           cat release-assets/inverter.csv

@@ -78,8 +78,14 @@ esp_err_t ota_service_register_status_callback(ota_status_callback_t callback);
  * approves a restart. Pending metadata survives ordinary restarts and power loss. */
 bool ota_service_update_pending(void);
 esp_err_t ota_service_get_pending_version(char *buffer, size_t len);
+/* Worker-task preflight: validate version and re-hash the staged image before
+ * inverter output is shut down. Do not call from a button/LCD rendering path.
+ * Invalid or stale staged metadata is cleared and the image is discarded. */
+esp_err_t ota_service_validate_pending_for_apply(void);
+/** True only after the staged payload passed background SHA-256 preflight. */
+bool ota_service_pending_image_verified(void);
 /* Selects the staged image as the next boot target; does not reboot or stop
- * inverter output. Caller must first complete the existing safe shutdown. */
+ * inverter output. Caller must validate first and complete the safe shutdown. */
 esp_err_t ota_service_select_pending_for_boot(void);
 esp_err_t ota_service_clear_pending(void);
 /** Erase the inactive staged image and clear its persistent pending marker. */
