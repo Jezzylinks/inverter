@@ -163,7 +163,7 @@ static esp_err_t wifi_https_start_optional(void)
     httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
     config.port_secure = WIFI_HTTPS_SERVER_PORT;
     config.httpd.max_uri_handlers = 13U;
-    config.httpd.max_open_sockets = 2U;
+    config.httpd.max_open_sockets = 1U;
     config.httpd.stack_size = 10240U;
     config.httpd.lru_purge_enable = true;
     config.servercert = (const uint8_t *)s_https_cert_pem;
@@ -376,9 +376,10 @@ static esp_err_t http_landing_handler(httpd_req_t *req)
 
 static esp_err_t http_sensitive_action_blocked(httpd_req_t *req)
 {
-    (void)req;
-    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                               "Sensitive actions require HTTPS. Open https://192.168.4.1/");
+    (void)httpd_resp_set_status(req, "426 Upgrade Required");
+    (void)httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    return httpd_resp_sendstr(req,
+                              "Sensitive actions require HTTPS. Open https://192.168.4.1/");
 }
 
 static esp_err_t root_handler(httpd_req_t *req)
