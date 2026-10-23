@@ -28,7 +28,6 @@
 #define WIFI_HTTP_SCAN_BYTES 4096U
 #define WIFI_HTTP_CALLBACK_STACK 3072U
 #define WIFI_HTTP_CALLBACK_PRIORITY 4U
-#define WIFI_HTTPS_SERVER_PORT 443U
 #define WIFI_HTTPS_CERT_PATH "/spiffs/https_server.crt"
 #define WIFI_HTTPS_KEY_PATH "/spiffs/https_server.key"
 #define WIFI_HTTPS_MAX_PEM_BYTES 8192U
@@ -160,10 +159,10 @@ static esp_err_t wifi_https_start_optional(void)
     }
 
     httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
-    config.httpd.server_port = WIFI_HTTPS_SERVER_PORT;
-    config.httpd.ctrl_port = HTTPD_SSL_DEFAULT_PORT;
+    config.port_secure = WIFI_HTTPS_SERVER_PORT;
     config.httpd.max_uri_handlers = 13U;
-    config.httpd.stack_size = WIFI_HTTP_STACK_SIZE;
+    config.httpd.max_open_sockets = 2U;
+    config.httpd.stack_size = 10240U;
     config.httpd.lru_purge_enable = true;
     config.servercert = (const uint8_t *)s_https_cert_pem;
     config.servercert_len = cert_len;
