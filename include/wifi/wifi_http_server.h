@@ -15,6 +15,7 @@ extern "C" {
 #include "esp_err.h"
 
 #define WIFI_HTTP_SERVER_PORT 80U
+#define WIFI_HTTPS_SERVER_PORT 443U
 #define WIFI_HTTP_MAX_FORM_BYTES 256U
 
 /**
@@ -32,6 +33,9 @@ esp_err_t wifi_http_server_stop(void);
 
 /** True only while the HTTP server handle is valid. */
 bool wifi_http_server_running(void);
+
+/** True only while the optional TLS server is running on port 443. */
+bool wifi_https_server_running(void);
 
 /** Register the single provisioning-complete callback; NULL clears it. */
 esp_err_t wifi_http_server_register_save_callback(
