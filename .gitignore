@@ -7,3 +7,7 @@ managed_components/
 sdkconfig
 sdkconfig.*
 !sdkconfig.defaults
+
+# Device-local HTTPS identity (never commit private keys)
+data/https_server.crt
+data/https_server.key
