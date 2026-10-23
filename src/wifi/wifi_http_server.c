@@ -8,8 +8,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "esp_http_server.h"
+#include "esp_https_server.h"
+#include "esp_spiffs.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -25,8 +28,16 @@
 #define WIFI_HTTP_SCAN_BYTES 4096U
 #define WIFI_HTTP_CALLBACK_STACK 3072U
 #define WIFI_HTTP_CALLBACK_PRIORITY 4U
+#define WIFI_HTTPS_CERT_PATH "/spiffs/https_server.crt"
+#define WIFI_HTTPS_KEY_PATH "/spiffs/https_server.key"
+#define WIFI_HTTPS_MAX_PEM_BYTES 8192U
+#define WIFI_HTTPS_SPIFFS_PARTITION "spiffs"
 
 static httpd_handle_t s_server;
+static httpd_handle_t s_https_server;
+static char *s_https_cert_pem;
+static char *s_https_key_pem;
+static bool s_https_spiffs_mounted;
 static SemaphoreHandle_t s_mutex;
 static wifi_http_save_callback_t s_save_callback;
 
@@ -37,8 +48,155 @@ static esp_err_t scan_handler(httpd_req_t *req);
 static esp_err_t reset_handler(httpd_req_t *req);
 static esp_err_t redirect_handler(httpd_req_t *req);
 static esp_err_t captive_redirect_handler(httpd_req_t *req);
+static esp_err_t http_landing_handler(httpd_req_t *req);
+static esp_err_t http_sensitive_action_blocked(httpd_req_t *req);
+
+static esp_err_t wifi_https_mount_spiffs(void)
+{
+    if (s_https_spiffs_mounted) {
+        return ESP_OK;
+    }
+
+    const esp_vfs_spiffs_conf_t conf = {
+        .base_path = "/spiffs",
+        .partition_label = WIFI_HTTPS_SPIFFS_PARTITION,
+        .max_files = 4,
+        .format_if_mount_failed = false,
+    };
+    esp_err_t err = esp_vfs_spiffs_register(&conf);
+    if (err == ESP_ERR_INVALID_STATE) {
+        /* Another subsystem may already have mounted this partition. */
+        size_t total = 0U, used = 0U;
+        err = esp_spiffs_info(WIFI_HTTPS_SPIFFS_PARTITION, &total, &used);
+        if (err == ESP_OK) {
+            s_https_spiffs_mounted = true;
+        }
+        return err;
+    }
+    if (err == ESP_OK) {
+        s_https_spiffs_mounted = true;
+    }
+    return err;
+}
+
+static char *wifi_https_read_pem(const char *path, size_t *out_len)
+{
+    struct stat st;
+    if (path == NULL || out_len == NULL || stat(path, &st) != 0 ||
+        st.st_size <= 0 || (size_t)st.st_size > WIFI_HTTPS_MAX_PEM_BYTES) {
+        return NULL;
+    }
+
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) {
+        return NULL;
+    }
+    const size_t size = (size_t)st.st_size;
+    char *buffer = calloc(size + 1U, 1U);
+    if (buffer == NULL) {
+        fclose(file);
+        return NULL;
+    }
+    const size_t read_count = fread(buffer, 1U, size, file);
+    fclose(file);
+    if (read_count != size || strstr(buffer, "-----BEGIN ") == NULL ||
+        strstr(buffer, "-----END ") == NULL) {
+        memset(buffer, 0, size + 1U);
+        free(buffer);
+        return NULL;
+    }
+    *out_len = size + 1U;
+    return buffer;
+}
+
+static void wifi_https_release_credentials(void)
+{
+    if (s_https_cert_pem != NULL) {
+        free(s_https_cert_pem);
+        s_https_cert_pem = NULL;
+    }
+    if (s_https_key_pem != NULL) {
+        memset(s_https_key_pem, 0, strlen(s_https_key_pem));
+        free(s_https_key_pem);
+        s_https_key_pem = NULL;
+    }
+}
+
+static esp_err_t wifi_https_register_routes(httpd_handle_t server)
+{
+    const httpd_uri_t *const routes[] = {
+        &s_root_uri, &s_save_uri, &s_status_uri, &s_scan_uri, &s_reset_uri,
+        &s_generate_204_uri, &s_gen_204_uri, &s_hotspot_uri, &s_success_html_uri,
+        &s_ncsi_uri, &s_connecttest_uri, &s_success_txt_uri, &s_redirect_uri,
+    };
+    for (size_t i = 0U; i < sizeof(routes) / sizeof(routes[0]); ++i) {
+        const esp_err_t err = httpd_register_uri_handler(server, routes[i]);
+        if (err != ESP_OK) {
+            ESP_LOGE(WIFI_HTTP_TAG, "HTTPS route registration failed for %s: %s",
+                     routes[i]->uri, esp_err_to_name(err));
+            return err;
+        }
+    }
+    return ESP_OK;
+}
+
+static esp_err_t wifi_https_start_optional(void)
+{
+    esp_err_t err = wifi_https_mount_spiffs();
+    if (err != ESP_OK) {
+        ESP_LOGW(WIFI_HTTP_TAG,
+                 "HTTPS unavailable: SPIFFS mount failed (%s); HTTP captive portal remains available",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    size_t cert_len = 0U, key_len = 0U;
+    s_https_cert_pem = wifi_https_read_pem(WIFI_HTTPS_CERT_PATH, &cert_len);
+    s_https_key_pem = wifi_https_read_pem(WIFI_HTTPS_KEY_PATH, &key_len);
+    if (s_https_cert_pem == NULL || s_https_key_pem == NULL) {
+        ESP_LOGW(WIFI_HTTP_TAG,
+                 "HTTPS certificate/key missing or invalid; create device-local PEM files and upload SPIFFS");
+        wifi_https_release_credentials();
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
+    config.port_secure = WIFI_HTTPS_SERVER_PORT;
+    config.httpd.max_uri_handlers = 13U;
+    config.httpd.max_open_sockets = 1U;
+    config.httpd.stack_size = 10240U;
+    config.httpd.lru_purge_enable = true;
+    config.servercert = (const uint8_t *)s_https_cert_pem;
+    config.servercert_len = cert_len;
+    config.prvtkey_pem = (const uint8_t *)s_https_key_pem;
+    config.prvtkey_len = key_len;
+
+    httpd_handle_t server = NULL;
+    err = httpd_ssl_start(&server, &config);
+    if (err != ESP_OK) {
+        ESP_LOGW(WIFI_HTTP_TAG,
+                 "HTTPS server start failed: %s; HTTP captive portal remains available",
+                 esp_err_to_name(err));
+        wifi_https_release_credentials();
+        return err;
+    }
+
+    err = wifi_https_register_routes(server);
+    if (err != ESP_OK) {
+        (void)httpd_ssl_stop(server);
+        wifi_https_release_credentials();
+        return err;
+    }
+    s_https_server = server;
+    ESP_LOGI(WIFI_HTTP_TAG, "HTTPS provisioning server started on port %u",
+             WIFI_HTTPS_SERVER_PORT);
+    return ESP_OK;
+}
 
 static const httpd_uri_t s_root_uri = {.uri = "/", .method = HTTP_GET, .handler = root_handler};
+static const httpd_uri_t s_http_root_uri = {.uri = "/", .method = HTTP_GET, .handler = http_landing_handler};
+static const httpd_uri_t s_http_save_uri = {.uri = "/save", .method = HTTP_POST, .handler = http_sensitive_action_blocked};
+static const httpd_uri_t s_http_reset_uri = {.uri = "/reset", .method = HTTP_POST, .handler = http_sensitive_action_blocked};
 static const httpd_uri_t s_save_uri = {.uri = "/save", .method = HTTP_POST, .handler = save_handler};
 static const httpd_uri_t s_status_uri = {.uri = "/status", .method = HTTP_GET, .handler = status_handler};
 static const httpd_uri_t s_scan_uri = {.uri = "/scan", .method = HTTP_GET, .handler = scan_handler};
@@ -200,6 +358,28 @@ static esp_err_t wifi_http_schedule_save_callback(void)
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
+}
+
+
+static esp_err_t http_landing_handler(httpd_req_t *req)
+{
+    static const char page[] =
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Vonix Inverter Secure Setup</title></head><body>"
+        "<h2>Vonix Inverter</h2><p>Secure setup is available over HTTPS.</p>"
+        "<p><a href='https://192.168.4.1/'>Open secure Wi-Fi setup</a></p>"
+        "<p>Your browser may warn because this device uses a locally generated certificate. "
+        "Only proceed if you are connected directly to your own inverter.</p></body></html>";
+    return wifi_http_send_text(req, "200 OK", "text/html; charset=utf-8", page);
+}
+
+static esp_err_t http_sensitive_action_blocked(httpd_req_t *req)
+{
+    (void)httpd_resp_set_status(req, "426 Upgrade Required");
+    (void)httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    return httpd_resp_sendstr(req,
+                              "Sensitive actions require HTTPS. Open https://192.168.4.1/");
 }
 
 static esp_err_t root_handler(httpd_req_t *req)
@@ -384,7 +564,7 @@ esp_err_t wifi_http_server_start(void)
     }
 
     const httpd_uri_t *const routes[] = {
-        &s_root_uri, &s_save_uri, &s_status_uri, &s_scan_uri, &s_reset_uri,
+        &s_http_root_uri, &s_http_save_uri, &s_status_uri, &s_scan_uri, &s_http_reset_uri,
         &s_generate_204_uri, &s_gen_204_uri, &s_hotspot_uri, &s_success_html_uri,
         &s_ncsi_uri, &s_connecttest_uri, &s_success_txt_uri, &s_redirect_uri,
     };
@@ -402,6 +582,10 @@ esp_err_t wifi_http_server_start(void)
     s_server = server;
     wifi_http_unlock();
     ESP_LOGI(WIFI_HTTP_TAG, "Provisioning HTTP server started on port %u", WIFI_HTTP_SERVER_PORT);
+
+    /* Keep HTTP for OS captive-portal detection; offer the same handlers on
+     * HTTPS for users who explicitly open https://192.168.4.1/. */
+    (void)wifi_https_start_optional();
     return ESP_OK;
 }
 
@@ -416,13 +600,28 @@ esp_err_t wifi_http_server_stop(void)
         return ESP_OK;
     }
 
+    esp_err_t first_err = ESP_OK;
+    if (s_https_server != NULL) {
+        httpd_handle_t https_server = s_https_server;
+        s_https_server = NULL;
+        const esp_err_t https_err = httpd_ssl_stop(https_server);
+        if (https_err != ESP_OK) {
+            ESP_LOGW(WIFI_HTTP_TAG, "HTTPS stop failed: %s", esp_err_to_name(https_err));
+            first_err = https_err;
+        } else {
+            ESP_LOGI(WIFI_HTTP_TAG, "Provisioning HTTPS server stopped");
+        }
+        wifi_https_release_credentials();
+    }
+
     const esp_err_t err = httpd_stop(server);
     if (err != ESP_OK) {
         ESP_LOGW(WIFI_HTTP_TAG, "HTTP stop failed: %s", esp_err_to_name(err));
+        if (first_err == ESP_OK) first_err = err;
     } else {
         ESP_LOGI(WIFI_HTTP_TAG, "Provisioning HTTP server stopped");
     }
-    return err;
+    return first_err;
 }
 
 bool wifi_http_server_running(void)
@@ -431,6 +630,12 @@ bool wifi_http_server_running(void)
     const bool running = s_server != NULL;
     wifi_http_unlock();
     return running;
+}
+
+
+bool wifi_https_server_running(void)
+{
+    return s_https_server != NULL;
 }
 
 esp_err_t wifi_http_server_register_save_callback(wifi_http_save_callback_t callback)
