@@ -48,6 +48,8 @@ static esp_err_t scan_handler(httpd_req_t *req);
 static esp_err_t reset_handler(httpd_req_t *req);
 static esp_err_t redirect_handler(httpd_req_t *req);
 static esp_err_t captive_redirect_handler(httpd_req_t *req);
+static esp_err_t http_landing_handler(httpd_req_t *req);
+static esp_err_t http_sensitive_action_blocked(httpd_req_t *req);
 
 static esp_err_t wifi_https_mount_spiffs(void)
 {
@@ -192,6 +194,9 @@ static esp_err_t wifi_https_start_optional(void)
 }
 
 static const httpd_uri_t s_root_uri = {.uri = "/", .method = HTTP_GET, .handler = root_handler};
+static const httpd_uri_t s_http_root_uri = {.uri = "/", .method = HTTP_GET, .handler = http_landing_handler};
+static const httpd_uri_t s_http_save_uri = {.uri = "/save", .method = HTTP_POST, .handler = http_sensitive_action_blocked};
+static const httpd_uri_t s_http_reset_uri = {.uri = "/reset", .method = HTTP_POST, .handler = http_sensitive_action_blocked};
 static const httpd_uri_t s_save_uri = {.uri = "/save", .method = HTTP_POST, .handler = save_handler};
 static const httpd_uri_t s_status_uri = {.uri = "/status", .method = HTTP_GET, .handler = status_handler};
 static const httpd_uri_t s_scan_uri = {.uri = "/scan", .method = HTTP_GET, .handler = scan_handler};
@@ -353,6 +358,27 @@ static esp_err_t wifi_http_schedule_save_callback(void)
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
+}
+
+
+static esp_err_t http_landing_handler(httpd_req_t *req)
+{
+    static const char page[] =
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Vonix Inverter Secure Setup</title></head><body>"
+        "<h2>Vonix Inverter</h2><p>Secure setup is available over HTTPS.</p>"
+        "<p><a href='https://192.168.4.1/'>Open secure Wi-Fi setup</a></p>"
+        "<p>Your browser may warn because this device uses a locally generated certificate. "
+        "Only proceed if you are connected directly to your own inverter.</p></body></html>";
+    return wifi_http_send_text(req, "200 OK", "text/html; charset=utf-8", page);
+}
+
+static esp_err_t http_sensitive_action_blocked(httpd_req_t *req)
+{
+    (void)req;
+    return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                               "Sensitive actions require HTTPS. Open https://192.168.4.1/");
 }
 
 static esp_err_t root_handler(httpd_req_t *req)
@@ -537,7 +563,7 @@ esp_err_t wifi_http_server_start(void)
     }
 
     const httpd_uri_t *const routes[] = {
-        &s_root_uri, &s_save_uri, &s_status_uri, &s_scan_uri, &s_reset_uri,
+        &s_http_root_uri, &s_http_save_uri, &s_status_uri, &s_scan_uri, &s_http_reset_uri,
         &s_generate_204_uri, &s_gen_204_uri, &s_hotspot_uri, &s_success_html_uri,
         &s_ncsi_uri, &s_connecttest_uri, &s_success_txt_uri, &s_redirect_uri,
     };
