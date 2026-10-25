@@ -122,23 +122,6 @@ static void wifi_https_release_credentials(void)
     }
 }
 
-static esp_err_t wifi_https_register_routes(httpd_handle_t server)
-{
-    const httpd_uri_t *const routes[] = {
-        &s_root_uri, &s_save_uri, &s_status_uri, &s_scan_uri, &s_reset_uri,
-        &s_generate_204_uri, &s_gen_204_uri, &s_hotspot_uri, &s_success_html_uri,
-        &s_ncsi_uri, &s_connecttest_uri, &s_success_txt_uri, &s_redirect_uri,
-    };
-    for (size_t i = 0U; i < sizeof(routes) / sizeof(routes[0]); ++i) {
-        const esp_err_t err = httpd_register_uri_handler(server, routes[i]);
-        if (err != ESP_OK) {
-            ESP_LOGE(WIFI_HTTP_TAG, "HTTPS route registration failed for %s: %s",
-                     routes[i]->uri, esp_err_to_name(err));
-            return err;
-        }
-    }
-    return ESP_OK;
-}
 
 static esp_err_t wifi_https_start_optional(void)
 {
@@ -209,6 +192,25 @@ static const httpd_uri_t s_ncsi_uri = {.uri = "/ncsi.txt", .method = HTTP_GET, .
 static const httpd_uri_t s_connecttest_uri = {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = captive_redirect_handler};
 static const httpd_uri_t s_success_txt_uri = {.uri = "/success.txt", .method = HTTP_GET, .handler = captive_redirect_handler};
 static const httpd_uri_t s_redirect_uri = {.uri = "/*", .method = HTTP_GET, .handler = redirect_handler};
+
+static esp_err_t wifi_https_register_routes(httpd_handle_t server)
+{
+    const httpd_uri_t *const routes[] = {
+        &s_root_uri, &s_save_uri, &s_status_uri, &s_scan_uri, &s_reset_uri,
+        &s_generate_204_uri, &s_gen_204_uri, &s_hotspot_uri, &s_success_html_uri,
+        &s_ncsi_uri, &s_connecttest_uri, &s_success_txt_uri, &s_redirect_uri,
+    };
+    for (size_t i = 0U; i < sizeof(routes) / sizeof(routes[0]); ++i) {
+        const esp_err_t err = httpd_register_uri_handler(server, routes[i]);
+        if (err != ESP_OK) {
+            ESP_LOGE(WIFI_HTTP_TAG, "HTTPS route registration failed for %s: %s",
+                     routes[i]->uri, esp_err_to_name(err));
+            return err;
+        }
+    }
+    return ESP_OK;
+}
+
 
 static void wifi_http_lock(void)
 {
