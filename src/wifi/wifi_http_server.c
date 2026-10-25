@@ -50,6 +50,7 @@ static esp_err_t redirect_handler(httpd_req_t *req);
 static esp_err_t captive_redirect_handler(httpd_req_t *req);
 static esp_err_t http_landing_handler(httpd_req_t *req);
 static esp_err_t http_sensitive_action_blocked(httpd_req_t *req);
+static esp_err_t wifi_https_register_routes(httpd_handle_t server);
 
 static esp_err_t wifi_https_mount_spiffs(void)
 {
