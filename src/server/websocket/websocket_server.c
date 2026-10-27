@@ -598,12 +598,7 @@ esp_err_t websocket_server_register(httpd_handle_t server)
         return ESP_ERR_INVALID_ARG;
     }
 
-    esp_err_t ret = httpd_register_uri_handler(server, &ws_uri);
-    if (ret == ESP_OK)
-    {
-    }
-
-    return ret;
+    return httpd_register_uri_handler(server, &ws_uri);
 }
 
 esp_err_t websocket_server_unregister(httpd_handle_t server)
