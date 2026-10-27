@@ -259,17 +259,26 @@ static void mqtt_message_callback(const mqtt_message_t *message)
 
 static void cleanup_http_services(void)
 {
+    /* json_api_server_stop() unregisters from the most recently registered
+     * handle (HTTPS when active). The plain HTTP listener is stopped below,
+     * which releases its own URI table as well. */
+    (void)json_api_server_stop();
+    if (s_https_server != NULL) {
+        (void)websocket_server_unregister(s_https_server);
+        (void)web_dashboard_server_unregister(s_https_server);
+        (void)httpd_ssl_stop(s_https_server);
+        s_https_server = NULL;
+    }
     (void)web_dashboard_server_unregister(s_http_server);
     s_dashboard_running = false;
-    (void)web_dashboard_server_deinit();
     (void)websocket_server_unregister(s_http_server);
     s_websocket_running = false;
-    (void)json_api_server_stop();
     (void)websocket_server_deinit();
     if (s_http_server != NULL) {
         (void)httpd_stop(s_http_server);
         s_http_server = NULL;
     }
+    (void)web_dashboard_server_deinit();
 }
 
 static esp_err_t start_mqtt_if_enabled(void)
@@ -499,6 +508,7 @@ esp_err_t network_services_init(void)
         return err;
     }
     s_http_server = NULL;
+    s_https_server = NULL;
     s_running = false;
     s_mdns_running = false;
     s_captive_dns_running = false;
@@ -627,6 +637,10 @@ static esp_err_t network_services_start_locked(void)
     }
     s_websocket_running = true;
     NS_HEAP("start:websocket");
+
+    /* HTTPS mirrors the same local interface. It is optional so a missing
+     * device-local certificate never breaks the existing HTTP UI. */
+    (void)network_services_start_https_dashboard();
 
     err = mdns_service_init(device_identity_hostname());
     if (err == ESP_OK) {
