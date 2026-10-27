@@ -118,7 +118,8 @@ esp_err_t mqtt_config_load(network_mqtt_config_t *config)
         nvs_get_string(handle, NETWORK_MQTT_CLIENT_ID_KEY, config->client_id,
                        sizeof(config->client_id));
     /* Missing/empty IDs use this unit's default; preserve configured IDs. */
-    if (client_id_err != ESP_OK || config->client_id[0] == '\0') {
+    if (client_id_err != ESP_OK || config->client_id[0] == '\0' ||
+        strcmp(config->client_id, WIFI_HOSTNAME) == 0) {
         (void)snprintf(config->client_id, sizeof(config->client_id), "%s",
                        device_identity_hostname());
     }

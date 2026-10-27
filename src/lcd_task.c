@@ -1606,7 +1606,7 @@ static void draw_wifi_status(const lcd_wifi_status_data_t *d)
     {
         char row0[LCD_LINE_SIZE];
         char row1[LCD_LINE_SIZE];
-        switch (d->page % 5U)
+        switch (d->page % 6U)
         {
         case 0:
             snprintf(row0, LCD_LINE_SIZE, "WiFi: %-10.10s", d->state);
@@ -1625,9 +1625,14 @@ static void draw_wifi_status(const lcd_wifi_status_data_t *d)
             snprintf(row1, LCD_LINE_SIZE, "%s",
                      d->connected ? (d->internet_available ? "Available" : "Offline") : "N/A");
             break;
+        case 4:
+            snprintf(row0, LCD_LINE_SIZE, "Device name 1/2");
+            snprintf(row1, LCD_LINE_SIZE, "%.16s", d->hostname);
+            break;
         default:
-            snprintf(row0, LCD_LINE_SIZE, "Device name:");
-            snprintf(row1, LCD_LINE_SIZE, "%-16.16s", d->hostname);
+            snprintf(row0, LCD_LINE_SIZE, "Device name 2/2");
+            snprintf(row1, LCD_LINE_SIZE, "%s",
+                     strlen(d->hostname) > 16U ? d->hostname + 16U : "");
             break;
         }
         draw_commit(row0, row1);
