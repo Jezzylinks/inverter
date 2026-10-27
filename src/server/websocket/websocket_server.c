@@ -35,6 +35,7 @@ static const char *TAG = "WS_SERVER";
  *---------------------------------------------------------*/
 typedef struct
 {
+    httpd_handle_t server;
     int fd;
     bool active;
     bool authenticated;
@@ -43,18 +44,17 @@ typedef struct
 
 static ws_client_t s_clients[WS_MAX_CLIENTS];
 static SemaphoreHandle_t s_mutex = NULL;
-static httpd_handle_t s_server = NULL;
 static bool s_initialized = false;
 extern system_state_t sys_state;
 
 /*----------------------------------------------------------
  * Find or allocate client slot
  *---------------------------------------------------------*/
-static int ws_find_client(int fd)
+static int ws_find_client(httpd_handle_t server, int fd)
 {
     for (int i = 0; i < WS_MAX_CLIENTS; i++)
     {
-        if (s_clients[i].active && s_clients[i].fd == fd)
+        if (s_clients[i].active && s_clients[i].server == server && s_clients[i].fd == fd)
         {
             return i;
         }
@@ -68,6 +68,7 @@ static int ws_alloc_client(httpd_handle_t server, int fd)
     {
         if (!s_clients[i].active)
         {
+            s_clients[i].server = server;
             s_clients[i].fd = fd;
             s_clients[i].active = true;
             s_clients[i].authenticated = !sys_state.security.enabled;
@@ -79,12 +80,13 @@ static int ws_alloc_client(httpd_handle_t server, int fd)
     return -1;
 }
 
-static void ws_remove_client(int fd)
+static void ws_remove_client(httpd_handle_t server, int fd)
 {
-    int idx = ws_find_client(fd);
+    int idx = ws_find_client(server, fd);
     if (idx >= 0)
     {
         s_clients[idx].active = false;
+        s_clients[idx].server = NULL;
         s_clients[idx].fd = -1;
         s_clients[idx].authenticated = false;
         s_clients[idx].subscribed = false;
@@ -143,7 +145,7 @@ static cJSON *status_json_create(const wifi_status_t *status)
 
 static void websocket_broadcast_json(cJSON *root, bool require_subscription)
 {
-    if (!s_initialized || root == NULL || s_server == NULL) {
+    if (!s_initialized || root == NULL) {
         cJSON_Delete(root);
         return;
     }
@@ -168,7 +170,7 @@ static void websocket_broadcast_json(cJSON *root, bool require_subscription)
             .payload = (uint8_t *)json_str,
             .len = strlen(json_str),
         };
-        const esp_err_t err = httpd_ws_send_frame_async(s_server,
+        const esp_err_t err = httpd_ws_send_frame_async(s_clients[i].server,
                                                         s_clients[i].fd,
                                                         &ws_pkt);
         if (err != ESP_OK) {
@@ -334,11 +336,11 @@ static bool ws_authorized(httpd_req_t *req)
     return valid;
 }
 
-static esp_err_t ws_send_json(int fd, cJSON *root)
+static esp_err_t ws_send_json(httpd_handle_t server, int fd, cJSON *root)
 {
     char *payload = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
-    if (payload == NULL || s_server == NULL) {
+    if (payload == NULL || server == NULL) {
         free(payload);
         return ESP_ERR_NO_MEM;
     }
@@ -349,7 +351,7 @@ static esp_err_t ws_send_json(int fd, cJSON *root)
         .payload = (uint8_t *)payload,
         .len = strlen(payload),
     };
-    const esp_err_t err = httpd_ws_send_frame_async(s_server, fd, &frame);
+    const esp_err_t err = httpd_ws_send_frame_async(server, fd, &frame);
     free(payload);
     return err;
 }
@@ -373,7 +375,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
         if (s_mutex) {
             xSemaphoreTake(s_mutex, portMAX_DELAY);
         }
-        int client_idx = ws_find_client(fd);
+        int client_idx = ws_find_client(req->handle, fd);
         if (client_idx < 0) {
             client_idx = ws_alloc_client(req->handle, fd);
         }
@@ -422,7 +424,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
                 if (s_mutex) {
                     xSemaphoreTake(s_mutex, portMAX_DELAY);
                 }
-                client_idx = ws_find_client(fd);
+                client_idx = ws_find_client(req->handle, fd);
                 if (client_idx < 0) {
                     client_idx = ws_alloc_client(req->handle, fd);
                 }
@@ -458,14 +460,14 @@ static esp_err_t ws_handler(httpd_req_t *req)
                         if (!valid) {
                             cJSON_AddStringToObject(reply, "error", "invalid_pin");
                         }
-                        (void)ws_send_json(fd, reply);
+                        (void)ws_send_json(req->handle, fd, reply);
                     }
                     else if (!already_authenticated)
                     {
                         cJSON *reply = cJSON_CreateObject();
                         cJSON_AddStringToObject(reply, "type", "error");
                         cJSON_AddStringToObject(reply, "error", "authentication_required");
-                        (void)ws_send_json(fd, reply);
+                        (void)ws_send_json(req->handle, fd, reply);
                     }
                     else if (strcmp(cmd_str, "get_status") == 0)
                     {
@@ -473,7 +475,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
                         wifi_status_t status;
                         if (wifi_events_get_status_copy(&status) == ESP_OK)
                         {
-                            (void)ws_send_json(fd, status_json_create(&status));
+                            (void)ws_send_json(req->handle, fd, status_json_create(&status));
                         }
                     }
                     else if (strcmp(cmd_str, "subscribe") == 0)
@@ -483,7 +485,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
                         {
                             xSemaphoreTake(s_mutex, portMAX_DELAY);
                         }
-                        int subscribed_idx = ws_find_client(fd);
+                        int subscribed_idx = ws_find_client(req->handle, fd);
                         if (subscribed_idx < 0) {
                             subscribed_idx = ws_alloc_client(req->handle, fd);
                         }
@@ -502,7 +504,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
                         wifi_status_t status;
                         if (wifi_events_get_status_copy(&status) == ESP_OK)
                         {
-                            (void)ws_send_json(fd, status_json_create(&status));
+                            (void)ws_send_json(req->handle, fd, status_json_create(&status));
                         }
                     }
                 }
@@ -519,7 +521,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
         {
             xSemaphoreTake(s_mutex, portMAX_DELAY);
         }
-        ws_remove_client(fd);
+        ws_remove_client(req->handle, fd);
         if (s_mutex)
         {
             xSemaphoreGive(s_mutex);
@@ -599,7 +601,6 @@ esp_err_t websocket_server_register(httpd_handle_t server)
     esp_err_t ret = httpd_register_uri_handler(server, &ws_uri);
     if (ret == ESP_OK)
     {
-        s_server = server;
     }
 
     return ret;
@@ -617,9 +618,22 @@ esp_err_t websocket_server_unregister(httpd_handle_t server)
         "/ws",
         HTTP_GET);
 
-    if (ret == ESP_OK && s_server == server)
-    {
-        s_server = NULL;
+    if (ret == ESP_OK) {
+        if (s_mutex != NULL) {
+            xSemaphoreTake(s_mutex, portMAX_DELAY);
+        }
+        for (int i = 0; i < WS_MAX_CLIENTS; ++i) {
+            if (s_clients[i].active && s_clients[i].server == server) {
+                s_clients[i].server = NULL;
+                s_clients[i].fd = -1;
+                s_clients[i].active = false;
+                s_clients[i].authenticated = false;
+                s_clients[i].subscribed = false;
+            }
+        }
+        if (s_mutex != NULL) {
+            xSemaphoreGive(s_mutex);
+        }
     }
 
     return ret;
