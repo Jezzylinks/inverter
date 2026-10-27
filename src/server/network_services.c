@@ -32,6 +32,7 @@
 #define NETWORK_HTTP_PORT 80U
 #define NETWORK_HTTPS_PORT 443U
 #define NETWORK_HTTP_STACK_SIZE 8192U
+#define NETWORK_HTTP_MAX_OPEN_SOCKETS 3U
 #define NETWORK_HTTPS_STACK_SIZE 10240U
 #define NETWORK_HTTPS_MAX_OPEN_SOCKETS 2U
 #define NETWORK_HTTPS_MAX_PEM_BYTES 8192U
@@ -581,6 +582,8 @@ static esp_err_t network_services_start_locked(void)
     httpd_config_t http_config = HTTPD_DEFAULT_CONFIG();
     http_config.server_port = NETWORK_HTTP_PORT;
     http_config.max_uri_handlers = NETWORK_HTTP_MAX_URI_HANDLERS;
+    /* Leave room in LWIP for the TLS listener, captive DNS, MQTT and NTP. */
+    http_config.max_open_sockets = NETWORK_HTTP_MAX_OPEN_SOCKETS;
     http_config.stack_size = NETWORK_HTTP_STACK_SIZE;
     http_config.lru_purge_enable = true;
 
