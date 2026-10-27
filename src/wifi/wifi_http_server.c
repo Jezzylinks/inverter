@@ -465,7 +465,7 @@ static esp_err_t http_landing_handler(httpd_req_t *req)
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<title>Vonix Inverter Secure Setup</title></head><body>"
         "<h2>Vonix Inverter</h2><p>Secure setup is available over HTTPS.</p>"
-        "<p><a href='WIFI_HTTPS_DEFAULT_URL'>Open secure Wi-Fi setup</a></p>"
+        "<p><a href='" WIFI_HTTPS_DEFAULT_URL "'>Open secure Wi-Fi setup</a></p>"
         "<p>Your browser may warn because this device uses a locally generated certificate. "
         "Only proceed if you are connected directly to your own inverter.</p></body></html>";
     return wifi_http_send_text(req, "200 OK", "text/html; charset=utf-8",
@@ -475,7 +475,7 @@ static esp_err_t http_landing_handler(httpd_req_t *req)
 static esp_err_t http_sensitive_action_blocked(httpd_req_t *req)
 {
     return wifi_http_send_text(req, "426 Upgrade Required", "text/plain; charset=utf-8",
-                               "Sensitive actions require HTTPS. Open WIFI_HTTPS_DEFAULT_URL");
+                               "Sensitive actions require HTTPS. Open " WIFI_HTTPS_DEFAULT_URL);
 }
 
 static esp_err_t root_handler(httpd_req_t *req)
@@ -732,7 +732,7 @@ esp_err_t wifi_http_server_start(void)
     ESP_LOGI(WIFI_HTTP_TAG, "Provisioning HTTP server started on port %u", WIFI_HTTP_SERVER_PORT);
 
     /* Keep HTTP for OS captive-portal detection; offer the same handlers on
-     * HTTPS for users who explicitly open WIFI_HTTPS_DEFAULT_URL. */
+     * HTTPS for users who explicitly open the default HTTPS provisioning URL. */
     (void)wifi_https_start_optional();
     return ESP_OK;
 }
