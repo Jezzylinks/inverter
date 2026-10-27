@@ -1,18 +1,22 @@
-# Local HTTPS for the inverter provisioning interface
+# Local HTTPS for the inverter dashboard and provisioning interface
 
-This branch keeps the HTTP listener on port 80 only for captive-portal detection and a landing page. Credential saving and credential erasure are rejected over HTTP and must be submitted over HTTPS. The same provisioning handlers are registered on HTTPS port 443.
+The normal local dashboard, JSON API, and WebSocket are served on HTTPS port 443 as well as the existing HTTP port 80. HTTP remains available for compatibility and captive-portal discovery; it is not automatically redirected to HTTPS. HTTPS startup is optional and does not prevent the HTTP dashboard or inverter control from starting if the device-local certificate/key are missing or invalid.
+
+The separate captive provisioning portal also offers HTTPS on port 443 when runtime provisioning is enabled. It uses the same certificate/key files and only accepts credential-changing operations over HTTPS.
 
 ## Generate a device-local certificate
 
 Do not commit the generated private key. Each inverter should have its own key and certificate.
 
-From the repository root in PowerShell, run:
+From the repository root in PowerShell, read the unique hostname from the inverter LCD or `GET /api/v1/wifi` response, then run the script with that exact name. For example:
 
 ```powershell
-./scripts/generate_local_https_cert.ps1
+./scripts/generate_local_https_cert.ps1 -DeviceHostname "solar-inverter-A1B2.local"
 ```
 
-The script reads the provisioning address from `WIFI_HTTPS_DEFAULT_IP` in `include/wifi/wifi_http_server.h` and is equivalent to this manual command (ECDSA P-256, IP subject alternative name only, valid for 825 days):
+Replace `solar-inverter-A1B2.local` with this inverter's actual MAC-suffixed hostname. The script always adds the provisioning AP IP SAN from `WIFI_HTTPS_DEFAULT_IP` and adds the exact DNS SAN when `-DeviceHostname` is supplied. Without the parameter, the certificate matches only the provisioning AP IP, so a browser accessing the station dashboard by `.local` name will report an identity mismatch. Generate a different key/certificate for each inverter; do not share a private key between devices.
+
+The equivalent OpenSSL command is (ECDSA P-256, valid for 825 days):
 
 ```powershell
 New-Item -ItemType Directory -Force data | Out-Null
@@ -21,13 +25,13 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -sha256 -node
   -out data/https_server.crt `
   -days 825 `
   -subj "/CN=192.168.4.1" `
-  -addext "subjectAltName=IP:192.168.4.1" `
+  -addext "subjectAltName=IP:192.168.4.1,DNS:solar-inverter-A1B2.local" `
   -addext "basicConstraints=critical,CA:FALSE" `
   -addext "keyUsage=critical,digitalSignature" `
   -addext "extendedKeyUsage=serverAuth"
 ```
 
-There is deliberately no `.local` name in the certificate: the HTTPS server only runs during provisioning, when mDNS is stopped and clients reach the device by its access-point address.
+The IP SAN is for direct AP access at `https://192.168.4.1/`; the DNS SAN is for the normal dashboard at `https://<actual-device-hostname>.local/`. The latter only matches when the DNS SAN is generated for that exact device hostname.
 
 The ESP32 expects these files in its SPIFFS filesystem at:
 - `/spiffs/https_server.crt`
@@ -35,7 +39,7 @@ The ESP32 expects these files in its SPIFFS filesystem at:
 
 The firmware mounts the existing `spiffs` partition without formatting it, reads both PEM files into RAM, and unmounts the partition again (unless another module such as the dashboard already owns the mount, in which case it reads the files from that mount and leaves it alone). The TLS server keeps its own copy of the PEM data, so the firmware wipes and frees its copies as soon as the server has started. If the files are missing, invalid, or TLS cannot start, the HTTP landing page says that secure setup is unavailable (it no longer links to a dead HTTPS page), nothing sensitive is accepted over HTTP, and the logs explain why HTTPS did not start. No default/shared private key is included in this repository.
 
-Runtime provisioning (and therefore this server) only runs when `CONFIG_INVERTER_WIFI_RUNTIME_PROVISIONING=y`, and the provisioning access point requires a WPA2/WPA3 password of at least 8 characters.
+The separate captive provisioning portal only runs when `CONFIG_INVERTER_WIFI_RUNTIME_PROVISIONING=y`, and its access point requires a WPA2/WPA3 password of at least 8 characters. The normal dashboard HTTPS listener does not depend on that option.
 
 ## Build and upload
 
@@ -46,15 +50,16 @@ pio run -e esp32dev -t upload
 pio device monitor -b 115200
 ```
 
-After boot, connect to the inverter AP and explicitly open:
+After boot, use one of these local addresses:
 
-`https://192.168.4.1/`
+- Station/LAN: `https://<actual-device-hostname>.local/` (requires the matching DNS SAN and working mDNS).
+- Direct access point: `https://192.168.4.1/` (requires the device AP to be active).
 
-The HTTP landing page remains at `http://192.168.4.1/` for captive portal discovery. It does not accept credential-save or credential-reset POST requests. This avoids sending the PIN or Wi-Fi password over plaintext HTTP.
+The HTTP dashboard remains available at `http://<device-ip>/`. During captive provisioning, the HTTP landing page remains at `http://192.168.4.1/` and sensitive credential-save/reset operations are rejected over plaintext HTTP.
 
 ## Browser trust warning
 
-The generated certificate is self-signed. TLS encrypts the connection, but a browser will normally warn that it cannot verify the device identity. Do not treat clicking through the warning as equivalent to a trusted certificate. For production deployment, provision a certificate whose identity matches the URL and whose issuing CA is trusted by the client device. The certificate SAN above matches the AP IPv4 address only.
+The generated certificate is self-signed. TLS encrypts the connection, but a browser will normally warn that it cannot verify the device identity. Do not treat clicking through the warning as equivalent to a trusted certificate. For production deployment, provision a certificate whose identity matches the URL and whose issuing CA is trusted by the client device. The AP IP SAN matches `192.168.4.1`; the optional DNS SAN must exactly match the device hostname used in the URL.
 
 ## Memory and validation notes
 
