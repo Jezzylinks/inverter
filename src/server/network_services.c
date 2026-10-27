@@ -18,6 +18,7 @@
 #include "server/web/web_dashboard_server.h"
 #include "utility/quiet_hours.h"
 #include "wifi/wifi_config.h"
+#include "system/device_identity.h"
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_controller.h"
 #include "wifi/wifi_manager.h"
@@ -510,7 +511,7 @@ static esp_err_t network_services_start_locked(void)
     s_websocket_running = true;
     NS_HEAP("start:websocket");
 
-    err = mdns_service_init(WIFI_HOSTNAME);
+    err = mdns_service_init(device_identity_hostname());
     if (err == ESP_OK) {
         s_mdns_running = true;
     } else {
