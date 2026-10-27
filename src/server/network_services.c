@@ -394,16 +394,20 @@ static esp_err_t network_services_start_https_dashboard(void)
         return err;
     }
 
+    bool https_api_registered = false;
     err = web_dashboard_server_register(server);
     if (err == ESP_OK) {
         err = json_api_server_start(server);
+        https_api_registered = (err == ESP_OK);
     }
     if (err == ESP_OK) {
         err = websocket_server_register(server);
     }
     if (err != ESP_OK) {
         (void)websocket_server_unregister(server);
-        (void)json_api_server_stop();
+        if (https_api_registered) {
+            (void)json_api_server_stop();
+        }
         (void)web_dashboard_server_unregister(server);
         (void)httpd_ssl_stop(server);
         ESP_LOGW(NETWORK_SERVICES_TAG, "HTTPS dashboard route registration failed: %s",
