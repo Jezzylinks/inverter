@@ -14,6 +14,7 @@
 #include "esp_https_server.h"
 #include "esp_spiffs.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -41,6 +42,8 @@
 static httpd_handle_t s_server;
 static httpd_handle_t s_https_server;
 static SemaphoreHandle_t s_mutex;
+static SemaphoreHandle_t s_scan_guard;
+static int64_t s_last_scan_us;
 static wifi_http_save_callback_t s_save_callback;
 
 static esp_err_t root_handler(httpd_req_t *req);
@@ -178,7 +181,7 @@ static esp_err_t wifi_https_start_optional(void)
     httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
     config.port_secure = WIFI_HTTPS_SERVER_PORT;
     config.httpd.max_uri_handlers = 13U;
-    config.httpd.max_open_sockets = 1U;
+    config.httpd.max_open_sockets = 2U;
     config.httpd.stack_size = 10240U;
     config.httpd.lru_purge_enable = true;
     /* Needed so the wildcard catch-all route matches; without it the URI is compared literally. */
@@ -217,6 +220,8 @@ static esp_err_t wifi_https_start_optional(void)
 static const httpd_uri_t s_root_uri = {.uri = "/", .method = HTTP_GET, .handler = root_handler};
 static const httpd_uri_t s_http_root_uri = {.uri = "/", .method = HTTP_GET, .handler = http_landing_handler};
 static const httpd_uri_t s_http_save_uri = {.uri = "/save", .method = HTTP_POST, .handler = http_sensitive_action_blocked};
+static const httpd_uri_t s_http_status_uri = {.uri = "/status", .method = HTTP_GET, .handler = http_sensitive_action_blocked};
+static const httpd_uri_t s_http_scan_uri = {.uri = "/scan", .method = HTTP_GET, .handler = http_sensitive_action_blocked};
 static const httpd_uri_t s_http_reset_uri = {.uri = "/reset", .method = HTTP_POST, .handler = http_sensitive_action_blocked};
 static const httpd_uri_t s_save_uri = {.uri = "/save", .method = HTTP_POST, .handler = save_handler};
 static const httpd_uri_t s_status_uri = {.uri = "/status", .method = HTTP_GET, .handler = status_handler};
@@ -589,14 +594,28 @@ static esp_err_t status_handler(httpd_req_t *req)
 
 static esp_err_t scan_handler(httpd_req_t *req)
 {
+    /* A client may not use the provisioning endpoint to continuously trigger
+     * expensive radio scans and heap allocations. Reject concurrent scans and
+     * enforce a five-second cooldown between completed/started scans. */
+    if (s_scan_guard == NULL || xSemaphoreTake(s_scan_guard, 0) != pdTRUE) {
+        return wifi_http_send_error(req, "429 Too Many Requests", "Scan already in progress");
+    }
+    const int64_t now_us = esp_timer_get_time();
+    if (s_last_scan_us != 0 && now_us - s_last_scan_us < 5000000LL) {
+        xSemaphoreGive(s_scan_guard);
+        return wifi_http_send_error(req, "429 Too Many Requests", "Please wait before scanning again");
+    }
+    s_last_scan_us = now_us;
     char *results = calloc(WIFI_HTTP_SCAN_BYTES, 1U);
     if (results == NULL) {
+        xSemaphoreGive(s_scan_guard);
         return wifi_http_send_error(req, "503 Service Unavailable", "Out of memory");
     }
 
     const esp_err_t scan_err = wifi_scan_start(results, WIFI_HTTP_SCAN_BYTES);
     if (scan_err != ESP_OK) {
         free(results);
+        xSemaphoreGive(s_scan_guard);
         ESP_LOGW(WIFI_HTTP_TAG, "Provisioning scan failed: %s", esp_err_to_name(scan_err));
         return wifi_http_send_error(req, "503 Service Unavailable", "Wi-Fi scan unavailable");
     }
@@ -604,6 +623,7 @@ static esp_err_t scan_handler(httpd_req_t *req)
     char *page = calloc(WIFI_HTTP_SCAN_BYTES + 768U, 1U);
     if (page == NULL) {
         free(results);
+        xSemaphoreGive(s_scan_guard);
         return wifi_http_send_error(req, "503 Service Unavailable", "Out of memory");
     }
     const int rendered = wifi_web_pages_render_scan(page, WIFI_HTTP_SCAN_BYTES + 768U, results);
@@ -614,6 +634,7 @@ static esp_err_t scan_handler(httpd_req_t *req)
     }
     const esp_err_t response_err = wifi_http_send_text(req, "200 OK", "text/html; charset=utf-8", page);
     free(page);
+    xSemaphoreGive(s_scan_guard);
     return response_err;
 }
 
@@ -666,10 +687,17 @@ esp_err_t wifi_http_server_start(void)
             return ESP_ERR_NO_MEM;
         }
     }
+    if (s_scan_guard == NULL) {
+        s_scan_guard = xSemaphoreCreateMutex();
+        if (s_scan_guard == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = WIFI_HTTP_SERVER_PORT;
     config.max_uri_handlers = 13U;
+    config.max_open_sockets = 3U;
     config.stack_size = WIFI_HTTP_STACK_SIZE;
     config.lru_purge_enable = true;
     /* Needed so the wildcard catch-all route matches; without it the URI is compared literally. */
@@ -683,7 +711,7 @@ esp_err_t wifi_http_server_start(void)
     }
 
     const httpd_uri_t *const routes[] = {
-        &s_http_root_uri, &s_http_save_uri, &s_status_uri, &s_scan_uri, &s_http_reset_uri,
+        &s_http_root_uri, &s_http_save_uri, &s_http_status_uri, &s_http_scan_uri, &s_http_reset_uri,
         &s_generate_204_uri, &s_gen_204_uri, &s_hotspot_uri, &s_success_html_uri,
         &s_ncsi_uri, &s_connecttest_uri, &s_success_txt_uri, &s_redirect_uri,
     };
