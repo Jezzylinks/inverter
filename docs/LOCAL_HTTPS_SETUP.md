@@ -62,3 +62,7 @@ The setup form is `application/x-www-form-urlencoded`. The server now decodes `+
 Do not merge this branch until the PlatformIO build succeeds and a device test confirms HTTPS access, credential save/reset over HTTPS, HTTP rejection of sensitive POSTs, captive-portal behavior, heap stability, and no regression to the already-working OTA flow.
 
 The existing HTTPS OTA client and its certificate verification configuration are not changed by this feature.
+
+## Socket and TLS hardening
+
+The HTTP landing/captive-portal listener is limited to three open sockets; HTTPS allows two so one idle TLS client does not monopolize provisioning. LWIP is configured for 16 sockets to accommodate both listeners and DNS. The `/scan` and `/status` endpoints reject plain HTTP and are registered only on HTTPS. Scan requests are serialized and rate-limited to one per five seconds. The certificate generator uses ECDSA P-256 with an IP subject alternative name and explicit CA:false, digital-signature, and server-auth extensions; it expires after 825 days. TLS configuration disables legacy RSA key exchange, static ECDH key exchanges, and renegotiation while retaining ECDHE-ECDSA. Because mbedTLS settings affect the OTA client too, a successful PlatformIO build and full OTA regression test are required before merging.
