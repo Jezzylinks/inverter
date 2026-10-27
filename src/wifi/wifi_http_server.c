@@ -630,6 +630,7 @@ static esp_err_t scan_handler(httpd_req_t *req)
     free(results);
     if (rendered < 0 || rendered >= (int)(WIFI_HTTP_SCAN_BYTES + 768U)) {
         free(page);
+        xSemaphoreGive(s_scan_guard);
         return wifi_http_send_error(req, "500 Internal Server Error", "Scan rendering failed");
     }
     const esp_err_t response_err = wifi_http_send_text(req, "200 OK", "text/html; charset=utf-8", page);
