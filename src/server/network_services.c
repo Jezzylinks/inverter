@@ -3,8 +3,12 @@
 
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 
 #include "esp_http_server.h"
+#include "esp_https_server.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -26,7 +30,13 @@
 
 #define NETWORK_SERVICES_TAG "NET_SERVICES"
 #define NETWORK_HTTP_PORT 80U
+#define NETWORK_HTTPS_PORT 443U
 #define NETWORK_HTTP_STACK_SIZE 8192U
+#define NETWORK_HTTPS_STACK_SIZE 10240U
+#define NETWORK_HTTPS_MAX_OPEN_SOCKETS 2U
+#define NETWORK_HTTPS_MAX_PEM_BYTES 8192U
+#define NETWORK_HTTPS_CERT_PATH "/www/https_server.crt"
+#define NETWORK_HTTPS_KEY_PATH "/www/https_server.key"
 #define NETWORK_SYNC_TASK_STACK_SIZE 8192U
 /* JSON API (64 handlers incl. OPTIONS) + dashboard (3) + WebSocket (1) = 68.
  * Each spare slot costs one pointer, so keep generous headroom: when this was
@@ -51,6 +61,7 @@ static SemaphoreHandle_t s_mutex;
  * use) and the services ended up half started. */
 static SemaphoreHandle_t s_lifecycle_mutex;
 static httpd_handle_t s_http_server;
+static httpd_handle_t s_https_server;
 static network_mqtt_config_t s_mqtt_config;
 static bool s_initialized;
 static bool s_running;
