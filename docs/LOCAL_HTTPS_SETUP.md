@@ -8,7 +8,7 @@ The separate captive provisioning portal also offers HTTPS on port 443 when runt
 
 Do not commit the generated private key. Each inverter should have its own key and certificate.
 
-From the repository root in PowerShell, read the unique hostname from the inverter LCD or `GET /api/v1/wifi` response, then run the script with that exact name. For example:
+From the repository root in PowerShell, read the unique hostname from the inverter LCD or `GET /api/v1/wifi` response (append `.local` if the API returns only the bare hostname), then run the script with that exact name. For example:
 
 ```powershell
 ./scripts/generate_local_https_cert.ps1 -DeviceHostname "solar-inverter-A1B2.local"
@@ -33,11 +33,9 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -sha256 -node
 
 The IP SAN is for direct AP access at `https://192.168.4.1/`; the DNS SAN is for the normal dashboard at `https://<actual-device-hostname>.local/`. The latter only matches when the DNS SAN is generated for that exact device hostname.
 
-The ESP32 expects these files in its SPIFFS filesystem at:
-- `/spiffs/https_server.crt`
-- `/spiffs/https_server.key`
+The certificate and key must be in the root of the SPIFFS filesystem image as `https_server.crt` and `https_server.key`. The provisioning listener reads them via `/spiffs/https_server.crt` and `/spiffs/https_server.key`; the dashboard listener reads the same files via the dashboard's existing `/www` mount.
 
-The firmware mounts the existing `spiffs` partition without formatting it, reads both PEM files into RAM, and unmounts the partition again (unless another module such as the dashboard already owns the mount, in which case it reads the files from that mount and leaves it alone). The TLS server keeps its own copy of the PEM data, so the firmware wipes and frees its copies as soon as the server has started. If the files are missing, invalid, or TLS cannot start, the HTTP landing page says that secure setup is unavailable (it no longer links to a dead HTTPS page), nothing sensitive is accepted over HTTP, and the logs explain why HTTPS did not start. No default/shared private key is included in this repository.
+The firmware does not format SPIFFS to create certificates. It reads the PEM files into RAM and wipes/frees its temporary copies after the TLS server starts. If files are missing, invalid, or TLS cannot start, HTTPS is skipped with a diagnostic log; the existing HTTP dashboard remains available, and the provisioning landing page clearly reports when secure setup is unavailable. No default/shared private key is included in this repository.
 
 The separate captive provisioning portal only runs when `CONFIG_INVERTER_WIFI_RUNTIME_PROVISIONING=y`, and its access point requires a WPA2/WPA3 password of at least 8 characters. The normal dashboard HTTPS listener does not depend on that option.
 
