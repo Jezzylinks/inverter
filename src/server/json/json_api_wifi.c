@@ -18,6 +18,7 @@
 #include "wifi/wifi_controller.h"
 #include "wifi/wifi_config.h"
 #include "system/inverter_errors.h"
+#include "system/device_identity.h"
 #include "server/network_services.h"
 
 static const char *wifi_mode_name(wifi_mode_t mode)
@@ -91,7 +92,7 @@ static void add_config_json(cJSON *root, const wifi_manager_config_t *config)
     cJSON_AddStringToObject(root, "ap_auth", wifi_auth_name(config->ap_authmode));
     cJSON_AddNumberToObject(root, "ap_channel", config->ap_channel);
     cJSON_AddNumberToObject(root, "ap_max_connection", config->ap_max_connection);
-    cJSON_AddStringToObject(root, "hostname", WIFI_HOSTNAME);
+    cJSON_AddStringToObject(root, "hostname", device_identity_hostname());
     cJSON_AddBoolToObject(root, "requires_restart", true);
 }
 
@@ -133,6 +134,8 @@ static esp_err_t api_status_handler(httpd_req_t *req)
         return ESP_ERR_NO_MEM;
     }
     cJSON_AddStringToObject(root, "mode", wifi_mode_name(wifi_manager_get_mode()));
+    /* The dashboard shows <hostname>.local, so report the name mDNS really advertises. */
+    cJSON_AddStringToObject(root, "hostname", device_identity_hostname());
     cJSON_AddBoolToObject(root, "runtime_provisioning_enabled",
                           WIFI_RUNTIME_PROVISIONING_ENABLED != 0);
     wifi_manager_config_t config = {0};

@@ -9,14 +9,25 @@ Do not commit the generated private key. Each inverter should have its own key a
 From the repository root in PowerShell, run:
 
 ```powershell
+./scripts/generate_local_https_cert.ps1
+```
+
+The script reads the provisioning address from `WIFI_HTTPS_DEFAULT_IP` in `include/wifi/wifi_http_server.h` and is equivalent to this manual command (ECDSA P-256, IP subject alternative name only, valid for 825 days):
+
+```powershell
 New-Item -ItemType Directory -Force data | Out-Null
-openssl req -x509 -newkey rsa:2048 -sha256 -nodes `
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -sha256 -nodes `
   -keyout data/https_server.key `
   -out data/https_server.crt `
-  -days 3650 `
+  -days 825 `
   -subj "/CN=192.168.4.1" `
-  -addext "subjectAltName=IP:192.168.4.1,DNS:solar-inverter.local"
+  -addext "subjectAltName=IP:192.168.4.1" `
+  -addext "basicConstraints=critical,CA:FALSE" `
+  -addext "keyUsage=critical,digitalSignature" `
+  -addext "extendedKeyUsage=serverAuth"
 ```
+
+There is deliberately no `.local` name in the certificate: the HTTPS server only runs during provisioning, when mDNS is stopped and clients reach the device by its access-point address.
 
 The ESP32 expects these files in its SPIFFS filesystem at:
 - `/spiffs/https_server.crt`

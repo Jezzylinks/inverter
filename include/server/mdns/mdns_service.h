@@ -15,7 +15,7 @@ extern "C"
 
     /**
      * @brief Initialize mDNS service
-     * @param hostname Device hostname (e.g., "solar-inverter"). NULL uses WIFI_HOSTNAME.
+     * @param hostname Device hostname (e.g., "solar-inverter-3FA2"). NULL uses device_identity_hostname().
      * @return ESP_OK on success
      */
     esp_err_t mdns_service_init(const char *hostname);

@@ -141,6 +141,7 @@
     els.wifiState.textContent = connected ? 'Connected' : friendly;
     els.wifiSsid.textContent = status.ssid || (connected ? 'Station network' : 'No network');
     els.deviceIp.textContent = status.ip && status.ip !== '0.0.0.0' ? status.ip : '—';
+    els.deviceHost.textContent = status.hostname ? `${status.hostname}.local` : '—';
     els.internetState.textContent = status.internet || 'Unknown';
     els.lastUpdate.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     els.heroTitle.textContent = connected ? 'Your inverter is online' : stateText === 'connecting' || stateText === 'reconnecting' ? 'Connecting to your network' : 'Network connection needs attention';

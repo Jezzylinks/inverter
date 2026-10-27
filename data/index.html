@@ -46,7 +46,7 @@
         </article>
         <article class="metric-card accent-green">
           <div class="metric-icon">⌂</div>
-          <div><p class="metric-label">Device address</p><strong id="deviceIp">—</strong><span id="deviceHost" class="metric-detail">solar-inverter.local</span></div>
+          <div><p class="metric-label">Device address</p><strong id="deviceIp">—</strong><span id="deviceHost" class="metric-detail">—</span></div>
         </article>
         <article class="metric-card accent-amber">
           <div class="metric-icon">◌</div>
@@ -99,7 +99,7 @@
           <form id="mqttForm" class="form-grid">
             <label class="toggle-row full-span"><input id="mqttEnabled" type="checkbox"><span class="toggle-control"></span><span><strong>Enable MQTT</strong><small>Connect after Wi‑Fi receives an IP address.</small></span></label>
             <label>Broker URL<input id="mqttBroker" name="broker" placeholder="mqtts://broker.example.com" autocomplete="off"></label>
-            <label>Client ID<input id="mqttClientId" name="client_id" placeholder="solar-inverter" autocomplete="off"></label>
+            <label>Client ID<input id="mqttClientId" name="client_id" placeholder="solar-inverter-XXXX" autocomplete="off"></label>
             <label>Username<input id="mqttUsername" name="username" autocomplete="username"></label>
             <label>Password<input id="mqttPassword" name="password" type="password" autocomplete="new-password"></label>
             <label>Publish topic<input id="mqttPublishTopic" name="publish_topic" placeholder="inverter/status"></label>
