@@ -16,7 +16,8 @@ extern "C" {
 
 #define WIFI_HTTP_SERVER_PORT 80U
 #define WIFI_HTTPS_SERVER_PORT 443U
-#define WIFI_HTTP_MAX_FORM_BYTES 256U
+/* ssid(32)+password(63) can grow 3x when percent-encoded; worst case is ~312. */
+#define WIFI_HTTP_MAX_FORM_BYTES 512U
 
 /**
  * Called after credentials have been committed and the HTTP response has been

@@ -22,7 +22,9 @@ The ESP32 expects these files in its SPIFFS filesystem at:
 - `/spiffs/https_server.crt`
 - `/spiffs/https_server.key`
 
-The firmware mounts the existing `spiffs` partition without formatting it. If the files are missing, invalid, or TLS cannot start, the captive HTTP landing page remains available and logs explain why HTTPS did not start. No default/shared private key is included in this repository.
+The firmware mounts the existing `spiffs` partition without formatting it, reads both PEM files into RAM, and unmounts the partition again (unless another module such as the dashboard already owns the mount, in which case it reads the files from that mount and leaves it alone). The TLS server keeps its own copy of the PEM data, so the firmware wipes and frees its copies as soon as the server has started. If the files are missing, invalid, or TLS cannot start, the HTTP landing page says that secure setup is unavailable (it no longer links to a dead HTTPS page), nothing sensitive is accepted over HTTP, and the logs explain why HTTPS did not start. No default/shared private key is included in this repository.
+
+Runtime provisioning (and therefore this server) only runs when `CONFIG_INVERTER_WIFI_RUNTIME_PROVISIONING=y`, and the provisioning access point requires a WPA2/WPA3 password of at least 8 characters.
 
 ## Build and upload
 
@@ -48,6 +50,14 @@ The generated certificate is self-signed. TLS encrypts the connection, but a bro
 ESP-IDF HTTPS server sockets have a substantial RAM cost. This implementation limits HTTPS to one simultaneous open socket and uses a dedicated TLS server stack. The inverter must be built and tested on the physical ESP32 with its normal Wi-Fi, ADC, LCD, and control workload active. Check startup logs for:
 - `HTTPS provisioning server started on port 443`
 - `HTTPS unavailable` or `HTTPS server start failed`
+
+## Provisioning PIN lockout
+
+Web provisioning uses its own PIN lockout scope (`SECURITY_LOCKOUT_PROVISIONING`), separate from the front-panel PIN entry, so failed attempts over Wi-Fi cannot lock the local user out of the panel. As before, if panel security is explicitly disabled the PIN check is bypassed for this scope.
+
+## Form encoding
+
+The setup form is `application/x-www-form-urlencoded`. The server now decodes `+` and `%XX` for the SSID and password before validating and saving them, so names and passwords containing spaces or symbols are stored exactly as typed. Test with an SSID containing a space and a password containing `@ & + %`.
 
 Do not merge this branch until the PlatformIO build succeeds and a device test confirms HTTPS access, credential save/reset over HTTPS, HTTP rejection of sensitive POSTs, captive-portal behavior, heap stability, and no regression to the already-working OTA flow.
 
