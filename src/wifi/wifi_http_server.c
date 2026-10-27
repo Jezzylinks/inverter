@@ -12,6 +12,7 @@
 
 #include "esp_http_server.h"
 #include "esp_https_server.h"
+#include "sdkconfig.h"
 #include "esp_spiffs.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -33,6 +34,23 @@
 #define WIFI_HTTPS_KEY_FILE "https_server.key"
 #define WIFI_HTTPS_MAX_PEM_BYTES 8192U
 #define WIFI_HTTPS_SPIFFS_PARTITION "spiffs"
+
+/* Socket budget while provisioning (the dashboard/API server is stopped). Every
+ * esp_http_server instance permanently reserves 3 sockets on top of its client
+ * sockets (listener + 2 internal control sockets), and the captive DNS server
+ * uses one more. If CONFIG_LWIP_MAX_SOCKETS is too small, accept() fails
+ * intermittently under load instead of failing loudly. */
+#define WIFI_HTTP_MAX_OPEN_SOCKETS 3U
+#define WIFI_HTTPS_MAX_OPEN_SOCKETS 2U
+#define WIFI_HTTPD_RESERVED_SOCKETS 3U
+#define WIFI_DNS_SOCKETS 1U
+#define WIFI_PROVISIONING_SOCKET_BUDGET                                        \
+    (2U * WIFI_HTTPD_RESERVED_SOCKETS + WIFI_HTTP_MAX_OPEN_SOCKETS +           \
+     WIFI_HTTPS_MAX_OPEN_SOCKETS + WIFI_DNS_SOCKETS)
+_Static_assert(WIFI_PROVISIONING_SOCKET_BUDGET <= (unsigned)CONFIG_LWIP_MAX_SOCKETS,
+               "Provisioning needs more sockets than CONFIG_LWIP_MAX_SOCKETS allows. "
+               "sdkconfig.defaults sets 16, but a stale local sdkconfig keeps the old "
+               "value: delete sdkconfig.esp32dev (or sdkconfig) and rebuild.");
 /* Where this module mounts the partition itself, and where the dashboard
  * (web_dashboard_server.c) mounts the same partition. Both are searched so the
  * PEM files are found whichever module owns the mount. */
@@ -181,7 +199,7 @@ static esp_err_t wifi_https_start_optional(void)
     httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
     config.port_secure = WIFI_HTTPS_SERVER_PORT;
     config.httpd.max_uri_handlers = 13U;
-    config.httpd.max_open_sockets = 2U;
+    config.httpd.max_open_sockets = WIFI_HTTPS_MAX_OPEN_SOCKETS;
     config.httpd.stack_size = 10240U;
     config.httpd.lru_purge_enable = true;
     /* Needed so the wildcard catch-all route matches; without it the URI is compared literally. */
@@ -698,7 +716,7 @@ esp_err_t wifi_http_server_start(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = WIFI_HTTP_SERVER_PORT;
     config.max_uri_handlers = 13U;
-    config.max_open_sockets = 3U;
+    config.max_open_sockets = WIFI_HTTP_MAX_OPEN_SOCKETS;
     config.stack_size = WIFI_HTTP_STACK_SIZE;
     config.lru_purge_enable = true;
     /* Needed so the wildcard catch-all route matches; without it the URI is compared literally. */
