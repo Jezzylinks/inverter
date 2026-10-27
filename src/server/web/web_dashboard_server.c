@@ -12,7 +12,8 @@
 #define WEB_DASHBOARD_PARTITION "spiffs"
 
 static bool s_mounted;
-static bool s_registered;
+static httpd_handle_t s_registered_servers[2];
+static size_t s_registered_count;
 
 static void dashboard_security_headers(httpd_req_t *req, bool asset)
 {
@@ -121,7 +122,7 @@ esp_err_t web_dashboard_server_init(void)
 
 esp_err_t web_dashboard_server_deinit(void)
 {
-    if (s_registered) {
+    if (s_registered_count != 0U) {
         return ESP_ERR_INVALID_STATE;
     }
     if (s_mounted) {
@@ -136,6 +137,14 @@ esp_err_t web_dashboard_server_register(httpd_handle_t server)
     if (server == NULL || !s_mounted) {
         return ESP_ERR_INVALID_STATE;
     }
+    for (size_t i = 0U; i < s_registered_count; ++i) {
+        if (s_registered_servers[i] == server) {
+            return ESP_OK;
+        }
+    }
+    if (s_registered_count >= (sizeof(s_registered_servers) / sizeof(s_registered_servers[0]))) {
+        return ESP_ERR_NO_MEM;
+    }
     const httpd_uri_t *routes[] = {&s_index_uri, &s_css_uri, &s_js_uri};
     for (size_t i = 0U; i < sizeof(routes) / sizeof(routes[0]); ++i) {
         const esp_err_t err = httpd_register_uri_handler(server, routes[i]);
@@ -146,7 +155,7 @@ esp_err_t web_dashboard_server_register(httpd_handle_t server)
             return err;
         }
     }
-    s_registered = true;
+    s_registered_servers[s_registered_count++] = server;
     return ESP_OK;
 }
 
@@ -158,11 +167,19 @@ esp_err_t web_dashboard_server_unregister(httpd_handle_t server)
     (void)httpd_unregister_uri_handler(server, "/", HTTP_GET);
     (void)httpd_unregister_uri_handler(server, "/assets/app.css", HTTP_GET);
     (void)httpd_unregister_uri_handler(server, "/assets/app.js", HTTP_GET);
-    s_registered = false;
+    for (size_t i = 0U; i < s_registered_count; ++i) {
+        if (s_registered_servers[i] == server) {
+            for (size_t j = i + 1U; j < s_registered_count; ++j) {
+                s_registered_servers[j - 1U] = s_registered_servers[j];
+            }
+            s_registered_servers[--s_registered_count] = NULL;
+            break;
+        }
+    }
     return ESP_OK;
 }
 
 bool web_dashboard_server_available(void)
 {
-    return s_mounted && s_registered;
+    return s_mounted && s_registered_count != 0U;
 }
