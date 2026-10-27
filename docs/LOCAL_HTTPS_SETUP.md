@@ -61,7 +61,7 @@ The generated certificate is self-signed. TLS encrypts the connection, but a bro
 
 ## Memory and validation notes
 
-ESP-IDF HTTPS server sockets have a substantial RAM cost. The dashboard HTTPS listener allows two simultaneous client sockets and uses a dedicated TLS server stack; the HTTP listener is limited to three clients so MQTT/NTP and captive DNS retain socket headroom. The inverter must be built and tested on the physical ESP32 with its normal Wi-Fi, ADC, LCD, and control workload active. Check startup logs for:
+ESP-IDF HTTPS server sockets have a substantial RAM cost. The dashboard HTTPS listener allows three simultaneous client sockets and uses a dedicated TLS server stack; the HTTP listener is limited to two clients so MQTT/NTP and captive DNS retain socket headroom. The inverter must be built and tested on the physical ESP32 with its normal Wi-Fi, ADC, LCD, and control workload active. Check startup logs for:
 - `HTTPS dashboard/API/WebSocket started on port 443`
 - `HTTPS provisioning server started on port 443` (only when runtime provisioning is enabled)
 - `HTTPS dashboard unavailable` or `HTTPS dashboard TLS startup failed` if certificate loading or TLS startup fails
