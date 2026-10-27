@@ -3,13 +3,17 @@
 $ErrorActionPreference = "Stop"
 New-Item -ItemType Directory -Force data | Out-Null
 $key = Join-Path (Get-Location) "data/https_server.key"
+$header = Get-Content (Join-Path (Get-Location) "include/wifi/wifi_http_server.h") -Raw
+$match = [regex]::Match($header, '#define\s+WIFI_HTTPS_DEFAULT_IP\s+"([^"]+)"')
+if (-not $match.Success) { throw "WIFI_HTTPS_DEFAULT_IP was not found in wifi_http_server.h" }
+$provisioningIp = $match.Groups[1].Value
 $cert = Join-Path (Get-Location) "data/https_server.crt"
 # P-256 ECDSA keeps the certificate and handshake smaller than RSA-2048.
 # The IP SAN matches the default provisioning AP; no misleading .local DNS SAN.
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -sha256 -nodes `
   -keyout $key -out $cert -days 825 `
-  -subj "/CN=192.168.4.1" `
-  -addext "subjectAltName=IP:192.168.4.1" `
+  -subj "/CN=$provisioningIp" `
+  -addext "subjectAltName=IP:$provisioningIp" `
   -addext "basicConstraints=critical,CA:FALSE" `
   -addext "keyUsage=critical,digitalSignature" `
   -addext "extendedKeyUsage=serverAuth"
