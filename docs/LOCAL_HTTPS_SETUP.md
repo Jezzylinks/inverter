@@ -22,7 +22,9 @@ The ESP32 expects these files in its SPIFFS filesystem at:
 - `/spiffs/https_server.crt`
 - `/spiffs/https_server.key`
 
-The firmware mounts the existing `spiffs` partition without formatting it. If the files are missing, invalid, or TLS cannot start, the captive HTTP landing page remains available and logs explain why HTTPS did not start. No default/shared private key is included in this repository.
+The firmware mounts the existing `spiffs` partition without formatting it, reads both PEM files into RAM, and unmounts the partition again (unless another module such as the dashboard already owns the mount, in which case it reads the files from that mount and leaves it alone). The TLS server keeps its own copy of the PEM data, so the firmware wipes and frees its copies as soon as the server has started. If the files are missing, invalid, or TLS cannot start, the HTTP landing page says that secure setup is unavailable (it no longer links to a dead HTTPS page), nothing sensitive is accepted over HTTP, and the logs explain why HTTPS did not start. No default/shared private key is included in this repository.
+
+Runtime provisioning (and therefore this server) only runs when `CONFIG_INVERTER_WIFI_RUNTIME_PROVISIONING=y`, and the provisioning access point requires a WPA2/WPA3 password of at least 8 characters.
 
 ## Build and upload
 
@@ -49,6 +51,18 @@ ESP-IDF HTTPS server sockets have a substantial RAM cost. This implementation li
 - `HTTPS provisioning server started on port 443`
 - `HTTPS unavailable` or `HTTPS server start failed`
 
+## Provisioning PIN lockout
+
+Web provisioning uses its own PIN lockout scope (`SECURITY_LOCKOUT_PROVISIONING`), separate from the front-panel PIN entry, so failed attempts over Wi-Fi cannot lock the local user out of the panel. As before, if panel security is explicitly disabled the PIN check is bypassed for this scope.
+
+## Form encoding
+
+The setup form is `application/x-www-form-urlencoded`. The server now decodes `+` and `%XX` for the SSID and password before validating and saving them, so names and passwords containing spaces or symbols are stored exactly as typed. Test with an SSID containing a space and a password containing `@ & + %`.
+
 Do not merge this branch until the PlatformIO build succeeds and a device test confirms HTTPS access, credential save/reset over HTTPS, HTTP rejection of sensitive POSTs, captive-portal behavior, heap stability, and no regression to the already-working OTA flow.
 
 The existing HTTPS OTA client and its certificate verification configuration are not changed by this feature.
+
+## Socket and TLS hardening
+
+The HTTP landing/captive-portal listener is limited to three open sockets; HTTPS allows two so one idle TLS client does not monopolize provisioning. LWIP is configured for 16 sockets to accommodate both listeners and DNS. The `/scan` and `/status` endpoints reject plain HTTP and are registered only on HTTPS. Scan requests are serialized and rate-limited to one per five seconds. The certificate generator uses ECDSA P-256 with an IP subject alternative name and explicit CA:false, digital-signature, and server-auth extensions; it expires after 825 days. TLS configuration disables legacy RSA key exchange, static ECDH key exchanges, and renegotiation while retaining ECDHE-ECDSA. Because mbedTLS settings affect the OTA client too, a successful PlatformIO build and full OTA regression test are required before merging.

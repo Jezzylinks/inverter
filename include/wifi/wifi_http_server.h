@@ -16,7 +16,11 @@ extern "C" {
 
 #define WIFI_HTTP_SERVER_PORT 80U
 #define WIFI_HTTPS_SERVER_PORT 443U
-#define WIFI_HTTP_MAX_FORM_BYTES 256U
+/* Keep the default provisioning host consistent with the certificate SAN. */
+#define WIFI_HTTPS_DEFAULT_IP "192.168.4.1"
+#define WIFI_HTTPS_DEFAULT_URL "https://" WIFI_HTTPS_DEFAULT_IP "/"
+/* ssid(32)+password(63) can grow 3x when percent-encoded; worst case is ~312. */
+#define WIFI_HTTP_MAX_FORM_BYTES 512U
 
 /**
  * Called after credentials have been committed and the HTTP response has been

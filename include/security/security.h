@@ -20,6 +20,10 @@ extern "C"
         SECURITY_LOCKOUT_GENERAL = 0,
         SECURITY_LOCKOUT_FACTORY_RESET,
         SECURITY_LOCKOUT_OTA,
+        /* Remote Wi-Fi provisioning over the local web portal. Kept separate
+         * from SECURITY_LOCKOUT_GENERAL so failed web attempts can never lock
+         * the local front-panel user out (and vice versa). */
+        SECURITY_LOCKOUT_PROVISIONING,
         SECURITY_LOCKOUT_SCOPE_COUNT
     } security_lockout_scope_t;
 
