@@ -15,7 +15,7 @@ esp_err_t web_dashboard_server_init(void);
 /** Unmount the dashboard filesystem. */
 esp_err_t web_dashboard_server_deinit(void);
 
-/** Register dashboard routes on the shared station-mode HTTP server. */
+/** Register dashboard routes on an HTTP or HTTPS server (up to two listeners). */
 esp_err_t web_dashboard_server_register(httpd_handle_t server);
 
 /** Unregister dashboard routes from the shared station-mode HTTP server. */
