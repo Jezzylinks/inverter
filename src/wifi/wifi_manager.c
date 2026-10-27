@@ -9,7 +9,6 @@
 #include <stdio.h>
 
 #include "esp_log.h"
-#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
@@ -20,6 +19,7 @@
 #include "wifi/wifi_storage.h"
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_config.h"
+#include "system/device_identity.h"
 #include "storage/nvs_manager.h"
 
 static const char *TAG = "wifi_manager";
@@ -285,14 +285,13 @@ esp_err_t wifi_manager_init(void)
         goto rollback_netif;
     }
 
-    uint8_t sta_mac[6] = {0};
-    char hostname[32];
-    if (esp_read_mac(sta_mac, ESP_MAC_WIFI_STA) == ESP_OK) {
-        snprintf(hostname, sizeof(hostname), "%s-%02X%02X",
-                 WIFI_HOSTNAME, sta_mac[4], sta_mac[5]);
-        esp_netif_set_hostname(s_sta_netif, hostname);
+    const char *hostname = device_identity_hostname();
+    err = esp_netif_set_hostname(s_sta_netif, hostname);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set station hostname '%s': %s",
+                 hostname, esp_err_to_name(err));
     } else {
-        esp_netif_set_hostname(s_sta_netif, WIFI_HOSTNAME);
+        ESP_LOGI(TAG, "Station hostname: %s", hostname);
     }
 
     s_ap_netif = esp_netif_create_default_wifi_ap();

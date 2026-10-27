@@ -1582,21 +1582,21 @@ static void draw_wifi_status(const lcd_wifi_status_data_t *d)
             snprintf(rows[0], LCD_LINE_SIZE, "WI-FI STATUS");
             snprintf(rows[1], LCD_LINE_SIZE, "State: %-13.13s", d->state);
             snprintf(rows[2], LCD_LINE_SIZE, "SSID: %-14.14s", d->ssid);
-            rows[3][0] = '\0';
+            snprintf(rows[3], LCD_LINE_SIZE, "%-20.20s", d->hostname);
             break;
         case 1:
             snprintf(rows[0], LCD_LINE_SIZE, "IP: %-16.16s", d->ip);
             snprintf(rows[1], LCD_LINE_SIZE, "GW: %-16.16s", d->gateway);
             snprintf(rows[2], LCD_LINE_SIZE, "IP: %-3s LINK: %-5s",
                      d->got_ip ? "YES" : "NO", d->connected ? "UP" : "DOWN");
-            rows[3][0] = '\0';
+            snprintf(rows[3], LCD_LINE_SIZE, "%-20.20s", d->hostname);
             break;
         default:
             snprintf(rows[0], LCD_LINE_SIZE, "Signal: %d dBm", d->rssi);
             snprintf(rows[1], LCD_LINE_SIZE, "Internet: %-8s",
                      d->internet_available ? "ONLINE" : "OFFLINE");
             snprintf(rows[2], LCD_LINE_SIZE, "Wi-Fi: %-10.10s", d->state);
-            rows[3][0] = '\0';
+            snprintf(rows[3], LCD_LINE_SIZE, "%-20.20s", d->hostname);
             break;
         }
         const char *row_ptrs[] = {rows[0], rows[1], rows[2], rows[3]};
@@ -1606,7 +1606,7 @@ static void draw_wifi_status(const lcd_wifi_status_data_t *d)
     {
         char row0[LCD_LINE_SIZE];
         char row1[LCD_LINE_SIZE];
-        switch (d->page % 4U)
+        switch (d->page % 5U)
         {
         case 0:
             snprintf(row0, LCD_LINE_SIZE, "WiFi: %-10.10s", d->state);
@@ -1620,10 +1620,14 @@ static void draw_wifi_status(const lcd_wifi_status_data_t *d)
             snprintf(row0, LCD_LINE_SIZE, "Signal:");
             snprintf(row1, LCD_LINE_SIZE, "%d dBm", (int)d->rssi);
             break;
-        default:
+        case 3:
             snprintf(row0, LCD_LINE_SIZE, "Internet:");
             snprintf(row1, LCD_LINE_SIZE, "%s",
                      d->connected ? (d->internet_available ? "Available" : "Offline") : "N/A");
+            break;
+        default:
+            snprintf(row0, LCD_LINE_SIZE, "Device name:");
+            snprintf(row1, LCD_LINE_SIZE, "%-16.16s", d->hostname);
             break;
         }
         draw_commit(row0, row1);

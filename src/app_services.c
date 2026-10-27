@@ -27,6 +27,7 @@
 #include "wifi/wifi_controller.h"
 #include "wifi/wifi_events.h"
 #include "wifi/wifi_manager.h"
+#include "system/device_identity.h"
 #include "wifi/wifi_monitor.h"
 #include "wifi/wifi_types.h"
 #include "wifi/wifi_security.h"
@@ -3574,6 +3575,7 @@ void app_services_show_wifi_status(void)
     lcd_show_wifi_status(state_text, ssid, ip, gateway, rssi,
                          status.connected, status.got_ip,
                          status.connected && status.internet_available);
+    lcd_update_wifi_status_hostname(device_identity_hostname());
 }
 
 const char *app_services_wifi_saved_network_label(void)

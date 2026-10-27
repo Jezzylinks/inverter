@@ -665,13 +665,21 @@ void lcd_show_wifi_status(const char *state, const char *ssid, const char *ip,
     LCD_UNLOCK();
 }
 
+void lcd_update_wifi_status_hostname(const char *hostname)
+{
+    LCD_LOCK();
+    snprintf(sys_lcd.wifi_status.hostname,
+             sizeof(sys_lcd.wifi_status.hostname), "%s",
+             hostname ? hostname : "");
+    LCD_UNLOCK();
+}
+
 void lcd_update_wifi_status_page(uint8_t page)
 {
     LCD_LOCK();
-    const uint8_t page_count = lcd_geometry_is_20x4() ? 3U : 4U;
+    const uint8_t page_count = lcd_geometry_is_20x4() ? 3U : 5U;
     sys_lcd.wifi_status.page = page % page_count;
     sys_lcd.wifi_status.entered_ms = _lcd_get_time_ms();
-    LCD_UNLOCK();
 }
 
 void lcd_show_wifi_connecting(const char *ssid, int8_t rssi)

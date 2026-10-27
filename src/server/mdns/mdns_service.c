@@ -9,6 +9,7 @@
 #include "mdns.h"
 #include "esp_log.h"
 #include "wifi/wifi_config.h"
+#include "system/device_identity.h"
 
 static const char *TAG = "MDNS_SERVICE";
 
@@ -26,7 +27,7 @@ esp_err_t mdns_service_init(const char *hostname)
 
     if (hostname == NULL)
     {
-        hostname = WIFI_HOSTNAME;
+        hostname = device_identity_hostname();
     }
 
     esp_err_t err = mdns_init();

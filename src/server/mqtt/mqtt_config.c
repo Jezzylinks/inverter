@@ -7,6 +7,7 @@
 #include "nvs.h"
 #include "system/system_state.h"
 #include "wifi/wifi_config.h"
+#include "system/device_identity.h"
 
 #define MQTT_CONFIG_TAG "NET_SERVICES"
 #define MQTT_CONFIG_NVS_NAMESPACE NVS_NS_SYSTEM
@@ -72,7 +73,7 @@ void mqtt_config_defaults(network_mqtt_config_t *config)
     }
     memset(config, 0, sizeof(*config));
     config->enabled = false;
-    strncpy(config->client_id, WIFI_HOSTNAME, sizeof(config->client_id) - 1U);
+    strncpy(config->client_id, device_identity_hostname(), sizeof(config->client_id) - 1U);
     strncpy(config->publish_topic, "inverter/status", sizeof(config->publish_topic) - 1U);
     strncpy(config->subscribe_topic, "inverter/command", sizeof(config->subscribe_topic) - 1U);
     config->keepalive_sec = 60;
@@ -113,8 +114,14 @@ esp_err_t mqtt_config_load(network_mqtt_config_t *config)
     }
     (void)nvs_get_string(handle, NETWORK_MQTT_BROKER_KEY, config->broker_url,
                          sizeof(config->broker_url));
-    (void)nvs_get_string(handle, NETWORK_MQTT_CLIENT_ID_KEY, config->client_id,
-                         sizeof(config->client_id));
+    const esp_err_t client_id_err =
+        nvs_get_string(handle, NETWORK_MQTT_CLIENT_ID_KEY, config->client_id,
+                       sizeof(config->client_id));
+    /* Missing/empty IDs use this unit's default; preserve configured IDs. */
+    if (client_id_err != ESP_OK || config->client_id[0] == '\0') {
+        (void)snprintf(config->client_id, sizeof(config->client_id), "%s",
+                       device_identity_hostname());
+    }
     (void)nvs_get_string(handle, NETWORK_MQTT_USERNAME_KEY, config->username,
                          sizeof(config->username));
     (void)nvs_get_string(handle, NETWORK_MQTT_PASSWORD_KEY, config->password,

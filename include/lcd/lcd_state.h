@@ -307,6 +307,7 @@ extern "C"
         char ssid[LCD_WIFI_SSID_MAX_LEN + 1U];
         char ip[LCD_LINE_SIZE];
         char gateway[LCD_LINE_SIZE];
+        char hostname[32];
         int8_t rssi;
         bool connected;
         bool got_ip;
