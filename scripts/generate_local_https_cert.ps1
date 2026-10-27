@@ -16,12 +16,7 @@ $provisioningIp = $match.Groups[1].Value
 $cert = Join-Path (Get-Location) "data/https_server.crt"
 $san = "IP:$provisioningIp"
 if (-not [string]::IsNullOrWhiteSpace($DeviceHostname)) {
-    if ($DeviceHostname -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.localif ($LASTEXITCODE -ne 0) {
-    throw "OpenSSL failed to generate the certificate."
-}
-Write-Host "Created $cert and $key"
-Write-Warning "Do not commit data/https_server.key. Upload filesystem with: pio run -e esp32dev -t uploadfs"
-) {
+    if ($DeviceHostname -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.local$') {
         throw "DeviceHostname must be the exact local hostname, for example solar-inverter-A1B2.local"
     }
     $san += ",DNS:$DeviceHostname"
