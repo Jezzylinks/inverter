@@ -23,6 +23,7 @@
   const $ = (id) => document.getElementById(id);
   const els = {
     connectionBadge: $('connectionBadge'), connectionLabel: $('connectionLabel'), pinButton: $('pinButton'),
+    notificationButton: $('notificationButton'), notificationPopover: $('notificationPopover'), notificationCount: $('notificationCount'), notificationTotal: $('notificationTotal'), notificationList: $('notificationList'),
     heroTitle: $('heroTitle'), heroSubtitle: $('heroSubtitle'), signalLabel: $('signalLabel'), signalBars: document.querySelector('.signal-bars'),
     wifiState: $('wifiState'), wifiSsid: $('wifiSsid'), deviceIp: $('deviceIp'), deviceHost: $('deviceHost'), internetState: $('internetState'), lastUpdate: $('lastUpdate'),
     scanButton: $('scanButton'), disconnectButton: $('disconnectButton'), refreshButton: $('refreshButton'), networkNotice: $('networkNotice'), networkList: $('networkList'),
@@ -333,11 +334,47 @@
     try { renderServices(await request('/api/v1/services')); } catch (error) { if (error.message !== 'Security PIN required') log(error.message, 'error'); }
   }
 
+
+  function renderNotifications(events) {
+    if (!els.notificationList) return;
+    const items = Array.isArray(events) ? events.slice(0, 8) : [];
+    const total = Array.isArray(events) ? events.length : 0;
+    if (els.notificationTotal) els.notificationTotal.textContent = String(total);
+    if (els.notificationCount) {
+      els.notificationCount.hidden = total === 0;
+      els.notificationCount.textContent = total > 9 ? '9+' : String(total);
+    }
+    els.notificationList.replaceChildren();
+    if (items.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'notification-empty';
+      empty.textContent = 'No device faults have been reported.';
+      els.notificationList.appendChild(empty);
+      return;
+    }
+    items.forEach((event) => {
+      const severity = String(event.severity || 'info').toLowerCase();
+      const row = document.createElement('div');
+      row.className = 'notification-item ' + (severity === 'critical' || severity === 'fault' ? 'error' : severity === 'warning' || severity === 'derated' ? 'warn' : '');
+      const dot = document.createElement('i');
+      dot.setAttribute('aria-hidden', 'true');
+      const copy = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = event.message || 'Device event';
+      const meta = document.createElement('small');
+      meta.textContent = severity + (event.source ? ' · ' + event.source : '');
+      copy.append(title, meta);
+      row.append(dot, copy);
+      els.notificationList.appendChild(row);
+    });
+  }
+
   async function loadFaultHistory() {
     try {
       const payload = await request('/api/v1/faults');
       els.faultHistory.replaceChildren();
       const events = Array.isArray(payload.events) ? payload.events : [];
+      renderNotifications(events);
       if (events.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'log-empty';
@@ -670,6 +707,17 @@
 
   function bind() {
     setupNavigation();
+    els.notificationButton?.addEventListener('click', () => {
+      const open = els.notificationPopover.hidden;
+      els.notificationPopover.hidden = !open;
+      els.notificationButton.setAttribute('aria-expanded', String(open));
+    });
+    document.addEventListener('click', (event) => {
+      if (els.notificationPopover && !event.target.closest('.notification-wrap')) {
+        els.notificationPopover.hidden = true;
+        els.notificationButton?.setAttribute('aria-expanded', 'false');
+      }
+    });
     els.pinButton.addEventListener('click', requestPin);
     els.pinCloseButton.addEventListener('click', () => els.pinDialog.close());
     els.passwordCloseButton.addEventListener('click', () => els.passwordDialog.close());
