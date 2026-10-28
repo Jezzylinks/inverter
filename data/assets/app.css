@@ -271,3 +271,37 @@ html { scroll-behavior: smooth; scroll-padding-top: 90px; }
   .chart-range { align-self: flex-start; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+
+/* Power-flow visual uses the same reported telemetry as the metric cards. */
+.power-flow-panel { margin: 18px 0 20px; }
+.flow-live { display: inline-flex; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .1em; white-space: nowrap; }
+.flow-live span { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px rgba(91,228,170,.35); }
+.power-flow { display: grid; grid-template-columns: minmax(0,1fr) 34px minmax(0,1fr) 34px minmax(0,1fr) 34px minmax(0,1fr); align-items: center; gap: 8px; margin-top: 20px; }
+.flow-node { display: flex; align-items: flex-start; gap: 12px; min-width: 0; min-height: 102px; padding: 15px 13px; border: 1px solid var(--line); border-radius: 15px; background: linear-gradient(145deg, rgba(20,39,62,.76), rgba(7,16,29,.7)); }
+.flow-node-icon { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 36px; border: 1px solid rgba(85,214,232,.2); border-radius: 11px; color: var(--cyan); background: rgba(85,214,232,.08); font-size: 21px; }
+.flow-battery .flow-node-icon { color: var(--green); border-color: rgba(91,228,170,.2); background: rgba(91,228,170,.07); }
+.flow-load .flow-node-icon { color: var(--amber); border-color: rgba(247,201,108,.2); background: rgba(247,201,108,.07); }
+.flow-node-label { display: block; margin: 2px 0 7px; color: var(--subtle); font-size: 9px; font-weight: 850; letter-spacing: .12em; }
+.flow-node strong { display: block; overflow-wrap: anywhere; color: var(--text); font-size: 15px; font-weight: 800; }
+.flow-node small { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.flow-connector { position: relative; display: block; height: 2px; background: linear-gradient(90deg, rgba(85,214,232,.15), rgba(85,214,232,.75), rgba(85,214,232,.15)); }
+.flow-connector::after { content: ""; position: absolute; top: -4px; right: -1px; width: 8px; height: 8px; border-top: 2px solid var(--cyan); border-right: 2px solid var(--cyan); transform: rotate(45deg); }
+.flow-connector i { position: absolute; top: -3px; left: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 10px rgba(85,214,232,.7); animation: flow-pulse 2.4s ease-in-out infinite; }
+@keyframes flow-pulse { 0%,100% { opacity: .35; transform: translateX(0); } 50% { opacity: 1; transform: translateX(18px); } }
+#power-flow { scroll-margin-top: 92px; }
+@media (max-width: 1000px) {
+ .power-flow { grid-template-columns: minmax(0,1fr) 28px minmax(0,1fr); row-gap: 12px; }
+ .power-flow .flow-connector:nth-of-type(4) { display: none; }
+ .power-flow .flow-load { grid-column: 3; }
+}
+@media (max-width: 620px) {
+ .power-flow { grid-template-columns: 1fr; gap: 8px; }
+ .flow-node { min-height: 82px; }
+ .flow-connector { width: 2px; height: 18px; margin: 0 auto; background: linear-gradient(180deg, rgba(85,214,232,.15), rgba(85,214,232,.75), rgba(85,214,232,.15)); }
+ .flow-connector::after { top: auto; right: -3px; bottom: -1px; transform: rotate(135deg); }
+ .flow-connector i { top: 0; left: -3px; animation: flow-pulse-vertical 2.4s ease-in-out infinite; }
+ .power-flow .flow-connector:nth-of-type(4) { display: block; }
+ .power-flow .flow-load { grid-column: auto; }
+}
+@keyframes flow-pulse-vertical { 0%,100% { opacity: .35; transform: translateY(0); } 50% { opacity: 1; transform: translateY(9px); } }
