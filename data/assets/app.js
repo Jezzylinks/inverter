@@ -587,7 +587,9 @@
       batteryVoltage: Number(battery.voltage),
       outputVoltage: Number(inverter.voltage)
     };
-    if (battery.voltage !== null && battery.voltage !== undefined && battery.voltage !== '' && Number.isFinite(values.batteryVoltage)) {
+    const batteryValid = battery.voltage !== null && battery.voltage !== undefined && battery.voltage !== '' && Number.isFinite(values.batteryVoltage);
+    const outputValid = inverter.voltage !== null && inverter.voltage !== undefined && inverter.voltage !== '' && Number.isFinite(values.outputVoltage);
+    if (batteryValid || outputValid) {
       state.chartSamples.push(values);
       state.chartSamples = state.chartSamples.filter((sample) => Date.now() - sample.time <= 24 * 60 * 60 * 1000).slice(-600);
       drawTelemetryCharts();
