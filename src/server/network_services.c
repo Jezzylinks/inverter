@@ -3,8 +3,12 @@
 
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 
 #include "esp_http_server.h"
+#include "esp_https_server.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -26,7 +30,14 @@
 
 #define NETWORK_SERVICES_TAG "NET_SERVICES"
 #define NETWORK_HTTP_PORT 80U
+#define NETWORK_HTTPS_PORT 443U
 #define NETWORK_HTTP_STACK_SIZE 8192U
+#define NETWORK_HTTP_MAX_OPEN_SOCKETS 2U
+#define NETWORK_HTTPS_STACK_SIZE 10240U
+#define NETWORK_HTTPS_MAX_OPEN_SOCKETS 3U
+#define NETWORK_HTTPS_MAX_PEM_BYTES 8192U
+#define NETWORK_HTTPS_CERT_PATH "/www/https_server.crt"
+#define NETWORK_HTTPS_KEY_PATH "/www/https_server.key"
 #define NETWORK_SYNC_TASK_STACK_SIZE 8192U
 /* JSON API (64 handlers incl. OPTIONS) + dashboard (3) + WebSocket (1) = 68.
  * Each spare slot costs one pointer, so keep generous headroom: when this was
@@ -51,6 +62,7 @@ static SemaphoreHandle_t s_mutex;
  * use) and the services ended up half started. */
 static SemaphoreHandle_t s_lifecycle_mutex;
 static httpd_handle_t s_http_server;
+static httpd_handle_t s_https_server;
 static network_mqtt_config_t s_mqtt_config;
 static bool s_initialized;
 static bool s_running;
@@ -248,17 +260,26 @@ static void mqtt_message_callback(const mqtt_message_t *message)
 
 static void cleanup_http_services(void)
 {
+    /* json_api_server_stop() unregisters from the most recently registered
+     * handle (HTTPS when active). The plain HTTP listener is stopped below,
+     * which releases its own URI table as well. */
+    (void)json_api_server_stop();
+    if (s_https_server != NULL) {
+        (void)websocket_server_unregister(s_https_server);
+        (void)web_dashboard_server_unregister(s_https_server);
+        (void)httpd_ssl_stop(s_https_server);
+        s_https_server = NULL;
+    }
     (void)web_dashboard_server_unregister(s_http_server);
     s_dashboard_running = false;
-    (void)web_dashboard_server_deinit();
     (void)websocket_server_unregister(s_http_server);
     s_websocket_running = false;
-    (void)json_api_server_stop();
     (void)websocket_server_deinit();
     if (s_http_server != NULL) {
         (void)httpd_stop(s_http_server);
         s_http_server = NULL;
     }
+    (void)web_dashboard_server_deinit();
 }
 
 static esp_err_t start_mqtt_if_enabled(void)
@@ -288,6 +309,116 @@ static esp_err_t start_mqtt_if_enabled(void)
         ESP_LOGW(NETWORK_SERVICES_TAG, "MQTT startup failed: %s", esp_err_to_name(err));
     }
     return err;
+}
+
+/* Start a second TLS listener for the same dashboard/API/WebSocket handlers.
+ * The dashboard already owns the SPIFFS mount at /www, so read the per-device
+ * certificate from that mount. HTTPS is optional: missing certs or TLS startup
+ * failure must never take down the existing HTTP service or inverter control. */
+static void network_https_wipe_free(char *buffer)
+{
+    if (buffer == NULL) {
+        return;
+    }
+    volatile unsigned char *p = (volatile unsigned char *)buffer;
+    size_t n = strlen(buffer);
+    while (n-- > 0U) {
+        *p++ = 0U;
+    }
+    free(buffer);
+}
+
+static char *network_https_read_pem(const char *path, size_t *out_len)
+{
+    struct stat info;
+    if (path == NULL || out_len == NULL || stat(path, &info) != 0 ||
+        info.st_size <= 0 || (size_t)info.st_size > NETWORK_HTTPS_MAX_PEM_BYTES) {
+        return NULL;
+    }
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) {
+        return NULL;
+    }
+    const size_t size = (size_t)info.st_size;
+    char *pem = calloc(size + 1U, 1U);
+    if (pem == NULL) {
+        fclose(file);
+        return NULL;
+    }
+    const size_t count = fread(pem, 1U, size, file);
+    fclose(file);
+    if (count != size || strstr(pem, "-----BEGIN ") == NULL ||
+        strstr(pem, "-----END ") == NULL) {
+        network_https_wipe_free(pem);
+        return NULL;
+    }
+    *out_len = size + 1U;
+    return pem;
+}
+
+static esp_err_t network_services_start_https_dashboard(void)
+{
+    if (s_https_server != NULL) {
+        return ESP_OK;
+    }
+    size_t cert_len = 0U;
+    size_t key_len = 0U;
+    char *cert_pem = network_https_read_pem(NETWORK_HTTPS_CERT_PATH, &cert_len);
+    char *key_pem = network_https_read_pem(NETWORK_HTTPS_KEY_PATH, &key_len);
+    if (cert_pem == NULL || key_pem == NULL) {
+        network_https_wipe_free(cert_pem);
+        network_https_wipe_free(key_pem);
+        ESP_LOGW(NETWORK_SERVICES_TAG,
+                 "HTTPS dashboard unavailable: certificate/key missing under /www; upload the SPIFFS image with per-device PEM files");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
+    config.port_secure = NETWORK_HTTPS_PORT;
+    config.httpd.max_uri_handlers = NETWORK_HTTP_MAX_URI_HANDLERS;
+    config.httpd.max_open_sockets = NETWORK_HTTPS_MAX_OPEN_SOCKETS;
+    config.httpd.stack_size = NETWORK_HTTPS_STACK_SIZE;
+    config.httpd.lru_purge_enable = true;
+    config.servercert = (const uint8_t *)cert_pem;
+    config.servercert_len = cert_len;
+    config.prvtkey_pem = (const uint8_t *)key_pem;
+    config.prvtkey_len = key_len;
+
+    httpd_handle_t server = NULL;
+    esp_err_t err = httpd_ssl_start(&server, &config);
+    network_https_wipe_free(cert_pem);
+    network_https_wipe_free(key_pem);
+    if (err != ESP_OK) {
+        ESP_LOGW(NETWORK_SERVICES_TAG, "HTTPS dashboard TLS startup failed: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    bool https_api_registered = false;
+    err = web_dashboard_server_register(server);
+    if (err == ESP_OK) {
+        err = json_api_server_start(server);
+        https_api_registered = (err == ESP_OK);
+    }
+    if (err == ESP_OK) {
+        err = websocket_server_register(server);
+    }
+    if (err != ESP_OK) {
+        (void)websocket_server_unregister(server);
+        if (https_api_registered) {
+            (void)json_api_server_stop();
+        }
+        (void)web_dashboard_server_unregister(server);
+        (void)httpd_ssl_stop(server);
+        ESP_LOGW(NETWORK_SERVICES_TAG, "HTTPS dashboard route registration failed: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    s_https_server = server;
+    ESP_LOGI(NETWORK_SERVICES_TAG,
+             "HTTPS dashboard/API/WebSocket started on port %u", NETWORK_HTTPS_PORT);
+    return ESP_OK;
 }
 
 static esp_err_t network_services_start_station_services(void)
@@ -382,6 +513,7 @@ esp_err_t network_services_init(void)
         return err;
     }
     s_http_server = NULL;
+    s_https_server = NULL;
     s_running = false;
     s_mdns_running = false;
     s_captive_dns_running = false;
@@ -454,6 +586,8 @@ static esp_err_t network_services_start_locked(void)
     httpd_config_t http_config = HTTPD_DEFAULT_CONFIG();
     http_config.server_port = NETWORK_HTTP_PORT;
     http_config.max_uri_handlers = NETWORK_HTTP_MAX_URI_HANDLERS;
+    /* Leave room in LWIP for the TLS listener, captive DNS, MQTT and NTP. */
+    http_config.max_open_sockets = NETWORK_HTTP_MAX_OPEN_SOCKETS;
     http_config.stack_size = NETWORK_HTTP_STACK_SIZE;
     http_config.lru_purge_enable = true;
 
@@ -510,6 +644,10 @@ static esp_err_t network_services_start_locked(void)
     }
     s_websocket_running = true;
     NS_HEAP("start:websocket");
+
+    /* HTTPS mirrors the same local interface. It is optional so a missing
+     * device-local certificate never breaks the existing HTTP UI. */
+    (void)network_services_start_https_dashboard();
 
     err = mdns_service_init(device_identity_hostname());
     if (err == ESP_OK) {
