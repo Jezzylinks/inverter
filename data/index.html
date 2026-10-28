@@ -22,6 +22,16 @@
         <div id="connectionBadge" class="status-badge status-neutral" role="status" aria-live="polite">
           <span class="status-dot"></span><span id="connectionLabel">Starting…</span>
         </div>
+        <div class="notification-wrap">
+          <button id="notificationButton" class="icon-button notification-button" type="button" title="View device notifications" aria-label="View device notifications" aria-expanded="false" aria-controls="notificationPopover">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><span id="notificationCount" class="notification-count" hidden>0</span>
+          </button>
+          <div id="notificationPopover" class="notification-popover" hidden>
+            <div class="notification-heading"><div><strong>Device notifications</strong><small>Recent reported faults</small></div><span id="notificationTotal">0</span></div>
+            <div id="notificationList" class="notification-list"><p class="notification-empty">No notifications loaded.</p></div>
+            <a class="notification-footer" href="#fault-history" data-nav-link>View fault history <span>→</span></a>
+          </div>
+        </div>
         <button id="pinButton" class="icon-button" type="button" title="Set security PIN" aria-label="Set security PIN">•••</button>
       </div>
     </header>
