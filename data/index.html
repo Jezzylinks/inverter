@@ -26,8 +26,43 @@
       </div>
     </header>
 
+    <nav class="primary-nav" aria-label="Main navigation">
+      <button class="mobile-menu-toggle" id="mobileMenuToggle" type="button" aria-expanded="false" aria-controls="primaryNavLinks" aria-label="Open navigation">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="nav-links" id="primaryNavLinks">
+        <a class="nav-link is-active" href="#overview" data-nav-link>Overview</a>
+        <div class="nav-group">
+          <button class="nav-link nav-trigger" type="button" aria-expanded="false" aria-haspopup="true">Monitoring <span class="nav-chevron">⌄</span></button>
+          <div class="nav-dropdown">
+            <a href="#monitoring" data-nav-link><span>◫</span><span><strong>Live telemetry</strong><small>Battery, solar and load</small></span></a>
+            <a href="#performance" data-nav-link><span>⌁</span><span><strong>Performance charts</strong><small>Measurements from this session</small></span></a>
+            <a href="#fault-history" data-nav-link><span>⚠</span><span><strong>Fault history</strong><small>Device diagnostics</small></span></a>
+            <a href="#event-log" data-nav-link><span>≡</span><span><strong>Activity log</strong><small>Recent dashboard events</small></span></a>
+          </div>
+        </div>
+        <div class="nav-group">
+          <button class="nav-link nav-trigger" type="button" aria-expanded="false" aria-haspopup="true">Network <span class="nav-chevron">⌄</span></button>
+          <div class="nav-dropdown">
+            <a href="#network-panel" data-nav-link><span>⌁</span><span><strong>Wi-Fi connection</strong><small>Scan and connect networks</small></span></a>
+            <a href="#service-panel" data-nav-link><span>◉</span><span><strong>Service health</strong><small>API and live updates</small></span></a>
+          </div>
+        </div>
+        <div class="nav-group">
+          <button class="nav-link nav-trigger" type="button" aria-expanded="false" aria-haspopup="true">Settings <span class="nav-chevron">⌄</span></button>
+          <div class="nav-dropdown">
+            <button type="button" class="dropdown-action" id="navPinAction"><span>⌑</span><span><strong>Security PIN</strong><small>Unlock protected actions</small></span></button>
+            <button type="button" class="dropdown-action" id="navMqttAction"><span>⇄</span><span><strong>MQTT integration</strong><small>Configure bridge settings</small></span></button>
+            <a href="#network-panel" data-nav-link><span>⌁</span><span><strong>Network settings</strong><small>Wi-Fi connection options</small></span></a>
+          </div>
+        </div>
+        <a class="nav-link" href="#firmware" data-nav-link>Firmware & OTA</a>
+      </div>
+      <div class="nav-quick-status"><span class="nav-status-dot"></span><span>Local device</span></div>
+    </nav>
+
     <main>
-      <section class="hero-panel">
+      <section class="hero-panel" id="overview">
         <div>
           <p class="eyebrow">NETWORK OVERVIEW</p>
           <h2 id="heroTitle">Preparing your control center</h2>
@@ -54,12 +89,28 @@
         </article>
       </section>
 
-      <section class="metric-grid telemetry-grid" aria-label="Inverter metrics">
+      <section class="metric-grid telemetry-grid" id="monitoring" aria-label="Inverter metrics">
         <article class="metric-card accent-green"><div class="metric-icon" aria-hidden="true">↯</div><div><p class="metric-label">Inverter</p><strong id="inverterState" aria-live="polite">Unknown</strong><span id="inverterDetail" class="metric-detail">Waiting for telemetry</span></div></article>
         <article class="metric-card accent-amber"><div class="metric-icon" aria-hidden="true">▣</div><div><p class="metric-label">Battery · estimated SOC</p><strong id="batteryMetric" aria-live="polite">—</strong><span id="batteryDetail" class="metric-detail">Telemetry unavailable</span></div></article>
         <article class="metric-card accent-cyan"><div class="metric-icon" aria-hidden="true">☼</div><div><p class="metric-label">Solar / PV</p><strong id="solarMetric" aria-live="polite">—</strong><span id="solarDetail" class="metric-detail">Telemetry unavailable</span></div></article>
         <article class="metric-card accent-green"><div class="metric-icon" aria-hidden="true">⌂</div><div><p class="metric-label">Load</p><strong id="loadMetric" aria-live="polite">—</strong><span id="loadDetail" class="metric-detail">Telemetry unavailable</span></div></article>
       </section>
+
+      <section class="panel chart-panel" id="performance" aria-labelledby="performanceTitle">
+        <div class="panel-heading chart-heading">
+          <div><p class="eyebrow">LIVE PERFORMANCE</p><h3 id="performanceTitle">Electrical trends</h3><p class="metric-detail">Lightweight browser-session history. The device does not need to store historical data.</p></div>
+          <div class="chart-range" role="group" aria-label="Chart time range">
+            <button type="button" class="range-button is-selected" data-chart-range="15m" aria-pressed="true">15 min</button>
+            <button type="button" class="range-button" data-chart-range="session" aria-pressed="false">Session</button>
+          </div>
+        </div>
+        <div class="chart-grid">
+          <article class="chart-card"><div class="chart-card-heading"><span>Battery voltage</span><strong id="batteryChartLatest">— <small>V</small></strong></div><canvas id="batteryChart" height="150" role="img" aria-label="Battery voltage trend chart"></canvas><p class="chart-footnote">Measured battery voltage</p></article>
+          <article class="chart-card"><div class="chart-card-heading"><span>AC output voltage</span><strong id="outputChartLatest">— <small>V</small></strong></div><canvas id="outputChart" height="150" role="img" aria-label="AC output voltage trend chart"></canvas><p class="chart-footnote">Measured inverter output voltage</p></article>
+        </div>
+        <div class="chart-empty" id="chartEmpty">Waiting for valid telemetry measurements to build the charts.</div>
+      </section>
+
       <section class="health-strip" aria-label="Dashboard data health">
         <div class="health-item"><span class="health-indicator" id="apiHealthDot"></span><div><span class="health-label">Device API</span><strong id="apiHealth">Checking…</strong></div></div>
         <div class="health-item"><span class="health-indicator" id="liveHealthDot"></span><div><span class="health-label">Live updates</span><strong id="liveHealth">Connecting…</strong></div></div>
@@ -67,7 +118,7 @@
       </section>
 
       <section class="content-grid">
-        <article class="panel panel-wide">
+        <article class="panel panel-wide" id="network-panel">
           <div class="panel-heading">
             <div><p class="eyebrow">WIRELESS CONTROL</p><h3>Network connection</h3></div>
             <button id="refreshButton" class="button button-quiet" type="button"><span class="button-icon">↻</span> Refresh</button>
@@ -82,7 +133,7 @@
           </div>
         </article>
 
-        <article class="panel">
+        <article class="panel" id="service-panel">
           <div class="panel-heading"><div><p class="eyebrow">SERVICE HEALTH</p><h3>System services</h3></div><span id="servicePulse" class="pulse"></span></div>
           <div class="service-list">
             <div class="service-row"><span class="service-name"><span class="service-symbol">H</span> HTTP API</span><span id="serviceHttp" class="service-state">—</span></div>
@@ -108,8 +159,8 @@
           </form>
         </article>
 
-        <article class="panel panel-wide">
-          <div class="panel-heading"><div><p class="eyebrow">FIRMWARE</p><h3>OTA update</h3></div><span id="otaState" class="service-state" role="status" aria-live="polite">Idle</span></div>
+        <article class="panel panel-wide" id="firmware">
+          <div class="panel-heading"><div><p class="eyebrow">FIRMWARE & OTA</p><h3>Firmware update</h3></div><span id="otaState" class="service-state" role="status" aria-live="polite">Idle</span></div>
           <div class="service-list">
             <div class="service-row"><span class="service-name">Installed</span><span id="otaInstalled" class="service-state">—</span></div>
             <div class="service-row"><span class="service-name">Available</span><span id="otaAvailable" class="service-state">—</span></div>
@@ -119,7 +170,7 @@
         </article>
 
 
-        <article class="panel panel-wide">
+        <article class="panel panel-wide" id="fault-history">
           <div class="panel-heading">
             <div><p class="eyebrow">DEVICE DIAGNOSTICS</p><h3>Fault history</h3><p id="faultDiagnostics" class="metric-detail">Persistent diagnostics unavailable</p></div>
             <span id="faultSummary" class="service-state">Waiting for device</span>
@@ -129,7 +180,7 @@
           </div>
         </article>
 
-        <article class="panel panel-wide">
+        <article class="panel panel-wide" id="event-log">
           <div class="panel-heading"><div><p class="eyebrow">ACTIVITY</p><h3>Recent events</h3></div><button id="clearLogButton" class="text-button" type="button">Clear</button></div>
           <div id="eventLog" class="event-log" aria-live="polite"><div class="log-empty">No events yet.</div></div>
         </article>
