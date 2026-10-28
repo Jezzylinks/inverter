@@ -15,7 +15,9 @@
     apiAuthRequired: false,
     socketConnected: false,
     lastTelemetryAt: 0,
-    lastApiError: ''
+    lastApiError: '',
+    chartSamples: [],
+    chartRange: '15m'
   };
 
   const $ = (id) => document.getElementById(id);
@@ -198,6 +200,7 @@
       [inverter.voltage, battery.voltage, battery.state_of_charge, solar.voltage, solar.current, load.voltage]
         .some((value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)));
     if (hasValidMeasurement) markTelemetryFresh();
+    recordChartSample(payloads);
   }
 
   function renderOta(payload) {
@@ -512,7 +515,146 @@
     }
   }
 
+
+  function setupNavigation() {
+    const nav = document.querySelector('.primary-nav');
+    const menuToggle = $('mobileMenuToggle');
+    const navLinks = $('primaryNavLinks');
+    if (!nav || !navLinks) return;
+    const groups = Array.from(nav.querySelectorAll('.nav-group'));
+    const closeGroups = (except) => groups.forEach((group) => {
+      if (group !== except) {
+        group.classList.remove('is-open');
+        const trigger = group.querySelector('.nav-trigger');
+        if (trigger) trigger.setAttribute('aria-expanded', 'false');
+      }
+    });
+    groups.forEach((group) => {
+      const trigger = group.querySelector('.nav-trigger');
+      trigger?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const opening = !group.classList.contains('is-open');
+        closeGroups(group);
+        group.classList.toggle('is-open', opening);
+        trigger.setAttribute('aria-expanded', String(opening));
+      });
+    });
+    document.addEventListener('click', (event) => {
+      if (!nav.contains(event.target)) closeGroups(null);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        closeGroups(null);
+        nav.classList.remove('mobile-open');
+        menuToggle?.setAttribute('aria-expanded', 'false');
+      }
+    });
+    menuToggle?.addEventListener('click', () => {
+      const open = !nav.classList.contains('mobile-open');
+      nav.classList.toggle('mobile-open', open);
+      menuToggle.setAttribute('aria-expanded', String(open));
+      menuToggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+    });
+    navLinks.querySelectorAll('[data-nav-link]').forEach((link) => link.addEventListener('click', () => {
+      nav.querySelectorAll('[data-nav-link]').forEach((item) => item.classList.toggle('is-active', item === link));
+      closeGroups(null);
+      nav.classList.remove('mobile-open');
+      menuToggle?.setAttribute('aria-expanded', 'false');
+    }));
+    $('navPinAction')?.addEventListener('click', () => { closeGroups(null); requestPin(); });
+    $('navMqttAction')?.addEventListener('click', () => {
+      closeGroups(null);
+      els.mqttPanel.hidden = false;
+      els.mqttPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    document.querySelectorAll('[data-chart-range]').forEach((button) => button.addEventListener('click', () => {
+      state.chartRange = button.dataset.chartRange || '15m';
+      document.querySelectorAll('[data-chart-range]').forEach((item) => {
+        const selected = item === button;
+        item.classList.toggle('is-selected', selected);
+        item.setAttribute('aria-pressed', String(selected));
+      });
+      drawTelemetryCharts();
+    }));
+    window.addEventListener('resize', drawTelemetryCharts, { passive: true });
+  }
+
+  function recordChartSample(payloads) {
+    const inverter = payloads.inverter || {};
+    const battery = payloads.battery || {};
+    const values = {
+      time: Date.now(),
+      batteryVoltage: Number(battery.voltage),
+      outputVoltage: Number(inverter.voltage)
+    };
+    if (battery.voltage !== null && battery.voltage !== undefined && battery.voltage !== '' && Number.isFinite(values.batteryVoltage)) {
+      state.chartSamples.push(values);
+      state.chartSamples = state.chartSamples.filter((sample) => Date.now() - sample.time <= 24 * 60 * 60 * 1000).slice(-600);
+      drawTelemetryCharts();
+    }
+  }
+
+  function drawOneChart(canvasId, latestId, key, unit) {
+    const canvas = $(canvasId);
+    const latest = $(latestId);
+    if (!canvas || !latest) return;
+    const valid = state.chartSamples.filter((sample) => Number.isFinite(sample[key]) && sample[key] > 0);
+    const filtered = state.chartRange === '15m'
+      ? valid.filter((sample) => Date.now() - sample.time <= 15 * 60 * 1000)
+      : valid;
+    const last = filtered[filtered.length - 1];
+    latest.innerHTML = last ? `${last[key].toFixed(1)} <small>${unit}</small>` : `— <small>${unit}</small>`;
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(240, canvas.clientWidth || 300);
+    const height = 150;
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.scale(ratio, ratio);
+    ctx.clearRect(0, 0, width, height);
+    const pad = { top: 12, right: 8, bottom: 22, left: 8 };
+    const plotW = width - pad.left - pad.right;
+    const plotH = height - pad.top - pad.bottom;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(174,205,236,.12)';
+    for (let i = 0; i < 4; i++) {
+      const y = pad.top + plotH * i / 3;
+      ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(width - pad.right, y); ctx.stroke();
+    }
+    if (filtered.length === 0) return;
+    const vals = filtered.map((sample) => sample[key]);
+    let min = Math.min(...vals), max = Math.max(...vals);
+    if (max - min < 0.5) { min -= 0.5; max += 0.5; }
+    const points = filtered.map((sample, index) => ({
+      x: pad.left + (filtered.length === 1 ? plotW / 2 : plotW * index / (filtered.length - 1)),
+      y: pad.top + plotH - ((sample[key] - min) / (max - min)) * plotH
+    }));
+    const gradient = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
+    gradient.addColorStop(0, 'rgba(85,214,232,.22)');
+    gradient.addColorStop(1, 'rgba(85,214,232,0)');
+    ctx.beginPath(); ctx.moveTo(points[0].x, pad.top + plotH);
+    points.forEach((point) => ctx.lineTo(point.x, point.y));
+    ctx.lineTo(points[points.length - 1].x, pad.top + plotH); ctx.closePath();
+    ctx.fillStyle = gradient; ctx.fill();
+    ctx.beginPath(); points.forEach((point, index) => index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y));
+    ctx.strokeStyle = '#55d6e8'; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+    const point = points[points.length - 1];
+    ctx.beginPath(); ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2); ctx.fillStyle = '#5be4aa'; ctx.fill();
+    ctx.fillStyle = '#68829e'; ctx.font = '10px system-ui, sans-serif';
+    ctx.fillText(`${max.toFixed(1)} ${unit}`, pad.left, height - 5);
+    ctx.textAlign = 'right'; ctx.fillText(`${min.toFixed(1)} ${unit}`, width - pad.right, height - 5);
+  }
+
+  function drawTelemetryCharts() {
+    drawOneChart('batteryChart', 'batteryChartLatest', 'batteryVoltage', 'V');
+    drawOneChart('outputChart', 'outputChartLatest', 'outputVoltage', 'V');
+    const empty = $('chartEmpty');
+    if (empty) empty.hidden = state.chartSamples.some((sample) => Number.isFinite(sample.batteryVoltage) || Number.isFinite(sample.outputVoltage));
+  }
+
   function bind() {
+    setupNavigation();
     els.pinButton.addEventListener('click', requestPin);
     els.pinCloseButton.addEventListener('click', () => els.pinDialog.close());
     els.passwordCloseButton.addEventListener('click', () => els.passwordDialog.close());
