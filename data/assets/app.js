@@ -33,6 +33,8 @@
     clearLogButton: $('clearLogButton'), toastRegion: $('toastRegion'),
     inverterState: $('inverterState'), inverterDetail: $('inverterDetail'), batteryMetric: $('batteryMetric'), batteryDetail: $('batteryDetail'),
     solarMetric: $('solarMetric'), solarDetail: $('solarDetail'), loadMetric: $('loadMetric'), loadDetail: $('loadDetail'),
+    solarFlowValue: $('solarFlowValue'), solarFlowDetail: $('solarFlowDetail'), batteryFlowValue: $('batteryFlowValue'), batteryFlowDetail: $('batteryFlowDetail'),
+    inverterFlowValue: $('inverterFlowValue'), inverterFlowDetail: $('inverterFlowDetail'), loadFlowValue: $('loadFlowValue'), loadFlowDetail: $('loadFlowDetail'),
     apiHealth: $('apiHealth'), apiHealthDot: $('apiHealthDot'), liveHealth: $('liveHealth'), liveHealthDot: $('liveHealthDot'),
     telemetryHealth: $('telemetryHealth'), telemetryHealthDot: $('telemetryHealthDot'),
     otaState: $('otaState'), otaInstalled: $('otaInstalled'), otaAvailable: $('otaAvailable'), otaProgress: $('otaProgress'), otaCheckButton: $('otaCheckButton'), otaStartButton: $('otaStartButton'), otaCancelButton: $('otaCancelButton'),
@@ -195,6 +197,17 @@
     els.loadDetail.textContent = load.telemetry_valid === false
       ? 'Telemetry unavailable'
       : `${formatValue(load.voltage, ' V')} · ${load.current_available === true ? formatValue(load.current, ' A') : 'Current not measured'} · ${load.percentage_available === true ? formatValue(load.percentage, '%') : 'Load % unavailable'}`;
+
+    if (els.solarFlowValue) {
+      els.solarFlowValue.textContent = solar.power_available === true ? formatValue(solar.power_kw, ' kW') : 'Not measured';
+      els.solarFlowDetail.textContent = solar.available === true ? `${formatValue(solar.voltage, ' V')} · ${formatValue(solar.current, ' A')}` : 'Solar sensors unavailable';
+      els.batteryFlowValue.textContent = socText === '—' ? '—' : `~${socText}`;
+      els.batteryFlowDetail.textContent = battery.telemetry_valid === false ? 'Telemetry unavailable' : formatValue(battery.voltage, ' V');
+      els.inverterFlowValue.textContent = inverter.state || 'Unknown';
+      els.inverterFlowDetail.textContent = inverterValid ? formatValue(inverter.voltage, ' V') : 'Telemetry unavailable';
+      els.loadFlowValue.textContent = load.power_available === true ? formatValue(load.power_kw, ' kW') : 'Not measured';
+      els.loadFlowDetail.textContent = load.telemetry_valid === false ? 'Telemetry unavailable' : formatValue(load.voltage, ' V');
+    }
 
     const hasValidMeasurement = inverter.telemetry_valid !== false &&
       [inverter.voltage, battery.voltage, battery.state_of_charge, solar.voltage, solar.current, load.voltage]
