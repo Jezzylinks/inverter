@@ -36,6 +36,7 @@
           <button class="nav-link nav-trigger" type="button" aria-expanded="false" aria-haspopup="true">Monitoring <span class="nav-chevron">⌄</span></button>
           <div class="nav-dropdown">
             <a href="#monitoring" data-nav-link><span>◫</span><span><strong>Live telemetry</strong><small>Battery, solar and load</small></span></a>
+            <a href="#power-flow" data-nav-link><span>⇄</span><span><strong>Power flow</strong><small>Live energy path</small></span></a>
             <a href="#performance" data-nav-link><span>⌁</span><span><strong>Performance charts</strong><small>Measurements from this session</small></span></a>
             <a href="#fault-history" data-nav-link><span>⚠</span><span><strong>Fault history</strong><small>Device diagnostics</small></span></a>
             <a href="#event-log" data-nav-link><span>≡</span><span><strong>Activity log</strong><small>Recent dashboard events</small></span></a>
@@ -94,6 +95,20 @@
         <article class="metric-card accent-amber"><div class="metric-icon" aria-hidden="true">▣</div><div><p class="metric-label">Battery · estimated SOC</p><strong id="batteryMetric" aria-live="polite">—</strong><span id="batteryDetail" class="metric-detail">Telemetry unavailable</span></div></article>
         <article class="metric-card accent-cyan"><div class="metric-icon" aria-hidden="true">☼</div><div><p class="metric-label">Solar / PV</p><strong id="solarMetric" aria-live="polite">—</strong><span id="solarDetail" class="metric-detail">Telemetry unavailable</span></div></article>
         <article class="metric-card accent-green"><div class="metric-icon" aria-hidden="true">⌂</div><div><p class="metric-label">Load</p><strong id="loadMetric" aria-live="polite">—</strong><span id="loadDetail" class="metric-detail">Telemetry unavailable</span></div></article>
+      </section>
+
+
+      <section class="panel power-flow-panel" id="power-flow" aria-labelledby="powerFlowTitle">
+        <div class="panel-heading"><div><p class="eyebrow">ENERGY PATH</p><h3 id="powerFlowTitle">System power flow</h3><p class="metric-detail">Only measured or reported values are shown. Missing sensor data stays unavailable.</p></div><span class="flow-live"><span></span> DEVICE DATA</span></div>
+        <div class="power-flow">
+          <article class="flow-node flow-solar"><span class="flow-node-icon" aria-hidden="true">☼</span><div><span class="flow-node-label">SOLAR / PV</span><strong id="solarFlowValue">Not measured</strong><small id="solarFlowDetail">Solar sensors unavailable</small></div></article>
+          <span class="flow-connector" aria-hidden="true"><i></i></span>
+          <article class="flow-node flow-battery"><span class="flow-node-icon" aria-hidden="true">▰</span><div><span class="flow-node-label">BATTERY</span><strong id="batteryFlowValue">—</strong><small id="batteryFlowDetail">Waiting for telemetry</small></div></article>
+          <span class="flow-connector" aria-hidden="true"><i></i></span>
+          <article class="flow-node flow-inverter"><span class="flow-node-icon" aria-hidden="true">ϟ</span><div><span class="flow-node-label">INVERTER</span><strong id="inverterFlowValue">Unknown</strong><small id="inverterFlowDetail">Waiting for telemetry</small></div></article>
+          <span class="flow-connector" aria-hidden="true"><i></i></span>
+          <article class="flow-node flow-load"><span class="flow-node-icon" aria-hidden="true">⌂</span><div><span class="flow-node-label">AC LOAD</span><strong id="loadFlowValue">Not measured</strong><small id="loadFlowDetail">Output measurements unavailable</small></div></article>
+        </div>
       </section>
 
       <section class="panel chart-panel" id="performance" aria-labelledby="performanceTitle">
