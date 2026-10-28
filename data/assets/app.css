@@ -291,9 +291,10 @@ html { scroll-behavior: smooth; scroll-padding-top: 90px; }
 @keyframes flow-pulse { 0%,100% { opacity: .35; transform: translateX(0); } 50% { opacity: 1; transform: translateX(18px); } }
 #power-flow { scroll-margin-top: 92px; }
 @media (max-width: 1000px) {
- .power-flow { grid-template-columns: minmax(0,1fr) 28px minmax(0,1fr); row-gap: 12px; }
- .power-flow .flow-connector:nth-of-type(4) { display: none; }
- .power-flow .flow-load { grid-column: 3; }
+ .power-flow { grid-template-columns: repeat(4, minmax(0,1fr)); gap: 9px; }
+ .flow-connector { display: none; }
+ .flow-node { flex-direction: column; gap: 9px; padding: 13px 11px; }
+ .flow-node strong { font-size: 13px; }
 }
 @media (max-width: 620px) {
  .power-flow { grid-template-columns: 1fr; gap: 8px; }
@@ -301,7 +302,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 90px; }
  .flow-connector { width: 2px; height: 18px; margin: 0 auto; background: linear-gradient(180deg, rgba(85,214,232,.15), rgba(85,214,232,.75), rgba(85,214,232,.15)); }
  .flow-connector::after { top: auto; right: -3px; bottom: -1px; transform: rotate(135deg); }
  .flow-connector i { top: 0; left: -3px; animation: flow-pulse-vertical 2.4s ease-in-out infinite; }
- .power-flow .flow-connector:nth-of-type(4) { display: block; }
+ .flow-connector { display: block; }
  .power-flow .flow-load { grid-column: auto; }
 }
 @keyframes flow-pulse-vertical { 0%,100% { opacity: .35; transform: translateY(0); } 50% { opacity: 1; transform: translateY(9px); } }
