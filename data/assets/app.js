@@ -25,6 +25,8 @@
     connectionBadge: $('connectionBadge'), connectionLabel: $('connectionLabel'), pinButton: $('pinButton'),
     notificationButton: $('notificationButton'), notificationPopover: $('notificationPopover'), notificationCount: $('notificationCount'), notificationTotal: $('notificationTotal'), notificationList: $('notificationList'),
     heroTitle: $('heroTitle'), heroSubtitle: $('heroSubtitle'), signalLabel: $('signalLabel'), signalBars: document.querySelector('.signal-bars'),
+    outputVoltageMetric: $('outputVoltageMetric'), outputVoltageDetail: $('outputVoltageDetail'), outputPowerMetric: $('outputPowerMetric'), outputPowerDetail: $('outputPowerDetail'), loadProgressBar: $('loadProgressBar'),
+    wifiDashboardState: $('wifiDashboardState'), wifiDashboardDetail: $('wifiDashboardDetail'), dashboardNotificationList: $('dashboardNotificationList'), dashboardClock: $('dashboardClock'),
     wifiState: $('wifiState'), wifiSsid: $('wifiSsid'), deviceIp: $('deviceIp'), deviceHost: $('deviceHost'), internetState: $('internetState'), lastUpdate: $('lastUpdate'),
     scanButton: $('scanButton'), disconnectButton: $('disconnectButton'), refreshButton: $('refreshButton'), networkNotice: $('networkNotice'), networkList: $('networkList'),
     serviceHttp: $('serviceHttp'), serviceWs: $('serviceWs'), serviceMdns: $('serviceMdns'), serviceNtp: $('serviceNtp'), serviceMqtt: $('serviceMqtt'), servicePulse: $('servicePulse'),
@@ -145,6 +147,9 @@
     const friendly = stateText.charAt(0).toUpperCase() + stateText.slice(1);
     els.wifiState.textContent = connected ? 'Connected' : friendly;
     els.wifiSsid.textContent = status.ssid || (connected ? 'Station network' : 'No network');
+    if (els.wifiDashboardState) els.wifiDashboardState.textContent = connected ? 'Connected' : friendly;
+    if (els.wifiDashboardDetail) els.wifiDashboardDetail.textContent = connected ? `${status.ssid || 'Wi-Fi network'} · ${typeof status.rssi === 'number' ? `${status.rssi} dBm` : 'Signal unavailable'}` : 'No active Wi-Fi connection';
+    document.querySelector('.wifi-signal-bars')?.classList.toggle('is-weak', !connected || (typeof status.rssi === 'number' && status.rssi < -75));
     els.deviceIp.textContent = status.ip && status.ip !== '0.0.0.0' ? status.ip : '—';
     els.deviceHost.textContent = status.hostname ? `${status.hostname}.local` : '—';
     els.internetState.textContent = status.internet || 'Unknown';
@@ -198,6 +203,12 @@
     els.loadDetail.textContent = load.telemetry_valid === false
       ? 'Telemetry unavailable'
       : `${formatValue(load.voltage, ' V')} · ${load.current_available === true ? formatValue(load.current, ' A') : 'Current not measured'} · ${load.percentage_available === true ? formatValue(load.percentage, '%') : 'Load % unavailable'}`;
+    if (els.outputVoltageMetric) els.outputVoltageMetric.textContent = inverterValid ? formatValue(inverter.voltage, ' V') : '—';
+    if (els.outputVoltageDetail) els.outputVoltageDetail.textContent = inverter.frequency_available === true ? `AC · ${formatValue(inverter.frequency, ' Hz')}` : 'AC output · frequency unavailable';
+    const outputPowerWatts = load.power_available === true && Number.isFinite(Number(load.power_kw)) ? Number(load.power_kw) * 1000 : null;
+    if (els.outputPowerMetric) els.outputPowerMetric.textContent = outputPowerWatts === null ? '—' : `${Math.round(outputPowerWatts)} W`;
+    if (els.outputPowerDetail) els.outputPowerDetail.textContent = load.percentage_available === true ? `Load: ${formatValue(load.percentage, '%')}` : 'Load percentage unavailable';
+    if (els.loadProgressBar) els.loadProgressBar.style.width = load.percentage_available === true ? `${Math.max(0, Math.min(100, Number(load.percentage) || 0))}%` : '0%';
 
     if (els.solarFlowValue) {
       els.solarFlowValue.textContent = solar.power_available === true ? formatValue(solar.power_kw, ' kW') : 'Not measured';
@@ -345,7 +356,14 @@
       els.notificationCount.textContent = total > 9 ? '9+' : String(total);
     }
     els.notificationList.replaceChildren();
+    if (els.dashboardNotificationList) els.dashboardNotificationList.replaceChildren();
     if (items.length === 0) {
+      if (els.dashboardNotificationList) {
+        const emptyDashboard = document.createElement('div');
+        emptyDashboard.className = 'notification-empty';
+        emptyDashboard.textContent = 'No device faults have been reported.';
+        els.dashboardNotificationList.appendChild(emptyDashboard);
+      }
       const empty = document.createElement('p');
       empty.className = 'notification-empty';
       empty.textContent = 'No device faults have been reported.';
@@ -366,7 +384,35 @@
       copy.append(title, meta);
       row.append(dot, copy);
       els.notificationList.appendChild(row);
+      if (els.dashboardNotificationList) {
+        const dashboardRow = document.createElement('article');
+        const kind = severity === 'critical' || severity === 'fault' ? 'error' : severity === 'warning' || severity === 'derated' ? 'warn' : severity === 'ok' || severity === 'normal' ? 'good' : '';
+        dashboardRow.className = `dashboard-notification ${kind}`;
+        const stateIcon = document.createElement('span');
+        stateIcon.className = 'notification-state-icon';
+        stateIcon.setAttribute('aria-hidden', 'true');
+        stateIcon.textContent = kind === 'error' ? '×' : kind === 'warn' ? '!' : kind === 'good' ? '✓' : 'i';
+        const copy = document.createElement('div');
+        const heading = document.createElement('strong');
+        heading.textContent = event.message || 'Device event';
+        const details = document.createElement('small');
+        const value = typeof event.value === 'number' && Number.isFinite(event.value) ? ` · ${event.value.toFixed(2)}` : '';
+        details.textContent = `${event.source || 'Device'}${value}`;
+        const time = document.createElement('span');
+        time.className = 'notification-time';
+        time.textContent = severity.toUpperCase();
+        copy.append(heading, details, time);
+        dashboardRow.append(stateIcon, copy);
+        els.dashboardNotificationList.appendChild(dashboardRow);
+      }
     });
+    if (els.dashboardNotificationList && items.length > 5) {
+      const more = document.createElement('a');
+      more.className = 'text-link dashboard-more-link';
+      more.href = '#fault-history';
+      more.textContent = `View all ${total} events →`;
+      els.dashboardNotificationList.appendChild(more);
+    }
   }
 
   async function loadFaultHistory() {
@@ -612,6 +658,10 @@
       menuToggle?.setAttribute('aria-expanded', 'false');
     }));
     $('navPinAction')?.addEventListener('click', () => { closeGroups(null); requestPin(); });
+    $('quickPinAction')?.addEventListener('click', requestPin);
+    const clock = () => { if (els.dashboardClock) els.dashboardClock.textContent = new Date().toLocaleString([], { month: 'short', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }); };
+    clock();
+    window.setInterval(clock, 1000);
     $('navMqttAction')?.addEventListener('click', () => {
       closeGroups(null);
       els.mqttPanel.hidden = false;
