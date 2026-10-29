@@ -26,7 +26,7 @@
     notificationButton: $('notificationButton'), notificationPopover: $('notificationPopover'), notificationCount: $('notificationCount'), notificationTotal: $('notificationTotal'), notificationList: $('notificationList'),
     heroTitle: $('heroTitle'), heroSubtitle: $('heroSubtitle'), signalLabel: $('signalLabel'), signalBars: document.querySelector('.signal-bars'),
     outputVoltageMetric: $('outputVoltageMetric'), outputVoltageDetail: $('outputVoltageDetail'), outputPowerMetric: $('outputPowerMetric'), outputPowerDetail: $('outputPowerDetail'), loadProgressBar: $('loadProgressBar'),
-    wifiDashboardState: $('wifiDashboardState'), wifiDashboardDetail: $('wifiDashboardDetail'), dashboardNotificationList: $('dashboardNotificationList'), dashboardClock: $('dashboardClock'),
+    wifiDashboardState: $('wifiDashboardState'), wifiDashboardDetail: $('wifiDashboardDetail'), dashboardNotificationList: $('dashboardNotificationList'), dashboardClock: $('dashboardClock'), topLastUpdate: $('topLastUpdate'),
     wifiState: $('wifiState'), wifiSsid: $('wifiSsid'), deviceIp: $('deviceIp'), deviceHost: $('deviceHost'), internetState: $('internetState'), lastUpdate: $('lastUpdate'),
     scanButton: $('scanButton'), disconnectButton: $('disconnectButton'), refreshButton: $('refreshButton'), networkNotice: $('networkNotice'), networkList: $('networkList'),
     serviceHttp: $('serviceHttp'), serviceWs: $('serviceWs'), serviceMdns: $('serviceMdns'), serviceNtp: $('serviceNtp'), serviceMqtt: $('serviceMqtt'), servicePulse: $('servicePulse'),
@@ -153,7 +153,9 @@
     els.deviceIp.textContent = status.ip && status.ip !== '0.0.0.0' ? status.ip : '—';
     els.deviceHost.textContent = status.hostname ? `${status.hostname}.local` : '—';
     els.internetState.textContent = status.internet || 'Unknown';
-    els.lastUpdate.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    const updatedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    els.lastUpdate.textContent = `Updated ${updatedAt}`;
+    if (els.topLastUpdate) els.topLastUpdate.textContent = `Last update: ${updatedAt}`;
     els.heroTitle.textContent = connected ? 'Your inverter is online' : stateText === 'connecting' || stateText === 'reconnecting' ? 'Connecting to your network' : 'Network connection needs attention';
     els.heroSubtitle.textContent = connected ? `Live control is available at ${status.ip || 'the device address'}.` : 'Use the network controls below to scan or connect.';
     els.signalLabel.textContent = typeof status.rssi === 'number' && status.rssi < 0 ? `${status.rssi} dBm` : '— dBm';
@@ -659,6 +661,7 @@
     }));
     $('navPinAction')?.addEventListener('click', () => { closeGroups(null); requestPin(); });
     $('quickPinAction')?.addEventListener('click', requestPin);
+    $('sidebarPinAction')?.addEventListener('click', requestPin);
     const clock = () => { if (els.dashboardClock) els.dashboardClock.textContent = new Date().toLocaleString([], { month: 'short', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }); };
     clock();
     window.setInterval(clock, 1000);
