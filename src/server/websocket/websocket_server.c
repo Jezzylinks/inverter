@@ -263,6 +263,14 @@ void websocket_broadcast_device_status(void)
     cJSON_AddNullToObject(data, "solar_current");
     cJSON_AddBoolToObject(data, "solar_available", false);
     cJSON_AddBoolToObject(data, "telemetry_valid", valid);
+    /* Battery condition flags let the dashboard update its charging/low state
+     * and notifications live without waiting for the next HTTP poll. */
+    cJSON_AddBoolToObject(data, "battery_charging", snapshot.battery_charging);
+    cJSON_AddBoolToObject(data, "battery_low",
+                          snapshot.inverter.battery.is_low || snapshot.low_battery);
+    cJSON_AddBoolToObject(data, "battery_critical", snapshot.inverter.battery.is_critical);
+    cJSON_AddNumberToObject(data, "uptime_seconds",
+                            (double)(esp_timer_get_time() / 1000000ULL));
     cJSON_AddItemToObject(root, "data", data);
     websocket_broadcast_json(root, true);
 }

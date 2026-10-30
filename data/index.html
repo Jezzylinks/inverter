@@ -3,261 +3,522 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#09111f">
-  <meta name="description" content="Solar inverter local control dashboard">
-  <title>Vonix | Inverter Dashboard</title>
+  <meta name="theme-color" content="#070f1e">
+  <meta name="description" content="VONIX inverter management dashboard">
+  <title>VONIX | Inverter Management</title>
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="dashboard-sidebar" aria-label="Dashboard sections">
-      <a class="sidebar-brand" href="#overview" aria-label="Vonix dashboard home">
-        <span class="sidebar-brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span><strong>VONIX</strong><small>ENERGY SOLUTIONS</small></span>
-      </a>
-      <div class="sidebar-caption">WORKSPACE</div>
-      <a class="sidebar-link active" href="#overview"><span class="side-icon">▦</span>Dashboard</a>
-      <a class="sidebar-link" href="#monitoring"><span class="side-icon">⌁</span>Monitoring</a>
-      <a class="sidebar-link" href="#power-flow"><span class="side-icon">⇄</span>Power flow</a>
-      <a class="sidebar-link" href="#performance"><span class="side-icon">▥</span>Analytics</a>
-      <div class="sidebar-caption sidebar-caption-spaced">DEVICE MANAGEMENT</div>
-      <a class="sidebar-link" href="#network-panel"><span class="side-icon">⌁</span>Network</a>
-      <a class="sidebar-link" href="#service-panel"><span class="side-icon">◉</span>System services</a>
-      <a class="sidebar-link" href="#fault-history"><span class="side-icon">⚠</span>Fault history</a>
-      <a class="sidebar-link" href="#firmware"><span class="side-icon">↻</span>Firmware &amp; OTA</a>
-      <div class="sidebar-bottom">
-        <span class="sidebar-device-dot"></span><span><strong>Local device</strong><small>Inverter control panel</small></span>
-      </div>
-    </aside>
+<svg xmlns="http://www.w3.org/2000/svg" class="sprite" width="0" height="0" aria-hidden="true">
+  <defs>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11 12 3l9 8M5 10v10h14V10M10 20v-6h4v6"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+    <symbol id="i-battery" viewBox="0 0 24 24"><rect x="2" y="7" width="17" height="10" rx="2"/><path d="M22 11v2M6 10v4M10 10v4"/></symbol>
+    <symbol id="i-battery-bolt" viewBox="0 0 24 24"><rect x="2" y="7" width="17" height="10" rx="2"/><path d="M22 11v2M11 9l-3 3h4l-3 3"/></symbol>
+    <symbol id="i-flow" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-4h12v4"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h8M8 9h2"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+    <symbol id="i-solar" viewBox="0 0 24 24"><path d="M3 9h18l-2 10H5zM9 9l-1 10M15 9l1 10M4 14h16M12 2v3M5 4l2 2M19 4l-2 2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-toggle" viewBox="0 0 24 24"><rect x="1" y="6" width="22" height="12" rx="6"/><circle cx="7.5" cy="12" r="2.5"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M18.4 6.6a9 9 0 1 1-12.8 0M12 2v10"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="m8 14 3-3 2 2 3-4M8 7h8"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0zM12 18v4"/></symbol>
+  </defs>
+</svg>
+
+<div class="app" id="app">
+  <div class="scrim" id="scrim" hidden></div>
+
+  <aside class="sidebar" id="sidebar" aria-label="Sections">
+    <a class="brand" href="#/dashboard" aria-label="VONIX Energy Solutions">
+      <svg class="brand-bolt" viewBox="0 0 40 48" aria-hidden="true"><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4cc9ff"/><stop offset="1" stop-color="#1769ff"/></linearGradient></defs><path d="M24 1 3 27h13l-3 20 22-28H22z" fill="url(#bg)"/></svg>
+      <span class="brand-text"><strong>VONIX</strong><small>ENERGY SOLUTIONS</small></span>
+    </a>
+    <nav class="side-nav">
+      <a class="side-link" data-route="dashboard" href="#/dashboard"><svg class="ico"><use href="#i-home"/></svg><span>Dashboard</span></a>
+
+      <p class="side-head">MONITORING<svg class="ico chev"><use href="#i-chevron"/></svg></p>
+      <a class="side-link" data-route="live" href="#/live"><svg class="ico"><use href="#i-monitor"/></svg><span>Live Overview</span></a>
+      <a class="side-link" data-route="battery" href="#/battery"><svg class="ico"><use href="#i-battery"/></svg><span>Battery Monitor</span></a>
+      <a class="side-link" data-route="performance" href="#/performance"><svg class="ico"><use href="#i-activity"/></svg><span>Inverter Performance</span></a>
+      <a class="side-link" data-route="power-flow" href="#/power-flow"><svg class="ico"><use href="#i-flow"/></svg><span>Power Flow</span></a>
+      <a class="side-link" data-route="faults" href="#/faults"><svg class="ico"><use href="#i-alert"/></svg><span>Fault History</span></a>
+      <a class="side-link" data-route="events" href="#/events"><svg class="ico"><use href="#i-file"/></svg><span>Event Log</span></a>
+
+      <p class="side-head">NETWORK<svg class="ico chev"><use href="#i-chevron"/></svg></p>
+      <a class="side-link" data-route="wifi" href="#/wifi"><svg class="ico"><use href="#i-wifi"/></svg><span>Wi-Fi Configuration</span></a>
+      <a class="side-link" data-route="services" href="#/services"><svg class="ico"><use href="#i-cloud"/></svg><span>Network Services</span></a>
+      <a class="side-link" data-route="connectivity" href="#/connectivity"><svg class="ico"><use href="#i-globe"/></svg><span>Connectivity</span></a>
+      <a class="side-link" data-route="diagnostics" href="#/diagnostics"><svg class="ico"><use href="#i-activity"/></svg><span>Diagnostics</span></a>
+
+      <p class="side-head">SETTINGS<svg class="ico chev"><use href="#i-chevron"/></svg></p>
+      <a class="side-link" data-route="general" href="#/general"><svg class="ico"><use href="#i-gear"/></svg><span>General Settings</span></a>
+      <a class="side-link" data-route="battery-config" href="#/battery-config"><svg class="ico"><use href="#i-battery"/></svg><span>Battery Configuration</span></a>
+      <a class="side-link" data-route="security" href="#/security"><svg class="ico"><use href="#i-lock"/></svg><span>Security &amp; PIN</span></a>
+      <a class="side-link" data-route="display" href="#/display"><svg class="ico"><use href="#i-monitor"/></svg><span>Display Preferences</span></a>
+
+      <p class="side-head">FIRMWARE &amp; OTA<svg class="ico chev"><use href="#i-chevron"/></svg></p>
+      <a class="side-link" data-route="firmware" href="#/firmware"><svg class="ico"><use href="#i-cloud"/></svg><span>Current Firmware</span></a>
+      <a class="side-link" data-route="updates" href="#/updates"><svg class="ico"><use href="#i-download"/></svg><span>Check for Updates</span></a>
+      <a class="side-link" data-route="ota-settings" href="#/ota-settings"><svg class="ico"><use href="#i-gear"/></svg><span>OTA Settings</span></a>
+
+      <a class="side-link side-about" data-route="about" href="#/about"><svg class="ico"><use href="#i-info"/></svg><span>About</span></a>
+    </nav>
+  </aside>
+
+  <div class="main-col">
     <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div>
-          <p class="eyebrow">ENERGY MANAGEMENT</p>
-          <h1>Vonix Energy</h1>
-        </div>
-      </div>
-      <div class="topbar-actions">
-        <div id="connectionBadge" class="status-badge status-neutral" role="status" aria-live="polite">
-          <span class="status-dot"></span><span id="connectionLabel">Starting…</span>
-        </div>
-        <div class="notification-wrap">
-          <button id="notificationButton" class="icon-button notification-button" type="button" title="View device notifications" aria-label="View device notifications" aria-expanded="false" aria-controls="notificationPopover">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><span id="notificationCount" class="notification-count" hidden>0</span>
-          </button>
-          <div id="notificationPopover" class="notification-popover" hidden>
-            <div class="notification-heading"><div><strong>Device notifications</strong><small>Recent reported faults</small></div><span id="notificationTotal">0</span></div>
-            <div id="notificationList" class="notification-list"><p class="notification-empty">No notifications loaded.</p></div>
-            <a class="notification-footer" href="#fault-history" data-nav-link>View fault history <span>→</span></a>
+      <button class="icon-btn menu-btn" id="menuBtn" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false"><svg class="ico"><use href="#i-menu"/></svg></button>
+      <span class="top-title">Inverter Management System</span>
+
+      <nav class="top-nav" aria-label="Main">
+        <a class="top-btn primary" data-route="dashboard" href="#/dashboard"><svg class="ico"><use href="#i-home"/></svg>Dashboard</a>
+        <div class="dd">
+          <button class="top-btn dd-trigger" type="button" aria-haspopup="true" aria-expanded="false"><svg class="ico"><use href="#i-activity"/></svg>Monitoring<svg class="ico chev"><use href="#i-chevron"/></svg></button>
+          <div class="dd-menu" role="menu">
+            <a href="#/live" role="menuitem"><svg class="ico"><use href="#i-monitor"/></svg>Live Overview</a>
+            <a href="#/battery" role="menuitem"><svg class="ico"><use href="#i-battery"/></svg>Battery Monitor</a>
+            <a href="#/performance" role="menuitem"><svg class="ico"><use href="#i-activity"/></svg>Inverter Performance</a>
+            <a href="#/measurements" role="menuitem"><svg class="ico"><use href="#i-bolt"/></svg>Electrical Measurements</a>
+            <a href="#/power-flow" role="menuitem"><svg class="ico"><use href="#i-flow"/></svg>Power Flow</a>
+            <a href="#/faults" role="menuitem"><svg class="ico"><use href="#i-alert"/></svg>Fault History</a>
+            <a href="#/events" role="menuitem"><svg class="ico"><use href="#i-file"/></svg>Event Log</a>
           </div>
         </div>
-        <button id="pinButton" class="icon-button" type="button" title="Set security PIN" aria-label="Set security PIN">•••</button>
+        <div class="dd">
+          <button class="top-btn dd-trigger" type="button" aria-haspopup="true" aria-expanded="false"><svg class="ico"><use href="#i-wifi"/></svg>Network<svg class="ico chev"><use href="#i-chevron"/></svg></button>
+          <div class="dd-menu" role="menu">
+            <a href="#/wifi" role="menuitem"><svg class="ico"><use href="#i-wifi"/></svg>Wi-Fi Configuration</a>
+            <a href="#/services" role="menuitem"><svg class="ico"><use href="#i-cloud"/></svg>Network Services</a>
+            <a href="#/connectivity" role="menuitem"><svg class="ico"><use href="#i-globe"/></svg>Connectivity</a>
+            <a href="#/diagnostics" role="menuitem"><svg class="ico"><use href="#i-activity"/></svg>Diagnostics</a>
+          </div>
+        </div>
+        <div class="dd">
+          <button class="top-btn dd-trigger" type="button" aria-haspopup="true" aria-expanded="false"><svg class="ico"><use href="#i-gear"/></svg>Settings<svg class="ico chev"><use href="#i-chevron"/></svg></button>
+          <div class="dd-menu" role="menu">
+            <a href="#/general" role="menuitem"><svg class="ico"><use href="#i-gear"/></svg>General Settings</a>
+            <a href="#/battery-config" role="menuitem"><svg class="ico"><use href="#i-battery"/></svg>Battery Configuration</a>
+            <a href="#/security" role="menuitem"><svg class="ico"><use href="#i-lock"/></svg>Security &amp; PIN</a>
+            <a href="#/display" role="menuitem"><svg class="ico"><use href="#i-monitor"/></svg>Display Preferences</a>
+          </div>
+        </div>
+        <div class="dd">
+          <button class="top-btn dd-trigger" type="button" aria-haspopup="true" aria-expanded="false"><svg class="ico"><use href="#i-cloud"/></svg>Firmware &amp; OTA<svg class="ico chev"><use href="#i-chevron"/></svg></button>
+          <div class="dd-menu" role="menu">
+            <a href="#/firmware" role="menuitem"><svg class="ico"><use href="#i-cloud"/></svg>Current Firmware</a>
+            <a href="#/updates" role="menuitem"><svg class="ico"><use href="#i-download"/></svg>Check for Updates</a>
+            <a href="#/ota-settings" role="menuitem"><svg class="ico"><use href="#i-gear"/></svg>OTA Settings</a>
+          </div>
+        </div>
+      </nav>
+
+      <div class="top-right">
+        <div class="live" id="liveBox" data-tone="neutral" role="status" aria-live="polite">
+          <span class="live-dot"></span>
+          <span class="live-text"><strong data-k="live.label">Connecting</strong><small data-k="live.sub">Waiting for device</small></span>
+        </div>
+        <div class="dd dd-right">
+          <button class="icon-btn bell" id="bellBtn" type="button" aria-label="Notifications" aria-haspopup="true" aria-expanded="false">
+            <svg class="ico"><use href="#i-bell"/></svg><span class="badge" data-k="notif.count" hidden>0</span>
+          </button>
+          <div class="dd-menu bell-menu" role="menu">
+            <p class="dd-title">Notifications</p>
+            <div data-list="notif-mini"></div>
+            <a class="dd-foot" href="#/events">View all</a>
+          </div>
+        </div>
+        <div class="dd dd-right">
+          <button class="user-btn dd-trigger" type="button" aria-haspopup="true" aria-expanded="false"><span class="avatar"><svg class="ico"><use href="#i-user"/></svg></span><span data-k="user.label">Admin</span><svg class="ico chev"><use href="#i-chevron"/></svg></button>
+          <div class="dd-menu" role="menu">
+            <a href="#/security" role="menuitem"><svg class="ico"><use href="#i-lock"/></svg>Security &amp; PIN</a>
+            <button type="button" id="forgetPinBtn" role="menuitem"><svg class="ico"><use href="#i-logout"/></svg>Forget PIN on this browser</button>
+          </div>
+        </div>
       </div>
     </header>
 
-    <nav class="primary-nav" aria-label="Main navigation">
-      <button class="mobile-menu-toggle" id="mobileMenuToggle" type="button" aria-expanded="false" aria-controls="primaryNavLinks" aria-label="Open navigation">
-        <span></span><span></span><span></span>
-      </button>
-      <div class="nav-links" id="primaryNavLinks">
-        <a class="nav-link is-active" href="#overview" data-nav-link>Overview</a>
-        <div class="nav-group">
-          <button class="nav-link nav-trigger" type="button" aria-expanded="false" aria-haspopup="true">Monitoring <span class="nav-chevron">⌄</span></button>
-          <div class="nav-dropdown">
-            <a href="#monitoring" data-nav-link><span>◫</span><span><strong>Live telemetry</strong><small>Battery, solar and load</small></span></a>
-            <a href="#power-flow" data-nav-link><span>⇄</span><span><strong>Power flow</strong><small>Live energy path</small></span></a>
-            <a href="#performance" data-nav-link><span>⌁</span><span><strong>Performance charts</strong><small>Measurements from this session</small></span></a>
-            <a href="#fault-history" data-nav-link><span>⚠</span><span><strong>Fault history</strong><small>Device diagnostics</small></span></a>
-            <a href="#event-log" data-nav-link><span>≡</span><span><strong>Activity log</strong><small>Recent dashboard events</small></span></a>
-          </div>
-        </div>
-        <div class="nav-group">
-          <button class="nav-link nav-trigger" type="button" aria-expanded="false" aria-haspopup="true">Network <span class="nav-chevron">⌄</span></button>
-          <div class="nav-dropdown">
-            <a href="#network-panel" data-nav-link><span>⌁</span><span><strong>Wi-Fi connection</strong><small>Scan and connect networks</small></span></a>
-            <a href="#service-panel" data-nav-link><span>◉</span><span><strong>Service health</strong><small>API and live updates</small></span></a>
-          </div>
-        </div>
-        <div class="nav-group">
-          <button class="nav-link nav-trigger" type="button" aria-expanded="false" aria-haspopup="true">Settings <span class="nav-chevron">⌄</span></button>
-          <div class="nav-dropdown">
-            <button type="button" class="dropdown-action" id="navPinAction"><span>⌑</span><span><strong>Security PIN</strong><small>Unlock protected actions</small></span></button>
-            <button type="button" class="dropdown-action" id="navMqttAction"><span>⇄</span><span><strong>MQTT integration</strong><small>Configure bridge settings</small></span></button>
-            <a href="#network-panel" data-nav-link><span>⌁</span><span><strong>Network settings</strong><small>Wi-Fi connection options</small></span></a>
-          </div>
-        </div>
-        <a class="nav-link" href="#firmware" data-nav-link>Firmware & OTA</a>
-      </div>
-      <div class="nav-quick-status"><span class="nav-status-dot"></span><span>Local device</span></div>
-    </nav>
+    <main id="content" tabindex="-1">
 
-    <main>
-      <section class="hero-panel" id="overview">
-        <div>
-          <p class="eyebrow">NETWORK OVERVIEW</p>
-          <h2 id="heroTitle">Preparing your control center</h2>
-          <p id="heroSubtitle" class="hero-subtitle">Connecting to live inverter services.</p>
+      <!-- ============ DASHBOARD ============ -->
+      <section class="view" data-view="dashboard">
+        <div class="page-head">
+          <div><h1>System Overview</h1><p class="sub">Real-time inverter status and key parameters</p></div>
+          <div class="clock-pill"><svg class="ico"><use href="#i-clock"/></svg><span data-k="clock">—</span></div>
         </div>
-        <div class="hero-signal" aria-label="Wi-Fi signal strength">
-          <div class="signal-bars"><i></i><i></i><i></i><i></i></div>
-          <span id="signalLabel">— dBm</span>
+
+        <div class="stat-grid">
+          <article class="card stat">
+            <span class="stat-ico g-green"><svg class="ico"><use href="#i-box"/></svg></span>
+            <div class="stat-body">
+              <p class="stat-label">INVERTER STATUS</p>
+              <p class="stat-value"><span data-k="inv.state">—</span><i class="dot" data-k-tone="inv.tone"></i></p>
+            </div>
+            <p class="stat-foot">Mode: <b data-k="inv.mode">—</b></p>
+          </article>
+
+          <article class="card stat">
+            <span class="stat-ico g-teal"><svg class="ico"><use href="#i-battery-bolt"/></svg></span>
+            <div class="stat-body">
+              <p class="stat-label">BATTERY</p>
+              <p class="stat-value big"><span data-k="bat.soc">—</span><small class="est" data-k="bat.est" hidden>est.</small></p>
+            </div>
+            <div class="stat-bar"><div class="bar"><i data-bar="bat" data-k-tone="bat.tone"></i></div></div>
+            <p class="stat-foot split"><span data-k="bat.volts">—</span><span class="sep">|</span><span data-k="bat.cap">—</span></p>
+          </article>
+
+          <article class="card stat">
+            <span class="stat-ico g-blue"><svg class="ico"><use href="#i-bolt"/></svg></span>
+            <div class="stat-body">
+              <p class="stat-label">OUTPUT VOLTAGE</p>
+              <p class="stat-value"><span data-k="out.volt">—</span><span class="chip" data-k="out.chip" hidden>AC</span></p>
+            </div>
+            <p class="stat-foot" data-k="out.freq">—</p>
+          </article>
+
+          <article class="card stat">
+            <span class="stat-ico g-green"><svg class="ico"><use href="#i-bolt"/></svg></span>
+            <div class="stat-body">
+              <p class="stat-label">OUTPUT POWER</p>
+              <p class="stat-value"><span data-k="pow.value">—</span></p>
+            </div>
+            <div class="stat-bar"><div class="bar"><i data-bar="load"></i></div></div>
+            <p class="stat-foot">Load: <b data-k="pow.load">—</b></p>
+          </article>
+
+          <article class="card stat">
+            <span class="stat-ico g-wifi"><svg class="ico"><use href="#i-wifi"/></svg></span>
+            <div class="stat-body">
+              <p class="stat-label">Wi-Fi</p>
+              <p class="stat-value wifi"><span data-k="wifi.state" data-k-tone="wifi.tone">—</span><span class="sig" data-sig="wifi" aria-hidden="true"><i></i><i></i><i></i><i></i></span></p>
+            </div>
+            <p class="stat-foot">RSSI: <b data-k="wifi.rssi">—</b></p>
+          </article>
+        </div>
+
+        <div class="dash-grid">
+          <div class="col-main">
+            <section class="card panel" aria-labelledby="pfTitle">
+              <div class="panel-head">
+                <div><h2 id="pfTitle">Power Flow</h2><p class="sub">Live energy flow between system components</p></div>
+                <div class="legend"><span><i class="lg on"></i>Power Flow</span><span><i class="lg off"></i>Standby</span></div>
+              </div>
+              <div data-slot="flow"></div>
+            </section>
+
+            <section class="card panel" aria-labelledby="lcTitle">
+              <div class="panel-head">
+                <div><h2 id="lcTitle">Live Charts</h2><p class="sub" data-k="chart.sub">Real-time measurements (last 15 minutes)</p></div>
+                <div class="seg" role="group" aria-label="Chart range">
+                  <button type="button" data-range="15m" class="on" aria-pressed="true">15m</button>
+                  <button type="button" data-range="1h" aria-pressed="false">1h</button>
+                  <button type="button" data-range="6h" aria-pressed="false">6h</button>
+                  <button type="button" data-range="session" aria-pressed="false">Session</button>
+                </div>
+              </div>
+              <div class="chart-pair" data-slot="charts"></div>
+            </section>
+          </div>
+
+          <div class="col-side">
+            <section class="card panel notif" aria-labelledby="ntTitle">
+              <div class="panel-head">
+                <h2 id="ntTitle"><svg class="ico"><use href="#i-bell"/></svg>Notifications</h2>
+                <a class="link" href="#/events">View All</a>
+              </div>
+              <div class="n-list" data-list="notif"></div>
+            </section>
+
+            <section class="card panel qa" aria-labelledby="qaTitle">
+              <div class="panel-head"><h2 id="qaTitle"><svg class="ico bolt"><use href="#i-bolt"/></svg>Quick Actions</h2></div>
+              <div class="qa-grid">
+                <button type="button" class="qa-btn" id="qaControl"><svg class="ico"><use href="#i-toggle"/></svg><span><b>Inverter Control</b><small>Power &amp; mode settings</small></span></button>
+                <a class="qa-btn" href="#/wifi"><svg class="ico"><use href="#i-wifi"/></svg><span><b>Wi-Fi Settings</b><small>Manage network</small></span></a>
+                <a class="qa-btn" href="#/faults"><svg class="ico"><use href="#i-file"/></svg><span><b>View Logs</b><small>System and fault logs</small></span></a>
+                <a class="qa-btn" href="#/general"><svg class="ico"><use href="#i-gear"/></svg><span><b>System Settings</b><small>General configuration</small></span></a>
+              </div>
+            </section>
+          </div>
         </div>
       </section>
 
-      <section class="metric-grid" aria-label="Network metrics">
-        <article class="metric-card accent-cyan">
-          <div class="metric-icon">⌁</div>
-          <div><p class="metric-label">Wi‑Fi state</p><strong id="wifiState">Unknown</strong><span id="wifiSsid" class="metric-detail">No network</span></div>
-        </article>
-        <article class="metric-card accent-green">
-          <div class="metric-icon">⌂</div>
-          <div><p class="metric-label">Device address</p><strong id="deviceIp">—</strong><span id="deviceHost" class="metric-detail">—</span></div>
-        </article>
-        <article class="metric-card accent-amber">
-          <div class="metric-icon">◌</div>
-          <div><p class="metric-label">Internet</p><strong id="internetState">Unknown</strong><span id="lastUpdate" class="metric-detail">Waiting for data</span></div>
-        </article>
-      </section>
-
-      <section class="metric-grid telemetry-grid" id="monitoring" aria-label="Inverter metrics">
-        <article class="metric-card accent-green"><div class="metric-icon" aria-hidden="true">↯</div><div><p class="metric-label">Inverter</p><strong id="inverterState" aria-live="polite">Unknown</strong><span id="inverterDetail" class="metric-detail">Waiting for telemetry</span></div></article>
-        <article class="metric-card accent-amber"><div class="metric-icon" aria-hidden="true">▣</div><div><p class="metric-label">Battery · estimated SOC</p><strong id="batteryMetric" aria-live="polite">—</strong><span id="batteryDetail" class="metric-detail">Telemetry unavailable</span></div></article>
-        <article class="metric-card accent-cyan"><div class="metric-icon" aria-hidden="true">☼</div><div><p class="metric-label">Solar / PV</p><strong id="solarMetric" aria-live="polite">—</strong><span id="solarDetail" class="metric-detail">Telemetry unavailable</span></div></article>
-        <article class="metric-card accent-green"><div class="metric-icon" aria-hidden="true">⌂</div><div><p class="metric-label">Load</p><strong id="loadMetric" aria-live="polite">—</strong><span id="loadDetail" class="metric-detail">Telemetry unavailable</span></div></article>
-      </section>
-
-
-      <section class="panel power-flow-panel" id="power-flow" aria-labelledby="powerFlowTitle">
-        <div class="panel-heading"><div><p class="eyebrow">ENERGY PATH</p><h3 id="powerFlowTitle">System power flow</h3><p class="metric-detail">Only measured or reported values are shown. Missing sensor data stays unavailable.</p></div><span class="flow-live"><span></span> DEVICE DATA</span></div>
-        <div class="power-flow">
-          <article class="flow-node flow-solar"><span class="flow-node-icon" aria-hidden="true">☼</span><div><span class="flow-node-label">SOLAR / PV</span><strong id="solarFlowValue">Not measured</strong><small id="solarFlowDetail">Solar sensors unavailable</small></div></article>
-          <span class="flow-connector" aria-hidden="true"><i></i></span>
-          <article class="flow-node flow-battery"><span class="flow-node-icon" aria-hidden="true">▰</span><div><span class="flow-node-label">BATTERY</span><strong id="batteryFlowValue">—</strong><small id="batteryFlowDetail">Waiting for telemetry</small></div></article>
-          <span class="flow-connector" aria-hidden="true"><i></i></span>
-          <article class="flow-node flow-inverter"><span class="flow-node-icon" aria-hidden="true">ϟ</span><div><span class="flow-node-label">INVERTER</span><strong id="inverterFlowValue">Unknown</strong><small id="inverterFlowDetail">Waiting for telemetry</small></div></article>
-          <span class="flow-connector" aria-hidden="true"><i></i></span>
-          <article class="flow-node flow-load"><span class="flow-node-icon" aria-hidden="true">⌂</span><div><span class="flow-node-label">AC LOAD</span><strong id="loadFlowValue">Not measured</strong><small id="loadFlowDetail">Output measurements unavailable</small></div></article>
+      <!-- ============ BATTERY MONITOR ============ -->
+      <section class="view" data-view="battery" hidden>
+        <div class="page-head"><div><h1>Battery Monitor</h1><p class="sub">Battery bank voltage, estimated charge and protection thresholds</p></div></div>
+        <div class="tile-grid">
+          <article class="card tile"><p class="stat-label">VOLTAGE</p><p class="tile-val" data-k="bat.volts">—</p><p class="tile-sub">Measured</p></article>
+          <article class="card tile"><p class="stat-label">STATE OF CHARGE</p><p class="tile-val" data-k="bat.soc">—</p><p class="tile-sub">Firmware estimate</p></article>
+          <article class="card tile"><p class="stat-label">CHARGE STATE</p><p class="tile-val" data-k="bat.charge">—</p><p class="tile-sub" data-k="bat.chargeSub">—</p></article>
+          <article class="card tile"><p class="stat-label">RATED CAPACITY</p><p class="tile-val" data-k="bat.cap">—</p><p class="tile-sub">From battery profile</p></article>
         </div>
+        <section class="card panel">
+          <div class="panel-head"><div><h2>Battery Voltage</h2><p class="sub" data-k="chart.sub">Real-time measurements</p></div>
+            <div class="seg" role="group" aria-label="Chart range"><button type="button" data-range="15m" class="on">15m</button><button type="button" data-range="1h">1h</button><button type="button" data-range="6h">6h</button><button type="button" data-range="session">Session</button></div></div>
+          <div class="chart-pair single"><div class="chart-card" data-chart-card="battery"></div></div>
+        </section>
+        <section class="card panel"><div class="panel-head"><h2>Protection thresholds</h2></div>
+          <dl class="kv"><div><dt>Low-voltage warning</dt><dd data-k="bat.warnV">—</dd></div><div><dt>Cut-off voltage</dt><dd data-k="bat.cutV">—</dd></div><div><dt>System voltage</dt><dd data-k="bat.sysV">—</dd></div><div><dt>Battery current / temperature</dt><dd>Not measured by this hardware</dd></div></dl>
+        </section>
       </section>
 
-      <section class="panel chart-panel" id="performance" aria-labelledby="performanceTitle">
-        <div class="panel-heading chart-heading">
-          <div><p class="eyebrow">LIVE PERFORMANCE</p><h3 id="performanceTitle">Electrical trends</h3><p class="metric-detail">Lightweight browser-session history. The device does not need to store historical data.</p></div>
-          <div class="chart-range" role="group" aria-label="Chart time range">
-            <button type="button" class="range-button is-selected" data-chart-range="15m" aria-pressed="true">15 min</button>
-            <button type="button" class="range-button" data-chart-range="session" aria-pressed="false">Session</button>
-          </div>
-        </div>
-        <div class="chart-grid">
-          <article class="chart-card"><div class="chart-card-heading"><span>Battery voltage</span><strong id="batteryChartLatest">— <small>V</small></strong></div><canvas id="batteryChart" height="150" role="img" aria-label="Battery voltage trend chart"></canvas><p class="chart-footnote">Measured battery voltage</p></article>
-          <article class="chart-card"><div class="chart-card-heading"><span>AC output voltage</span><strong id="outputChartLatest">— <small>V</small></strong></div><canvas id="outputChart" height="150" role="img" aria-label="AC output voltage trend chart"></canvas><p class="chart-footnote">Measured inverter output voltage</p></article>
-        </div>
-        <div class="chart-empty" id="chartEmpty">Waiting for valid telemetry measurements to build the charts.</div>
+      <!-- ============ PERFORMANCE ============ -->
+      <section class="view" data-view="performance" hidden>
+        <div class="page-head"><div><h1>Inverter Performance</h1><p class="sub">Electrical trends recorded in this browser session</p></div></div>
+        <section class="card panel">
+          <div class="panel-head"><div><h2>Trends</h2><p class="sub" data-k="chart.sub">Real-time measurements</p></div>
+            <div class="seg" role="group" aria-label="Chart range"><button type="button" data-range="15m" class="on">15m</button><button type="button" data-range="1h">1h</button><button type="button" data-range="6h">6h</button><button type="button" data-range="session">Session</button></div></div>
+          <div class="chart-pair" data-slot="charts"></div>
+        </section>
+        <section class="card panel"><div class="panel-head"><h2>Statistics for selected range</h2></div>
+          <div class="table-wrap"><table class="tbl" id="statsTable"><thead><tr><th>Measurement</th><th>Minimum</th><th>Average</th><th>Maximum</th><th>Samples</th></tr></thead><tbody></tbody></table></div>
+        </section>
       </section>
 
-      <section class="health-strip" aria-label="Dashboard data health">
-        <div class="health-item"><span class="health-indicator" id="apiHealthDot"></span><div><span class="health-label">Device API</span><strong id="apiHealth">Checking…</strong></div></div>
-        <div class="health-item"><span class="health-indicator" id="liveHealthDot"></span><div><span class="health-label">Live updates</span><strong id="liveHealth">Connecting…</strong></div></div>
-        <div class="health-item"><span class="health-indicator" id="telemetryHealthDot"></span><div><span class="health-label">Telemetry freshness</span><strong id="telemetryHealth">Waiting for measurements</strong></div></div>
+      <!-- ============ MEASUREMENTS ============ -->
+      <section class="view" data-view="measurements" hidden>
+        <div class="page-head"><div><h1>Electrical Measurements</h1><p class="sub">Only values the hardware actually measures are shown; everything else is marked as not measured.</p></div></div>
+        <section class="card panel"><div class="table-wrap"><table class="tbl" id="measureTable"><thead><tr><th>Measurement</th><th>Value</th><th>Source</th></tr></thead><tbody></tbody></table></div></section>
       </section>
 
-      <section class="content-grid">
-        <article class="panel panel-wide" id="network-panel">
-          <div class="panel-heading">
-            <div><p class="eyebrow">WIRELESS CONTROL</p><h3>Network connection</h3></div>
-            <button id="refreshButton" class="button button-quiet" type="button"><span class="button-icon">↻</span> Refresh</button>
-          </div>
-          <div id="networkNotice" class="inline-notice" hidden></div>
-          <div class="network-actions">
-            <button id="scanButton" class="button button-primary" type="button"><span class="button-icon">⌕</span> Scan networks</button>
-            <button id="disconnectButton" class="button button-secondary" type="button"><span class="button-icon">×</span> Disconnect</button>
-          </div>
-          <div id="networkList" class="network-list" aria-live="polite">
-            <div class="empty-state"><div class="empty-icon">⌁</div><p>Scan to discover nearby networks.</p></div>
-          </div>
-        </article>
+      <!-- ============ POWER FLOW ============ -->
+      <section class="view" data-view="power-flow" hidden>
+        <div class="page-head"><div><h1>Power Flow</h1><p class="sub">Live energy flow between system components</p></div></div>
+        <section class="card panel"><div class="panel-head"><div><h2>System diagram</h2></div><div class="legend"><span><i class="lg on"></i>Power Flow</span><span><i class="lg off"></i>Standby</span></div></div><div data-slot="flow"></div></section>
+      </section>
 
-        <article class="panel" id="service-panel">
-          <div class="panel-heading"><div><p class="eyebrow">SERVICE HEALTH</p><h3>System services</h3></div><span id="servicePulse" class="pulse"></span></div>
-          <div class="service-list">
-            <div class="service-row"><span class="service-name"><span class="service-symbol">H</span> HTTP API</span><span id="serviceHttp" class="service-state">—</span></div>
-            <div class="service-row"><span class="service-name"><span class="service-symbol">W</span> Live updates</span><span id="serviceWs" class="service-state">—</span></div>
-            <div class="service-row"><span class="service-name"><span class="service-symbol">M</span> Local discovery</span><span id="serviceMdns" class="service-state">—</span></div>
-            <div class="service-row"><span class="service-name"><span class="service-symbol">T</span> Time sync</span><span id="serviceNtp" class="service-state">—</span></div>
-            <div class="service-row"><span class="service-name"><span class="service-symbol">Q</span> MQTT bridge</span><span id="serviceMqtt" class="service-state">—</span></div>
-          </div>
-          <button id="mqttToggleButton" class="button button-secondary full-width" type="button">Configure MQTT</button>
-        </article>
+      <!-- ============ FAULTS ============ -->
+      <section class="view" data-view="faults" hidden>
+        <div class="page-head"><div><h1>Fault History</h1><p class="sub" data-k="fault.diag">Persistent diagnostics unavailable</p></div><span class="pill" data-k="fault.summary">—</span></div>
+        <section class="card panel"><div class="log" data-list="faults"><p class="empty">Device fault history will appear here after authentication.</p></div></section>
+      </section>
 
-        <article id="mqttPanel" class="panel panel-wide collapsible" hidden>
-          <div class="panel-heading"><div><p class="eyebrow">OPTIONAL INTEGRATION</p><h3>MQTT bridge</h3></div><button id="mqttCloseButton" class="icon-button small" type="button" aria-label="Close MQTT settings">×</button></div>
+      <!-- ============ EVENTS ============ -->
+      <section class="view" data-view="events" hidden>
+        <div class="page-head"><div><h1>Event Log</h1><p class="sub">Notifications and recent dashboard activity</p></div></div>
+        <section class="card panel"><div class="panel-head"><h2><svg class="ico"><use href="#i-bell"/></svg>All notifications</h2></div><div class="n-list" data-list="notif-all"></div></section>
+        <section class="card panel"><div class="panel-head"><h2>Dashboard activity</h2><button class="text-btn" id="clearLog" type="button">Clear</button></div><div class="log" data-list="events"><p class="empty">No events yet.</p></div></section>
+      </section>
+
+      <!-- ============ WIFI ============ -->
+      <section class="view" data-view="wifi" hidden>
+        <div class="page-head"><div><h1>Wi-Fi Configuration</h1><p class="sub">Scan for networks and connect the inverter</p></div>
+          <button class="btn ghost" id="refreshBtn" type="button"><svg class="ico"><use href="#i-refresh"/></svg>Refresh</button></div>
+        <section class="card panel">
+          <dl class="kv"><div><dt>Status</dt><dd data-k="wifi.state">—</dd></div><div><dt>Network</dt><dd data-k="wifi.ssid">—</dd></div><div><dt>Signal</dt><dd data-k="wifi.rssi">—</dd></div><div><dt>IP address</dt><dd data-k="wifi.ip">—</dd></div></dl>
+          <div class="notice" id="wifiNotice" hidden></div>
+          <div class="btn-row"><button class="btn primary" id="scanBtn" type="button"><svg class="ico"><use href="#i-search"/></svg>Scan networks</button><button class="btn" id="disconnectBtn" type="button">Disconnect</button></div>
+          <div class="net-list" id="netList"><p class="empty">Scan to discover nearby networks.</p></div>
+        </section>
+      </section>
+
+      <!-- ============ SERVICES ============ -->
+      <section class="view" data-view="services" hidden>
+        <div class="page-head"><div><h1>Network Services</h1><p class="sub">Local services running on the inverter</p></div></div>
+        <section class="card panel"><div class="svc-list">
+          <div class="svc"><span>HTTP API</span><b data-svc="http">—</b></div>
+          <div class="svc"><span>Live updates (WebSocket)</span><b data-svc="websocket">—</b></div>
+          <div class="svc"><span>Local discovery (mDNS)</span><b data-svc="mdns">—</b></div>
+          <div class="svc"><span>Time sync (NTP)</span><b data-svc="ntp">—</b></div>
+          <div class="svc"><span>MQTT bridge</span><b data-svc="mqtt">—</b></div>
+        </div></section>
+        <section class="card panel"><div class="panel-head"><div><h2>MQTT bridge</h2><p class="sub">Optional integration. Connects after Wi-Fi receives an IP address.</p></div></div>
           <form id="mqttForm" class="form-grid">
-            <label class="toggle-row full-span"><input id="mqttEnabled" type="checkbox"><span class="toggle-control"></span><span><strong>Enable MQTT</strong><small>Connect after Wi‑Fi receives an IP address.</small></span></label>
-            <label>Broker URL<input id="mqttBroker" name="broker" placeholder="mqtts://broker.example.com" autocomplete="off"></label>
-            <label>Client ID<input id="mqttClientId" name="client_id" placeholder="solar-inverter-XXXX" autocomplete="off"></label>
-            <label>Username<input id="mqttUsername" name="username" autocomplete="username"></label>
-            <label>Password<input id="mqttPassword" name="password" type="password" autocomplete="new-password"></label>
-            <label>Publish topic<input id="mqttPublishTopic" name="publish_topic" placeholder="inverter/status"></label>
-            <label>Subscribe topic<input id="mqttSubscribeTopic" name="subscribe_topic" placeholder="inverter/command"></label>
-            <div class="form-actions full-span"><button class="button button-primary" type="submit">Save MQTT settings</button><button id="mqttConnectButton" class="button button-secondary" type="button">Connect now</button></div>
+            <label class="check full"><input id="mqttEnabled" type="checkbox"><span>Enable MQTT</span></label>
+            <label>Broker URL<input id="mqttBroker" placeholder="mqtts://broker.example.com" autocomplete="off"></label>
+            <label>Client ID<input id="mqttClientId" placeholder="solar-inverter-XXXX" autocomplete="off"></label>
+            <label>Username<input id="mqttUser" autocomplete="username"></label>
+            <label>Password<input id="mqttPass" type="password" autocomplete="new-password"></label>
+            <label>Publish topic<input id="mqttPub" placeholder="inverter/status"></label>
+            <label>Subscribe topic<input id="mqttSub" placeholder="inverter/command"></label>
+            <div class="btn-row full"><button class="btn primary" type="submit">Save MQTT settings</button><button class="btn" id="mqttConnectBtn" type="button">Connect now</button></div>
           </form>
-        </article>
+        </section>
+      </section>
 
-        <article class="panel panel-wide" id="firmware">
-          <div class="panel-heading"><div><p class="eyebrow">FIRMWARE & OTA</p><h3>Firmware update</h3></div><span id="otaState" class="service-state" role="status" aria-live="polite">Idle</span></div>
-          <div class="service-list">
-            <div class="service-row"><span class="service-name">Installed</span><span id="otaInstalled" class="service-state">—</span></div>
-            <div class="service-row"><span class="service-name">Available</span><span id="otaAvailable" class="service-state">—</span></div>
-            <div class="service-row"><span class="service-name">Progress</span><span id="otaProgress" class="service-state">—</span></div>
-          </div>
-          <div class="network-actions"><button id="otaCheckButton" class="button button-secondary" type="button">Check for update</button><button id="otaStartButton" class="button button-primary" type="button">Start update</button><button id="otaCancelButton" class="button button-secondary" type="button">Cancel</button></div>
-        </article>
+      <!-- ============ CONNECTIVITY ============ -->
+      <section class="view" data-view="connectivity" hidden>
+        <div class="page-head"><div><h1>Connectivity</h1><p class="sub">Network addresses and internet reachability</p></div></div>
+        <section class="card panel"><dl class="kv">
+          <div><dt>Wi-Fi state</dt><dd data-k="wifi.state">—</dd></div><div><dt>Network</dt><dd data-k="wifi.ssid">—</dd></div>
+          <div><dt>IP address</dt><dd data-k="wifi.ip">—</dd></div><div><dt>Gateway</dt><dd data-k="wifi.gateway">—</dd></div>
+          <div><dt>Netmask</dt><dd data-k="wifi.netmask">—</dd></div><div><dt>Hostname</dt><dd data-k="wifi.host">—</dd></div>
+          <div><dt>Internet</dt><dd data-k="wifi.internet">—</dd></div><div><dt>Signal strength</dt><dd data-k="wifi.rssi">—</dd></div>
+        </dl></section>
+      </section>
 
+      <!-- ============ DIAGNOSTICS ============ -->
+      <section class="view" data-view="diagnostics" hidden>
+        <div class="page-head"><div><h1>Diagnostics</h1><p class="sub">Controller health and last-reset information</p></div></div>
+        <section class="card panel"><dl class="kv">
+          <div><dt>Firmware</dt><dd data-k="sys.fw">—</dd></div><div><dt>Hardware</dt><dd data-k="sys.hw">—</dd></div>
+          <div><dt>Uptime</dt><dd data-k="sys.uptime">—</dd></div><div><dt>Device time</dt><dd data-k="sys.time">—</dd></div>
+          <div><dt>Free heap</dt><dd data-k="sys.heap">—</dd></div><div><dt>Lowest free heap</dt><dd data-k="sys.heapMin">—</dd></div>
+          <div><dt>Last reset reason</dt><dd data-k="sys.reset">—</dd></div><div><dt>Boot count</dt><dd data-k="sys.boots">—</dd></div>
+          <div><dt>Fault flags</dt><dd data-k="sys.flags">—</dd></div><div><dt>Last start error</dt><dd data-k="sys.startErr">—</dd></div>
+        </dl></section>
+      </section>
 
-        <article class="panel panel-wide" id="fault-history">
-          <div class="panel-heading">
-            <div><p class="eyebrow">DEVICE DIAGNOSTICS</p><h3>Fault history</h3><p id="faultDiagnostics" class="metric-detail">Persistent diagnostics unavailable</p></div>
-            <span id="faultSummary" class="service-state">Waiting for device</span>
-          </div>
-          <div id="faultHistory" class="event-log" aria-live="polite">
-            <div class="log-empty">Device fault history will appear here after authentication.</div>
-          </div>
-        </article>
+      <!-- ============ GENERAL ============ -->
+      <section class="view" data-view="general" hidden>
+        <div class="page-head"><div><h1>General Settings</h1><p class="sub">Device identity and system overview</p></div></div>
+        <section class="card panel"><dl class="kv">
+          <div><dt>Device name</dt><dd data-k="sys.device">—</dd></div><div><dt>Hardware</dt><dd data-k="sys.hw">—</dd></div>
+          <div><dt>Firmware</dt><dd data-k="sys.fw">—</dd></div><div><dt>Uptime</dt><dd data-k="sys.uptime">—</dd></div>
+          <div><dt>Display</dt><dd data-k="sys.lcd">—</dd></div><div><dt>Time sync</dt><dd data-k="sys.ntp">—</dd></div>
+        </dl>
+        <p class="note">Operating settings are changed from the inverter's front-panel menu. This dashboard shows them read-only so the protection logic stays authoritative on the device.</p></section>
+      </section>
 
-        <article class="panel panel-wide" id="event-log">
-          <div class="panel-heading"><div><p class="eyebrow">ACTIVITY</p><h3>Recent events</h3></div><button id="clearLogButton" class="text-button" type="button">Clear</button></div>
-          <div id="eventLog" class="event-log" aria-live="polite"><div class="log-empty">No events yet.</div></div>
-        </article>
+      <!-- ============ BATTERY CONFIG ============ -->
+      <section class="view" data-view="battery-config" hidden>
+        <div class="page-head"><div><h1>Battery Configuration</h1><p class="sub">Active battery profile (read-only)</p></div></div>
+        <section class="card panel"><dl class="kv">
+          <div><dt>Rated capacity</dt><dd data-k="bat.cap">—</dd></div><div><dt>System voltage</dt><dd data-k="bat.sysV">—</dd></div>
+          <div><dt>Low-voltage warning</dt><dd data-k="bat.warnV">—</dd></div><div><dt>Cut-off voltage</dt><dd data-k="bat.cutV">—</dd></div>
+        </dl>
+        <p class="note">Battery type and capacity are set from the inverter's front-panel menu.</p></section>
+      </section>
+
+      <!-- ============ SECURITY ============ -->
+      <section class="view" data-view="security" hidden>
+        <div class="page-head"><div><h1>Security &amp; PIN</h1><p class="sub">The device PIN protects controls and live data</p></div></div>
+        <section class="card panel">
+          <dl class="kv"><div><dt>Access</dt><dd data-k="sec.state">—</dd></div><div><dt>Storage</dt><dd>This browser tab only</dd></div></dl>
+          <div class="btn-row"><button class="btn primary" id="pinOpenBtn" type="button"><svg class="ico"><use href="#i-lock"/></svg>Enter PIN</button><button class="btn" id="pinForgetBtn" type="button">Forget PIN</button></div>
+        </section>
+      </section>
+
+      <!-- ============ DISPLAY ============ -->
+      <section class="view" data-view="display" hidden>
+        <div class="page-head"><div><h1>Display Preferences</h1><p class="sub">Saved in this browser only</p></div></div>
+        <section class="card panel"><div class="form-grid">
+          <label>Default chart range<select id="prefRange"><option value="15m">15 minutes</option><option value="1h">1 hour</option><option value="6h">6 hours</option><option value="session">Session</option></select></label>
+          <label class="check full"><input id="prefClock24" type="checkbox"><span>Use 24-hour clock</span></label>
+          <label class="check full"><input id="prefMotion" type="checkbox"><span>Animate power flow</span></label>
+        </div></section>
+      </section>
+
+      <!-- ============ FIRMWARE ============ -->
+      <section class="view" data-view="firmware" hidden>
+        <div class="page-head"><div><h1>Firmware &amp; OTA</h1><p class="sub">Installed firmware and over-the-air updates</p></div><span class="pill" data-k="ota.state">Idle</span></div>
+        <section class="card panel" id="fw-current"><div class="panel-head"><h2>Current firmware</h2></div><dl class="kv">
+          <div><dt>Installed version</dt><dd data-k="ota.installed">—</dd></div><div><dt>Uptime</dt><dd data-k="sys.uptime">—</dd></div></dl></section>
+        <section class="card panel" id="fw-updates"><div class="panel-head"><h2>Check for updates</h2></div><dl class="kv">
+          <div><dt>Available version</dt><dd data-k="ota.available">—</dd></div><div><dt>Progress</dt><dd data-k="ota.progress">—</dd></div></dl>
+          <div class="bar wide"><i data-bar="ota"></i></div>
+          <p class="note" data-k="ota.error" hidden></p>
+          <div class="btn-row"><button class="btn" id="otaCheck" type="button">Check for update</button><button class="btn primary" id="otaStart" type="button">Start update</button><button class="btn" id="otaCancel" type="button">Cancel</button></div></section>
+        <section class="card panel" id="fw-settings"><div class="panel-head"><h2>OTA settings</h2></div><dl class="kv">
+          <div><dt>Automatic update check</dt><dd data-k="ota.auto">—</dd></div><div><dt>Confirmation pending</dt><dd data-k="ota.confirm">—</dd></div></dl>
+          <p class="note">Automatic checks are configured from the inverter's front-panel menu.</p></section>
+      </section>
+
+      <!-- ============ ABOUT ============ -->
+      <section class="view" data-view="about" hidden>
+        <div class="page-head"><div><h1>About</h1><p class="sub">VONIX Energy Solutions</p></div></div>
+        <section class="card panel"><dl class="kv">
+          <div><dt>Product</dt><dd>ESP32 Inverter</dd></div><div><dt>Firmware</dt><dd data-k="sys.fw">—</dd></div>
+          <div><dt>Device</dt><dd data-k="sys.device">—</dd></div><div><dt>Dashboard</dt><dd>Served locally by the inverter</dd></div>
+        </dl></section>
       </section>
     </main>
 
-    <footer class="footer"><span>Vonix Energy Solutions</span><span id="footerVersion">Local inverter management</span></footer>
+    <footer class="footer">
+      <span class="f-left">VONIX Energy Solutions<i class="vr"></i>ESP32 Inverter</span>
+      <span class="f-right">Firmware <b data-k="foot.fw">—</b><i class="vr"></i>Uptime: <b data-k="foot.uptime">—</b><i class="dot ok" data-k-tone="foot.tone"></i></span>
+    </footer>
   </div>
+</div>
 
-  <dialog id="pinDialog" class="dialog">
-    <form id="pinForm" method="dialog" class="dialog-card">
-      <button id="pinCloseButton" class="dialog-close" type="button" aria-label="Close">×</button>
-      <p class="eyebrow">SECURITY</p><h3>Unlock live controls</h3>
-      <p class="dialog-copy">Enter the device security PIN to authorize network changes and live updates. It stays in this browser session only.</p>
-      <label>Security PIN<input id="pinInput" inputmode="numeric" pattern="[0-9]*" maxlength="8" type="password" autocomplete="one-time-code" required></label>
-      <div id="pinError" class="form-error" hidden>That PIN was not accepted.</div>
-      <button class="button button-primary full-width" type="submit">Continue</button>
-    </form>
-  </dialog>
+<!-- templates -->
+<template id="tplFlow">
+  <div class="flow" data-flow>
+    <div class="flow-row">
+      <div class="fnode" data-node="solar">
+        <div class="fbox"><svg class="ico"><use href="#i-solar"/></svg></div>
+        <p class="fname">PV / Solar</p><p class="fval" data-k="flow.solar">—</p><p class="fsub" data-k="flow.solarSub">—</p>
+      </div>
+      <div class="fline" data-line="solar"><i></i></div>
+      <div class="fnode inv" data-node="inverter">
+        <div class="fbox"><svg class="ico"><use href="#i-box"/></svg></div>
+        <p class="fname">Inverter</p><p class="fval" data-k="flow.inv">—</p><p class="fsub" data-k="flow.invSub">—</p>
+      </div>
+      <div class="fline" data-line="load"><i></i></div>
+      <div class="fnode" data-node="load">
+        <div class="fbox"><svg class="ico"><use href="#i-home"/></svg></div>
+        <p class="fname">AC Load</p><p class="fval" data-k="flow.load">—</p><p class="fsub" data-k="flow.loadSub">—</p>
+      </div>
+    </div>
+    <div class="flow-batt">
+      <div class="fvert" data-line="batt"><i></i></div>
+      <div class="fnode batt" data-node="battery">
+        <div class="fbox"><svg class="ico"><use href="#i-battery-bolt"/></svg></div>
+        <div class="ftext"><p class="fname">Battery</p><p class="fval" data-k="flow.batt">—</p><p class="fsub" data-k="flow.battSub">—</p></div>
+      </div>
+    </div>
+  </div>
+</template>
 
-  <dialog id="passwordDialog" class="dialog">
-    <form id="passwordForm" method="dialog" class="dialog-card">
-      <button id="passwordCloseButton" class="dialog-close" type="button" aria-label="Close">×</button>
-      <p class="eyebrow">CONNECT NETWORK</p><h3 id="passwordTitle">Enter network password</h3>
-      <p id="passwordCopy" class="dialog-copy">Your password is sent only to this inverter.</p>
-      <input id="selectedSsid" type="hidden">
-      <label>Password<input id="networkPassword" type="password" autocomplete="current-password"></label>
-      <div id="passwordError" class="form-error" hidden></div>
-      <button class="button button-primary full-width" type="submit">Connect</button>
-    </form>
-  </dialog>
+<template id="tplChartCard">
+  <div class="chart-head"><span data-t="title">—</span><b data-t="latest">—</b></div>
+  <canvas role="img"></canvas>
+</template>
 
-  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
-  <script src="/assets/app.js" defer></script>
+<!-- dialogs -->
+<dialog id="pinDialog" class="dialog">
+  <form id="pinForm" method="dialog" class="dlg-card">
+    <button class="dlg-x" id="pinClose" type="button" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button>
+    <h3>Unlock live controls</h3>
+    <p class="note">Enter the device security PIN to authorise controls and live updates. It stays in this browser tab only.</p>
+    <label>Security PIN<input id="pinInput" inputmode="numeric" pattern="[0-9]*" maxlength="8" type="password" autocomplete="one-time-code" required></label>
+    <p class="form-err" id="pinError" hidden>That PIN was not accepted.</p>
+    <button class="btn primary full" type="submit">Continue</button>
+  </form>
+</dialog>
+
+<dialog id="pwDialog" class="dialog">
+  <form id="pwForm" method="dialog" class="dlg-card">
+    <button class="dlg-x" id="pwClose" type="button" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button>
+    <h3 id="pwTitle">Connect to network</h3>
+    <p class="note" id="pwCopy">Your password is sent only to this inverter.</p>
+    <label>Password<input id="pwInput" type="password" autocomplete="current-password"></label>
+    <p class="form-err" id="pwError" hidden></p>
+    <button class="btn primary full" type="submit">Connect</button>
+  </form>
+</dialog>
+
+<dialog id="ctlDialog" class="dialog">
+  <div class="dlg-card">
+    <button class="dlg-x" id="ctlClose" type="button" aria-label="Close"><svg class="ico"><use href="#i-x"/></svg></button>
+    <h3>Inverter control</h3>
+    <dl class="kv one"><div><dt>Current state</dt><dd data-k="inv.state">—</dd></div><div><dt>Output</dt><dd data-k="ctl.output">—</dd></div></dl>
+    <p class="note" id="ctlNote"></p>
+    <p class="form-err" id="ctlError" hidden></p>
+    <div class="btn-row"><button class="btn primary" id="ctlOn" type="button"><svg class="ico"><use href="#i-power"/></svg>Turn on</button><button class="btn danger" id="ctlOff" type="button"><svg class="ico"><use href="#i-power"/></svg>Turn off</button></div>
+  </div>
+</dialog>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="true"></div>
+<script src="/assets/app.js" defer></script>
 </body>
 </html>
