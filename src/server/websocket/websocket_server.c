@@ -145,6 +145,13 @@ static cJSON *status_json_create(const wifi_status_t *status)
 
 static void websocket_broadcast_json(cJSON *root, bool require_subscription)
 {
+    typedef struct {
+        httpd_handle_t server;
+        int fd;
+    } ws_failed_client_t;
+    ws_failed_client_t failed[WS_MAX_CLIENTS] = {0};
+    size_t failed_count = 0U;
+
     if (!s_initialized || root == NULL) {
         cJSON_Delete(root);
         return;
@@ -170,19 +177,29 @@ static void websocket_broadcast_json(cJSON *root, bool require_subscription)
             .payload = (uint8_t *)json_str,
             .len = strlen(json_str),
         };
-        const esp_err_t err = httpd_ws_send_frame_async(s_clients[i].server,
-                                                        s_clients[i].fd,
-                                                        &ws_pkt);
+        const httpd_handle_t server = s_clients[i].server;
+        const int fd = s_clients[i].fd;
+        const esp_err_t err = httpd_ws_send_frame_async(server, fd, &ws_pkt);
         if (err != ESP_OK) {
-            ESP_LOGW(TAG, "WS send failed for fd %d: %s",
-                     s_clients[i].fd, esp_err_to_name(err));
-            s_clients[i].active = false;
-            s_clients[i].authenticated = false;
-            s_clients[i].subscribed = false;
+            ESP_LOGW(TAG, "WS send failed for fd %d: %s; closing stale session",
+                     fd, esp_err_to_name(err));
+            failed[failed_count].server = server;
+            failed[failed_count].fd = fd;
+            failed_count++;
+            ws_remove_client(server, fd);
         }
     }
     if (s_mutex != NULL) {
         xSemaphoreGive(s_mutex);
+    }
+
+    /* Do not call the HTTP server close path while holding the client mutex.
+     * A dead socket must be closed so the browser observes close and reconnects;
+     * merely freeing its slot leaves a silent, permanently stale WebSocket. */
+    for (size_t i = 0U; i < failed_count; ++i) {
+        if (failed[i].server != NULL && failed[i].fd >= 0) {
+            (void)httpd_sess_trigger_close(failed[i].server, failed[i].fd);
+        }
     }
     free(json_str);
 }
