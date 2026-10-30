@@ -151,6 +151,7 @@ static esp_err_t api_status_handler(httpd_req_t *req)
         return ESP_ERR_NO_MEM;
     }
     cJSON_AddStringToObject(root, "device", WIFI_HOSTNAME);
+    cJSON_AddStringToObject(root, "firmware_version", INVERTER_FIRMWARE_VERSION);
     cJSON_AddBoolToObject(root, "system_ready", state.system_ready);
     cJSON_AddStringToObject(root, "inverter_state",
                             inverter_state_name(state.inverter.inverter_state));
@@ -386,6 +387,18 @@ static esp_err_t api_battery_handler(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "current_available", false);
     cJSON_AddBoolToObject(root, "power_available", false);
     cJSON_AddStringToObject(root, "state_of_charge_source", "firmware_estimate");
+    /* Configured battery bank profile (not a measurement): rated capacity and
+     * protection thresholds from the active profile, so the dashboard can show
+     * "12.4 V | 200 Ah" and mark low-voltage state without hard-coding values. */
+    const float rated_ah = state.battery_profile.capacity_ah;
+    const bool capacity_known = isfinite(rated_ah) && rated_ah > 0.0f;
+    add_float_or_null(root, "capacity_ah", rated_ah, capacity_known);
+    cJSON_AddBoolToObject(root, "capacity_available", capacity_known);
+    const float warn_v = state.battery_profile.low_voltage_warning_v;
+    const float cutoff_v = state.battery_profile.cutoff_voltage_v;
+    add_float_or_null(root, "low_voltage_warning_v", warn_v, isfinite(warn_v) && warn_v > 0.0f);
+    add_float_or_null(root, "cutoff_voltage_v", cutoff_v, isfinite(cutoff_v) && cutoff_v > 0.0f);
+    cJSON_AddNumberToObject(root, "system_voltage", state.battery_voltage_system);
     return json_api_send(req, root, 200);
 }
 
