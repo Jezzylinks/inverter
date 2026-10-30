@@ -43,7 +43,9 @@
     liveNotifs: [],
     seen: { wifi: null, inv: null, otaVersion: '', batLow: false },
     activity: [],
-    selectedSsid: ''
+    selectedSsid: '',
+    otaActionBusy: false,
+    otaCheckPollTimer: null
   };
 
   /* ------------------------------ helpers ------------------------------ */
@@ -356,7 +358,8 @@
     put('ota.auto', o.auto_check_enabled ? 'On' : 'Off');
     put('ota.confirm', o.confirmation_pending ? 'Yes — awaiting confirmation' : 'No');
     put('ota.error', o.error); show('ota.error', Boolean(o.error));
-    $('otaStart').disabled = !o.update_available || active;
+    $('otaCheck').disabled = state.otaActionBusy || stateName === 'checking' || active;
+    $('otaStart').disabled = !o.update_available || active || state.otaActionBusy;
     $('otaCancel').disabled = !active && !o.confirmation_pending;
     if (o.update_available && o.available_version && state.seen.otaVersion !== o.available_version) {
       state.seen.otaVersion = o.available_version;
@@ -657,9 +660,53 @@
     try { await request('/api/v1/mqtt/config', { method: 'POST', body: JSON.stringify(body) }); $('mqttPass').value = ''; toast('MQTT settings saved', 'ok'); await loadServices(); }
     catch (e) { if (quiet(e)) toast(e.message, 'error'); }
   }
-  async function otaAction(path) {
-    try { await request(path, { method: 'POST', body: '{}' }); } catch (e) { if (quiet(e)) toast(e.message, 'error'); }
-    await loadOta();
+  async function otaAction(path, button) {
+    if (state.otaActionBusy) return;
+    state.otaActionBusy = true;
+    const isCheck = path === '/api/v1/ota/check';
+    const originalLabel = button ? button.textContent : '';
+    if (button) { setBusy(button, true); if (isCheck) button.textContent = 'Checking…'; }
+    if (isCheck) {
+      state.ota = { ...(state.ota || {}), state: 'checking', error: '', in_progress: false };
+      renderOta();
+      logActivity('Firmware manifest check requested');
+    }
+    try {
+      const result = await request(path, { method: 'POST', body: '{}' });
+      if (result.success === false) throw new Error(result.message || 'OTA request was rejected');
+      if (isCheck) {
+        toast('Firmware check started. Waiting for the manifest result…', 'success');
+        startOtaCheckPolling();
+      } else {
+        toast(result.message || 'OTA request accepted', 'success');
+      }
+    } catch (e) {
+      if (quiet(e)) toast(e.message, 'error');
+      if (isCheck) { state.ota = { ...(state.ota || {}), state: 'error', error: e.message }; renderOta(); }
+    } finally {
+      state.otaActionBusy = false;
+      if (button) { setBusy(button, false); button.textContent = originalLabel; }
+      await loadOta();
+    }
+  }
+
+  /* Prefer WebSocket updates; REST polling is the fallback when the socket is down. */
+  function startOtaCheckPolling() {
+    if (state.otaCheckPollTimer) window.clearInterval(state.otaCheckPollTimer);
+    let attempts = 0;
+    state.otaCheckPollTimer = window.setInterval(async () => {
+      attempts += 1;
+      await loadOta();
+      const current = String((state.ota || {}).state || '').toLowerCase();
+      if (current !== 'checking' || attempts >= 45) {
+        window.clearInterval(state.otaCheckPollTimer);
+        state.otaCheckPollTimer = null;
+        if (current === 'available') toast('Firmware ' + state.ota.available_version + ' is available.', 'success');
+        else if (current === 'idle') toast('Your inverter is already running the latest firmware.', 'success');
+        else if (current === 'error') toast(state.ota.error || 'Firmware check failed.', 'error');
+        else if (attempts >= 45 && current === 'checking') toast('Firmware check is taking longer than expected. Check the status again shortly.', 'warn');
+      }
+    }, 2000);
   }
 
   /* ---------------------------- routing & chrome ---------------------------- */
@@ -717,9 +764,9 @@
     $('refreshBtn').addEventListener('click', loadAll);
     $('mqttForm').addEventListener('submit', saveMqtt);
     $('mqttConnectBtn').addEventListener('click', async () => { const b = $('mqttConnectBtn'); setBusy(b, true); try { await request('/api/v1/mqtt/connect', { method: 'POST', body: '{}' }); await loadServices(); } catch (e) { if (quiet(e)) toast(e.message, 'error'); } finally { setBusy(b, false); } });
-    $('otaCheck').addEventListener('click', () => otaAction('/api/v1/ota/check'));
-    $('otaStart').addEventListener('click', () => otaAction('/api/v1/ota/start'));
-    $('otaCancel').addEventListener('click', () => otaAction('/api/v1/ota/cancel'));
+    $('otaCheck').addEventListener('click', () => otaAction('/api/v1/ota/check', $('otaCheck')));
+    $('otaStart').addEventListener('click', () => otaAction('/api/v1/ota/start', $('otaStart')));
+    $('otaCancel').addEventListener('click', () => otaAction('/api/v1/ota/cancel', $('otaCancel')));
     $('clearLog').addEventListener('click', () => { state.activity = []; renderActivity(); });
     window.addEventListener('online', () => { loadAll(); connectSocket(); });
 
