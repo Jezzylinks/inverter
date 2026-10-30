@@ -1844,6 +1844,9 @@ static void app_services_record_ota_error(const char *detail,
     snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
 
+    websocket_broadcast_ota_status("error", snapshot.progress_percent,
+                                   snapshot.available_version,
+                                   snapshot.error_detail);
     if (user_initiated)
     {
         app_services_show_ota_lcd(&snapshot);
@@ -3991,6 +3994,12 @@ static void ota_manifest_check_task(void *parameter)
     {
         ESP_LOGW(APP_SERVICES_TAG, "OTA check failed: %s", esp_err_to_name(err));
     }
+    /* Manifest checks are independent of OTA download callbacks. Publish the
+     * terminal state so dashboards do not remain stuck on "checking". */
+    websocket_broadcast_ota_status(app_ota_state_text(snapshot.state),
+                                   snapshot.progress_percent,
+                                   snapshot.available_version,
+                                   snapshot.error_detail);
     if (job->user_initiated || update_available || cancelled)
     {
         app_services_show_ota_lcd(&snapshot);
@@ -4323,6 +4332,9 @@ esp_err_t app_services_check_for_update(bool user_initiated)
         xSemaphoreGive(s_services_mutex);
         memset(job, 0, sizeof(*job));
         free(job);
+        websocket_broadcast_ota_status("error", failed_status.progress_percent,
+                                       failed_status.available_version,
+                                       failed_status.error_detail);
         if (user_initiated)
         {
             app_services_show_ota_lcd(&failed_status);
@@ -4333,6 +4345,11 @@ esp_err_t app_services_check_for_update(bool user_initiated)
     xSemaphoreTake(s_services_mutex, portMAX_DELAY);
     snapshot = s_ota_status;
     xSemaphoreGive(s_services_mutex);
+    /* Publish acceptance of the asynchronous manifest request immediately. */
+    websocket_broadcast_ota_status(app_ota_state_text(snapshot.state),
+                                   snapshot.progress_percent,
+                                   snapshot.available_version,
+                                   snapshot.error_detail);
     if (user_initiated)
     {
         app_services_show_ota_lcd(&snapshot);
