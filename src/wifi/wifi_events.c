@@ -31,6 +31,7 @@ static uint32_t s_reconnect_generation;
 static uint32_t s_reconnect_initial_delay_ms = WIFI_CONNECT_TIMEOUT_MS;
 static bool s_initialized;
 static bool s_ap_active;
+static bool s_sta_started;
 static bool s_auto_reconnect = true;
 /* Kept for the policy API. The background search no longer stops at this
  * limit; the foreground Connect operation still uses it (via
@@ -278,6 +279,7 @@ static void wifi_schedule_reconnect(uint32_t delay_ms)
         return;
     }
 
+    s_reconnect_initial_delay_ms = delay_ms;
     const BaseType_t result =
         xTaskCreatePinnedToCore(wifi_reconnect_task, "wifi_reconnect",
                                 WIFI_RECONNECT_TASK_STACK,
@@ -301,10 +303,8 @@ void wifi_events_set_retry_policy(bool enabled, uint8_t retry_limit)
     s_retry_limit = retry_limit;
     if (enabled && !was_enabled) {
         s_status.retry_count = 0U;
-        should_schedule = s_initialized &&
-                          (s_status.state == WIFI_STATE_DISCONNECTED ||
-                           s_status.state == WIFI_STATE_AP_ACTIVE ||
-                           s_status.state == WIFI_STATE_FAILED);
+        should_schedule = s_initialized && s_sta_started &&
+                          !s_status.connected;
     }
     if (!enabled) {
         ++s_reconnect_generation;
@@ -327,12 +327,14 @@ esp_err_t wifi_events_init(void)
     }
 
     s_ap_active = false;
+    s_sta_started = false;
     memset(&s_status, 0, sizeof(s_status));
     memset(s_status_callbacks, 0, sizeof(s_status_callbacks));
     memset(s_event_callbacks, 0, sizeof(s_event_callbacks));
     s_status.state = WIFI_STATE_IDLE;
     s_reconnect_generation = 0U;
     s_ap_active = false;
+    s_sta_started = false;
 
     esp_err_t err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                          &wifi_event_handler, NULL,
@@ -365,6 +367,7 @@ esp_err_t wifi_events_deinit(void)
     events_lock();
     ++s_reconnect_generation;
     s_auto_reconnect = false;
+    s_sta_started = false;
     TaskHandle_t reconnect_task = s_reconnect_task;
     s_reconnect_task = NULL;
     s_initialized = false;
@@ -395,6 +398,7 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
         switch (event_id) {
         case WIFI_EVENT_STA_START:
             events_lock();
+            s_sta_started = true;
             s_status.connected = false;
             s_status.got_ip = false;
             events_unlock();
@@ -461,6 +465,7 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
         case WIFI_EVENT_STA_STOP: {
             bool ap_active;
             events_lock();
+            s_sta_started = false;
             s_status.connected = false;
             s_status.got_ip = false;
             s_status.internet_available = false;
