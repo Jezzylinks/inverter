@@ -327,7 +327,7 @@ esp_err_t wifi_manager_init(void)
         goto rollback_wifi;
     }
 
-    wifi_events_set_retry_policy(s_config.auto_reconnect, s_retry_limit);
+    wifi_events_set_retry_policy(s_config.auto_reconnect && s_config.ssid[0] != '\0', s_retry_limit);
 
     err = wifi_events_register_event_callback(wifi_manager_event_update);
     if (err != ESP_OK)
@@ -954,7 +954,7 @@ uint8_t wifi_manager_get_retry_limit(void)
  *---------------------------------------------------------*/
 void wifi_manager_enable_auto_reconnect(bool enable)
 {
-    s_auto_reconnect = enable;
+    s_auto_reconnect = enable && s_config.ssid[0] != '\0';
 
     if (s_manager_mutex)
     {
@@ -965,7 +965,7 @@ void wifi_manager_enable_auto_reconnect(bool enable)
     {
         xSemaphoreGive(s_manager_mutex);
     }
-    wifi_events_set_retry_policy(enable, s_retry_limit);
+    wifi_events_set_retry_policy(s_auto_reconnect, s_retry_limit);
 }
 
 bool wifi_manager_auto_reconnect_enabled(void)
