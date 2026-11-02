@@ -709,7 +709,7 @@ esp_err_t wifi_manager_set_config(const wifi_manager_config_t *config)
     }
 
     memcpy(&s_config, &temp, sizeof(s_config));
-    wifi_events_set_retry_policy(s_config.auto_reconnect, s_retry_limit);
+    wifi_events_set_retry_policy(s_config.auto_reconnect && s_config.ssid[0] != '\0', s_retry_limit);
 
     if (s_manager_mutex)
     {
