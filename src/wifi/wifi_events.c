@@ -107,6 +107,8 @@ static uint32_t wifi_reconnect_backoff_ms(uint8_t retry_count)
                : (uint32_t)WIFI_RECONNECT_STEADY_DELAY_MS;
 }
 
+static void wifi_schedule_reconnect(uint32_t delay_ms);
+
 static void wifi_reconnect_task(void *arg)
 {
     const uint32_t generation = (uint32_t)(uintptr_t)arg;
@@ -252,12 +254,27 @@ static void wifi_reconnect_task(void *arg)
     }
 
 reconnect_done:
-    events_lock();
-    if (s_reconnect_task == xTaskGetCurrentTaskHandle())
     {
-        s_reconnect_task = NULL;
+        bool restart_supervisor = false;
+        uint8_t retry_count = 0U;
+        events_lock();
+        if (s_reconnect_task == xTaskGetCurrentTaskHandle())
+        {
+            s_reconnect_task = NULL;
+        }
+        /* Auto-reconnect may have been re-enabled before this generation's
+         * cancelled worker had time to exit. Hand ownership to a fresh worker
+         * instead of leaving the station without a supervisor. */
+        restart_supervisor = s_initialized && s_auto_reconnect &&
+                             s_sta_started && !s_status.connected;
+        retry_count = s_status.retry_count;
+        events_unlock();
+
+        if (restart_supervisor)
+        {
+            wifi_schedule_reconnect(wifi_reconnect_backoff_ms(retry_count));
+        }
     }
-    events_unlock();
     vTaskDelete(NULL);
 }
 
