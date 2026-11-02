@@ -28,6 +28,7 @@ static esp_event_handler_instance_t s_ip_instance;
 static SemaphoreHandle_t s_mutex;
 static TaskHandle_t s_reconnect_task;
 static uint32_t s_reconnect_generation;
+static uint32_t s_reconnect_initial_delay_ms = WIFI_CONNECT_TIMEOUT_MS;
 static bool s_initialized;
 static bool s_ap_active;
 static bool s_auto_reconnect = true;
@@ -108,7 +109,9 @@ static uint32_t wifi_reconnect_backoff_ms(uint8_t retry_count)
 static void wifi_reconnect_task(void *arg)
 {
     const uint32_t generation = (uint32_t)(uintptr_t)arg;
-    uint32_t delay_ms = (uint32_t)WIFI_CONNECT_TIMEOUT_MS;
+    events_lock();
+    uint32_t delay_ms = s_reconnect_initial_delay_ms;
+    events_unlock();
 
     /*
      * Keep one low-priority supervisor alive while auto-reconnect is enabled.
@@ -278,7 +281,7 @@ static void wifi_schedule_reconnect(uint32_t delay_ms)
     const BaseType_t result =
         xTaskCreatePinnedToCore(wifi_reconnect_task, "wifi_reconnect",
                                 WIFI_RECONNECT_TASK_STACK,
-                                (void *)(uintptr_t)delay_ms,
+                                (void *)(uintptr_t)s_reconnect_generation,
                                 WIFI_RECONNECT_TASK_PRIORITY,
                                 &s_reconnect_task, APP_CORE_SYSTEM);
     if (result != pdPASS)
