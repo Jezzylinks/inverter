@@ -439,7 +439,9 @@ static esp_err_t ws_handler(httpd_req_t *req)
         if (ret == ESP_OK)
         {
             buf[ws_pkt.len] = '\0';
-            ESP_LOGI(TAG, "WS message from fd %d: %s", fd, buf);
+            /* Never log command payloads: authenticate messages contain the PIN. */
+            ESP_LOGD(TAG, "WS message received from fd %d (%u bytes)",
+                     fd, (unsigned)ws_pkt.len);
 
             /* Parse JSON command */
             cJSON *json = cJSON_Parse(buf);
@@ -493,6 +495,15 @@ static esp_err_t ws_handler(httpd_req_t *req)
                         cJSON_AddStringToObject(reply, "type", "error");
                         cJSON_AddStringToObject(reply, "error", "authentication_required");
                         (void)ws_send_json(req->handle, fd, reply);
+                    }
+                    else if (strcmp(cmd_str, "ping") == 0)
+                    {
+                        /* Browser-level heartbeat: browsers cannot originate WS control PING frames. */
+                        cJSON *reply = cJSON_CreateObject();
+                        if (reply != NULL) {
+                            cJSON_AddStringToObject(reply, "type", "pong");
+                            (void)ws_send_json(req->handle, fd, reply);
+                        }
                     }
                     else if (strcmp(cmd_str, "get_status") == 0)
                     {

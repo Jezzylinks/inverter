@@ -30,7 +30,8 @@
 
   const state = {
     pin: session.get('inverterPin'),
-    socket: null, socketRetry: 0, socketTimer: null, socketOk: false,
+    socket: null, socketRetry: 0, socketTimer: null, socketHeartbeatTimer: null,
+    lastSocketPongAt: 0, socketOk: false,
     apiOk: false, authNeeded: false,
     status: null, wifi: null, inverter: {}, battery: {}, solar: {}, load: {}, system: {}, services: null, ota: null,
     faults: { events: [], diagnostics: null, available: false },
@@ -565,25 +566,71 @@
   async function loadAll() { await loadStatus(); await Promise.all([loadDevice(), loadSystem(), loadServices(), loadOta(), loadFaults()]); renderLive(); }
 
   /* ------------------------------ WebSocket ------------------------------ */
-  function send(cmd) { if (state.socket && state.socket.readyState === WebSocket.OPEN) state.socket.send(JSON.stringify(cmd)); }
+  const WS_HEARTBEAT_MS = 20000;
+  const WS_PONG_TIMEOUT_MS = 50000;
+  function send(cmd, socket = state.socket) {
+    if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(cmd));
+  }
+  function stopSocketHeartbeat() {
+    if (state.socketHeartbeatTimer) window.clearInterval(state.socketHeartbeatTimer);
+    state.socketHeartbeatTimer = null;
+    state.lastSocketPongAt = 0;
+  }
+  function startSocketHeartbeat(sock) {
+    stopSocketHeartbeat();
+    state.lastSocketPongAt = Date.now();
+    state.socketHeartbeatTimer = window.setInterval(() => {
+      if (sock !== state.socket || sock.readyState !== WebSocket.OPEN) return;
+      if (Date.now() - state.lastSocketPongAt > WS_PONG_TIMEOUT_MS) {
+        /* Force the normal close/retry path instead of showing a stale Live state. */
+        try { sock.close(4000, 'heartbeat timeout'); } catch (_) { /* close is best effort */ }
+        return;
+      }
+      send({ cmd: 'ping' }, sock);
+    }, WS_HEARTBEAT_MS);
+  }
   function connectSocket() {
     if (state.socket && state.socket.readyState <= WebSocket.OPEN) return;
     try { state.socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`); } catch (_) { scheduleSocket(); return; }
     const sock = state.socket;
-    sock.addEventListener('open', () => { state.socketRetry = 0; send({ cmd: 'authenticate', pin: state.pin }); });
+    sock.addEventListener('open', () => {
+      state.socketRetry = 0;
+      send({ cmd: 'authenticate', pin: state.pin }, sock);
+    });
     sock.addEventListener('message', (ev) => {
       let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
       if (m.type === 'authenticated') {
-        if (m.ok) { state.socketOk = true; send({ cmd: 'subscribe' }); send({ cmd: 'get_status' }); } else { requestPin(); }
+        if (m.ok) {
+          state.socketOk = true;
+          startSocketHeartbeat(sock);
+          send({ cmd: 'subscribe' }, sock);
+          send({ cmd: 'get_status' }, sock);
+        } else { requestPin(); }
         renderLive();
+      } else if (m.type === 'pong') {
+        state.lastSocketPongAt = Date.now();
+        if (!state.socketOk) { state.socketOk = true; renderLive(); }
       } else if (m.type === 'status') {
         state.status = { ...(state.status || {}), ...m }; renderWifi(); renderInverter(); trackTransitions(); renderLive();
       } else if (m.type === 'device') { onDeviceSocket(m.data || {}); }
       else if (m.type === 'ota') { state.ota = { ...(state.ota || {}), ...(m.data || {}), in_progress: ['preparing', 'downloading', 'verifying'].includes((m.data || {}).state) }; renderOta(); }
       else if (m.type === 'error' && m.error !== 'authentication_required') { logActivity(m.error || 'Live update error', 'bad'); }
     });
-    sock.addEventListener('close', () => { state.socketOk = false; renderLive(); scheduleSocket(); });
-    sock.addEventListener('error', () => { state.socketOk = false; renderLive(); });
+    sock.addEventListener('close', () => {
+      if (sock !== state.socket) return;
+      stopSocketHeartbeat();
+      state.socketOk = false;
+      state.socket = null;
+      renderLive();
+      scheduleSocket();
+    });
+    sock.addEventListener('error', () => {
+      if (sock !== state.socket) return;
+      state.socketOk = false;
+      renderLive();
+      /* A browser normally follows error with close; close explicitly if it does not. */
+      try { sock.close(); } catch (_) { scheduleSocket(); }
+    });
   }
   function scheduleSocket() {
     if (state.socketTimer) return;
