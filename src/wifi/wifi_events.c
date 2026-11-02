@@ -108,94 +108,209 @@ static uint32_t wifi_reconnect_backoff_ms(uint8_t retry_count)
 static void wifi_reconnect_task(void *arg)
 {
     const uint32_t generation = (uint32_t)(uintptr_t)arg;
-    uint32_t waited_ms = 0U;
-    uint8_t retry_count = 0U;
-    events_lock();
-    retry_count = s_status.retry_count;
-    events_unlock();
-    const uint32_t backoff_ms = wifi_reconnect_backoff_ms(retry_count);
-    ESP_LOGD(WIFI_EVENTS_TAG, "Next network search in %lums (attempt %u)",
-             (unsigned long)backoff_ms, (unsigned)retry_count);
+    uint32_t delay_ms = (uint32_t)WIFI_CONNECT_TIMEOUT_MS;
 
-    while (waited_ms < backoff_ms) {
-        const uint32_t slice = (backoff_ms - waited_ms) > 250U
-                                   ? 250U
-                                   : (backoff_ms - waited_ms);
-        vTaskDelay(pdMS_TO_TICKS(slice));
-        waited_ms += slice;
+    /*
+     * Keep one low-priority supervisor alive while auto-reconnect is enabled.
+     * A failed esp_wifi_connect() normally produces STA_DISCONNECTED, but the
+     * driver can also finish a scan without a useful AP and leave no further
+     * event to trigger the old one-shot retry task. The bounded attempt wait
+     * below guarantees another search even in that case.
+     */
+    for (;;)
+    {
+        uint32_t waited_ms = 0U;
+        while (waited_ms < delay_ms)
+        {
+            const uint32_t remaining = delay_ms - waited_ms;
+            const uint32_t slice = remaining > 250U ? 250U : remaining;
+            const uint32_t notified =
+                (uint32_t)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(slice));
+
+            events_lock();
+            const bool cancelled = !s_initialized || !s_auto_reconnect ||
+                                   generation != s_reconnect_generation;
+            const bool connected = s_status.connected;
+            const uint8_t retry_count = s_status.retry_count;
+            events_unlock();
+
+            if (cancelled || connected)
+            {
+                goto reconnect_done;
+            }
+
+            if (notified > 0U)
+            {
+                /* A disconnect event arrived while waiting. Start a fresh
+                 * bounded backoff from that event rather than waiting out a
+                 * stale startup guard. */
+                delay_ms = wifi_reconnect_backoff_ms(retry_count);
+                waited_ms = 0U;
+            }
+            else
+            {
+                waited_ms += slice;
+            }
+        }
 
         events_lock();
         const bool cancelled = !s_initialized || !s_auto_reconnect ||
                                generation != s_reconnect_generation;
+        const bool connected = s_status.connected;
+        const uint8_t retry_before = s_status.retry_count;
+        const wifi_connection_state_t state = s_status.state;
+        /* IDLE is valid immediately after STA_START; AP_ACTIVE is the normal
+         * published state in APSTA while the station is searching. */
+        const bool station_may_connect =
+            state == WIFI_STATE_IDLE ||
+            state == WIFI_STATE_DISCONNECTED ||
+            state == WIFI_STATE_FAILED ||
+            state == WIFI_STATE_AP_ACTIVE;
         events_unlock();
-        if (cancelled) {
+
+        if (cancelled || connected)
+        {
+            goto reconnect_done;
+        }
+
+        if (!station_may_connect)
+        {
+            delay_ms = wifi_reconnect_backoff_ms(retry_before);
+            continue;
+        }
+
+        const esp_err_t connect_err = esp_wifi_connect();
+        if (connect_err != ESP_OK && connect_err != ESP_ERR_WIFI_STATE &&
+            connect_err != ESP_ERR_WIFI_CONN)
+        {
+            ESP_LOGW(WIFI_EVENTS_TAG, "Reconnect request failed: %s",
+                     esp_err_to_name(connect_err));
+        }
+        else
+        {
+            ESP_LOGI(WIFI_EVENTS_TAG,
+                     "Searching for saved station network (attempt %u)",
+                     (unsigned)(retry_before + 1U));
+        }
+
+        uint32_t attempt_waited_ms = 0U;
+        bool attempt_failed = false;
+        while (attempt_waited_ms < (uint32_t)WIFI_CONNECT_TIMEOUT_MS)
+        {
+            const uint32_t slice =
+                ((uint32_t)WIFI_CONNECT_TIMEOUT_MS - attempt_waited_ms) > 250U
+                    ? 250U
+                    : ((uint32_t)WIFI_CONNECT_TIMEOUT_MS - attempt_waited_ms);
+            (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(slice));
+            attempt_waited_ms += slice;
+
             events_lock();
-            if (s_reconnect_task == xTaskGetCurrentTaskHandle()) {
-                s_reconnect_task = NULL;
-            }
+            const bool stop = !s_initialized || !s_auto_reconnect ||
+                              generation != s_reconnect_generation;
+            const bool now_connected = s_status.connected;
+            const bool retry_event_seen = s_status.retry_count != retry_before;
+            const uint8_t retry_count = s_status.retry_count;
             events_unlock();
-            vTaskDelete(NULL);
+
+            if (stop || now_connected)
+            {
+                goto reconnect_done;
+            }
+            if (retry_event_seen)
+            {
+                attempt_failed = true;
+                delay_ms = wifi_reconnect_backoff_ms(retry_count);
+                break;
+            }
+        }
+
+        if (!attempt_failed)
+        {
+            events_lock();
+            const bool still_enabled = s_initialized && s_auto_reconnect &&
+                                       generation == s_reconnect_generation &&
+                                       !s_status.connected;
+            const uint8_t retry_count = s_status.retry_count;
+            events_unlock();
+
+            if (!still_enabled)
+            {
+                goto reconnect_done;
+            }
+
+            /* No connect/disconnect event arrived within the bounded window.
+             * Abort any stale driver-side attempt before the next search. */
+            ESP_LOGW(WIFI_EVENTS_TAG,
+                     "Station search timed out without a completion event; restarting search");
+            (void)esp_wifi_disconnect();
+            delay_ms = wifi_reconnect_backoff_ms(retry_count);
         }
     }
 
+reconnect_done:
     events_lock();
-    /* No retry cap: keep searching for the saved network for as long as
-     * auto-reconnect stays enabled. In APSTA the published state is
-     * AP_ACTIVE while the AP serves clients, so accept that too as long as
-     * the station itself is not connected. */
-    const bool should_connect = s_initialized && s_auto_reconnect &&
-                                generation == s_reconnect_generation &&
-                                !s_status.connected &&
-                                (s_status.state == WIFI_STATE_DISCONNECTED ||
-                                 s_status.state == WIFI_STATE_AP_ACTIVE);
-    if (s_reconnect_task == xTaskGetCurrentTaskHandle()) {
+    if (s_reconnect_task == xTaskGetCurrentTaskHandle())
+    {
         s_reconnect_task = NULL;
     }
     events_unlock();
-
-    if (should_connect) {
-        const esp_err_t err = esp_wifi_connect();
-        if (err != ESP_OK && err != ESP_ERR_WIFI_STATE) {
-            ESP_LOGW(WIFI_EVENTS_TAG, "Reconnect request failed: %s", esp_err_to_name(err));
-        }
-    }
     vTaskDelete(NULL);
 }
 
-static void wifi_schedule_reconnect(void)
+/* Keep the task handle protected by the event mutex. If a worker already
+ * exists, notify it so a new disconnect can shorten its current wait. */
+static void wifi_schedule_reconnect(uint32_t delay_ms)
 {
     events_lock();
-    const bool should_schedule = s_initialized && s_auto_reconnect &&
-                                 s_reconnect_task == NULL;
-    if (should_schedule) {
-        const BaseType_t result = xTaskCreatePinnedToCore(wifi_reconnect_task, "wifi_reconnect",
-                                              WIFI_RECONNECT_TASK_STACK,
-                                              (void *)(uintptr_t)s_reconnect_generation,
-                                              WIFI_RECONNECT_TASK_PRIORITY, &s_reconnect_task, APP_CORE_SYSTEM);
-        if (result != pdPASS) {
-            s_reconnect_task = NULL;
-        }
+    if (!s_initialized || !s_auto_reconnect)
+    {
+        events_unlock();
+        return;
+    }
+
+    if (s_reconnect_task != NULL)
+    {
+        xTaskNotifyGive(s_reconnect_task);
+        events_unlock();
+        return;
+    }
+
+    const BaseType_t result =
+        xTaskCreatePinnedToCore(wifi_reconnect_task, "wifi_reconnect",
+                                WIFI_RECONNECT_TASK_STACK,
+                                (void *)(uintptr_t)delay_ms,
+                                WIFI_RECONNECT_TASK_PRIORITY,
+                                &s_reconnect_task, APP_CORE_SYSTEM);
+    if (result != pdPASS)
+    {
+        s_reconnect_task = NULL;
+        ESP_LOGW(WIFI_EVENTS_TAG, "Unable to schedule reconnect supervisor");
     }
     events_unlock();
-
-    if (should_schedule && s_reconnect_task == NULL) {
-        ESP_LOGW(WIFI_EVENTS_TAG, "Unable to schedule reconnect task");
-    }
 }
 
 void wifi_events_set_retry_policy(bool enabled, uint8_t retry_limit)
 {
+    bool should_schedule = false;
     events_lock();
     const bool was_enabled = s_auto_reconnect;
     s_auto_reconnect = enabled;
     s_retry_limit = retry_limit;
     if (enabled && !was_enabled) {
         s_status.retry_count = 0U;
+        should_schedule = s_initialized &&
+                          (s_status.state == WIFI_STATE_DISCONNECTED ||
+                           s_status.state == WIFI_STATE_AP_ACTIVE ||
+                           s_status.state == WIFI_STATE_FAILED);
     }
     if (!enabled) {
         ++s_reconnect_generation;
     }
     events_unlock();
+
+    if (should_schedule) {
+        wifi_schedule_reconnect(wifi_reconnect_backoff_ms(0U));
+    }
 }
 
 esp_err_t wifi_events_init(void)
@@ -280,14 +395,18 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
             s_status.connected = false;
             s_status.got_ip = false;
             events_unlock();
-            /* Radio startup is not a station-connect request. The manager
-             * issues esp_wifi_connect() only after an explicit user action or
-             * a reconnect task. Leave APSTA's AP_ACTIVE state untouched. */
+            /* The controller makes the first connection request after start.
+             * Arm a delayed supervisor as a fallback in case that first scan
+             * fails without producing a follow-up DISCONNECTED event. */
+            wifi_schedule_reconnect((uint32_t)WIFI_CONNECT_TIMEOUT_MS);
             break;
         case WIFI_EVENT_STA_CONNECTED:
             events_lock();
             s_status.connected = true;
             s_status.retry_count = 0U;
+            if (s_reconnect_task != NULL) {
+                xTaskNotifyGive(s_reconnect_task);
+            }
             events_unlock();
             wifi_publish_state(WIFI_STATE_CONNECTING);
             break;
@@ -332,7 +451,7 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
                 }
             }
             if (retry) {
-                wifi_schedule_reconnect();
+                wifi_schedule_reconnect(wifi_reconnect_backoff_ms(retry_count));
             }
             break;
         }
@@ -387,6 +506,9 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base,
         s_status.ip = event->ip_info.ip;
         s_status.gateway = event->ip_info.gw;
         s_status.netmask = event->ip_info.netmask;
+        if (s_reconnect_task != NULL) {
+            xTaskNotifyGive(s_reconnect_task);
+        }
         events_unlock();
         wifi_publish_state(WIFI_STATE_CONNECTED);
         ESP_LOGI(WIFI_EVENTS_TAG, "Station address " IPSTR, IP2STR(&event->ip_info.ip));
