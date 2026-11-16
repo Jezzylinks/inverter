@@ -51,10 +51,12 @@ void stack_report_log(const char *stage)
                  (unsigned)min_free);
     }
     ESP_LOGI(TAG,
-             "tasks=%u total_never_used=%u bytes | heap free=%u largest=%u "
-             "min_ever=%u",
+             "tasks=%u total_never_used=%u bytes | heap8 free=%u largest=%u "
+             "internal free=%u largest=%u min_ever=%u",
              tasks_seen, (unsigned)total_unused,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)esp_get_minimum_free_heap_size());
 }

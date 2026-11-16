@@ -50,9 +50,13 @@
 /* Diagnostic: free/largest heap after each start/stop step, to find which
  * service does not give its memory back across a stop/start cycle. */
 #define NS_HEAP(label)                                                        \
-    ESP_LOGI(NETWORK_SERVICES_TAG, "NSHEAP %-24s free=%u largest=%u", (label), \
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),              \
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT))
+    ESP_LOGI(NETWORK_SERVICES_TAG,                                             \
+             "NSHEAP %-24s heap8=%u largest8=%u internal=%u largest_internal=%u", \
+             (label),                                                         \
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),               \
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),      \
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT), \
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT))
 static esp_err_t network_services_start_station_services(void);
 static esp_err_t network_services_stop_station_services(void);
 
