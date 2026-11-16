@@ -71,7 +71,9 @@ static esp_err_t css_handler(httpd_req_t *req)
 
 static esp_err_t js_handler(httpd_req_t *req)
 {
-    return send_file(req, WEB_DASHBOARD_BASE_PATH "/assets/app.js", "application/javascript; charset=utf-8", true);
+    /* JavaScript controls dashboard behavior and is updated through uploadfs.
+     * Never let a browser retain an old firmware/dashboard bundle for an hour. */
+    return send_file(req, WEB_DASHBOARD_BASE_PATH "/assets/app.js", "application/javascript; charset=utf-8", false);
 }
 
 static const httpd_uri_t s_index_uri = {
