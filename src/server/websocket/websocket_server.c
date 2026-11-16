@@ -410,6 +410,14 @@ static esp_err_t ws_handler(httpd_req_t *req)
         if (s_mutex) {
             xSemaphoreGive(s_mutex);
         }
+        if (client_idx < 0) {
+            /* Reject before completing the WebSocket upgrade. A connection
+             * without a tracked slot can never authenticate or receive data. */
+            ESP_LOGW(TAG, "WS client capacity reached; rejecting fd %d", fd);
+            httpd_resp_set_status(req, "503 Service Unavailable");
+            httpd_resp_set_type(req, "text/plain; charset=utf-8");
+            return httpd_resp_sendstr(req, "WebSocket capacity reached");
+        }
         ESP_LOGI(TAG, "WS handshake from fd %d", fd);
         return ESP_OK;
     }

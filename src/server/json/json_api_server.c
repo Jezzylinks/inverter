@@ -129,15 +129,17 @@ esp_err_t json_api_require_pin(httpd_req_t *req)
     return ESP_OK;
 }
 
-static void register_uri_group(const httpd_uri_t *uris, size_t count)
+static esp_err_t register_uri_group(const httpd_uri_t *uris, size_t count)
 {
     for (size_t i = 0U; i < count; ++i) {
         const esp_err_t err = httpd_register_uri_handler(s_server, &uris[i]);
         if (err != ESP_OK) {
-            ESP_LOGW(TAG, "Failed to register URI %s: %s",
+            ESP_LOGE(TAG, "Required URI registration failed for %s: %s",
                      uris[i].uri, esp_err_to_name(err));
+            return err;
         }
     }
+    return ESP_OK;
 }
 
 static void unregister_uri_group(const httpd_uri_t *uris, size_t count)
@@ -167,12 +169,19 @@ esp_err_t json_api_server_start(httpd_handle_t server)
     const httpd_uri_t *ota_uris = json_api_ota_uris(&ota_count);
     const httpd_uri_t *system_uris = json_api_system_uris(&system_count);
     const httpd_uri_t *cloud_uris = json_api_cloud_uris(&cloud_count);
-    register_uri_group(device_uris, device_count);
-    register_uri_group(wifi_uris, wifi_count);
-    register_uri_group(mqtt_uris, mqtt_count);
-    register_uri_group(ota_uris, ota_count);
-    register_uri_group(system_uris, system_count);
-    register_uri_group(cloud_uris, cloud_count);
+    esp_err_t err = register_uri_group(device_uris, device_count);
+    if (err == ESP_OK) err = register_uri_group(wifi_uris, wifi_count);
+    if (err == ESP_OK) err = register_uri_group(mqtt_uris, mqtt_count);
+    if (err == ESP_OK) err = register_uri_group(ota_uris, ota_count);
+    if (err == ESP_OK) err = register_uri_group(system_uris, system_count);
+    if (err == ESP_OK) err = register_uri_group(cloud_uris, cloud_count);
+
+    if (err != ESP_OK) {
+        /* Never report a partially registered API as healthy. Roll back every
+         * URI group (unregister of an absent URI is intentionally harmless). */
+        (void)json_api_server_stop();
+        return err;
+    }
 
     ESP_LOGI(TAG, "JSON API server registered");
     return ESP_OK;

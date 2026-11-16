@@ -266,16 +266,23 @@
     renderNotifications();
   }
   function faultTime(ev) {
-    if (!state.uptimeAt || !isNum(ev.uptime_ms)) return Date.now();
+    if (!state.uptimeAt || !isNum(ev.uptime_ms)) return null;
     const nowUptimeMs = (state.uptimeBase + (Date.now() - state.uptimeAt) / 1000) * 1000;
-    return Date.now() - Math.max(0, nowUptimeMs - Number(ev.uptime_ms));
+    const eventUptimeMs = Number(ev.uptime_ms);
+    /* A persisted event whose uptime is ahead of this boot cannot be assigned
+     * a wall-clock age. Do not silently turn it into "just now". */
+    if (eventUptimeMs > nowUptimeMs + 1000) return null;
+    return Date.now() - Math.max(0, nowUptimeMs - eventUptimeMs);
   }
   function allNotifications() {
     const items = state.faults.events.map((ev) => {
       const sev = String(ev.severity || 'info').toLowerCase();
       const kind = sev === 'critical' || sev === 'fault' ? 'bad' : sev === 'warning' || sev === 'derated' ? 'warn' : 'info';
       const value = isNum(ev.value) ? ` (${Number(ev.value).toFixed(2)})` : '';
-      return { kind, title: ev.message || 'Device event', desc: `${ev.source ? `${ev.source} · ` : ''}${sev}${value}`, t: faultTime(ev) };
+      const eventTime = faultTime(ev);
+      return { kind, title: ev.message || 'Device event', desc: `${ev.source ? `${ev.source} · ` : ''}${sev}${value}`,
+        t: eventTime === null ? 0 : eventTime,
+        timeLabel: eventTime === null ? (state.uptimeAt ? 'Earlier session' : 'Time unavailable') : null };
     });
     return items.concat(state.liveNotifs).sort((a, b) => b.t - a.t);
   }
@@ -288,7 +295,7 @@
     const title = document.createElement('p'); title.className = 'n-title'; title.textContent = item.title;
     const desc = document.createElement('p'); desc.className = 'n-desc'; desc.textContent = item.desc;
     body.append(title, desc);
-    const time = document.createElement('span'); time.className = 'n-time'; time.textContent = ago(item.t);
+    const time = document.createElement('span'); time.className = 'n-time'; time.textContent = item.timeLabel || ago(item.t);
     row.append(ic, body, time);
     return row;
   }
@@ -590,7 +597,9 @@
     }, WS_HEARTBEAT_MS);
   }
   function connectSocket() {
-    if (state.socket && state.socket.readyState <= WebSocket.OPEN) return;
+    /* Keep a single socket lifecycle, including while the old socket is CLOSING.
+     * Its close event owns clearing state.socket and scheduling the next attempt. */
+    if (state.socket) return;
     try { state.socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`); } catch (_) { scheduleSocket(); return; }
     const sock = state.socket;
     sock.addEventListener('open', () => {
@@ -834,7 +843,8 @@
     route(); tickClock();
     logActivity('Dashboard loaded');
     window.setInterval(() => { tickClock(); renderUptime(); renderLive(); }, 1000);
-    window.setInterval(renderNotifications, 30000);
+    /* Relative notification ages must advance without waiting for a REST poll. */
+    window.setInterval(renderNotifications, 1000);
     loadAll().then(connectSocket);
     window.setInterval(() => { loadStatus(); if (!state.socketOk) loadDevice(); }, 10000);
     window.setInterval(() => { loadServices(); loadOta(); loadFaults(); loadSystem(); }, 30000);
