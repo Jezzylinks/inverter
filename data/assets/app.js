@@ -101,10 +101,29 @@
   function sigLevel(rssi) { if (!isNum(rssi) || Number(rssi) >= 0) return 0; const r = Number(rssi); return r >= -55 ? 4 : r >= -67 ? 3 : r >= -75 ? 2 : r >= -85 ? 1 : 0; }
 
   /* ------------------------------- API -------------------------------- */
+  /* Keep REST traffic below the ESP32 HTTPD socket budget. One slot is
+   * normally occupied by the dashboard WebSocket; a four-request REST cap
+   * leaves headroom for the browser and occasional manual actions. */
+  const MAX_PARALLEL_API_REQUESTS = 4;
+  let activeApiRequests = 0;
+  const apiRequestWaiters = [];
+  async function fetchApi(path, options) {
+    if (activeApiRequests >= MAX_PARALLEL_API_REQUESTS) {
+      await new Promise((resolve) => apiRequestWaiters.push(resolve));
+    }
+    activeApiRequests++;
+    try {
+      return await fetch(path, options);
+    } finally {
+      activeApiRequests--;
+      const next = apiRequestWaiters.shift();
+      if (next) next();
+    }
+  }
   async function request(path, options = {}) {
     const headers = { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) };
     if (state.pin) headers['X-Inverter-PIN'] = state.pin;
-    const response = await fetch(path, { cache: 'no-store', ...options, headers });
+    const response = await fetchApi(path, { cache: 'no-store', ...options, headers });
     const payload = await response.json().catch(() => ({}));
     if (response.status === 401) { state.authNeeded = true; requestPin(); throw Object.assign(new Error('Security PIN required'), { auth: true }); }
     if (!response.ok) throw new Error(payload.error || payload.message || `Request failed (${response.status})`);
