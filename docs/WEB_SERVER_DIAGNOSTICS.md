@@ -14,7 +14,7 @@
 - `mbedtls_ssl_handshake returned -0x7780` is `MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE`: the remote browser/client sent a fatal TLS alert. A frequent cause with local ESP32 dashboards is that the browser does not trust the self-signed server certificate, or the URL host does not match the certificate SAN. This is not proof that the ESP32 listener is down.
 - `-0x7280` is `MBEDTLS_ERR_SSL_CONN_EOF`: the peer closed the TCP/TLS connection during the handshake. Browser navigation, cancelled requests, captive-network probes, and clients abandoning an untrusted certificate can produce this.
 - `setsockopt: 22` is an `EINVAL` socket-option failure. Do not treat one occurrence as proof that the listener stopped. Correlate it with the socket fd, client close, and whether new HTTP requests can still be served.
-- `-0x0050` is not enough by itself to identify the root cause. Capture the complete log line and surrounding socket/errno context before changing TLS settings.
+- `-0x0050` is `MBEDTLS_ERR_NET_CONN_RESET`: the TCP connection was reset by the peer (the browser/phone or an intervening network path). Treat it as a client/network abort unless repeated tests show it occurs while the client is still actively completing the handshake.
 
 The firmware deliberately does not disable certificate checks or weaken TLS to hide these errors.
 
