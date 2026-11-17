@@ -11,3 +11,9 @@ sdkconfig.*
 # Device-local HTTPS identity (never commit private keys)
 data/https_server.crt
 data/https_server.key
+
+# Local HTTPS root CA private material (public root certificate may be shared)
+certs/vonix_inverter_root_ca.key
+certs/vonix_inverter_root_ca.srl
+data/https_server.csr
+data/https_server.ext
