@@ -24,6 +24,7 @@
 #include "lcd/lcd_writer.h"
 #include "system/utils.h"
 #include "wifi/wifi_controller.h"
+#include "server/network_services.h"
 #include "security/change_pin_flow.h"
 #include "security/factory_reset.h"
 #include "security/security.h"
@@ -540,6 +541,42 @@ static void handle_wifi_password_submit(void)
     }
 }
 
+static void app_input_show_web_server_status(void)
+{
+    network_services_status_t services = {0};
+    wifi_status_t wifi = {0};
+    network_services_get_status(&services);
+    (void)wifi_events_get_status_copy(&wifi);
+    char ip[16] = "No IP";
+    if (wifi.got_ip) {
+        snprintf(ip, sizeof(ip), IPSTR, IP2STR(&wifi.ip));
+    } else if (wifi_events_is_ap_active()) {
+        snprintf(ip, sizeof(ip), "192.168.4.1");
+    }
+#if LCD_GEOMETRY_20X4
+    char rows[4][LCD_LINE_SIZE];
+    const char *row_ptrs[4] = {rows[0], rows[1], rows[2], rows[3]};
+    snprintf(rows[0], LCD_LINE_SIZE, "%-*s", LCD_COLS,
+             services.http_running ? "WEB SERVER ONLINE" : "WEB SERVER OFFLINE");
+    snprintf(rows[1], LCD_LINE_SIZE, "HTTP:%s HTTPS:%s",
+             services.http_running ? "ON" : "OFF",
+             services.https_running ? "ON" : "OFF");
+    snprintf(rows[2], LCD_LINE_SIZE, "WebSocket: %s",
+             services.websocket_running ? "ON" : "OFF");
+    snprintf(rows[3], LCD_LINE_SIZE, "IP: %s", ip);
+    lcd_show_menu_rows(row_ptrs, 4U);
+#else
+    char line1[LCD_LINE_SIZE];
+    char line2[LCD_LINE_SIZE];
+    snprintf(line1, sizeof(line1), "Web: %s",
+             services.http_running ? "Online" : "Offline");
+    snprintf(line2, sizeof(line2), "HTTP:%s WS:%s",
+             services.http_running ? "ON" : "OFF",
+             services.websocket_running ? "ON" : "OFF");
+    lcd_show_menu(line1, line2);
+#endif
+}
+
 static void handle_wifi_menu_action(uint8_t selection)
 {
     switch (app_menu_wifi_config_action_at(selection))
@@ -584,6 +621,10 @@ static void handle_wifi_menu_action(uint8_t selection)
         sys_state.menu_state = MENU_WIFI_SETTINGS;
         sys_state.menu_selection = 0U;
         show_menu_screen(MENU_WIFI_SETTINGS, 0);
+        break;
+    case APP_WIFI_MENU_WEB_SERVER:
+        enter_detail_view(MENU_WIFI_CONFIG, selection);
+        app_input_show_web_server_status();
         break;
     default:
         break;
