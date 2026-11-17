@@ -41,6 +41,9 @@ extern "C"
      */
     esp_err_t websocket_server_unregister(httpd_handle_t server);
 
+    /** Remove tracked WebSocket state when an HTTPD session closes unexpectedly. */
+    void websocket_server_session_closed(httpd_handle_t server, int fd);
+
     /**
      * @brief Broadcast status to all connected WebSocket clients
      * @param status Current WiFi status
