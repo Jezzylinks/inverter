@@ -104,7 +104,7 @@
   /* Keep REST traffic below the ESP32 HTTPD socket budget. One slot is
    * normally occupied by the dashboard WebSocket; a four-request REST cap
    * leaves headroom for the browser and occasional manual actions. */
-  const MAX_PARALLEL_API_REQUESTS = 4;
+  const MAX_PARALLEL_API_REQUESTS = location.protocol === 'https:' ? 1 : 4;
   let activeApiRequests = 0;
   const apiRequestWaiters = [];
   async function fetchApi(path, options) {
