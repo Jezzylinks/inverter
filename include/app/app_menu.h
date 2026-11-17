@@ -31,7 +31,8 @@ typedef enum {
     APP_WIFI_MENU_CONNECT,
     APP_WIFI_MENU_SCAN,
     APP_WIFI_MENU_AP_CLIENTS,
-    APP_WIFI_MENU_SETTINGS
+    APP_WIFI_MENU_SETTINGS,
+    APP_WIFI_MENU_WEB_SERVER
 } app_wifi_menu_action_t;
 
 typedef enum {
