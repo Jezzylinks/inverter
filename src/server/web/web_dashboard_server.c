@@ -88,6 +88,33 @@ static const httpd_uri_t s_css_uri = {
     .handler = css_handler,
 };
 
+static esp_err_t probe_handler(httpd_req_t *req)
+{
+    const char *uri = req->uri != NULL ? req->uri : "";
+    dashboard_security_headers(req, false);
+    if (strcmp(uri, "/generate_204") == 0) {
+        httpd_resp_set_status(req, "204 No Content");
+        return httpd_resp_send(req, NULL, 0);
+    }
+    if (strcmp(uri, "/ncsi.txt") == 0) {
+        httpd_resp_set_type(req, "text/plain; charset=utf-8");
+        return httpd_resp_sendstr(req, "Microsoft NCSI");
+    }
+    if (strcmp(uri, "/connecttest.txt") == 0) {
+        httpd_resp_set_type(req, "text/plain; charset=utf-8");
+        return httpd_resp_sendstr(req, "Microsoft Connect Test");
+    }
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_sendstr(req, "<html><body>Success</body></html>");
+}
+
+static const httpd_uri_t s_probe_uris[] = {
+    {.uri = "/ncsi.txt", .method = HTTP_GET, .handler = probe_handler},
+    {.uri = "/connecttest.txt", .method = HTTP_GET, .handler = probe_handler},
+    {.uri = "/generate_204", .method = HTTP_GET, .handler = probe_handler},
+    {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = probe_handler},
+};
+
 static const httpd_uri_t s_js_uri = {
     .uri = "/assets/app.js",
     .method = HTTP_GET,
@@ -147,7 +174,11 @@ esp_err_t web_dashboard_server_register(httpd_handle_t server)
     if (s_registered_count >= (sizeof(s_registered_servers) / sizeof(s_registered_servers[0]))) {
         return ESP_ERR_NO_MEM;
     }
-    const httpd_uri_t *routes[] = {&s_index_uri, &s_css_uri, &s_js_uri};
+    const httpd_uri_t *routes[] = {
+        &s_index_uri, &s_css_uri, &s_js_uri,
+        &s_probe_uris[0], &s_probe_uris[1],
+        &s_probe_uris[2], &s_probe_uris[3]
+    };
     for (size_t i = 0U; i < sizeof(routes) / sizeof(routes[0]); ++i) {
         const esp_err_t err = httpd_register_uri_handler(server, routes[i]);
         if (err != ESP_OK) {
@@ -169,6 +200,10 @@ esp_err_t web_dashboard_server_unregister(httpd_handle_t server)
     (void)httpd_unregister_uri_handler(server, "/", HTTP_GET);
     (void)httpd_unregister_uri_handler(server, "/assets/app.css", HTTP_GET);
     (void)httpd_unregister_uri_handler(server, "/assets/app.js", HTTP_GET);
+    (void)httpd_unregister_uri_handler(server, "/ncsi.txt", HTTP_GET);
+    (void)httpd_unregister_uri_handler(server, "/connecttest.txt", HTTP_GET);
+    (void)httpd_unregister_uri_handler(server, "/generate_204", HTTP_GET);
+    (void)httpd_unregister_uri_handler(server, "/hotspot-detect.html", HTTP_GET);
     for (size_t i = 0U; i < s_registered_count; ++i) {
         if (s_registered_servers[i] == server) {
             for (size_t j = i + 1U; j < s_registered_count; ++j) {
