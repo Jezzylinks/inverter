@@ -29,6 +29,7 @@
 static const char *TAG = "WS_SERVER";
 
 #define WS_MAX_CLIENTS 4
+#define WS_MAX_COMMAND_BYTES 512U
 
 /*----------------------------------------------------------
  * Client tracking
@@ -437,6 +438,11 @@ static esp_err_t ws_handler(httpd_req_t *req)
 
     if (ws_pkt.type == HTTPD_WS_TYPE_TEXT)
     {
+        if (ws_pkt.len > WS_MAX_COMMAND_BYTES) {
+            ESP_LOGW(TAG, "Rejecting oversized WS command from fd %d (%u bytes)",
+                     fd, (unsigned)ws_pkt.len);
+            return ESP_ERR_INVALID_SIZE;
+        }
         char *buf = calloc(1, ws_pkt.len + 1);
         if (buf == NULL)
         {
