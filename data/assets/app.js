@@ -324,6 +324,7 @@
       const value = isNum(ev.value) ? ` (${Number(ev.value).toFixed(2)})` : '';
       const eventTime = faultTime(ev);
       return { kind, title: ev.message || 'Device event', desc: `${ev.source ? `${ev.source} · ` : ''}${sev}${value}`,
+        id: ['fault', ev.source || '', ev.uptime_ms ?? '', sev, ev.message || '', ev.value ?? ''].join('|'),
         t: eventTime === null ? 0 : eventTime,
         timeLabel: eventTime === null ? (state.uptimeAt ? 'Earlier session' : 'Time unavailable') : null };
     });
