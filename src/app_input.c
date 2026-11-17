@@ -575,11 +575,13 @@ static void app_input_show_web_server_status(void)
 #else
     char line1[LCD_LINE_SIZE];
     char line2[LCD_LINE_SIZE];
-    snprintf(line1, sizeof(line1), "Web: %s",
-             services.http_running ? "Online" : "Offline");
-    snprintf(line2, sizeof(line2), "HTTP:%s WS:%s",
+    /* Compact labels keep all three listeners and the active IP visible on
+     * a 16x2 display: H=HTTP, T=HTTPS/TLS, W=WebSocket. */
+    snprintf(line1, sizeof(line1), "H:%s T:%s W:%s",
              services.http_running ? "ON" : "OFF",
+             services.https_running ? "ON" : "OFF",
              services.websocket_running ? "ON" : "OFF");
+    snprintf(line2, sizeof(line2), "IP:%s", ip);
     lcd_show_menu(line1, line2);
 #endif
 }
