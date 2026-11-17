@@ -14,6 +14,7 @@ extern "C" {
 
 typedef struct {
     bool http_running;
+    bool https_running;
     bool dashboard_running;
     bool websocket_running;
     bool mdns_running;
