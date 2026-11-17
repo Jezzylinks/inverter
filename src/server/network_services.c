@@ -299,11 +299,13 @@ static void cleanup_http_services(void)
     s_dashboard_running = false;
     (void)websocket_server_unregister(s_http_server);
     s_websocket_running = false;
-    (void)websocket_server_deinit();
     if (s_http_server != NULL) {
         (void)httpd_stop(s_http_server);
         s_http_server = NULL;
     }
+    /* Keep the WebSocket client mutex alive until both HTTPD instances have
+     * run their close_fn callbacks during shutdown. */
+    (void)websocket_server_deinit();
     (void)web_dashboard_server_deinit();
 }
 
@@ -404,6 +406,7 @@ static esp_err_t network_services_start_https_dashboard(void)
     config.httpd.max_open_sockets = NETWORK_HTTPS_MAX_OPEN_SOCKETS;
     config.httpd.stack_size = NETWORK_HTTPS_STACK_SIZE;
     config.httpd.lru_purge_enable = true;
+    config.httpd.close_fn = websocket_server_session_closed;
     config.servercert = (const uint8_t *)cert_pem;
     config.servercert_len = cert_len;
     config.prvtkey_pem = (const uint8_t *)key_pem;
@@ -624,6 +627,7 @@ static esp_err_t network_services_start_locked(void)
     http_config.max_open_sockets = NETWORK_HTTP_MAX_OPEN_SOCKETS;
     http_config.stack_size = NETWORK_HTTP_STACK_SIZE;
     http_config.lru_purge_enable = true;
+    http_config.close_fn = websocket_server_session_closed;
 
     NS_HEAP("start:begin");
     httpd_handle_t server = NULL;
