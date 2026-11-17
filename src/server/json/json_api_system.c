@@ -37,6 +37,7 @@ static esp_err_t api_services_handler(httpd_req_t *req)
     network_services_get_mqtt_config(&config);
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "http", status.http_running);
+    cJSON_AddBoolToObject(root, "https", status.https_running);
     cJSON_AddBoolToObject(root, "dashboard", status.dashboard_running);
     cJSON_AddBoolToObject(root, "websocket", status.websocket_running);
     cJSON_AddBoolToObject(root, "mdns", status.mdns_running);
