@@ -148,10 +148,30 @@ static void network_services_sync_task(void *arg)
     const bool local_ready = station_ready || ap_ready;
 
     if (local_ready && !local_running) {
-        (void)network_services_start();
-    } else if (!local_ready && local_running) {
-        (void)network_services_stop();
+        esp_err_t start_err = ESP_FAIL;
+        for (unsigned attempt = 0U; attempt < 3U; ++attempt) {
+            if (s_teardown_pending) {
+                start_err = ESP_ERR_INVALID_STATE;
+                break;
+            }
+            start_err = network_services_start();
+            if (start_err == ESP_OK) {
+                break;
+            }
+            ESP_LOGW(NETWORK_SERVICES_TAG,
+                     "Local server start retry %u/3 failed: %s",
+                     attempt + 1U, esp_err_to_name(start_err));
+            if (attempt < 2U) {
+                vTaskDelay(pdMS_TO_TICKS(500U * (attempt + 1U)));
+            }
+        }
     }
+    /* Do not stop the shared HTTP/WebSocket listener just because a STA link
+     * temporarily loses association or DHCP. network_services_stop() latches
+     * teardown for an intentional radio shutdown; using it for a transient
+     * disconnect prevented the listener from restarting on the next IP event.
+     * Keep the listener alive while Wi-Fi remains enabled; explicit Wi-Fi OFF,
+     * provisioning and OTA paths still stop it through their existing owners. */
 
     /* AP/APSTA owns the captive-DNS side of the local portal.  The
      * normal HTTP/API/dashboard server remains shared with the local service
