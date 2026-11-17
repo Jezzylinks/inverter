@@ -221,13 +221,15 @@ static const menu_item_t wifi_sta_items[] = {
     {"Status", MENU_WIFI_CONFIG},
     {"Connect", MENU_WIFI_CONFIG},
     {"Networks", MENU_WIFI_CONFIG},
-    {"Settings", MENU_WIFI_SETTINGS}};
+    {"Settings", MENU_WIFI_SETTINGS},
+    {"Web Server", MENU_WIFI_CONFIG}};
 
 static const menu_item_t wifi_ap_items[] = {
     {"ON/OFF", MENU_WIFI_CONFIG},
     {"Status", MENU_WIFI_CONFIG},
     {"AP Clients", MENU_WIFI_CONFIG},
-    {"Settings", MENU_WIFI_SETTINGS}};
+    {"Settings", MENU_WIFI_SETTINGS},
+    {"Web Server", MENU_WIFI_CONFIG}};
 
 static const menu_item_t wifi_apsta_items[] = {
     {"ON/OFF", MENU_WIFI_CONFIG},
@@ -292,6 +294,10 @@ static const char *wifi_menu_label(int index)
     {
         return "Status";
     }
+    if (action == APP_WIFI_MENU_WEB_SERVER)
+    {
+        return "Web Server";
+    }
     (void)mode;
     return "Networks";
 }
@@ -351,6 +357,10 @@ static const char *wifi_settings_menu_label(int index)
 app_wifi_menu_action_t app_menu_wifi_config_action_at(int index)
 {
     const wifi_mode_t mode = wifi_manager_get_mode();
+    if ((mode == WIFI_MODE_AP && index == 4) ||
+        (mode == WIFI_MODE_STA && index == 5) ||
+        (mode == WIFI_MODE_APSTA && index == 6))
+        return APP_WIFI_MENU_WEB_SERVER;
     if (index == 0)
         return APP_WIFI_MENU_TOGGLE;
     if (index == 1)
