@@ -508,7 +508,13 @@ esp_err_t network_services_init(void)
     if (s_lifecycle_mutex == NULL) {
         s_lifecycle_mutex = xSemaphoreCreateMutex();
     }
-    if (s_mutex == NULL) {
+    if (s_mutex == NULL || s_lifecycle_mutex == NULL) {
+        if (s_mutex != NULL) {
+            vSemaphoreDelete(s_mutex);
+            s_mutex = NULL;
+        }
+        ESP_LOGE(NETWORK_SERVICES_TAG,
+                 "Unable to create network-service lifecycle mutexes");
         return ESP_ERR_NO_MEM;
     }
     esp_err_t err = mqtt_config_load(&s_mqtt_config);
