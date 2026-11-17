@@ -13,6 +13,7 @@
 #include "lcd/error_log_scroll.h"
 #include "system/system_error_codes.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -548,10 +549,16 @@ static void app_input_show_web_server_status(void)
     network_services_get_status(&services);
     (void)wifi_events_get_status_copy(&wifi);
     char ip[16] = "No IP";
-    if (wifi.got_ip) {
+    if (wifi_events_is_ap_active()) {
+        esp_netif_t *ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        esp_netif_ip_info_t ap_ip = {0};
+        if (ap_netif != NULL && esp_netif_get_ip_info(ap_netif, &ap_ip) == ESP_OK) {
+            snprintf(ip, sizeof(ip), IPSTR, IP2STR(&ap_ip.ip));
+        } else {
+            snprintf(ip, sizeof(ip), "192.168.4.1");
+        }
+    } else if (wifi.got_ip) {
         snprintf(ip, sizeof(ip), IPSTR, IP2STR(&wifi.ip));
-    } else if (wifi_events_is_ap_active()) {
-        snprintf(ip, sizeof(ip), "192.168.4.1");
     }
 #if LCD_GEOMETRY_20X4
     char rows[4][LCD_LINE_SIZE];
