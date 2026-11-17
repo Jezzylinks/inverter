@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#070f1e">
   <meta name="description" content="VONIX inverter management dashboard">
   <title>VONIX | Inverter Management</title>
-  <link rel="stylesheet" href="/assets/app.css?v=20261117-1">
+  <link rel="stylesheet" href="/assets/app.css?v=20261117-2">
 </head>
 <body>
 <svg xmlns="http://www.w3.org/2000/svg" class="sprite" width="0" height="0" aria-hidden="true">
@@ -335,7 +335,8 @@
       <section class="view" data-view="services" hidden>
         <div class="page-head"><div><h1>Network Services</h1><p class="sub">Local services running on the inverter</p></div></div>
         <section class="card panel"><div class="svc-list">
-          <div class="svc"><span>HTTP API</span><b data-svc="http">—</b></div>
+          <div class="svc"><span>HTTP Dashboard / API</span><b data-svc="http">—</b></div>
+          <div class="svc"><span>HTTPS Dashboard / API</span><b data-svc="https">—</b></div>
           <div class="svc"><span>Live updates (WebSocket)</span><b data-svc="websocket">—</b></div>
           <div class="svc"><span>Local discovery (mDNS)</span><b data-svc="mdns">—</b></div>
           <div class="svc"><span>Time sync (NTP)</span><b data-svc="ntp">—</b></div>
@@ -519,6 +520,6 @@
 </dialog>
 
 <div class="toasts" id="toasts" aria-live="polite" aria-atomic="true"></div>
-<script src="/assets/app.js?v=20261117-1" defer></script>
+<script src="/assets/app.js?v=20261117-2" defer></script>
 </body>
 </html>
