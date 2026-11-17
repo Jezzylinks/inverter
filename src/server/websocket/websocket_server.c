@@ -94,6 +94,16 @@ static void ws_remove_client(httpd_handle_t server, int fd)
     }
 }
 
+void websocket_server_session_closed(httpd_handle_t server, int fd)
+{
+    if (server == NULL || fd < 0 || s_mutex == NULL) {
+        return;
+    }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    ws_remove_client(server, fd);
+    xSemaphoreGive(s_mutex);
+}
+
 static cJSON *status_json_create(const wifi_status_t *status)
 {
     if (status == NULL) {
