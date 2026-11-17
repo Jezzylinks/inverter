@@ -237,7 +237,8 @@ static const menu_item_t wifi_apsta_items[] = {
     {"Connect", MENU_WIFI_CONFIG},
     {"Networks", MENU_WIFI_CONFIG},
     {"AP Clients", MENU_WIFI_CONFIG},
-    {"Settings", MENU_WIFI_SETTINGS}};
+    {"Settings", MENU_WIFI_SETTINGS},
+    {"Web Server", MENU_WIFI_CONFIG}};
 
 static const menu_item_t wifi_settings_sta_items[] = {
     {"Saved Network", MENU_WIFI_SETTINGS},
