@@ -413,3 +413,6 @@ label.check input { width: 18px; height: 18px; accent-color: var(--blue); }
   .fline.active i { animation: none; }
   .view { animation: none; }
 }
+
+/* Notification dismissal controls */
+.n-dismiss{align-self:center;flex:0 0 auto;border:1px solid var(--line,rgba(130,150,180,.25));border-radius:7px;background:transparent;color:var(--muted,#8196b6);padding:5px 8px;font:inherit;font-size:11px;cursor:pointer}.n-dismiss:hover,.n-dismiss:focus-visible{color:var(--text,#eaf0f8);border-color:currentColor;outline:none}
