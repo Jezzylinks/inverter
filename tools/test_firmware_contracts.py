@@ -620,7 +620,7 @@ class FirmwareContracts(unittest.TestCase):
         server = root.joinpath("src", "server", "web", "web_dashboard_server.c").read_text()
         self.assertTrue(root.joinpath("data", "assets", "app.css").is_file())
         self.assertTrue(root.joinpath("data", "assets", "app.js").is_file())
-        self.assertIn('href="/assets/app.css"', html)
+        self.assertRegex(html, r'href="/assets/app\.css(?:\?[^\"]*)?"')
         self.assertIn('uri = "/assets/app.css"', server)
         self.assertIn('uri = "/assets/app.js"', server)
         self.assertIn('esp_vfs_spiffs_register(&config)', server)
