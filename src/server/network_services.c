@@ -35,7 +35,7 @@
 /* Keep the persistent dashboard WebSocket alive alongside parallel REST polls. */
 #define NETWORK_HTTP_MAX_OPEN_SOCKETS 6U
 #define NETWORK_HTTPS_STACK_SIZE 10240U
-#define NETWORK_HTTPS_MAX_OPEN_SOCKETS 3U
+#define NETWORK_HTTPS_MAX_OPEN_SOCKETS 2U
 #define NETWORK_HTTPS_MAX_PEM_BYTES 8192U
 #define NETWORK_HTTPS_CERT_PATH "/www/https_server.crt"
 #define NETWORK_HTTPS_KEY_PATH "/www/https_server.key"
@@ -389,11 +389,13 @@ static esp_err_t network_services_start_https_dashboard(void)
     config.prvtkey_pem = (const uint8_t *)key_pem;
     config.prvtkey_len = key_len;
 
+    NS_HEAP("https:before");
     httpd_handle_t server = NULL;
     esp_err_t err = httpd_ssl_start(&server, &config);
     network_https_wipe_free(cert_pem);
     network_https_wipe_free(key_pem);
     if (err != ESP_OK) {
+        NS_HEAP("https:start-failed");
         ESP_LOGW(NETWORK_SERVICES_TAG, "HTTPS dashboard TLS startup failed: %s",
                  esp_err_to_name(err));
         return err;
@@ -421,6 +423,7 @@ static esp_err_t network_services_start_https_dashboard(void)
     }
 
     s_https_server = server;
+    NS_HEAP("https:started");
     ESP_LOGI(NETWORK_SERVICES_TAG,
              "HTTPS dashboard/API/WebSocket started on port %u", NETWORK_HTTPS_PORT);
     return ESP_OK;
@@ -834,6 +837,7 @@ void network_services_get_status(network_services_status_t *status)
     }
     services_lock();
     status->http_running = s_http_server != NULL;
+    status->https_running = s_https_server != NULL;
     status->dashboard_running = s_dashboard_running;
     status->websocket_running = s_websocket_running;
     status->mdns_running = s_mdns_running;
