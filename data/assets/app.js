@@ -279,6 +279,30 @@
   }
 
   /* ---------------------------- notifications --------------------------- */
+  const dismissedNotifications = new Set((() => {
+    try { return JSON.parse(store.get('vonix.dismissedNotifications', '[]')); }
+    catch (_) { return []; }
+  })());
+  function notificationId(item) {
+    return item.id || [item.kind, item.title, item.desc, item.t].join('|');
+  }
+  function persistDismissedNotifications() {
+    const ids = Array.from(dismissedNotifications).slice(-100);
+    dismissedNotifications.clear();
+    ids.forEach((id) => dismissedNotifications.add(id));
+    store.set('vonix.dismissedNotifications', JSON.stringify(ids));
+  }
+  function dismissNotification(id) {
+    dismissedNotifications.add(id);
+    persistDismissedNotifications();
+    renderNotifications();
+  }
+  function clearNotifications() {
+    allNotifications().forEach((item) => dismissedNotifications.add(notificationId(item)));
+    persistDismissedNotifications();
+    renderNotifications();
+    toast('Notifications cleared');
+  }
   function addLive(kind, title, desc) {
     state.liveNotifs.unshift({ kind, title, desc, t: Date.now() });
     state.liveNotifs.length = Math.min(state.liveNotifs.length, 20);
@@ -303,7 +327,10 @@
         t: eventTime === null ? 0 : eventTime,
         timeLabel: eventTime === null ? (state.uptimeAt ? 'Earlier session' : 'Time unavailable') : null };
     });
-    return items.concat(state.liveNotifs).sort((a, b) => b.t - a.t);
+    return items.concat(state.liveNotifs)
+      .map((item) => ({ ...item, id: notificationId(item) }))
+      .filter((item) => !dismissedNotifications.has(item.id))
+      .sort((a, b) => b.t - a.t);
   }
   const N_ICON = { info: 'i-info', ok: 'i-check', warn: 'i-info', bad: 'i-x' };
   function nodeFor(item) {
@@ -315,7 +342,11 @@
     const desc = document.createElement('p'); desc.className = 'n-desc'; desc.textContent = item.desc;
     body.append(title, desc);
     const time = document.createElement('span'); time.className = 'n-time'; time.textContent = item.timeLabel || ago(item.t);
-    row.append(ic, body, time);
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button'; dismiss.className = 'n-dismiss';
+    dismiss.textContent = 'Dismiss'; dismiss.setAttribute('aria-label', `Dismiss notification: ${item.title}`);
+    dismiss.addEventListener('click', () => dismissNotification(item.id));
+    row.append(ic, body, time, dismiss);
     return row;
   }
   function fill(selector, items, limit, emptyText) {
@@ -843,6 +874,7 @@
     $('otaStart').addEventListener('click', () => otaAction('/api/v1/ota/start', $('otaStart')));
     $('otaCancel').addEventListener('click', () => otaAction('/api/v1/ota/cancel', $('otaCancel')));
     $('clearLog').addEventListener('click', () => { state.activity = []; renderActivity(); });
+    $('clearNotifications').addEventListener('click', clearNotifications);
     window.addEventListener('online', () => { loadAll(); connectSocket(); });
 
     $('prefRange').value = state.range;
