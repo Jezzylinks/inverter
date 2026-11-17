@@ -23,7 +23,7 @@ The firmware deliberately does not disable certificate checks or weaken TLS to h
 The certificate script now creates a local root CA and signs a P-256 ECDSA server certificate. The server certificate contains the AP address `192.168.4.1` as an IP SAN. Supply the exact device mDNS hostname to add its DNS SAN:
 
 ```powershell
-.\\scripts\\generate_local_https_cert.ps1 -DeviceHostname "vonix-inverter-A1B2.local"
+.\scripts\generate_local_https_cert.ps1 -DeviceHostname "vonix-inverter-A1B2.local"
 ```
 
 Install `certs/vonix_inverter_root_ca.crt` as a trusted CA certificate on the phone/computer used to browse the inverter. Then upload the filesystem image:
