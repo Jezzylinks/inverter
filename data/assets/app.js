@@ -430,7 +430,7 @@
   function renderServices() {
     const s = state.services; if (!s) return;
     const set = (k, on, offText = 'Offline') => $$(`[data-svc="${k}"]`).forEach((n) => { n.textContent = on ? 'Online' : offText; n.className = on ? 'on' : 'off'; });
-    set('http', s.http); set('websocket', s.websocket); set('mdns', s.mdns);
+    set('http', s.http); set('https', s.https); set('websocket', s.websocket); set('mdns', s.mdns);
     set('ntp', s.ntp_time_set, s.ntp ? 'Waiting for sync' : 'Offline');
     set('mqtt', s.mqtt_connected, s.mqtt_configured ? 'Ready' : 'Not set');
     if (s.mqtt) {
