@@ -232,7 +232,7 @@ static void network_services_sync_task(void *arg)
 
 static void network_wifi_status_callback(const wifi_status_t *status)
 {
-    if (status == NULL || !s_initialized || s_mutex == NULL) {
+    if (status == NULL || !s_initialized || s_mutex == NULL || s_teardown_pending) {
         return;
     }
     const wifi_mode_t mode = wifi_manager_get_mode();
@@ -585,10 +585,34 @@ esp_err_t network_services_deinit(void)
     if (!s_initialized) {
         return ESP_OK;
     }
-    (void)network_services_stop();
+    /* Prevent new status events from queuing sync work while teardown waits. */
+    s_teardown_pending = true;
+    (void)wifi_events_unregister_status_callback(network_wifi_status_callback);
+    const esp_err_t stop_err = network_services_stop();
+    if (stop_err != ESP_OK) {
+        return stop_err;
+    }
+    /* A worker may have been queued immediately before callback removal. It
+     * must finish its final mutex access before s_mutex can be destroyed. */
+    for (unsigned wait_ms = 0U; wait_ms < 3000U; wait_ms += 10U) {
+        services_lock();
+        const bool sync_pending = s_sync_scheduled;
+        services_unlock();
+        if (!sync_pending) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10U));
+    }
+    services_lock();
+    const bool sync_pending = s_sync_scheduled;
+    services_unlock();
+    if (sync_pending) {
+        ESP_LOGE(NETWORK_SERVICES_TAG,
+                 "Network sync worker did not drain; retaining mutexes safely");
+        return ESP_ERR_TIMEOUT;
+    }
     (void)wifi_dns_server_stop();
     (void)wifi_dns_server_deinit();
-    (void)wifi_events_unregister_status_callback(network_wifi_status_callback);
     services_lock();
     s_initialized = false;
     services_unlock();
