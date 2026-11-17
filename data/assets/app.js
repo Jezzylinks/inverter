@@ -298,6 +298,7 @@
     renderNotifications();
   }
   function clearNotifications() {
+    if (!window.confirm('Clear all dashboard notifications? This only dismisses them from this browser; it does not clear device faults or the fault log.')) return;
     allNotifications().forEach((item) => dismissedNotifications.add(notificationId(item)));
     persistDismissedNotifications();
     renderNotifications();
